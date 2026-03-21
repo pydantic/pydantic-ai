@@ -23,7 +23,7 @@ Pydantic AI ships with several capabilities that cover common needs:
 | [`Thinking`][pydantic_ai.capabilities.Thinking] | Enables model thinking/reasoning mode |
 | [`WebSearch`][pydantic_ai.capabilities.WebSearch] | Registers the web search [builtin tool](builtin-tools.md) |
 | [`Toolset`][pydantic_ai.capabilities.Toolset] | Wraps an [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] |
-| [`HistoryProcessorCapability`][pydantic_ai.capabilities.HistoryProcessorCapability] | Wraps a [history processor](message-history.md) |
+| [`HistoryProcessor`][pydantic_ai.capabilities.HistoryProcessor] | Wraps a [history processor](message-history.md) |
 
 ```python {title="builtin_capabilities.py"}
 from pydantic_ai import Agent
@@ -106,7 +106,7 @@ The configuration methods are:
 
 | Method | Return type | Purpose |
 |---|---|---|
-| [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions] | [`Instructions`][pydantic_ai._instructions.Instructions] ` \| None` | System prompt additions (static strings, [template strings](#template-instructions), or callables) |
+| [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions] | [`Instructions`][pydantic_ai._instructions.AgentInstructions] ` \| None` | System prompt additions (static strings, [template strings](#template-instructions), or callables) |
 | [`get_model_settings()`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] | [`AgentModelSettings`][pydantic_ai.agent.abstract.AgentModelSettings] ` \| None` | Model settings dict, or a callable for [per-step settings](#dynamic-model-settings) |
 | [`get_toolset()`][pydantic_ai.capabilities.AbstractCapability.get_toolset] | [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] ` \| None` | A [toolset](toolsets.md) to register with the agent |
 | [`get_builtin_tools()`][pydantic_ai.capabilities.AbstractCapability.get_builtin_tools] | `Sequence[AbstractBuiltinTool]` | [Builtin tools](builtin-tools.md) to register |
@@ -195,19 +195,19 @@ Capabilities can hook into four lifecycle points, each with three variants:
 
 | Hook | Signature | Purpose |
 |---|---|---|
-| `wrap_run_step` | `(ctx, *, node, handler) -> AgentNode \| End` | Wrap each graph node execution |
+| `wrap_node_run` | `(ctx, *, node, handler) -> AgentNode \| End` | Wrap each graph node execution |
 
-The `wrap_run_step` hook fires for every node in the agent graph (`UserPromptNode`, `ModelRequestNode`, `CallToolsNode`). The `handler` executes the node and returns the next node. Override this to observe node transitions, add logging, or modify graph progression.
+The `wrap_node_run` hook fires for every node in the agent graph (`UserPromptNode`, `ModelRequestNode`, `CallToolsNode`). The `handler` executes the node and returns the next node. Override this to observe node transitions, add logging, or modify graph progression.
 
 ### Model request hooks
 
 | Hook | Signature | Purpose |
 |---|---|---|
-| `before_model_request` | `(ctx, request_context) -> BeforeModelRequestContext` | Modify messages, settings, or parameters before the model call |
+| `before_model_request` | `(ctx, request_context) -> ModelRequestContext` | Modify messages, settings, or parameters before the model call |
 | `after_model_request` | `(ctx, *, response) -> ModelResponse` | Modify the model's response |
 | `wrap_model_request` | `(ctx, *, request_context, handler) -> ModelResponse` | Wrap the model call |
 
-[`BeforeModelRequestContext`][pydantic_ai.capabilities.BeforeModelRequestContext] bundles `messages`, `model_settings`, and `model_request_parameters` into a single object, making the signature future-proof.
+[`ModelRequestContext`][pydantic_ai.capabilities.ModelRequestContext] bundles `messages`, `model_settings`, and `model_request_parameters` into a single object, making the signature future-proof.
 
 ### Tool hooks
 
@@ -415,7 +415,7 @@ from typing import Any
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.capabilities.abstract import BeforeModelRequestContext
+from pydantic_ai.capabilities.abstract import ModelRequestContext
 from pydantic_ai.models.test import TestModel
 
 
@@ -429,8 +429,8 @@ class RequestCounter(AbstractCapability[Any]):
         return RequestCounter()  # fresh instance for each run
 
     async def before_model_request(
-        self, ctx: RunContext[Any], request_context: BeforeModelRequestContext
-    ) -> BeforeModelRequestContext:
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
         self.count += 1
         return request_context
 

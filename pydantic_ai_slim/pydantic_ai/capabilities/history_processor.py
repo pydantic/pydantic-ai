@@ -3,11 +3,11 @@ from dataclasses import dataclass
 from pydantic_ai import _history_processor
 from pydantic_ai.tools import AgentDepsT, RunContext
 
-from .abstract import AbstractCapability, BeforeModelRequestContext
+from .abstract import AbstractCapability, ModelRequestContext
 
 
 @dataclass
-class HistoryProcessorCapability(AbstractCapability[AgentDepsT]):
+class HistoryProcessor(AbstractCapability[AgentDepsT]):
     """A capability that processes message history before model requests."""
 
     processor: _history_processor.HistoryProcessor[AgentDepsT]
@@ -15,8 +15,8 @@ class HistoryProcessorCapability(AbstractCapability[AgentDepsT]):
     async def before_model_request(
         self,
         ctx: RunContext[AgentDepsT],
-        request_context: BeforeModelRequestContext,
-    ) -> BeforeModelRequestContext:
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
         request_context.messages = await _history_processor.run_history_processor(
             self.processor, ctx, request_context.messages
         )

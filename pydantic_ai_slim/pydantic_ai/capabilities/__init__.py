@@ -1,8 +1,8 @@
 from typing import Any
 
-from .abstract import AbstractCapability, BeforeModelRequestContext
+from .abstract import AbstractCapability, ModelRequestContext
 from .combined import CombinedCapability
-from .history_processor import HistoryProcessorCapability
+from .history_processor import HistoryProcessor
 from .instructions import Instructions
 
 # Short name is intentional — passing a dict is enough to get type checking,
@@ -24,7 +24,7 @@ DEFAULT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (
 CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
     for cls in (
-        HistoryProcessorCapability,
+        HistoryProcessor,
         Instructions,
         ModelSettings,
         Thinking,
@@ -36,11 +36,11 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
 
 __all__ = [
     'AbstractCapability',
-    'BeforeModelRequestContext',
+    'ModelRequestContext',
     'CAPABILITY_TYPES',
     'DEFAULT_CAPABILITY_TYPES',
     'Instructions',
-    'HistoryProcessorCapability',
+    'HistoryProcessor',
     'ModelSettings',
     'Thinking',
     'Toolset',

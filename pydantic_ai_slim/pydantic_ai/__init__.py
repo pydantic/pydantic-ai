@@ -119,6 +119,7 @@ from .settings import ModelSettings
 from .tools import DeferredToolRequests, DeferredToolResults, RunContext, Tool, ToolApproved, ToolDefinition, ToolDenied
 from .toolsets import (
     AbstractToolset,
+    AgentToolset,
     ApprovalRequiredToolset,
     CombinedToolset,
     ExternalToolset,
@@ -240,6 +241,7 @@ __all__ = (
     'ToolDenied',
     # toolsets
     'AbstractToolset',
+    'AgentToolset',
     'ApprovalRequiredToolset',
     'CombinedToolset',
     'ExternalToolset',

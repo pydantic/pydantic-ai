@@ -150,7 +150,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         message_history: Sequence[ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: Model | KnownModelName | str | None = None,
-        instructions: _instructions.Instructions[DispatchDepsT] = None,
+        instructions: _instructions.AgentInstructions[DispatchDepsT] = None,
         deps: DispatchDepsT = None,
         output_type: OutputSpec[Any] | None = None,
         model_settings: ModelSettings | None = None,

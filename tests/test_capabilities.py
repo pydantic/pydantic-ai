@@ -18,7 +18,7 @@ from pydantic_ai.capabilities import (
     Toolset,
     WebSearch,
 )
-from pydantic_ai.capabilities.abstract import AbstractCapability, BeforeModelRequestContext
+from pydantic_ai.capabilities.abstract import AbstractCapability, ModelRequestContext
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.exceptions import SkipModelRequest, SkipToolExecution, SkipToolValidation
 from pydantic_ai.messages import (
@@ -659,7 +659,7 @@ def test_model_settings_callable_get_model_settings():
 
 async def test_model_settings_static_before_model_request():
     """Static ModelSettings passes through before_model_request without modification."""
-    from pydantic_ai.capabilities.abstract import BeforeModelRequestContext
+    from pydantic_ai.capabilities.abstract import ModelRequestContext
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.test import TestModel
     from pydantic_ai.result import RunUsage
@@ -670,7 +670,7 @@ async def test_model_settings_static_before_model_request():
     input_settings = _ModelSettings(temperature=0.5)
     result = await cap.before_model_request(
         ctx,
-        BeforeModelRequestContext(
+        ModelRequestContext(
             messages=[],
             model_settings=input_settings,
             model_request_parameters=ModelRequestParameters(),
@@ -917,8 +917,8 @@ async def test_concurrent_runs_capability_isolation():
         async def before_model_request(
             self,
             ctx: RunContext[None],
-            request_context: BeforeModelRequestContext,
-        ) -> BeforeModelRequestContext:
+            request_context: ModelRequestContext,
+        ) -> ModelRequestContext:
             self.request_count += 1
             assert self.request_count == 1, f'Expected 1, got {self.request_count} — state leaked between runs!'
             return request_context
@@ -1033,8 +1033,8 @@ class LoggingCapability(AbstractCapability[Any]):
     async def before_model_request(
         self,
         ctx: RunContext[Any],
-        request_context: BeforeModelRequestContext,
-    ) -> BeforeModelRequestContext:
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
         self.log.append('before_model_request')
         return request_context
 
@@ -1217,8 +1217,8 @@ class TestModelRequestHooks:
             async def before_model_request(
                 self,
                 ctx: RunContext[Any],
-                request_context: BeforeModelRequestContext,
-            ) -> BeforeModelRequestContext:
+                request_context: ModelRequestContext,
+            ) -> ModelRequestContext:
                 raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped model')]))
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[SkipCap()])
@@ -1398,8 +1398,8 @@ class TestCompositionOrder:
             async def before_model_request(
                 self,
                 ctx: RunContext[Any],
-                request_context: BeforeModelRequestContext,
-            ) -> BeforeModelRequestContext:
+                request_context: ModelRequestContext,
+            ) -> ModelRequestContext:
                 log.append('cap1:before')
                 return request_context
 
@@ -1425,8 +1425,8 @@ class TestCompositionOrder:
             async def before_model_request(
                 self,
                 ctx: RunContext[Any],
-                request_context: BeforeModelRequestContext,
-            ) -> BeforeModelRequestContext:
+                request_context: ModelRequestContext,
+            ) -> ModelRequestContext:
                 log.append('cap2:before')
                 return request_context
 
@@ -1600,8 +1600,8 @@ class TestStreamingHooks:
             async def before_model_request(
                 self,
                 ctx: RunContext[Any],
-                request_context: BeforeModelRequestContext,
-            ) -> BeforeModelRequestContext:
+                request_context: ModelRequestContext,
+            ) -> ModelRequestContext:
                 raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped in stream')]))
 
         agent = Agent(
@@ -1884,8 +1884,8 @@ class TestSkipModelRequestInteraction:
             async def before_model_request(
                 self,
                 ctx: RunContext[Any],
-                request_context: BeforeModelRequestContext,
-            ) -> BeforeModelRequestContext:
+                request_context: ModelRequestContext,
+            ) -> ModelRequestContext:
                 log.append('before_model_request')
                 raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped')]))
 
@@ -2042,15 +2042,15 @@ class TestPrepareToolsHook:
         assert 'desc_A_B' in result.output
 
 
-class TestWrapRunStepHook:
+class TestWrapNodeRunHook:
     async def test_observe_nodes(self):
-        """wrap_run_step can observe all nodes in the agent run."""
+        """wrap_node_run can observe all nodes in the agent run."""
 
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
             nodes: list[str] = field(default_factory=lambda: [])
 
-            async def wrap_run_step(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
                 self.nodes.append(type(node).__name__)
                 return await handler(node)
 
@@ -2060,13 +2060,13 @@ class TestWrapRunStepHook:
         assert cap.nodes == ['UserPromptNode', 'ModelRequestNode', 'CallToolsNode']
 
     async def test_observe_nodes_with_tools(self):
-        """wrap_run_step fires for each node including tool call round-trips."""
+        """wrap_node_run fires for each node including tool call round-trips."""
 
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
             nodes: list[str] = field(default_factory=lambda: [])
 
-            async def wrap_run_step(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
                 self.nodes.append(type(node).__name__)
                 return await handler(node)
 
@@ -2089,13 +2089,13 @@ class TestWrapRunStepHook:
         ]
 
     async def test_works_with_iter(self):
-        """wrap_run_step fires when using async for iteration."""
+        """wrap_node_run fires when using async for iteration."""
 
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
             nodes: list[str] = field(default_factory=lambda: [])
 
-            async def wrap_run_step(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
                 self.nodes.append(type(node).__name__)
                 return await handler(node)
 
@@ -2109,14 +2109,14 @@ class TestWrapRunStepHook:
         assert cap.nodes == ['UserPromptNode', 'ModelRequestNode', 'CallToolsNode']
 
     async def test_works_with_manual_next(self):
-        """wrap_run_step fires when using manual next() driving."""
+        """wrap_node_run fires when using manual next() driving."""
         from pydantic_graph import End
 
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
             nodes: list[str] = field(default_factory=lambda: [])
 
-            async def wrap_run_step(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
                 self.nodes.append(type(node).__name__)
                 return await handler(node)
 
@@ -2131,14 +2131,14 @@ class TestWrapRunStepHook:
         assert cap.nodes == ['UserPromptNode', 'ModelRequestNode', 'CallToolsNode']
 
     async def test_chaining_nests_correctly(self):
-        """Multiple capabilities compose wrap_run_step as nested middleware."""
+        """Multiple capabilities compose wrap_node_run as nested middleware."""
         log: list[str] = []
 
         @dataclass
         class OrderedCap(AbstractCapability[Any]):
             name: str
 
-            async def wrap_run_step(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
                 log.append(f'{self.name}:before:{type(node).__name__}')
                 result = await handler(node)
                 log.append(f'{self.name}:after:{type(result).__name__}')

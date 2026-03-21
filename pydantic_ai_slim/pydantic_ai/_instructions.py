@@ -5,7 +5,7 @@ from pydantic_ai.tools import AgentDepsT
 
 from . import _system_prompt
 
-Instructions = (
+AgentInstructions = (
     TemplateStr[AgentDepsT]
     | str
     | _system_prompt.SystemPromptFunc[AgentDepsT]
@@ -15,7 +15,7 @@ Instructions = (
 
 
 def normalize_instructions(
-    instructions: Instructions[AgentDepsT],
+    instructions: AgentInstructions[AgentDepsT],
 ) -> list[str | _system_prompt.SystemPromptFunc[AgentDepsT]]:
     if instructions is None:
         return []

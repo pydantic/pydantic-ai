@@ -285,7 +285,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                 pass
             return self._task_to_node(task)
 
-        return await self.ctx.deps.root_capability.wrap_run_step(run_context, node=node, handler=_step_handler)
+        return await self.ctx.deps.root_capability.wrap_node_run(run_context, node=node, handler=_step_handler)
 
     # TODO (v2): Make this a property
     def usage(self) -> _usage.RunUsage:
