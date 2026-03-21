@@ -1076,6 +1076,26 @@ class TestBedrock:
             )
         )
 
+    async def test_inference_profile_embed(self, bedrock_provider: BedrockProvider):
+        # When re-recording, set AWS_ACCOUNT_ID to your real account ID
+        account_id = os.getenv('AWS_ACCOUNT_ID', '123456789012')
+        inference_profile_arn = f'arn:aws:bedrock:us-east-1:{account_id}:application-inference-profile/otnfa2ysixqd'
+        settings: BedrockEmbeddingSettings = {'bedrock_inference_profile': inference_profile_arn}
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider, settings=settings)
+
+        result = await model.embed('Hello, world!', input_type='document')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
+                inputs=['Hello, world!'],
+                input_type='document',
+                model_name='amazon.titan-embed-text-v2:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=5),
+            )
+        )
+
     async def test_unsupported_model_error(self, bedrock_provider: BedrockProvider):
         with pytest.raises(UserError, match='Unsupported Bedrock embedding model'):
             BedrockEmbeddingModel('unsupported.model', provider=bedrock_provider)
