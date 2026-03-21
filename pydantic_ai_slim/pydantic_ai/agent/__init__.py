@@ -633,10 +633,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Returns:
             A new Agent instance.
         """
-        from pydantic_ai._spec import build_registry, load_from_registry
-        from pydantic_ai._template import validate_from_spec_args
         from pydantic_ai.agent.spec import AgentSpec as _AgentSpecModel
-        from pydantic_ai.capabilities import DEFAULT_CAPABILITY_TYPES
 
         template_context: dict[str, Any] = {
             'deps_type': deps_type if deps_type is not type(None) else None,
@@ -657,35 +654,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             effective_output_type = str
 
-        registry = build_registry(
-            custom_types=custom_capability_types,
-            defaults=DEFAULT_CAPABILITY_TYPES,
-            get_name=lambda c: c.get_serialization_name(),
-            label='capability',
-        )
-
         # Merge instructions from spec and arg
         merged_instructions = _instructions.normalize_instructions(validated_spec.instructions)
         merged_instructions.extend(_instructions.normalize_instructions(instructions))
 
-        def _instantiate_cap(
-            cap_cls: type[AbstractCapability[Any]],
-            args: tuple[Any, ...],
-            kwargs: dict[str, Any],
-        ) -> AbstractCapability[Any]:
-            args, kwargs = validate_from_spec_args(cap_cls, args, kwargs, template_context)
-            return cap_cls.from_spec(*args, **kwargs)
-
-        all_capabilities: list[AbstractCapability[Any]] = []
-        for cap_spec in validated_spec.capabilities:
-            capability = load_from_registry(
-                registry,
-                cap_spec,
-                label='capability',
-                custom_types_param='custom_capability_types',
-                instantiate=_instantiate_cap,
-            )
-            all_capabilities.append(capability)
+        all_capabilities = _capabilities_from_spec(validated_spec, custom_capability_types, template_context)
         if capabilities:
             all_capabilities.extend(capabilities)
 
@@ -1504,13 +1477,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if spec is None:
             return None
 
-        from pydantic_ai._spec import build_registry, load_from_registry
-        from pydantic_ai._template import validate_from_spec_args
         from pydantic_ai.agent.spec import AgentSpec as _AgentSpecModel
-        from pydantic_ai.capabilities import DEFAULT_CAPABILITY_TYPES
 
+        deps_type = self._deps_type
         template_context: dict[str, Any] = {
-            'deps_type': self._deps_type if self._deps_type is not type(None) else None,
+            'deps_type': deps_type if deps_type is not type(None) else None,
         }
         if isinstance(spec, dict):
             validated_spec = _AgentSpecModel.model_validate(spec, context=template_context)
@@ -1518,32 +1489,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             validated_spec = spec
         template_context['deps_schema'] = validated_spec.deps_schema
 
-        registry = build_registry(
-            custom_types=custom_capability_types,
-            defaults=DEFAULT_CAPABILITY_TYPES,
-            get_name=lambda c: c.get_serialization_name(),
-            label='capability',
-        )
-
-        def _instantiate_cap(
-            cap_cls: type[AbstractCapability[Any]],
-            args: tuple[Any, ...],
-            kwargs: dict[str, Any],
-        ) -> AbstractCapability[Any]:
-            args, kwargs = validate_from_spec_args(cap_cls, args, kwargs, template_context)
-            return cap_cls.from_spec(*args, **kwargs)
-
-        capabilities: list[AbstractCapability[Any]] = []
-        for cap_spec in validated_spec.capabilities:
-            capability = load_from_registry(
-                registry,
-                cap_spec,
-                label='capability',
-                custom_types_param='custom_capability_types',
-                instantiate=_instantiate_cap,
-            )
-            capabilities.append(capability)
-
+        capabilities = _capabilities_from_spec(validated_spec, custom_capability_types, template_context)
         combined = CombinedCapability(capabilities) if capabilities else None
 
         # Warn for unsupported fields with non-default values
@@ -2495,6 +2441,47 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         async with self:
             yield
+
+
+def _capabilities_from_spec(
+    spec: AgentSpec,
+    custom_capability_types: Sequence[type[AbstractCapability[Any]]],
+    template_context: dict[str, Any],
+) -> list[AbstractCapability[Any]]:
+    """Instantiate capabilities from an AgentSpec using the capability registry.
+
+    Shared by `Agent.from_spec()` and `Agent._resolve_spec()`.
+    """
+    from pydantic_ai._spec import build_registry, load_from_registry
+    from pydantic_ai._template import validate_from_spec_args
+    from pydantic_ai.capabilities import DEFAULT_CAPABILITY_TYPES
+
+    registry = build_registry(
+        custom_types=custom_capability_types,
+        defaults=DEFAULT_CAPABILITY_TYPES,
+        get_name=lambda c: c.get_serialization_name(),
+        label='capability',
+    )
+
+    def _instantiate_cap(
+        cap_cls: type[AbstractCapability[Any]],
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+    ) -> AbstractCapability[Any]:
+        args, kwargs = validate_from_spec_args(cap_cls, args, kwargs, template_context)
+        return cap_cls.from_spec(*args, **kwargs)
+
+    capabilities: list[AbstractCapability[Any]] = []
+    for cap_spec in spec.capabilities:
+        capability = load_from_registry(
+            registry,
+            cap_spec,
+            label='capability',
+            custom_types_param='custom_capability_types',
+            instantiate=_instantiate_cap,
+        )
+        capabilities.append(capability)
+    return capabilities
 
 
 @dataclasses.dataclass(init=False)
