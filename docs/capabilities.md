@@ -31,7 +31,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import Instructions, ModelSettings, Thinking, WebSearch
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-20250514',
+    'anthropic:claude-opus-4-6',
     capabilities=[
         Instructions('You are a research assistant. Be thorough and cite sources.'),
         Thinking(),

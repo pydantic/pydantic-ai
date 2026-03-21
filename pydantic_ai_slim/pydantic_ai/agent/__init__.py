@@ -1202,8 +1202,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     # Build RunContext for run lifecycle hooks
                     run_ctx = _agent_graph.build_run_context(agent_run.ctx)
 
-                    # Task-based wrap_run: handler calls before_run, signals readiness,
-                    # then waits for caller to finish
+                    # wrap_run cooperative hand-off protocol:
+                    #
+                    # 1. _do_run() calls before_run, sets _run_ready, then awaits _run_done.
+                    # 2. wrap_run wraps _do_run via the capability middleware chain.
+                    # 3. We await either _run_ready (handler started) or _wrap_task completion
+                    #    (short-circuit: wrap_run returned without calling handler).
+                    # 4. We yield agent_run to the caller for iteration.
+                    # 5. When the caller finishes (or an error occurs), we set _run_done.
+                    # 6. _do_run resumes: returns the result (success) or re-raises the error.
+                    # 7. If wrap_run catches the error and returns a recovery result, we use it.
+                    #    Otherwise the original error propagates.
                     _run_ready = asyncio.Event()
                     _run_done = asyncio.Event()
                     _run_error: BaseException | None = None
