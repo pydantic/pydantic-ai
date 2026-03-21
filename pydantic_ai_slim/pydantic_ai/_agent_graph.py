@@ -21,7 +21,7 @@ from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._tool_manager import ToolManager, ValidatedToolCall
 from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, now_utc
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
-from pydantic_ai.capabilities.abstract import AbstractCapability, BeforeModelRequestContext
+from pydantic_ai.capabilities.abstract import AbstractCapability, ModelRequestContext
 from pydantic_graph import BaseNode, GraphRunContext
 from pydantic_graph.beta import Graph, GraphBuilder
 from pydantic_graph.nodes import End, NodeRunEndT
@@ -518,7 +518,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         agent_stream_holder: list[result.AgentStream[DepsT, T]] = []
 
         async def _streaming_handler(
-            req_ctx: BeforeModelRequestContext,
+            req_ctx: ModelRequestContext,
         ) -> _messages.ModelResponse:
             with set_current_run_context(run_context):
                 async with ctx.deps.model.request_stream(
@@ -532,7 +532,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     await stream_done.wait()
             return sr.get()
 
-        wrap_request_context = BeforeModelRequestContext(
+        wrap_request_context = ModelRequestContext(
             messages=message_history,
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
@@ -616,7 +616,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.state.usage.requests += 1
             return await self._finish_handling(ctx, e.response)
 
-        async def model_handler(req_ctx: BeforeModelRequestContext) -> _messages.ModelResponse:
+        async def model_handler(req_ctx: ModelRequestContext) -> _messages.ModelResponse:
             with set_current_run_context(run_context):
                 return await ctx.deps.model.request(
                     req_ctx.messages, req_ctx.model_settings, req_ctx.model_request_parameters
@@ -624,7 +624,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         model_response = await ctx.deps.root_capability.wrap_model_request(
             run_context,
-            request_context=BeforeModelRequestContext(
+            request_context=ModelRequestContext(
                 messages=message_history,
                 model_settings=model_settings,
                 model_request_parameters=model_request_parameters,
@@ -656,7 +656,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         request_context = await ctx.deps.root_capability.before_model_request(
             run_context,
-            BeforeModelRequestContext(
+            ModelRequestContext(
                 messages=ctx.state.message_history[:],
                 model_settings=model_settings,
                 model_request_parameters=model_request_parameters,

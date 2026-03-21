@@ -1,9 +1,9 @@
 from typing import Any
 
-from .abstract import AbstractCapability, BeforeModelRequestContext
+from .abstract import AbstractCapability, ModelRequestContext
 from .builtin_tool import BuiltinToolCapability
 from .combined import CombinedCapability
-from .history_processor import HistoryProcessorCapability
+from .history_processor import HistoryProcessor
 from .image_generation import ImageGeneration
 from .instructions import Instructions
 from .mcp import MCP
@@ -11,6 +11,7 @@ from .mcp import MCP
 # Short name is intentional — passing a dict is enough to get type checking,
 # and users rarely need both this and settings.ModelSettings in the same scope.
 from .model_settings import ModelSettings
+from .prepare_tools import PrepareTools
 from .thinking import Thinking
 from .toolset import Toolset
 from .web_fetch import WebFetch
@@ -31,7 +32,7 @@ DEFAULT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (
 CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
     for cls in (
-        HistoryProcessorCapability,
+        HistoryProcessor,
         ImageGeneration,
         Instructions,
         MCP,
@@ -46,15 +47,16 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
 
 __all__ = [
     'AbstractCapability',
-    'BeforeModelRequestContext',
+    'ModelRequestContext',
     'BuiltinToolCapability',
     'CAPABILITY_TYPES',
     'DEFAULT_CAPABILITY_TYPES',
     'ImageGeneration',
     'Instructions',
-    'HistoryProcessorCapability',
+    'HistoryProcessor',
     'MCP',
     'ModelSettings',
+    'PrepareTools',
     'Thinking',
     'Toolset',
     'WebFetch',

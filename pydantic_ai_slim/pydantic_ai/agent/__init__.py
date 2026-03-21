@@ -43,7 +43,7 @@ from .._output import OutputToolset
 from .._template import TemplateStr
 from .._tool_manager import ParallelExecutionMode, ToolManager
 from ..builtin_tools import AbstractBuiltinTool
-from ..capabilities import AbstractCapability, CombinedCapability, HistoryProcessorCapability
+from ..capabilities import AbstractCapability, CombinedCapability, HistoryProcessor as HistoryProcessorCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from ..output import OutputDataT, OutputSpec
 from ..run import AgentRun, AgentRunResult
@@ -64,7 +64,7 @@ from ..tools import (
     ToolPrepareFunc,
     ToolsPrepareFunc,
 )
-from ..toolsets import AbstractToolset
+from ..toolsets import AbstractToolset, AgentToolset
 from ..toolsets._dynamic import (
     DynamicToolset,
     ToolsetFunc,
@@ -198,7 +198,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         *,
         output_type: OutputSpec[OutputDataT] = str,
-        instructions: _instructions.Instructions[AgentDepsT] = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
@@ -211,7 +211,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        toolsets: Sequence[AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT]] | None = None,
+        toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
@@ -230,7 +230,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         *,
         output_type: OutputSpec[OutputDataT] = str,
-        instructions: _instructions.Instructions[AgentDepsT] = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
@@ -260,7 +260,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         *,
         output_type: OutputSpec[OutputDataT] = str,
-        instructions: _instructions.Instructions[AgentDepsT] = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
@@ -273,7 +273,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        toolsets: Sequence[AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT]] | None = None,
+        toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
@@ -365,7 +365,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 [`Thinking`][pydantic_ai.capabilities.Thinking],
                 [`ModelSettings`][pydantic_ai.capabilities.ModelSettings],
                 [`WebSearch`][pydantic_ai.capabilities.WebSearch],
-                [`HistoryProcessorCapability`][pydantic_ai.capabilities.HistoryProcessorCapability], and
+                [`HistoryProcessor`][pydantic_ai.capabilities.HistoryProcessor], and
                 [`Toolset`][pydantic_ai.capabilities.Toolset].
                 Custom capabilities can be created by subclassing
                 [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability].
@@ -383,7 +383,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         capabilities = list(capabilities or [])
         for history_processor in self.history_processors:
-            capabilities.append(HistoryProcessorCapability(history_processor))
+            capabilities.append(HistoryProcessorCap(history_processor))
 
         self._root_capability = CombinedCapability(capabilities)
 
@@ -448,9 +448,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Capability-contributed toolsets (stored separately for per-run re-extraction)
         cap_toolset = self._root_capability.get_toolset()
-        self._cap_toolsets: list[AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT]] = (
-            [cap_toolset] if cap_toolset is not None else []
-        )
+        self._cap_toolsets: list[AgentToolset[AgentDepsT]] = [cap_toolset] if cap_toolset is not None else []
 
         self._event_stream_handler = event_stream_handler
 
@@ -488,7 +486,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
         output_type: OutputSpec[Any] = str,
-        instructions: _instructions.Instructions[Any] = None,
+        instructions: _instructions.AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
         description: str | None = None,
@@ -500,7 +498,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[Any]] = (),
         prepare_tools: ToolsPrepareFunc[Any] | None = None,
         prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
-        toolsets: Sequence[AbstractToolset[Any] | ToolsetFunc[Any]] | None = None,
+        toolsets: Sequence[AgentToolset[Any]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy | None = None,
         instrument: InstrumentationSettings | bool | None = None,
@@ -522,7 +520,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
         output_type: OutputSpec[Any] = str,
-        instructions: _instructions.Instructions[Any] = None,
+        instructions: _instructions.AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
         description: str | None = None,
@@ -534,7 +532,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[Any]] = (),
         prepare_tools: ToolsPrepareFunc[Any] | None = None,
         prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
-        toolsets: Sequence[AbstractToolset[Any] | ToolsetFunc[Any]] | None = None,
+        toolsets: Sequence[AgentToolset[Any]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy | None = None,
         instrument: InstrumentationSettings | bool | None = None,
@@ -555,7 +553,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
         output_type: OutputSpec[Any] = str,
-        instructions: _instructions.Instructions[Any] = None,
+        instructions: _instructions.AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
         description: str | None = None,
@@ -567,7 +565,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[Any]] = (),
         prepare_tools: ToolsPrepareFunc[Any] | None = None,
         prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
-        toolsets: Sequence[AbstractToolset[Any] | ToolsetFunc[Any]] | None = None,
+        toolsets: Sequence[AgentToolset[Any]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy | None = None,
         instrument: InstrumentationSettings | bool | None = None,
@@ -707,6 +705,98 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             capabilities=all_capabilities,
         )
 
+    @overload
+    @classmethod
+    def from_file(
+        cls,
+        path: Path | str,
+        *,
+        custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        model: models.Model | models.KnownModelName | str | None = None,
+        output_type: OutputSpec[Any] = str,
+        instructions: _instructions.AgentInstructions[Any] = None,
+        system_prompt: str | Sequence[str] = (),
+        name: str | None = None,
+        description: str | None = None,
+        model_settings: ModelSettings | None = None,
+        retries: int | None = None,
+        validation_context: Any = None,
+        output_retries: int | None = None,
+        tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
+        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[Any]] = (),
+        prepare_tools: ToolsPrepareFunc[Any] | None = None,
+        prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
+        toolsets: Sequence[AgentToolset[Any]] | None = None,
+        defer_model_check: bool = False,
+        end_strategy: EndStrategy | None = None,
+        instrument: InstrumentationSettings | bool | None = None,
+        metadata: AgentMetadata[Any] | None = None,
+        history_processors: Sequence[HistoryProcessor[Any]] | None = None,
+        event_stream_handler: EventStreamHandler[Any] | None = None,
+        tool_timeout: float | None = None,
+        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
+        capabilities: Sequence[AbstractCapability[Any]] | None = None,
+    ) -> Agent[None, str]: ...
+
+    @overload
+    @classmethod
+    def from_file(
+        cls,
+        path: Path | str,
+        *,
+        deps_type: type[T],
+        custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        model: models.Model | models.KnownModelName | str | None = None,
+        output_type: OutputSpec[Any] = str,
+        instructions: _instructions.AgentInstructions[Any] = None,
+        system_prompt: str | Sequence[str] = (),
+        name: str | None = None,
+        description: str | None = None,
+        model_settings: ModelSettings | None = None,
+        retries: int | None = None,
+        validation_context: Any = None,
+        output_retries: int | None = None,
+        tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
+        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[Any]] = (),
+        prepare_tools: ToolsPrepareFunc[Any] | None = None,
+        prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
+        toolsets: Sequence[AgentToolset[Any]] | None = None,
+        defer_model_check: bool = False,
+        end_strategy: EndStrategy | None = None,
+        instrument: InstrumentationSettings | bool | None = None,
+        metadata: AgentMetadata[Any] | None = None,
+        history_processors: Sequence[HistoryProcessor[Any]] | None = None,
+        event_stream_handler: EventStreamHandler[Any] | None = None,
+        tool_timeout: float | None = None,
+        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
+        capabilities: Sequence[AbstractCapability[Any]] | None = None,
+    ) -> Agent[T, str]: ...
+
+    @classmethod
+    def from_file(
+        cls,
+        path: Path | str,
+        **kwargs: Any,
+    ) -> Agent[Any, Any]:
+        """Construct an Agent from a YAML or JSON spec file.
+
+        This is a convenience method equivalent to
+        ``Agent.from_spec(AgentSpec.from_file(path), ...)``.
+
+        The file format is inferred from the extension (`.yaml`/`.yml` or `.json`).
+
+        Args:
+            path: Path to the spec file.
+            **kwargs: All other arguments are forwarded to [`from_spec`][pydantic_ai.Agent.from_spec].
+
+        Returns:
+            A new Agent instance.
+        """
+        from pydantic_ai.agent.spec import AgentSpec as _AgentSpecModel
+
+        spec = _AgentSpecModel.from_file(path)
+        return cls.from_spec(spec, **kwargs)
+
     @staticmethod
     def instrument_all(instrument: InstrumentationSettings | bool = True) -> None:
         """Set the instrumentation options for all agents where `instrument` is not set."""
@@ -782,7 +872,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: _instructions.Instructions[AgentDepsT] = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -802,7 +892,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: _instructions.Instructions[AgentDepsT] = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -822,7 +912,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: _instructions.Instructions[AgentDepsT] = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -973,7 +1063,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Per-run capability: re-extract get_*() if for_run returns a different instance
         run_capability = await self._root_capability.for_run(initial_ctx)
-        cap_toolsets: list[AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT]] | None
+        cap_toolsets: list[AgentToolset[AgentDepsT]] | None
         if run_capability is not self._root_capability:
             cap_instructions = _instructions.normalize_instructions(run_capability.get_instructions())
             cap_builtin_tools = list(run_capability.get_builtin_tools())
@@ -1123,7 +1213,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         _run_ready.set()
                         await _run_done.wait()
                         if _run_error is not None:
-                            raise _run_error
+                            # Raise the original node error, not the potentially
+                            # transformed version from context manager __aexit__ chains.
+                            raise agent_run._node_error or _run_error  # pyright: ignore[reportPrivateUsage]
                         r = agent_run.result
                         assert r is not None
                         return r
@@ -1144,8 +1236,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     try:
                         yield agent_run
                     except BaseException as _exc:
-                        _run_error = _exc
-                        raise
+                        # Use the original node error if available, since context manager
+                        # __aexit__ chains (GraphRun → anyio TaskGroup) may transform
+                        # the exception (e.g. into CancelledError or ExceptionGroup).
+                        _run_error = agent_run._node_error or _exc  # pyright: ignore[reportPrivateUsage]
+                        # Don't re-raise yet — give wrap_run a chance to recover.
+                        # If wrap_run catches the error from handler() and returns
+                        # a recovery result, the exception will be suppressed.
                     finally:
                         if agent_run.result is not None:
                             run_metadata = self._resolve_and_store_metadata(agent_run.ctx, metadata)
@@ -1158,12 +1255,28 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                                 _result = await _wrap_task
                                 _result = await run_capability.after_run(run_ctx, result=_result)
                                 agent_run._result_override = _result  # pyright: ignore[reportPrivateUsage]
+                            elif _run_error is not None:
+                                # Error path: await wrap_run to see if it recovers.
+                                # _do_run() re-raises _run_error; if wrap_run catches
+                                # it and returns a result, recovery succeeds.
+                                try:
+                                    _result = await _wrap_task
+                                    _result = await run_capability.after_run(run_ctx, result=_result)
+                                    agent_run._result_override = _result  # pyright: ignore[reportPrivateUsage]
+                                    _run_error = None  # Recovery succeeded
+                                except BaseException:
+                                    pass  # wrap_run didn't recover
                             elif not _wrap_task.done():
                                 _wrap_task.cancel()
                                 try:
                                     await _wrap_task
                                 except (asyncio.CancelledError, BaseException):
                                     pass
+
+                    # If wrap_run didn't recover from the error, re-raise.
+                    # In an @asynccontextmanager, not re-raising suppresses the exception.
+                    if _run_error is not None:
+                        raise _run_error
 
                     final_result = agent_run.result
                     if (
@@ -1306,7 +1419,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
-        instructions: _instructions.Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        instructions: _instructions.AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
         metadata: AgentMetadata[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
@@ -1936,7 +2049,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     def _get_instructions(
         self,
-        additional_instructions: _instructions.Instructions[AgentDepsT] = None,
+        additional_instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         cap_instructions: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] | None = None,
     ) -> tuple[str | None, list[_system_prompt.SystemPromptRunner[AgentDepsT]]]:
         override_instructions = self._override_instructions.get()
@@ -1968,7 +2081,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self,
         output_toolset: AbstractToolset[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         additional_toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        cap_toolsets: Sequence[AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT]] | None = None,
+        cap_toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
     ) -> AbstractToolset[AgentDepsT]:
         """Get the complete toolset.
 
@@ -2005,7 +2118,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     def _build_toolset_list(
         self,
-        cap_toolsets: Sequence[AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT]] | None = None,
+        cap_toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
     ) -> list[AbstractToolset[AgentDepsT]]:
         """Build the list of toolsets, optionally with per-run capability toolsets."""
         toolsets: list[AbstractToolset[AgentDepsT]] = []

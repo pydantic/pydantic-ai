@@ -21,7 +21,7 @@ from pydantic_ai.capabilities import (
     WebFetch,
     WebSearch,
 )
-from pydantic_ai.capabilities.abstract import AbstractCapability, BeforeModelRequestContext
+from pydantic_ai.capabilities.abstract import AbstractCapability, ModelRequestContext
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.exceptions import SkipModelRequest, SkipToolExecution, SkipToolValidation, UserError
 from pydantic_ai.messages import (
@@ -483,6 +483,35 @@ def test_from_file_with_schema_field(tmp_path: str):
     assert spec.json_schema_path == './agent_schema.json'
 
 
+def test_agent_from_file_yaml(tmp_path: str):
+    from pathlib import Path
+
+    spec_path = Path(tmp_path) / 'agent.yaml'
+    spec_path.write_text('model: test\nname: my-agent\ninstructions: Be helpful\n', encoding='utf-8')
+    agent = Agent.from_file(spec_path)
+    assert agent.name == 'my-agent'
+    assert 'Be helpful' in agent._instructions  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_file_json(tmp_path: str):
+    from pathlib import Path
+
+    spec_path = Path(tmp_path) / 'agent.json'
+    spec_path.write_text('{"model": "test", "name": "json-agent"}', encoding='utf-8')
+    agent = Agent.from_file(spec_path)
+    assert agent.name == 'json-agent'
+
+
+def test_agent_from_file_with_overrides(tmp_path: str):
+    from pathlib import Path
+
+    spec_path = Path(tmp_path) / 'agent.yaml'
+    spec_path.write_text('model: test\nname: spec-name\nretries: 5\n', encoding='utf-8')
+    agent = Agent.from_file(spec_path, name='override-name', retries=2)
+    assert agent.name == 'override-name'
+    assert agent._max_tool_retries == 2  # pyright: ignore[reportPrivateUsage]
+
+
 def test_to_file_yaml(tmp_path: str):
     from pathlib import Path
 
@@ -673,7 +702,7 @@ def test_model_settings_callable_get_model_settings():
 
 async def test_model_settings_static_before_model_request():
     """Static ModelSettings passes through before_model_request without modification."""
-    from pydantic_ai.capabilities.abstract import BeforeModelRequestContext
+    from pydantic_ai.capabilities.abstract import ModelRequestContext
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.test import TestModel
     from pydantic_ai.result import RunUsage
@@ -684,7 +713,7 @@ async def test_model_settings_static_before_model_request():
     input_settings = _ModelSettings(temperature=0.5)
     result = await cap.before_model_request(
         ctx,
-        BeforeModelRequestContext(
+        ModelRequestContext(
             messages=[],
             model_settings=input_settings,
             model_request_parameters=ModelRequestParameters(),
@@ -931,8 +960,8 @@ async def test_concurrent_runs_capability_isolation():
         async def before_model_request(
             self,
             ctx: RunContext[None],
-            request_context: BeforeModelRequestContext,
-        ) -> BeforeModelRequestContext:
+            request_context: ModelRequestContext,
+        ) -> ModelRequestContext:
             self.request_count += 1
             assert self.request_count == 1, f'Expected 1, got {self.request_count} — state leaked between runs!'
             return request_context
@@ -1047,8 +1076,8 @@ class LoggingCapability(AbstractCapability[Any]):
     async def before_model_request(
         self,
         ctx: RunContext[Any],
-        request_context: BeforeModelRequestContext,
-    ) -> BeforeModelRequestContext:
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
         self.log.append('before_model_request')
         return request_context
 
@@ -1168,6 +1197,55 @@ class TestRunHooks:
         result = await agent.run('hello')
         assert result.output == 'short-circuited'
 
+    async def test_wrap_run_can_recover_from_error(self):
+        """wrap_run can catch errors from handler() and return a recovery result."""
+
+        @dataclass
+        class ErrorRecoveryCap(AbstractCapability[Any]):
+            async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+                try:
+                    return await handler()
+                except RuntimeError:
+                    return AgentRunResult(output='recovered from error')
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[ErrorRecoveryCap()])
+        result = await agent.run('hello')
+        assert result.output == 'recovered from error'
+
+    async def test_wrap_run_error_propagates_without_recovery(self):
+        """Without recovery in wrap_run, errors propagate normally."""
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model))
+        with pytest.raises(RuntimeError, match='model exploded'):
+            await agent.run('hello')
+
+    async def test_wrap_run_recovery_via_iter(self):
+        """wrap_run error recovery works when using agent.iter() too."""
+
+        @dataclass
+        class ErrorRecoveryCap(AbstractCapability[Any]):
+            async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+                try:
+                    return await handler()
+                except RuntimeError:
+                    return AgentRunResult(output='recovered via iter')
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[ErrorRecoveryCap()])
+        async with agent.iter('hello') as agent_run:
+            async for _node in agent_run:
+                pass
+        assert agent_run.result is not None
+        assert agent_run.result.output == 'recovered via iter'
+
 
 class TestModelRequestHooks:
     async def test_before_model_request(self):
@@ -1231,8 +1309,8 @@ class TestModelRequestHooks:
             async def before_model_request(
                 self,
                 ctx: RunContext[Any],
-                request_context: BeforeModelRequestContext,
-            ) -> BeforeModelRequestContext:
+                request_context: ModelRequestContext,
+            ) -> ModelRequestContext:
                 raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped model')]))
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[SkipCap()])
@@ -1412,8 +1490,8 @@ class TestCompositionOrder:
             async def before_model_request(
                 self,
                 ctx: RunContext[Any],
-                request_context: BeforeModelRequestContext,
-            ) -> BeforeModelRequestContext:
+                request_context: ModelRequestContext,
+            ) -> ModelRequestContext:
                 log.append('cap1:before')
                 return request_context
 
@@ -1439,8 +1517,8 @@ class TestCompositionOrder:
             async def before_model_request(
                 self,
                 ctx: RunContext[Any],
-                request_context: BeforeModelRequestContext,
-            ) -> BeforeModelRequestContext:
+                request_context: ModelRequestContext,
+            ) -> ModelRequestContext:
                 log.append('cap2:before')
                 return request_context
 
@@ -1614,8 +1692,8 @@ class TestStreamingHooks:
             async def before_model_request(
                 self,
                 ctx: RunContext[Any],
-                request_context: BeforeModelRequestContext,
-            ) -> BeforeModelRequestContext:
+                request_context: ModelRequestContext,
+            ) -> ModelRequestContext:
                 raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped in stream')]))
 
         agent = Agent(
@@ -1898,8 +1976,8 @@ class TestSkipModelRequestInteraction:
             async def before_model_request(
                 self,
                 ctx: RunContext[Any],
-                request_context: BeforeModelRequestContext,
-            ) -> BeforeModelRequestContext:
+                request_context: ModelRequestContext,
+            ) -> ModelRequestContext:
                 log.append('before_model_request')
                 raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped')]))
 
@@ -2056,15 +2134,15 @@ class TestPrepareToolsHook:
         assert 'desc_A_B' in result.output
 
 
-class TestWrapRunStepHook:
+class TestWrapNodeRunHook:
     async def test_observe_nodes(self):
-        """wrap_run_step can observe all nodes in the agent run."""
+        """wrap_node_run can observe all nodes in the agent run."""
 
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
             nodes: list[str] = field(default_factory=lambda: [])
 
-            async def wrap_run_step(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
                 self.nodes.append(type(node).__name__)
                 return await handler(node)
 
@@ -2074,13 +2152,13 @@ class TestWrapRunStepHook:
         assert cap.nodes == ['UserPromptNode', 'ModelRequestNode', 'CallToolsNode']
 
     async def test_observe_nodes_with_tools(self):
-        """wrap_run_step fires for each node including tool call round-trips."""
+        """wrap_node_run fires for each node including tool call round-trips."""
 
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
             nodes: list[str] = field(default_factory=lambda: [])
 
-            async def wrap_run_step(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
                 self.nodes.append(type(node).__name__)
                 return await handler(node)
 
@@ -2103,13 +2181,13 @@ class TestWrapRunStepHook:
         ]
 
     async def test_works_with_iter(self):
-        """wrap_run_step fires when using async for iteration."""
+        """wrap_node_run fires when using async for iteration."""
 
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
             nodes: list[str] = field(default_factory=lambda: [])
 
-            async def wrap_run_step(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
                 self.nodes.append(type(node).__name__)
                 return await handler(node)
 
@@ -2123,14 +2201,14 @@ class TestWrapRunStepHook:
         assert cap.nodes == ['UserPromptNode', 'ModelRequestNode', 'CallToolsNode']
 
     async def test_works_with_manual_next(self):
-        """wrap_run_step fires when using manual next() driving."""
+        """wrap_node_run fires when using manual next() driving."""
         from pydantic_graph import End
 
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
             nodes: list[str] = field(default_factory=lambda: [])
 
-            async def wrap_run_step(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
                 self.nodes.append(type(node).__name__)
                 return await handler(node)
 
@@ -2145,14 +2223,14 @@ class TestWrapRunStepHook:
         assert cap.nodes == ['UserPromptNode', 'ModelRequestNode', 'CallToolsNode']
 
     async def test_chaining_nests_correctly(self):
-        """Multiple capabilities compose wrap_run_step as nested middleware."""
+        """Multiple capabilities compose wrap_node_run as nested middleware."""
         log: list[str] = []
 
         @dataclass
         class OrderedCap(AbstractCapability[Any]):
             name: str
 
-            async def wrap_run_step(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
                 log.append(f'{self.name}:before:{type(node).__name__}')
                 result = await handler(node)
                 log.append(f'{self.name}:after:{type(result).__name__}')
@@ -2353,3 +2431,135 @@ class TestMCPCapability:
         """MCP without url raises TypeError."""
         with pytest.raises(TypeError, match="missing 1 required keyword-only argument: 'url'"):
             MCP()  # type: ignore[call-arg]
+
+
+class TestNamedSpecDictRoundTrip:
+    """Test that NamedSpec correctly round-trips a dict-as-first-arg without misinterpreting it as kwargs."""
+
+    def test_model_settings_dict_round_trip(self):
+        """ModelSettings with a dict positional arg survives serialize -> deserialize."""
+        from pydantic_ai._spec import NamedSpec
+
+        spec = NamedSpec(name='ModelSettings', arguments=({'max_tokens': 4096, 'temperature': 0.5},))
+
+        # Serialize with short form
+        serialized = spec.model_dump(context={'use_short_form': True})
+
+        # The short form would be ambiguous (dict with string keys), so it should use the long form
+        assert serialized['name'] == 'ModelSettings'
+        # arguments is a tuple with one dict element
+        assert len(serialized['arguments']) == 1
+        assert serialized['arguments'][0] == {'max_tokens': 4096, 'temperature': 0.5}
+
+        # Deserialize and verify the round-trip
+        deserialized = NamedSpec.model_validate(serialized)
+        assert deserialized.name == 'ModelSettings'
+        assert deserialized.arguments == ({'max_tokens': 4096, 'temperature': 0.5},)
+        assert deserialized.args == ({'max_tokens': 4096, 'temperature': 0.5},)
+        assert deserialized.kwargs == {}
+
+    def test_non_dict_positional_arg_uses_short_form(self):
+        """A non-dict positional arg still uses the compact short form."""
+        from pydantic_ai._spec import NamedSpec
+
+        spec = NamedSpec(name='Instructions', arguments=('Be helpful.',))
+        serialized = spec.model_dump(context={'use_short_form': True})
+        assert serialized == {'Instructions': 'Be helpful.'}
+
+    def test_kwargs_still_use_short_form(self):
+        """Kwargs (dict arguments) still use the short form correctly."""
+        from pydantic_ai._spec import NamedSpec
+
+        spec = NamedSpec(name='ModelSettings', arguments={'max_tokens': 4096})
+        serialized = spec.model_dump(context={'use_short_form': True})
+        assert serialized == {'ModelSettings': {'max_tokens': 4096}}
+
+    def test_agent_from_spec_model_settings_round_trip(self):
+        """Agent.from_spec with ModelSettings dict works correctly both ways."""
+
+        # Construct via the dict short form (kwargs interpretation)
+        agent = Agent.from_spec(
+            {
+                'model': 'test',
+                'capabilities': [
+                    {'ModelSettings': {'max_tokens': 4096, 'temperature': 0.5}},
+                ],
+            }
+        )
+        assert agent.model is not None
+
+
+class TestPrepareToolsCapability:
+    async def test_prepare_tools_filters(self):
+        """PrepareTools capability filters tools using the provided callable."""
+        from pydantic_ai.capabilities import PrepareTools
+
+        async def hide_secret_tools(
+            ctx: RunContext[None], tool_defs: list[ToolDefinition]
+        ) -> list[ToolDefinition] | None:
+            return [td for td in tool_defs if td.name != 'secret_tool']
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            tool_names = [t.name for t in info.function_tools]
+            return make_text_response(f'tools: {sorted(tool_names)}')
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[PrepareTools(hide_secret_tools)])
+
+        @agent.tool_plain
+        def secret_tool() -> str:
+            return 'secret'
+
+        @agent.tool_plain
+        def public_tool() -> str:
+            return 'public'
+
+        result = await agent.run('hello')
+        assert result.output == "tools: ['public_tool']"
+
+    async def test_prepare_tools_none_returns_all(self):
+        """PrepareTools treats None return as 'keep all tools'."""
+        from pydantic_ai.capabilities import PrepareTools
+
+        async def noop_prepare(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+            return None
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            tool_names = [t.name for t in info.function_tools]
+            return make_text_response(f'tools: {sorted(tool_names)}')
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[PrepareTools(noop_prepare)])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'result'
+
+        result = await agent.run('hello')
+        assert result.output == "tools: ['my_tool']"
+
+    async def test_prepare_tools_modifies_definitions(self):
+        """PrepareTools can modify tool definitions (e.g. set strict mode)."""
+        from dataclasses import replace as dc_replace
+
+        from pydantic_ai.capabilities import PrepareTools
+
+        async def set_strict(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+            return [dc_replace(td, strict=True) for td in tool_defs]
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            strictness = [t.strict for t in info.function_tools]
+            return make_text_response(f'strict: {strictness}')
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[PrepareTools(set_strict)])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'result'
+
+        result = await agent.run('hello')
+        assert result.output == 'strict: [True]'
+
+    def test_prepare_tools_not_serializable(self):
+        """PrepareTools opts out of spec serialization."""
+        from pydantic_ai.capabilities import PrepareTools
+
+        assert PrepareTools.get_serialization_name() is None

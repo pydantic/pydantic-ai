@@ -11,7 +11,7 @@ from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse, 
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, BuiltinToolFunc, RunContext, ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset, ToolsetFunc
+from pydantic_ai.toolsets import AgentToolset
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class BeforeModelRequestContext:
+class ModelRequestContext:
     """Context passed to and returned from [`AbstractCapability.before_model_request`][pydantic_ai.capabilities.abstract.AbstractCapability.before_model_request].
 
     Wrapping these parameters in a dataclass instead of a tuple makes the signature
@@ -54,7 +54,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     - [`Thinking`][pydantic_ai.capabilities.Thinking] — enables model thinking/reasoning mode
     - [`ModelSettings`][pydantic_ai.capabilities.ModelSettings] — provides extra model settings
     - [`WebSearch`][pydantic_ai.capabilities.WebSearch] — registers the web search builtin tool
-    - [`HistoryProcessorCapability`][pydantic_ai.capabilities.HistoryProcessorCapability] — wraps a history processor as a capability
+    - [`HistoryProcessor`][pydantic_ai.capabilities.HistoryProcessor] — wraps a history processor as a capability
     - [`Toolset`][pydantic_ai.capabilities.Toolset] — registers a toolset with the agent
 
     Custom capabilities that should work with YAML/JSON specs (via
@@ -88,7 +88,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return self
 
-    def get_instructions(self) -> _instructions.Instructions[AgentDepsT] | None:
+    def get_instructions(self) -> _instructions.AgentInstructions[AgentDepsT] | None:
         """Return static instructions to include in the system prompt, or None."""
         return None
 
@@ -106,7 +106,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    def get_toolset(self) -> AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT] | None:
+    def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         """Return a toolset to register with the agent, or None."""
         return None
 
@@ -156,7 +156,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Wraps the entire agent run. handler() executes the run."""
         return await handler()
 
-    async def wrap_run_step(
+    async def wrap_node_run(
         self,
         ctx: RunContext[AgentDepsT],
         *,
@@ -194,8 +194,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     async def before_model_request(
         self,
         ctx: RunContext[AgentDepsT],
-        request_context: BeforeModelRequestContext,
-    ) -> BeforeModelRequestContext:
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
         """Called before each model request. Can modify messages, settings, and parameters."""
         return request_context
 
@@ -212,8 +212,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        request_context: BeforeModelRequestContext,
-        handler: Callable[[BeforeModelRequestContext], Awaitable[ModelResponse]],
+        request_context: ModelRequestContext,
+        handler: Callable[[ModelRequestContext], Awaitable[ModelResponse]],
     ) -> ModelResponse:
         """Wraps the model request. handler() calls the model."""
         return await handler(request_context)

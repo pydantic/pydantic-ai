@@ -9,10 +9,10 @@ from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import AgentDepsT, BuiltinToolFunc, RunContext, ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, ToolsetFunc
+from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
-from .abstract import AbstractCapability, BeforeModelRequestContext
+from .abstract import AbstractCapability, ModelRequestContext
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
@@ -33,7 +33,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             return self
         return replace(self, capabilities=new_caps)
 
-    def get_instructions(self) -> _instructions.Instructions[AgentDepsT] | None:
+    def get_instructions(self) -> _instructions.AgentInstructions[AgentDepsT] | None:
         instructions: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] = []
         for capability in self.capabilities:
             instructions.extend(_instructions.normalize_instructions(capability.get_instructions()))
@@ -56,12 +56,15 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         def resolve(ctx: RunContext[AgentDepsT]) -> ModelSettings:
             merged = static_settings
             for func in dynamic_settings:
-                merged = merge_model_settings(merged, func(ctx))
+                # Update ctx.model_settings so each callable sees prior capabilities' contributions
+                ctx.model_settings = merge_model_settings(ctx.model_settings, merged)
+                resolved = func(ctx)
+                merged = merge_model_settings(merged, resolved)
             return merged if merged is not None else ModelSettings()
 
         return resolve
 
-    def get_toolset(self) -> AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT] | None:
+    def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         toolsets: list[AbstractToolset[AgentDepsT]] = []
         for capability in self.capabilities:
             toolset = capability.get_toolset()
@@ -121,7 +124,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             chain = _make_run_wrap(cap, ctx, chain)
         return await chain()
 
-    async def wrap_run_step(
+    async def wrap_node_run(
         self,
         ctx: RunContext[AgentDepsT],
         *,
@@ -133,7 +136,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
         chain = handler
         for cap in reversed(self.capabilities):
-            chain = _make_run_step_wrap(cap, ctx, chain)
+            chain = _make_node_run_wrap(cap, ctx, chain)
         return await chain(node)
 
     # --- Event stream hook ---
@@ -153,8 +156,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     async def before_model_request(
         self,
         ctx: RunContext[AgentDepsT],
-        request_context: BeforeModelRequestContext,
-    ) -> BeforeModelRequestContext:
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
         for capability in self.capabilities:
             request_context = await capability.before_model_request(ctx, request_context)
         return request_context
@@ -173,8 +176,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        request_context: BeforeModelRequestContext,
-        handler: Callable[[BeforeModelRequestContext], Awaitable[ModelResponse]],
+        request_context: ModelRequestContext,
+        handler: Callable[[ModelRequestContext], Awaitable[ModelResponse]],
     ) -> ModelResponse:
         chain = handler
         for cap in reversed(self.capabilities):
@@ -276,9 +279,9 @@ def _make_run_wrap(
 def _make_model_request_wrap(
     cap: AbstractCapability[AgentDepsT],
     ctx: RunContext[AgentDepsT],
-    inner: Callable[[BeforeModelRequestContext], Awaitable[ModelResponse]],
-) -> Callable[[BeforeModelRequestContext], Awaitable[ModelResponse]]:
-    async def wrapped(request_context: BeforeModelRequestContext) -> ModelResponse:
+    inner: Callable[[ModelRequestContext], Awaitable[ModelResponse]],
+) -> Callable[[ModelRequestContext], Awaitable[ModelResponse]]:
+    async def wrapped(request_context: ModelRequestContext) -> ModelResponse:
         return await cap.wrap_model_request(
             ctx,
             request_context=request_context,
@@ -300,7 +303,7 @@ def _make_tool_validate_wrap(
     return wrapped
 
 
-def _make_run_step_wrap(
+def _make_node_run_wrap(
     cap: AbstractCapability[AgentDepsT],
     ctx: RunContext[AgentDepsT],
     inner: Callable[
@@ -314,7 +317,7 @@ def _make_run_step_wrap(
     async def wrapped(
         node: _agent_graph.AgentNode[AgentDepsT, Any],
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
-        return await cap.wrap_run_step(ctx, node=node, handler=inner)
+        return await cap.wrap_node_run(ctx, node=node, handler=inner)
 
     return wrapped
 

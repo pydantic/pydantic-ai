@@ -13,9 +13,9 @@ from pydantic_ai.tools import AgentDepsT
 class Instructions(AbstractCapability[AgentDepsT]):
     """A capability that provides static or dynamic instructions."""
 
-    instructions: _instructions.Instructions[AgentDepsT]
+    instructions: _instructions.AgentInstructions[AgentDepsT]
 
-    def get_instructions(self) -> _instructions.Instructions[AgentDepsT] | None:
+    def get_instructions(self) -> _instructions.AgentInstructions[AgentDepsT] | None:
         return self.instructions
 
     @classmethod
