@@ -3,14 +3,55 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from .._run_context import RunContext
-from ..messages import ModelMessage, ModelResponse
+from ..messages import ModelMessage, ModelResponse, ModelResponseStreamEvent
 from ..profiles import ModelProfile
 from ..settings import ModelSettings
 from ..usage import RequestUsage
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
+
+
+class CompletedStreamedResponse(StreamedResponse):
+    """A `StreamedResponse` that wraps an already-completed `ModelResponse`.
+
+    Used by durable execution integrations (Temporal, Prefect, DBOS) where the
+    actual stream is consumed within a task/activity and only the final response
+    is returned.
+    """
+
+    def __init__(self, model_request_parameters: ModelRequestParameters, response: ModelResponse):
+        super().__init__(model_request_parameters)
+        self.response = response
+
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        return
+        # noinspection PyUnreachableCode
+        yield
+
+    def get(self) -> ModelResponse:
+        return self.response
+
+    def usage(self) -> RequestUsage:
+        return self.response.usage  # pragma: no cover
+
+    @property
+    def model_name(self) -> str:
+        return self.response.model_name or ''  # pragma: no cover
+
+    @property
+    def provider_name(self) -> str:
+        return self.response.provider_name or ''  # pragma: no cover
+
+    @property
+    def provider_url(self) -> str | None:
+        return self.response.provider_url  # pragma: no cover
+
+    @property
+    def timestamp(self) -> datetime:
+        return self.response.timestamp  # pragma: no cover
 
 
 @dataclass(init=False)

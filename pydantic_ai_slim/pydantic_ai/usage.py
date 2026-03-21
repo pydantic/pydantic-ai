@@ -50,6 +50,14 @@ class UsageBase:
     ] = dataclasses.field(default_factory=dict[str, int])
     """Any extra details returned by the model."""
 
+    def __copy__(self) -> UsageBase:
+        """Shallow copy that also copies mutable fields like `details`."""
+        cls = type(self)
+        new = cls.__new__(cls)
+        new.__dict__.update(self.__dict__)
+        new.details = self.details.copy()
+        return new
+
     @property
     @deprecated('`request_tokens` is deprecated, use `input_tokens` instead')
     def request_tokens(self) -> int:

@@ -127,6 +127,8 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         provider, model_name = model_name.split('/', 1)
         if provider in provider_to_profile:
             model_name, *_ = model_name.split(':', 1)  # drop tags
+            if provider == 'anthropic':
+                model_name = model_name.replace('.', '-')
             profile = provider_to_profile[provider](model_name)
 
         # As OpenRouterProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
@@ -136,6 +138,7 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
             openai_chat_send_back_thinking_parts='field',
             openai_chat_thinking_field='reasoning',
             openai_chat_supports_file_urls=True,
+            openai_chat_supports_web_search=True,
         ).update(profile)
 
     @overload

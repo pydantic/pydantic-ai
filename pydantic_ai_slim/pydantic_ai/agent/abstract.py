@@ -104,6 +104,18 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
     @property
     @abstractmethod
+    def description(self) -> str | None:
+        """A human-readable description of the agent."""
+        raise NotImplementedError
+
+    @description.setter
+    @abstractmethod
+    def description(self, value: str | None) -> None:
+        """Set the description of the agent."""
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
     def deps_type(self) -> type:
         """The type of dependencies used by the agent."""
         raise NotImplementedError

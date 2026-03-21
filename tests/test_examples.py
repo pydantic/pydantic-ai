@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator, Iterable, Sequence
 from dataclasses import dataclass, field
 from inspect import FrameInfo
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import httpx
 import pytest
@@ -25,7 +25,9 @@ from pydantic_ai import (
     BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    DocumentUrl,
     FilePart,
+    ImageUrl,
     ModelHTTPError,
     ModelMessage,
     ModelResponse,
@@ -203,6 +205,7 @@ def test_docs_examples(
     env.set('PYDANTIC_AI_GATEWAY_API_KEY', 'testing')
     env.set('VOYAGE_API_KEY', 'testing')
     env.set('XAI_API_KEY', 'testing')
+    env.set('TAVILY_API_KEY', 'testing')
 
     prefix_settings = example.prefix_settings()
     opt_test = prefix_settings.get('test', '')
@@ -350,6 +353,7 @@ class MockMCPServer(AbstractToolset[Any]):
 
 
 text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
+    'Summarize https://ai.pydantic.dev': 'Pydantic AI is a Python agent framework for building production-grade LLM applications.',
     'Use the web to get the current time.': "In San Francisco, it's 8:21:41 pm PDT on Wednesday, August 6, 2025.",
     'Give me a sentence with the biggest news in AI this week.': 'Scientists have developed a universal AI detector that can identify deepfake videos.',
     'How many days between 2000-01-01 and 2025-03-18?': 'There are 9,208 days between January 1, 2000, and March 18, 2025.',
@@ -573,6 +577,12 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         args={'name': 'test', 'value': 42},
         tool_call_id='pyd_ai_tool_call_id',
     ),
+    'Find recent papers about transformer architectures': (
+        'Here are some recent papers about transformer architectures from arxiv.org:\n'
+        '\n'
+        '1. "Attention Is All You Need" - The foundational paper on the Transformer model.\n'
+        '2. "FlashAttention: Fast and Memory-Efficient Exact Attention" - Proposes an IO-aware attention algorithm.'
+    ),
 }
 
 tool_responses: dict[tuple[str, str], str] = {
@@ -587,14 +597,30 @@ async def model_logic(  # noqa: C901
     messages: list[ModelMessage], info: AgentInfo
 ) -> ModelResponse:  # pragma: lax no cover
     m = messages[-1].parts[-1]
-    if isinstance(m, UserPromptPart):
-        if isinstance(m.content, list) and m.content[0] == 'This is file d9a13f:':
-            return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
-        elif isinstance(m.content, list) and m.content[0] == 'This is file c6720d:':
-            return ModelResponse(parts=[TextPart('The document contains just the text "Dummy PDF file."')])
-
+    # Handle multimodal tool returns (content directly in ToolReturnPart)
+    if (
+        isinstance(m, ToolReturnPart)
+        and m.tool_name == 'get_company_logo'
+        and any(isinstance(f, ImageUrl) for f in m.files)
+    ):
+        return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
+    elif (
+        isinstance(m, ToolReturnPart)
+        and m.tool_name == 'get_document'
+        and any(isinstance(f, DocumentUrl) for f in m.files)
+    ):
+        return ModelResponse(parts=[TextPart('The document contains just the text "Dummy PDF file."')])
+    elif isinstance(m, UserPromptPart):
         assert isinstance(m.content, str)
-        if m.content == 'Tell me a joke.' and any(t.name == 'joke_factory' for t in info.function_tools):
+        if m.content == 'What is the latest news in AI?':
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        'Here are the latest developments in AI: AI continues to advance rapidly with new breakthroughs in large language models and multimodal systems.'
+                    )
+                ]
+            )
+        elif m.content == 'Tell me a joke.' and any(t.name == 'joke_factory' for t in info.function_tools):
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='joke_factory', args={'count': 5}, tool_call_id='pyd_ai_tool_call_id')]
             )
@@ -783,8 +809,7 @@ async def model_logic(  # noqa: C901
         return ModelResponse(
             parts=[ToolCallPart(tool_name='get_player_name', args={}, tool_call_id='pyd_ai_tool_call_id')]
         )
-    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_player_name':
-        m.content = cast(str, m.content)
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_player_name' and isinstance(m.content, str):
         if 'Anne' in m.content:
             return ModelResponse(parts=[TextPart("Congratulations Anne, you guessed correctly! You're a winner!")])
         elif 'Yashar' in m.content:
@@ -844,8 +869,8 @@ async def model_logic(  # noqa: C901
         return ModelResponse(parts=[TextPart('The current time is 10:45 PM on April 17, 2025.')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_user':
         return ModelResponse(parts=[TextPart("The user's name is John.")])
-    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_weather_forecast':
-        return ModelResponse(parts=[TextPart(cast(str, m.content))])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_weather_forecast' and isinstance(m.content, str):
+        return ModelResponse(parts=[TextPart(m.content)])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_company_logo':
         return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_document':
@@ -945,7 +970,12 @@ async def model_logic(  # noqa: C901
                 )
             ],
         )
-    elif isinstance(m, ToolReturnPart) and m.tool_name == 'update_file' and 'README.md.bak' in cast(str, m.content):
+    elif (
+        isinstance(m, ToolReturnPart)
+        and m.tool_name == 'update_file'
+        and isinstance(m.content, str)
+        and 'README.md.bak' in m.content
+    ):
         return ModelResponse(
             parts=[
                 TextPart(
