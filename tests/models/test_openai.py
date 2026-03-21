@@ -43,6 +43,7 @@ from pydantic_ai.builtin_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import SystemPromptPart, UploadedFile
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import _customize_tool_def  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.result import RunUsage
@@ -1800,6 +1801,10 @@ def tool_with_lists(x: list[int], y: list[MyDefaultDc]) -> str:
     return f'{x} {y}'  # pragma: no cover
 
 
+def tool_with_bare_list(items: list) -> str:
+    return f'{items}'  # pragma: no cover
+
+
 def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
     return f'{x} {y}'  # pragma: no cover
 
@@ -2308,6 +2313,23 @@ async def test_strict_mode_cannot_infer_strict(
             openai_model_profile('test-model')
         ),
     )
+
+
+def test_bare_list_tool_defaults_to_non_strict():
+    agent = Agent('test')
+    agent.tool_plain()(tool_with_bare_list)
+
+    base_tool_def = agent._function_toolset.tools['tool_with_bare_list'].tool_def  # pyright: ignore[reportPrivateUsage]
+    assert base_tool_def.strict is None
+
+    tool_def = _customize_tool_def(OpenAIJsonSchemaTransformer, base_tool_def)
+    assert tool_def.parameters_json_schema == {
+        'type': 'object',
+        'properties': {'items': {'type': 'array', 'items': {}}},
+        'required': ['items'],
+        'additionalProperties': False,
+    }
+    assert tool_def.strict is False
 
 
 def test_strict_schema():
