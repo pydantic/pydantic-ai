@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from typing import Any, overload
+from typing import TYPE_CHECKING, Any, overload
 
 from prefect import flow, task
 from prefect.context import FlowRunContext
@@ -37,6 +37,9 @@ from pydantic_ai.tools import (
 
 from ._model import PrefectModel
 from ._toolset import prefectify_toolset
+
+if TYPE_CHECKING:
+    from pydantic_ai.agent.spec import AgentSpec
 from ._types import TaskConfig, default_task_config
 
 
@@ -864,6 +867,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
         instructions: _instructions.AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        spec: dict[str, Any] | AgentSpec | None = None,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent dependencies, model, toolsets, tools, or instructions.
 
@@ -879,6 +883,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             instructions: The instructions to use instead of the instructions registered with the agent.
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
                 When set, any per-run `model_settings` argument is ignored.
+            spec: Optional agent spec to apply as overrides.
         """
         if _utils.is_set(model) and not isinstance(model, PrefectModel):
             raise UserError(
@@ -893,5 +898,6 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             tools=tools,
             instructions=instructions,
             model_settings=model_settings,
+            spec=spec,
         ):
             yield

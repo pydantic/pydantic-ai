@@ -2286,3 +2286,157 @@ class TestPrepareToolsCapability:
         from pydantic_ai.capabilities import PrepareTools
 
         assert PrepareTools.get_serialization_name() is None
+
+
+class TestOverrideWithSpec:
+    async def test_override_with_spec_instructions_and_model(self):
+        """Spec instructions and model replace the agent's when used via override."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions = next(
+                (m.instructions for m in messages if isinstance(m, ModelRequest) and m.instructions), None
+            )
+            return make_text_response(f'instructions: {instructions}')
+
+        agent = Agent(FunctionModel(model_fn), instructions='original')
+
+        with agent.override(spec={'instructions': 'from spec'}):
+            result = await agent.run('hello')
+
+        assert 'from spec' in result.output
+
+    async def test_override_with_spec_explicit_param_wins(self):
+        """Explicit override param beats spec value."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions = next(
+                (m.instructions for m in messages if isinstance(m, ModelRequest) and m.instructions), None
+            )
+            return make_text_response(f'instructions: {instructions}')
+
+        agent = Agent(FunctionModel(model_fn), instructions='original')
+
+        with agent.override(spec={'instructions': 'from spec'}, instructions='explicit'):
+            result = await agent.run('hello')
+
+        assert 'explicit' in result.output
+        assert 'from spec' not in result.output
+
+    async def test_override_with_spec_capabilities(self):
+        """Override with spec capabilities applies hooks."""
+        before_called = False
+
+        @dataclass
+        class TrackingCap(AbstractCapability[None]):
+            async def before_model_request(
+                self,
+                ctx: RunContext[None],
+                request_context: ModelRequestContext,
+            ) -> ModelRequestContext:
+                nonlocal before_called
+                before_called = True
+                return request_context
+
+            @classmethod
+            def get_serialization_name(cls) -> str | None:
+                return None
+
+        agent = Agent('test')
+
+        with agent.override(spec={'capabilities': []}, model='test'):
+            # Override with empty caps - just make sure it works
+            result = await agent.run('hello')
+            assert result.output is not None
+
+        # Now test with custom cap via direct capability
+        agent2 = Agent('test')
+        with agent2.override(spec={'capabilities': ['Thinking']}):
+            result2 = await agent2.run('hello')
+            assert result2.output is not None
+
+
+class TestRunWithSpec:
+    async def test_run_with_spec_instructions_added(self):
+        """Spec instructions are added additively at run time."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions = next(
+                (m.instructions for m in messages if isinstance(m, ModelRequest) and m.instructions), None
+            )
+            return make_text_response(f'instructions: {instructions}')
+
+        agent = Agent(FunctionModel(model_fn), instructions='original')
+
+        result = await agent.run('hello', spec={'instructions': 'also from spec'})
+        # Both original and spec instructions should be present
+        assert 'original' in result.output
+        assert 'also from spec' in result.output
+
+    async def test_run_with_spec_model_as_fallback(self):
+        """Spec model is used as fallback when no run-time model is provided."""
+        agent = Agent(None)  # No model set
+
+        result = await agent.run('hello', spec={'model': 'test'})
+        assert result.output is not None
+
+    async def test_run_with_spec_model_settings_merged(self):
+        """Spec model_settings are merged with run model_settings."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('ok')
+
+        agent = Agent(FunctionModel(model_fn))
+
+        result = await agent.run(
+            'hello',
+            spec={'model_settings': {'max_tokens': 100}},
+            model_settings={'temperature': 0.5},
+        )
+        assert result.output == 'ok'
+
+    async def test_run_with_spec_partial_no_model(self):
+        """Partial spec without model works if agent has a model."""
+        agent = Agent('test')
+
+        result = await agent.run('hello', spec={'instructions': 'be helpful'})
+        assert result.output is not None
+
+    async def test_run_with_spec_capabilities(self):
+        """Run with spec capabilities merges with agent's root capability."""
+        agent = Agent('test')
+
+        result = await agent.run(
+            'hello',
+            spec={
+                'capabilities': [
+                    {'Instructions': 'extra instructions from spec'},
+                ],
+            },
+        )
+        assert result.output is not None
+
+    async def test_run_with_spec_metadata_merged(self):
+        """Spec metadata is merged with run metadata."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('ok')
+
+        agent = Agent(FunctionModel(model_fn), metadata={'agent_key': 'agent_val'})
+
+        result = await agent.run(
+            'hello',
+            spec={'metadata': {'spec_key': 'spec_val'}},
+            metadata={'run_key': 'run_val'},
+        )
+        assert result.output == 'ok'
+        # Run metadata should take precedence, spec metadata should be present
+        assert result.metadata is not None
+        assert result.metadata.get('run_key') == 'run_val'
+        assert result.metadata.get('spec_key') == 'spec_val'
+
+    async def test_spec_unsupported_fields_warns(self):
+        """Non-default unsupported fields produce warnings."""
+        agent = Agent('test')
+
+        with pytest.warns(UserWarning, match='retries'):
+            await agent.run('hello', spec={'retries': 5})

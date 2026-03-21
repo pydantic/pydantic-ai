@@ -5,7 +5,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager, context
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 from pydantic import ConfigDict, with_config
 from pydantic.errors import PydanticUserError
@@ -43,6 +43,9 @@ from pydantic_ai.tools import (
 from ._model import TemporalModel, TemporalProviderFactory
 from ._run_context import TemporalRunContext
 from ._toolset import TemporalWrapperToolset, temporalize_toolset
+
+if TYPE_CHECKING:
+    from pydantic_ai.agent.spec import AgentSpec
 
 
 @dataclass
@@ -985,6 +988,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
         instructions: _instructions.AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        spec: dict[str, Any] | AgentSpec | None = None,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent name, dependencies, model, toolsets, tools, or instructions.
 
@@ -1000,6 +1004,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             instructions: The instructions to use instead of the instructions registered with the agent.
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
                 When set, any per-run `model_settings` argument is ignored.
+            spec: Optional agent spec to apply as overrides.
         """
         if workflow.in_workflow():
             if _utils.is_set(model):
@@ -1023,5 +1028,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             tools=tools,
             instructions=instructions,
             model_settings=model_settings,
+            spec=spec,
         ):
             yield
