@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from functools import cached_property
+from types import TracebackType
 from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard
 
 from opentelemetry.trace import get_current_span
@@ -154,6 +155,31 @@ class FallbackModel(Model):
             if result:
                 return True
         return False
+
+    async def __aenter__(self) -> FallbackModel:
+        """Enter all sub-models so their providers can manage HTTP client lifecycle."""
+        if not hasattr(self, '_entered_count'):
+            self._entered_count = 0
+        if self._entered_count == 0:
+            async with AsyncExitStack() as exit_stack:
+                for model in self.models:
+                    await exit_stack.enter_async_context(model)
+                self._exit_stack = exit_stack.pop_all()
+        self._entered_count += 1
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool | None:
+        """Exit all sub-models, closing their providers' HTTP clients."""
+        if not hasattr(self, '_entered_count') or self._entered_count == 0:
+            return
+        self._entered_count -= 1
+        if self._entered_count == 0 and hasattr(self, '_exit_stack'):
+            await self._exit_stack.aclose()
 
     @property
     def model_name(self) -> str:
