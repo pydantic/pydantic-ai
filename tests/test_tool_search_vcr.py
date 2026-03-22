@@ -69,59 +69,57 @@ class EvalMetadata(BaseModel):
 
 # --- Evaluators ---
 
+if evals_available():
 
-@dataclass(repr=False)
-class UsedSearchTools(Evaluator[str, EvalOutput, EvalMetadata]):
-    """Check that the model used search_tools when expected tools exist."""
+    @dataclass(repr=False)
+    class UsedSearchTools(Evaluator[str, EvalOutput, EvalMetadata]):
+        """Check that the model used search_tools when expected tools exist."""
 
-    evaluation_name: str | None = field(default='used_search_tools')
+        evaluation_name: str | None = field(default='used_search_tools')
 
-    def evaluate(self, ctx: EvaluatorContext[str, EvalOutput, EvalMetadata]) -> bool:
-        if not ctx.metadata or not ctx.metadata.expected_tools:
-            return True
-        return 'search_tools' in ctx.output.tool_calls
+        def evaluate(self, ctx: EvaluatorContext[str, EvalOutput, EvalMetadata]) -> bool:
+            if not ctx.metadata or not ctx.metadata.expected_tools:
+                return True
+            return 'search_tools' in ctx.output.tool_calls
 
+    @dataclass(repr=False)
+    class FoundExpectedTools(Evaluator[str, EvalOutput, EvalMetadata]):
+        """Check that the model found and called the expected tools."""
 
-@dataclass(repr=False)
-class FoundExpectedTools(Evaluator[str, EvalOutput, EvalMetadata]):
-    """Check that the model found and called the expected tools."""
+        evaluation_name: str | None = field(default='found_expected_tools')
 
-    evaluation_name: str | None = field(default='found_expected_tools')
+        def evaluate(self, ctx: EvaluatorContext[str, EvalOutput, EvalMetadata]) -> bool:
+            if not ctx.metadata or not ctx.metadata.expected_tools:
+                return True
+            return all(t in ctx.output.tool_calls for t in ctx.metadata.expected_tools)
 
-    def evaluate(self, ctx: EvaluatorContext[str, EvalOutput, EvalMetadata]) -> bool:
-        if not ctx.metadata or not ctx.metadata.expected_tools:
-            return True
-        return all(t in ctx.output.tool_calls for t in ctx.metadata.expected_tools)
+    @dataclass(repr=False)
+    class ReasonableToolUsage(Evaluator[str, EvalOutput, EvalMetadata]):
+        """Check that the model didn't use an excessive number of tool calls."""
 
+        max_calls: int = 10
+        evaluation_name: str | None = field(default='reasonable_usage')
 
-@dataclass(repr=False)
-class ReasonableToolUsage(Evaluator[str, EvalOutput, EvalMetadata]):
-    """Check that the model didn't use an excessive number of tool calls."""
+        def evaluate(self, ctx: EvaluatorContext[str, EvalOutput, EvalMetadata]) -> bool:
+            return len(ctx.output.tool_calls) <= self.max_calls
 
-    max_calls: int = 10
-    evaluation_name: str | None = field(default='reasonable_usage')
+    @dataclass(repr=False)
+    class KeywordCount(Evaluator[str, EvalOutput, EvalMetadata]):
+        """Score the number of keywords used in the search query. Best is <= 3."""
 
-    def evaluate(self, ctx: EvaluatorContext[str, EvalOutput, EvalMetadata]) -> bool:
-        return len(ctx.output.tool_calls) <= self.max_calls
+        evaluation_name: str | None = field(default='keyword_count')
 
-
-@dataclass(repr=False)
-class KeywordCount(Evaluator[str, EvalOutput, EvalMetadata]):
-    """Score the number of keywords used in the search query. Best is <= 3."""
-
-    evaluation_name: str | None = field(default='keyword_count')
-
-    def evaluate(self, ctx: EvaluatorContext[str, EvalOutput, EvalMetadata]) -> int | dict[str, int]:
-        if not ctx.output.search_interactions:
-            return {}
-        args = ctx.output.search_interactions[0][0]
-        if isinstance(args, str):
-            args = json.loads(args)
-        if is_str_dict(args):
-            keywords_str = args.get('keywords', '')
-        else:
-            return 0
-        return len(keywords_str.split())
+        def evaluate(self, ctx: EvaluatorContext[str, EvalOutput, EvalMetadata]) -> int | dict[str, int]:
+            if not ctx.output.search_interactions:
+                return {}
+            args = ctx.output.search_interactions[0][0]
+            if isinstance(args, str):
+                args = json.loads(args)
+            if is_str_dict(args):
+                keywords_str = args.get('keywords', '')
+            else:
+                return 0
+            return len(keywords_str.split())
 
 
 # --- Helpers ---
@@ -198,37 +196,39 @@ def _build_agent(model_name: str) -> Agent[None, str]:
     return agent
 
 
-def _build_dataset() -> Dataset[str, EvalOutput, EvalMetadata]:
-    return Dataset[str, EvalOutput, EvalMetadata](
-        cases=[
-            Case(
-                name='exchange_rate',
-                inputs='What is the current exchange rate from USD to EUR?',
-                metadata=EvalMetadata(expected_tools=['get_exchange_rate'], scenario='exchange_rate'),
-            ),
-            Case(
-                name='stock_price',
-                inputs='What is the current stock price for AAPL?',
-                metadata=EvalMetadata(expected_tools=['stock_lookup'], scenario='stock_price'),
-            ),
-            Case(
-                name='translation',
-                inputs="Translate 'hello, how are you?' to French.",
-                metadata=EvalMetadata(expected_tools=[], scenario='translation'),
-            ),
-            Case(
-                name='no_matching_tool',
-                inputs='Book a flight from New York to London for next week.',
-                metadata=EvalMetadata(expected_tools=[], scenario='no_matching_tool'),
-            ),
-        ],
-        evaluators=[
-            UsedSearchTools(),
-            FoundExpectedTools(),
-            ReasonableToolUsage(max_calls=10),
-            KeywordCount(),
-        ],
-    )
+if evals_available():
+
+    def _build_dataset() -> Dataset[str, EvalOutput, EvalMetadata]:
+        return Dataset[str, EvalOutput, EvalMetadata](
+            cases=[
+                Case(
+                    name='exchange_rate',
+                    inputs='What is the current exchange rate from USD to EUR?',
+                    metadata=EvalMetadata(expected_tools=['get_exchange_rate'], scenario='exchange_rate'),
+                ),
+                Case(
+                    name='stock_price',
+                    inputs='What is the current stock price for AAPL?',
+                    metadata=EvalMetadata(expected_tools=['stock_lookup'], scenario='stock_price'),
+                ),
+                Case(
+                    name='translation',
+                    inputs="Translate 'hello, how are you?' to French.",
+                    metadata=EvalMetadata(expected_tools=[], scenario='translation'),
+                ),
+                Case(
+                    name='no_matching_tool',
+                    inputs='Book a flight from New York to London for next week.',
+                    metadata=EvalMetadata(expected_tools=[], scenario='no_matching_tool'),
+                ),
+            ],
+            evaluators=[
+                UsedSearchTools(),
+                FoundExpectedTools(),
+                ReasonableToolUsage(max_calls=10),
+                KeywordCount(),
+            ],
+        )
 
 
 def _summarize_report(report: Any) -> dict[str, ScenarioSummary]:
