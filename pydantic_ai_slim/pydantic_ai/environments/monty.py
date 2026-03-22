@@ -183,7 +183,7 @@ class MontyEnvironment(ExecutionEnvironment):
         except MontySyntaxError as e:
             raise CodeSyntaxError(self._prepend_prints(e.display(), prints)) from e
         except MontyRuntimeError as e:
-            self._raise_if_timeout(e)
+            self._raise_if_timeout(e, prints)
             raise CodeRuntimeError(self._prepend_prints(e.display(), prints)) from e
 
         return self._build_result(monty_state.output, prints)
@@ -208,7 +208,7 @@ class MontyEnvironment(ExecutionEnvironment):
         except MontySyntaxError as e:
             raise CodeSyntaxError(self._prepend_prints(e.display(), prints)) from e
         except MontyRuntimeError as e:
-            self._raise_if_timeout(e)
+            self._raise_if_timeout(e, prints)
             raise CodeRuntimeError(self._prepend_prints(e.display(), prints)) from e
 
         return self._build_result(monty_state.output, prints)
@@ -247,10 +247,11 @@ class MontyEnvironment(ExecutionEnvironment):
 
         return '\n\n'.join(parts)
 
-    def _raise_if_timeout(self, e: MontyRuntimeError) -> None:
+    def _raise_if_timeout(self, e: MontyRuntimeError, prints: list[str]) -> None:
         """Raise CodeExecutionTimeout if the MontyRuntimeError is a time limit violation."""
         if self.execution_timeout is not None and 'time limit exceeded' in e.display():
-            raise CodeExecutionTimeout(f'Code execution timed out after {self.execution_timeout} seconds') from e
+            msg = f'Code execution timed out after {self.execution_timeout} seconds'
+            raise CodeExecutionTimeout(self._prepend_prints(msg, prints)) from e
 
     @staticmethod
     async def _execution_loop(

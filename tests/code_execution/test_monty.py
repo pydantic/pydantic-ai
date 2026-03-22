@@ -656,3 +656,35 @@ async def test_prints_included_in_runtime_error_with_functions():
             (add, False),
         )
     assert 'debug' in str(exc_info.value)
+
+
+async def test_print_and_falsy_output_returns_dict():
+    """print() combined with a falsy (but not None) result returns a dict."""
+    env = MontyEnvironment()
+    result = await env.run_python('print("debug")\n0')
+    assert result == {'stdout': 'debug', 'result': 0}
+
+    result = await env.run_python('print("debug")\nFalse')
+    assert result == {'stdout': 'debug', 'result': False}
+
+    result = await env.run_python('print("debug")\n[]')
+    assert result == {'stdout': 'debug', 'result': []}
+
+
+async def test_print_and_string_output_returns_dict():
+    """print() combined with a string expression result returns a dict, not a flat string."""
+    env = MontyEnvironment()
+    result = await env.run_python('print("debug")\n"hello"')
+    assert result == {'stdout': 'debug', 'result': 'hello'}
+
+
+async def test_prints_included_in_timeout_error():
+    """Print output before a timeout is included in the error message."""
+    from pydantic_ai.toolsets.code_execution._abstract import CodeExecutionTimeout
+
+    env = MontyEnvironment()
+    env.execution_timeout = 1.0
+    with pytest.raises(CodeExecutionTimeout) as exc_info:
+        await env.run_python('print("started")\nwhile True: pass')
+    assert 'started' in exc_info.value.message
+    assert 'timed out' in exc_info.value.message
