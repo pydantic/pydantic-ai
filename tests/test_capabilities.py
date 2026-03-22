@@ -2394,7 +2394,7 @@ class TestImageGenerationCapability:
 
 
 try:
-    import mcp as _mcp  # noqa: F401
+    import mcp as _mcp
 
     has_mcp = True
     del _mcp
