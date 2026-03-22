@@ -1614,8 +1614,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Set capability from spec, combining with agent's existing root capability
         if resolved is not None and resolved.capability is not None:
-            combined = CombinedCapability([self._root_capability, resolved.capability])
-            cap_token = self._override_root_capability.set(_utils.Some(combined))
+            cap_token = self._override_root_capability.set(_utils.Some(resolved.capability))
         else:
             cap_token = None
 

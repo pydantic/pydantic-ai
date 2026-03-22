@@ -2401,7 +2401,7 @@ class TestOverrideWithSpec:
         assert 'from spec' not in result.output
 
     async def test_override_with_spec_capabilities(self):
-        """Override with spec capabilities are combined with agent's existing capabilities."""
+        """Override with spec capabilities replaces agent's existing capabilities."""
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             instructions = next(
@@ -2409,13 +2409,13 @@ class TestOverrideWithSpec:
             )
             return make_text_response(f'instructions: {instructions}')
 
-        agent = Agent(FunctionModel(model_fn), instructions='agent-level')
+        agent = Agent(FunctionModel(model_fn), capabilities=[Instructions('agent-cap')])
 
         with agent.override(spec={'capabilities': [{'Instructions': 'from-spec-cap'}]}):
             result = await agent.run('hello')
-            # Both agent-level and spec capability instructions should be present
-            assert 'agent-level' in result.output
+            # Override replaces: only spec capability instructions, not agent's
             assert 'from-spec-cap' in result.output
+            assert 'agent-cap' not in result.output
 
 
 class TestRunWithSpec:
