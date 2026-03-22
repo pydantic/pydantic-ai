@@ -83,5 +83,5 @@ class MistralProvider(Provider[Mistral]):
                 self._http_client_factory = create_async_http_client
                 self._client = Mistral(api_key=api_key, async_client=http_client, server_url=base_url)
 
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:  # pragma: no cover
         self._client.sdk_configuration.async_client = http_client

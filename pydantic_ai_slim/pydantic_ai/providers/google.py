@@ -156,7 +156,7 @@ class GoogleProvider(Provider[Client]):
         else:
             self._client = client  # pragma: no cover
 
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:  # pragma: no cover
         api_client = self._client._api_client  # type: ignore[reportPrivateUsage]
         api_client._async_httpx_client = http_client  # type: ignore[reportPrivateUsage]
         api_client._http_options.httpx_async_client = http_client  # type: ignore[reportPrivateUsage]

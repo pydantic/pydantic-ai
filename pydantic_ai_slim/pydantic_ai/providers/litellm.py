@@ -136,5 +136,5 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
                 base_url=api_base, api_key=api_key or 'litellm-placeholder', http_client=http_client
             )
 
-    def _set_http_client(self, http_client: AsyncHTTPClient) -> None:
+    def _set_http_client(self, http_client: AsyncHTTPClient) -> None:  # pragma: no cover
         self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

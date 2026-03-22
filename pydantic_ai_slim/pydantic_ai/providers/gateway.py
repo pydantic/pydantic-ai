@@ -168,10 +168,15 @@ def gateway_provider(
     http_client = http_client or create_async_http_client()
     http_client.event_hooks = {'request': [_request_hook(api_key)]}
 
+    def _http_client_factory() -> httpx.AsyncClient:
+        client = create_async_http_client()
+        client.event_hooks = {'request': [_request_hook(api_key)]}
+        return client
+
     def _with_http_client(provider: Provider[Any]) -> Provider[Any]:
         if own_http_client:
             provider._own_http_client = http_client  # pyright: ignore[reportPrivateUsage]
-            provider._http_client_factory = create_async_http_client  # pyright: ignore[reportPrivateUsage]
+            provider._http_client_factory = _http_client_factory  # pyright: ignore[reportPrivateUsage]
         return provider
 
     if upstream_provider in ('openai', 'openai-chat', 'openai-responses', 'chat', 'responses'):

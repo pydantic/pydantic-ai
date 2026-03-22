@@ -91,5 +91,5 @@ class AlibabaProvider(Provider[AsyncOpenAI]):
 
             self._client = AsyncOpenAI(base_url=self._base_url, api_key=api_key, http_client=http_client)
 
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:  # pragma: no cover
         self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

@@ -76,6 +76,8 @@ from pydantic_ai.usage import RequestUsage
 if TYPE_CHECKING:
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.azure import AzureProvider
+    from pydantic_ai.providers.google_gla import GoogleGLAProvider  # pyright: ignore[reportDeprecated]
+    from pydantic_ai.providers.google_vertex import GoogleVertexProvider  # pyright: ignore[reportDeprecated]
     from pydantic_ai.providers.openai import OpenAIProvider
 else:
     try:
@@ -89,6 +91,16 @@ else:
     except ImportError:  # pragma: lax no cover
         AnthropicProvider = None
 
+    try:
+        from pydantic_ai.providers.google_gla import GoogleGLAProvider  # pyright: ignore[reportDeprecated]
+    except ImportError:  # pragma: lax no cover
+        GoogleGLAProvider = None
+
+    try:
+        from pydantic_ai.providers.google_vertex import GoogleVertexProvider  # pyright: ignore[reportDeprecated]
+    except ImportError:  # pragma: lax no cover
+        GoogleVertexProvider = None
+
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv
 
@@ -96,6 +108,8 @@ pytestmark = pytest.mark.anyio
 
 requires_openai = pytest.mark.skipif(OpenAIProvider is None, reason='openai not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_anthropic = pytest.mark.skipif(AnthropicProvider is None, reason='anthropic not installed')  # pyright: ignore[reportUnnecessaryComparison]
+requires_google_gla = pytest.mark.skipif(GoogleGLAProvider is None, reason='google-gla deps not installed')  # pyright: ignore[reportUnnecessaryComparison, reportDeprecated]
+requires_google_vertex = pytest.mark.skipif(GoogleVertexProvider is None, reason='google-auth not installed')  # pyright: ignore[reportUnnecessaryComparison, reportDeprecated]
 
 
 def test_result_tuple():
@@ -5877,6 +5891,73 @@ async def test_provider_reentry_after_close():
         second_client = provider.client._client  # pyright: ignore[reportPrivateUsage]
         assert not second_client.is_closed
         assert second_client is not first_client
+    assert second_client.is_closed
+
+
+@requires_google_gla
+@pytest.mark.filterwarnings('ignore:`GoogleGLAProvider` is deprecated.:DeprecationWarning')
+async def test_google_gla_provider_reentry_after_close():
+    """GoogleGLAProvider restores base_url and API key header on re-entry."""
+    provider = GoogleGLAProvider(api_key='test-key')  # pyright: ignore[reportDeprecated]
+
+    async with provider:
+        first_client = provider.client
+        assert not first_client.is_closed
+        assert str(first_client.base_url) == 'https://generativelanguage.googleapis.com/v1beta/models/'
+        assert first_client.headers['X-Goog-Api-Key'] == 'test-key'
+    assert first_client.is_closed
+
+    async with provider:
+        second_client = provider.client
+        assert not second_client.is_closed
+        assert second_client is not first_client
+        assert str(second_client.base_url) == 'https://generativelanguage.googleapis.com/v1beta/models/'
+        assert second_client.headers['X-Goog-Api-Key'] == 'test-key'
+    assert second_client.is_closed
+
+
+@requires_google_vertex
+@pytest.mark.filterwarnings('ignore:`GoogleVertexProvider` is deprecated.:DeprecationWarning')
+async def test_google_vertex_provider_reentry_after_close():
+    """GoogleVertexProvider restores auth and base_url on re-entry."""
+    provider = GoogleVertexProvider(service_account_file='/dev/null', project_id='test-project', region='us-central1')  # pyright: ignore[reportDeprecated]
+
+    async with provider:
+        first_client = provider.client
+        assert not first_client.is_closed
+        assert first_client.auth is not None
+        assert 'us-central1' in str(first_client.base_url)
+    assert first_client.is_closed
+
+    async with provider:
+        second_client = provider.client
+        assert not second_client.is_closed
+        assert second_client is not first_client
+        assert second_client.auth is not None
+        assert 'us-central1' in str(second_client.base_url)
+    assert second_client.is_closed
+
+
+@requires_openai
+async def test_gateway_provider_reentry_after_close():
+    """Gateway provider restores event_hooks on re-entry."""
+    from pydantic_ai.providers.gateway import gateway_provider
+
+    provider = gateway_provider('openai', api_key='test-key', base_url='https://gateway.example.com/proxy')
+
+    async with provider:
+        first_client = provider._own_http_client  # pyright: ignore[reportPrivateUsage]
+        assert first_client is not None
+        assert not first_client.is_closed
+        assert len(first_client.event_hooks.get('request', [])) == 1
+    assert first_client.is_closed
+
+    async with provider:
+        second_client = provider._own_http_client  # pyright: ignore[reportPrivateUsage]
+        assert second_client is not None
+        assert not second_client.is_closed
+        assert second_client is not first_client
+        assert len(second_client.event_hooks.get('request', [])) == 1
     assert second_client.is_closed
 
 

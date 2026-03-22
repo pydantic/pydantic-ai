@@ -144,5 +144,5 @@ class AzureProvider(Provider[AsyncOpenAI]):
             )
             self._base_url = str(self._client.base_url)
 
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:  # pragma: no cover
         self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

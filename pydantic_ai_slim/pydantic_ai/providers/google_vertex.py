@@ -122,6 +122,13 @@ class GoogleVertexProvider(Provider[httpx.AsyncClient]):
 
     def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
         self._client = http_client
+        self._client.auth = _VertexAIAuth(
+            self.service_account_file,
+            self.service_account_info,
+            self.project_id,
+            self.region,  # pyright: ignore[reportArgumentType]
+        )
+        self._client.base_url = self.base_url
 
 
 class _VertexAIAuth(httpx.Auth):

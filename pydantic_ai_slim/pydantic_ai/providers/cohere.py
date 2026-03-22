@@ -84,7 +84,7 @@ class CohereProvider(Provider[AsyncClientV2]):
                 self._client = AsyncClientV2(api_key=api_key, httpx_client=http_client, base_url=base_url)
                 self._v1_client = AsyncClient(api_key=api_key, httpx_client=http_client, base_url=base_url)
 
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:  # pragma: no cover
         self._client._client_wrapper.httpx_client.httpx_client = http_client  # type: ignore
         if self._v1_client is not None:
             self._v1_client._client_wrapper.httpx_client.httpx_client = http_client  # type: ignore

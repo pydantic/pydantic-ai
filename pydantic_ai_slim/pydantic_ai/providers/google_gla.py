@@ -47,6 +47,8 @@ class GoogleGLAProvider(Provider[httpx.AsyncClient]):
                 'to use the Google GLA provider.'
             )
 
+        self._api_key = api_key
+
         if http_client is None:
             http_client = create_async_http_client()
             self._own_http_client = http_client
@@ -58,3 +60,5 @@ class GoogleGLAProvider(Provider[httpx.AsyncClient]):
 
     def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
         self._client = http_client
+        self._client.base_url = self.base_url
+        self._client.headers['X-Goog-Api-Key'] = self._api_key
