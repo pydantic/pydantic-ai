@@ -555,3 +555,104 @@ async def test_repl_state_persists_across_calls():
     await env.run_python('count = count + 1')
     result = await env.run_python('count')
     assert result == 2
+
+
+# --- Print output tests ---
+
+
+async def test_print_only_returns_string():
+    """print() with no expression result returns the printed text."""
+    env = MontyEnvironment()
+    result = await env.run_python('print("hello")')
+    assert result == 'hello'
+
+
+async def test_print_multiple_lines():
+    """Multiple print() calls are concatenated."""
+    env = MontyEnvironment()
+    result = await env.run_python('print("line 1")\nprint("line 2")')
+    assert result == 'line 1\nline 2'
+
+
+async def test_output_only_preserves_structure():
+    """Expression result without prints is returned as-is (structured)."""
+    env = MontyEnvironment()
+    result = await env.run_python('[1, 2, 3]')
+    assert result == [1, 2, 3]
+
+
+async def test_print_and_output_returns_dict():
+    """print() combined with an expression result returns a dict with both."""
+    env = MontyEnvironment()
+    result = await env.run_python('print("debug")\n[1, 2, 3]')
+    assert result == {'stdout': 'debug', 'result': [1, 2, 3]}
+
+
+async def test_print_and_dict_output_returns_dict():
+    """print() combined with a dict expression preserves the dict structure."""
+    env = MontyEnvironment()
+    result = await env.run_python('print("info")\n{"key": "value"}')
+    assert result == {'stdout': 'info', 'result': {'key': 'value'}}
+
+
+async def test_print_and_none_output_returns_string():
+    """print() with None expression result returns just the printed text."""
+    env = MontyEnvironment()
+    result = await env.run_python('print("hello")\nNone')
+    assert result == 'hello'
+
+
+async def test_prints_included_in_runtime_error():
+    """Print output before a runtime error is included in the error message."""
+    from pydantic_ai.toolsets.code_execution._abstract import CodeRuntimeError
+
+    env = MontyEnvironment()
+    with pytest.raises(CodeRuntimeError) as exc_info:
+        await env.run_python('print("debug info")\n1 / 0')
+    assert 'debug info' in exc_info.value.message
+    assert 'ZeroDivisionError' in exc_info.value.message
+    assert '[stdout before error]' in exc_info.value.message
+
+
+async def test_prints_not_in_error_when_no_prints():
+    """Error messages without prior prints don't have the stdout wrapper."""
+    from pydantic_ai.toolsets.code_execution._abstract import CodeRuntimeError
+
+    env = MontyEnvironment()
+    with pytest.raises(CodeRuntimeError) as exc_info:
+        await env.run_python('1 / 0')
+    assert 'stdout before error' not in exc_info.value.message
+
+
+async def test_print_with_function_calls():
+    """Print output is captured alongside external function calls."""
+    env = MontyEnvironment()
+    result = await run_code_with_tools(
+        'print("before call")\nr = await add(x=1, y=2)\nprint("after call")\nr',
+        env,
+        (add, False),
+    )
+    assert result == {'stdout': 'before call\nafter call', 'result': 3}
+
+
+async def test_print_after_function_call():
+    """Prints after an external function call returns are still captured."""
+    env = MontyEnvironment()
+    result = await run_code_with_tools(
+        'r = await add(x=10, y=20)\nprint(r)',
+        env,
+        (add, False),
+    )
+    assert result == '30'
+
+
+async def test_prints_included_in_runtime_error_with_functions():
+    """Print output before a runtime error with functions is included in the error message."""
+    env = MontyEnvironment()
+    with pytest.raises(ModelRetry, match='debug') as exc_info:
+        await run_code_with_tools(
+            'print("debug")\n1 / 0',
+            env,
+            (add, False),
+        )
+    assert 'debug' in str(exc_info.value)

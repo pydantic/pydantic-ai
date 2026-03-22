@@ -181,10 +181,10 @@ class MontyEnvironment(ExecutionEnvironment):
                     'Unexpected external function call in code without functions.'
                 )  # pragma: no cover
         except MontySyntaxError as e:
-            raise CodeSyntaxError(e.display()) from e
+            raise CodeSyntaxError(self._prepend_prints(e.display(), prints)) from e
         except MontyRuntimeError as e:
             self._raise_if_timeout(e)
-            raise CodeRuntimeError(e.display()) from e
+            raise CodeRuntimeError(self._prepend_prints(e.display(), prints)) from e
 
         return self._build_result(monty_state.output, prints)
 
@@ -206,10 +206,10 @@ class MontyEnvironment(ExecutionEnvironment):
             monty_state = self._ensure_repl().feed_start(code, print_callback=lambda _stream, text: prints.append(text))
             monty_state = await self._execution_loop(monty_state, function_callback, functions=functions)
         except MontySyntaxError as e:
-            raise CodeSyntaxError(e.display()) from e
+            raise CodeSyntaxError(self._prepend_prints(e.display(), prints)) from e
         except MontyRuntimeError as e:
             self._raise_if_timeout(e)
-            raise CodeRuntimeError(e.display()) from e
+            raise CodeRuntimeError(self._prepend_prints(e.display(), prints)) from e
 
         return self._build_result(monty_state.output, prints)
 
@@ -223,7 +223,15 @@ class MontyEnvironment(ExecutionEnvironment):
         if output is None:
             return printed_text
 
-        return f'{printed_text}\n{output}'
+        return {'stdout': printed_text, 'result': output}
+
+    @staticmethod
+    def _prepend_prints(error_message: str, prints: list[str]) -> str:
+        """Prepend any captured print output to an error message."""
+        printed_text = ''.join(prints).rstrip('\n')
+        if not printed_text:
+            return error_message
+        return f'[stdout before error]\n{printed_text}\n[/stdout before error]\n{error_message}'
 
     def _build_type_check_prefix(
         self, signatures: list[FunctionSignature], referenced_types: list[TypeSignature]
