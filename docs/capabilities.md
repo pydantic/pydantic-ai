@@ -376,14 +376,18 @@ from typing import Any
 
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import AgentStreamEvent, FunctionToolCallEvent
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    PartStartEvent,
+    TextPart,
+)
 
 
 @dataclass
-class ToolCallCounter(AbstractCapability[Any]):
-    """Counts tool calls during a streamed run."""
-
-    tool_call_count: int = 0
+class StreamAuditor(AbstractCapability[Any]):
+    """Logs tool calls and text output during streamed runs."""
 
     async def wrap_run_event_stream(
         self,
@@ -391,16 +395,20 @@ class ToolCallCounter(AbstractCapability[Any]):
         *,
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
-        async def _counting_stream():
+        async def _audit():
             async for event in stream:
                 if isinstance(event, FunctionToolCallEvent):
-                    self.tool_call_count += 1
+                    print(f'Tool called: {event.part.tool_name}')
+                elif isinstance(event, FunctionToolResultEvent):
+                    print(f'Tool result: {event.tool_return.content!r}')
+                elif isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+                    print(f'Text: {event.part.content!r}')
                 yield event
 
-        return _counting_stream()
+        return _audit()
 ```
 
-For building web UIs that consume streamed events, see the [UI event streams](ui/overview.md) documentation.
+For building web UIs that transform streamed events into protocol-specific formats (like SSE), see the [UI event streams](ui/overview.md) documentation and the [`UIEventStream`][pydantic_ai.ui.UIEventStream] base class.
 
 ## Example: building a guardrail
 
@@ -612,39 +620,39 @@ agent = Agent.from_spec(
 )
 ```
 
-Override [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec] only when the constructor takes non-serializable types (like callables) or when you need to transform the spec arguments into a different constructor signature:
+Override [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec] when the constructor takes types that can't be represented in YAML/JSON. The spec fields should mirror the dataclass fields, but with serializable types:
 
 ```python {title="from_spec_override_example.py" test="skip" lint="skip"}
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability
-
-
-PROMPT_LIBRARY = {
-    'formal': 'Use formal, professional language.',
-    'casual': 'Be friendly and conversational.',
-}
+from pydantic_ai.tools import ToolDefinition
 
 
 @dataclass
-class PromptStyle(AbstractCapability[Any]):
-    """Applies a prompt style from a library."""
+class ConditionalTools(AbstractCapability[Any]):
+    """Hides tools unless a condition is met."""
 
-    instructions_text: str
+    condition: Callable[[RunContext[Any]], bool]  # not serializable
+    hidden_tools: list[str] = ()
 
     @classmethod
-    def from_spec(cls, style_name: str) -> 'PromptStyle':
-        text = PROMPT_LIBRARY.get(style_name)
-        if text is None:
-            raise ValueError(f'Unknown style: {style_name!r}')
-        return cls(instructions_text=text)
+    def from_spec(cls, hidden_tools: list[str]) -> 'ConditionalTools':
+        # In the spec, there's no condition callable — always hide
+        return cls(condition=lambda ctx: True, hidden_tools=hidden_tools)
 
-    def get_instructions(self):
-        return self.instructions_text
+    async def prepare_tools(
+        self, ctx: RunContext[Any], tool_defs: list[ToolDefinition]
+    ) -> list[ToolDefinition]:
+        if self.condition(ctx):
+            return [td for td in tool_defs if td.name not in self.hidden_tools]
+        return tool_defs
 ```
 
-Here, `from_spec('formal')` looks up a prompt from a library — something the default `cls(style_name='formal')` can't do since `instructions_text` expects the resolved text, not a lookup key.
+In YAML this would be `- ConditionalTools: {hidden_tools: [dangerous_tool]}`. In Python code, the full constructor is available: `ConditionalTools(condition=my_check, hidden_tools=['dangerous_tool'])`.
 
 Pass custom capability types via the `custom_capability_types` parameter so the spec resolver can find them.
 
