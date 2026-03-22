@@ -5,12 +5,11 @@ from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic
 
-from pydantic_ai import _instructions
-from pydantic_ai.builtin_tools import AbstractBuiltinTool
+from pydantic_ai._instructions import AgentInstructions
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import AgentDepsT, BuiltinToolFunc, RunContext, ToolDefinition
+from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AgentToolset
 
 if TYPE_CHECKING:
@@ -73,22 +72,22 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     @classmethod
     def from_spec(cls, *args: Any, **kwargs: Any) -> AbstractCapability[Any]:
-        """Create from spec arguments. Default: ``cls(*args, **kwargs)``.
+        """Create from spec arguments. Default: `cls(*args, **kwargs)`.
 
-        Override when ``__init__`` takes non-serializable types.
+        Override when `__init__` takes non-serializable types.
         """
         return cls(*args, **kwargs)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Return the capability instance to use for this agent run.
 
-        Called once per run, before ``get_*()`` re-extraction and before any hooks fire.
+        Called once per run, before `get_*()` re-extraction and before any hooks fire.
         Override to return a fresh instance for per-run state isolation.
-        Default: return ``self`` (shared across runs).
+        Default: return `self` (shared across runs).
         """
         return self
 
-    def get_instructions(self) -> _instructions.AgentInstructions[AgentDepsT] | None:
+    def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         """Return static instructions to include in the system prompt, or None."""
         return None
 
@@ -110,7 +109,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Return a toolset to register with the agent, or None."""
         return None
 
-    def get_builtin_tools(self) -> Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]]:
+    def get_builtin_tools(self) -> Sequence[AgentBuiltinTool[AgentDepsT]]:
         """Return builtin tools to register with the agent."""
         return []
 
@@ -168,12 +167,12 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
         """Wraps execution of each agent graph node (run step).
 
-        Called for every node in the agent graph (``UserPromptNode``,
-        ``ModelRequestNode``, ``CallToolsNode``).  ``handler(node)`` executes
-        the node and returns the next node (or ``End``).
+        Called for every node in the agent graph (`UserPromptNode`,
+        `ModelRequestNode`, `CallToolsNode`).  `handler(node)` executes
+        the node and returns the next node (or `End`).
 
         Override to inspect or modify nodes before execution, inspect or modify
-        the returned next node, call ``handler`` multiple times (retry), or
+        the returned next node, call `handler` multiple times (retry), or
         return a different node to redirect graph progression.
         """
         return await handler(node)
@@ -203,6 +202,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
+        request_context: ModelRequestContext,
         response: ModelResponse,
     ) -> ModelResponse:
         """Called after each model response. Can modify the response before further processing."""

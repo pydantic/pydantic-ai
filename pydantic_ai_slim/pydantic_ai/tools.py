@@ -27,6 +27,7 @@ __all__ = (
     'ToolParams',
     'ToolPrepareFunc',
     'ToolsPrepareFunc',
+    'AgentBuiltinTool',
     'BuiltinToolFunc',
     'Tool',
     'ObjectJsonSchema',
@@ -145,6 +146,12 @@ BuiltinToolFunc: TypeAlias = Callable[
 
 This is useful if you want to customize the builtin tool based on the run context (e.g. user dependencies),
 or omit it completely from a step.
+"""
+
+AgentBuiltinTool: TypeAlias = AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]
+"""A builtin tool or a function that dynamically produces one.
+
+This is a convenience alias for `AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]`.
 """
 
 DocstringFormat: TypeAlias = Literal['google', 'numpy', 'sphinx', 'auto']
