@@ -1574,7 +1574,7 @@ async def test_adapter_sets_current_run_id_on_trailing_mapped_request() -> None:
             ModelRequest(
                 parts=[UserPromptPart(content='Hello!', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
-                run_id=IsStr(),
+                run_id=(run_id := IsSameStr()),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -1582,7 +1582,7 @@ async def test_adapter_sets_current_run_id_on_trailing_mapped_request() -> None:
                 model_name='test',
                 timestamp=IsDatetime(),
                 provider_name='test',
-                run_id=IsStr(),
+                run_id=run_id,
             ),
         ]
     )

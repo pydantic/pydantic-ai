@@ -60,7 +60,6 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='extras not installed'),
 ]
-
 code_examples: dict[str, CodeExample] = {}
 
 
@@ -577,6 +576,12 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         tool_name='final_result',
         args={'name': 'test', 'value': 42},
         tool_call_id='pyd_ai_tool_call_id',
+    ),
+    'Find recent papers about transformer architectures': (
+        'Here are some recent papers about transformer architectures from arxiv.org:\n'
+        '\n'
+        '1. "Attention Is All You Need" - The foundational paper on the Transformer model.\n'
+        '2. "FlashAttention: Fast and Memory-Efficient Exact Attention" - Proposes an IO-aware attention algorithm.'
     ),
 }
 

@@ -472,7 +472,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
     _result: CallToolsNode[DepsT, NodeRunEndT] | None = field(repr=False, init=False, default=None)
     _did_stream: bool = field(repr=False, init=False, default=False)
-    _last_request_context: ModelRequestContext | None = field(repr=False, init=False, default=None)
+    last_request_context: ModelRequestContext | None = field(repr=False, init=False, default=None)
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -663,7 +663,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 model_request_parameters=model_request_parameters,
             ),
         )
-        self._last_request_context = request_context
+        self.last_request_context = request_context
         messages = request_context.messages
         model_settings = request_context.model_settings
         model_request_parameters = request_context.model_request_parameters
@@ -716,7 +716,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         response.run_id = response.run_id or ctx.state.run_id
 
         run_context = build_run_context(ctx)
-        request_context = self._last_request_context or ModelRequestContext(
+        request_context = self.last_request_context or ModelRequestContext(
             messages=ctx.state.message_history[:],
             model_settings=ctx.deps.get_model_settings(run_context),
             model_request_parameters=models.ModelRequestParameters(
