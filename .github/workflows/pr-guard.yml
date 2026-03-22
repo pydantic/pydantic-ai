@@ -22,15 +22,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          PR_NUMBER=${{ github.event.pull_request.number }}
-          PR_AUTHOR="${{ github.event.pull_request.user.login }}"
-          AUTHOR_ASSOCIATION="${{ github.event.pull_request.author_association }}"
           PR_BODY=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.body // ""')
 
           echo "PR #${PR_NUMBER} by ${PR_AUTHOR} (${AUTHOR_ASSOCIATION})"
 
           # Skip draft PRs — authors may create drafts to save progress
-          if [ "${{ github.event.pull_request.draft }}" = "true" ]; then
+          if [ "$IS_DRAFT" = "true" ]; then
             echo "PR is a draft, skipping checks."
             exit 0
           fi
@@ -40,55 +37,6 @@ jobs:
             echo "Author is a maintainer/collaborator, skipping checks."
             exit 0
           fi
-
-          # --- Contributor history (used for repeat offender detection + PR limits) ---
-          # Use GitHub search API to get counts server-side instead of fetching all PRs.
-          THIRTY_DAYS_AGO=$(date -u -d '30 days ago' '+%Y-%m-%dT%H:%M:%SZ')
-          REJECTED_COUNT=$(gh api -X GET "search/issues" \
-            -f q="repo:${REPO} type:pr author:${PR_AUTHOR} is:closed is:unmerged closed:>${THIRTY_DAYS_AGO}" \
-            --jq '.total_count')
-          MERGED_COUNT=$(gh api -X GET "search/issues" \
-            -f q="repo:${REPO} type:pr author:${PR_AUTHOR} is:merged" \
-            --jq '.total_count')
-          echo "Author: ${REJECTED_COUNT} rejected PRs (last 30d), ${MERGED_COUNT} merged PRs total."
-
-          # Repeat offender: 5+ rejected PRs in 30 days = close, 3+ = warn
-          if [ "$REJECTED_COUNT" -ge 5 ]; then
-            echo "Repeat offender (${REJECTED_COUNT} rejected). Closing."
-            gh pr close "$PR_NUMBER" --repo "$REPO"
-            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$(printf '%s\n\n%s\n\n%s' \
-              "⚠️ You have had **${REJECTED_COUNT} PRs closed without merging** in the last 30 days." \
-              "Please read our [contribution guidelines](https://github.com/${REPO}/blob/main/docs/contributing.md) before submitting further PRs. Continued spamming may result in being blocked from this repository." \
-              "If you believe this is a mistake, please reach out on [Slack](https://logfire.pydantic.dev/docs/join-slack/) or comment on a relevant issue to discuss with maintainers.")" || true
-            exit 0
-          elif [ "$REJECTED_COUNT" -ge 3 ]; then
-            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "⚠️ You have had **${REJECTED_COUNT} PRs closed without merging** recently. Please read our [contribution guidelines](https://github.com/${REPO}/blob/main/docs/contributing.md). If you need help, reach out on [Slack](https://logfire.pydantic.dev/docs/join-slack/)." || true
-          fi
-
-          # PR limits: new contributors can only have a limited number of open PRs
-          # 0 merged -> 1, 1 merged -> 2, 2 merged -> 3, 3+ merged -> unlimited
-          if [ "$MERGED_COUNT" -lt 3 ]; then
-            MAX_OPEN=$((MERGED_COUNT + 1))
-            # Count open PRs by this author, excluding the current one.
-            # Uses REST API (not search) to avoid indexing lag on newly opened PRs.
-            OPEN_COUNT=$(gh api "repos/${REPO}/pulls?state=open&per_page=100" --paginate --slurp \
-              --jq "[.[][] | select(.user.login == \"${PR_AUTHOR}\" and .number != ${PR_NUMBER})] | length")
-            echo "Open PRs (excluding this one): ${OPEN_COUNT} (limit: ${MAX_OPEN})."
-
-            if [ "$OPEN_COUNT" -ge "$MAX_OPEN" ]; then
-              echo "PR limit exceeded. Closing."
-              gh pr close "$PR_NUMBER" --repo "$REPO"
-              gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$(printf '%s\n\n%s' \
-                "You currently have **${OPEN_COUNT}** other open PR(s), and your limit is **${MAX_OPEN}** (based on **${MERGED_COUNT}** merged PR(s))." \
-                "Please wait for existing PRs to be reviewed and merged before opening new ones. See our [contribution guidelines](https://github.com/${REPO}/blob/main/docs/contributing.md) for details.")" || true
-              exit 0
-            fi
-          fi
-
-          # Parse closing keywords from PR body
-          # GitHub recognizes: close, closes, closed, fix, fixes, fixed, resolve, resolves, resolved
-          # Case-insensitive, with optional leading - or *
-          ISSUE_NUMBERS=$(printf '%s\n' "$PR_BODY" | grep -ioE '(^|\s|[-*]\s*)(close[sd]?|fix(es|ed)?|resolve[sd]?)\s+#[0-9]+' | grep -oE '[0-9]+' | sort -u || true)
 
           # --- Check 0: [bot] in PR title = auto-close ---
           # docs/contributing.md instructs AI agents to add [bot] to their PR title
@@ -113,6 +61,36 @@ jobs:
             gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$COMMENT" || true
             exit 0
           fi
+
+          # --- PR limits: new contributors can only have a limited number of open PRs ---
+          # 0 merged -> 1, 1 merged -> 2, 2 merged -> 3, 3+ merged -> unlimited
+          MERGED_COUNT=$(gh api -X GET "search/issues" \
+            -f q="repo:${REPO} type:pr author:${PR_AUTHOR} is:merged" \
+            --jq '.total_count')
+          echo "Author has ${MERGED_COUNT} merged PRs total."
+
+          if [ "$MERGED_COUNT" -lt 3 ]; then
+            MAX_OPEN=$((MERGED_COUNT + 1))
+            # Count open PRs by this author, excluding the current one.
+            # Uses REST API (not search) to avoid indexing lag on newly opened PRs.
+            OPEN_COUNT=$(gh api "repos/${REPO}/pulls?state=open&per_page=100" --paginate --slurp \
+              --jq "[.[][] | select(.user.login == \"${PR_AUTHOR}\" and .number != ${PR_NUMBER})] | length")
+            echo "Open PRs (excluding this one): ${OPEN_COUNT} (limit: ${MAX_OPEN})."
+
+            if [ "$OPEN_COUNT" -ge "$MAX_OPEN" ]; then
+              echo "PR limit exceeded. Closing."
+              gh pr close "$PR_NUMBER" --repo "$REPO"
+              gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$(printf '%s\n\n%s' \
+                "You currently have **${OPEN_COUNT}** other open PR(s), and your limit is **${MAX_OPEN}** (based on **${MERGED_COUNT}** merged PR(s))." \
+                "Please wait for existing PRs to be reviewed and merged before opening new ones. See our [contribution guidelines](https://github.com/${REPO}/blob/main/docs/contributing.md) for details.")" || true
+              exit 0
+            fi
+          fi
+
+          # Parse closing keywords from PR body
+          # GitHub recognizes: close, closes, closed, fix, fixes, fixed, resolve, resolves, resolved
+          # Case-insensitive, with optional leading - or *
+          ISSUE_NUMBERS=$(printf '%s\n' "$PR_BODY" | grep -ioE '(^|\s|[-*]\s*)(close[sd]?|fix(es|ed)?|resolve[sd]?)\s+#[0-9]+' | grep -oE '[0-9]+' | sort -u || true)
 
           if [ -z "$ISSUE_NUMBERS" ]; then
             echo "No closing keywords found in PR body."
@@ -215,4 +193,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
           PR_TITLE: ${{ github.event.pull_request.title }}
+          IS_DRAFT: ${{ github.event.pull_request.draft }}
