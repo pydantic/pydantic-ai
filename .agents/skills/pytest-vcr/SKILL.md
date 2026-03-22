@@ -1,7 +1,7 @@
 ---
 name: pytest-vcr
 description: Record, rewrite, and debug VCR cassettes for HTTP recordings. Use when running tests with --record-mode, verifying cassette playback, or inspecting request/response bodies in YAML cassettes.
-allowed-tools: Bash(uv run pytest *), Bash(uv run python .agents/skills/pytest-vcr/parse_cassette.py *), Bash(.agents/skills/pytest-vcr/run-vertex-tests.sh *), Bash(source .env && uv run pytest *), Bash(git diff *)
+allowed-tools: Bash(uv run pytest *), Bash(uv run python .agents/skills/pytest-vcr/parse_cassette.py *), Bash(source .env && uv run pytest *), Bash(git diff *)
 ---
 
 # Pytest VCR Workflow
@@ -76,30 +76,6 @@ For each interaction, shows:
 
 Base64 strings longer than 100 chars are truncated for readability.
 
-
-## Vertex AI Tests
-
-Vertex tests use the `skip_unless_vertex` fixture from `tests/conftest.py` — they only run in CI or when `ENABLE_VERTEX=1` is set. `ENABLE_VERTEX=1` is only needed when recording/rewriting cassettes locally; during playback, cassettes replay without live auth. Add `skip_unless_vertex: None` as a parameter to any new vertex test.
-
-Vertex auth works two ways:
-- **`GOOGLE_APPLICATION_CREDENTIALS`**: set this env var to a service account JSON path — no gcloud needed
-- **gcloud**: the script auto-detects project and checks auth via `gcloud`
-
-Use the provided script:
-
-```bash
-# Record Vertex cassettes
-.agents/skills/pytest-vcr/run-vertex-tests.sh tests/path/to/test.py -v --tb=line --record-mode=rewrite
-
-# Verify playback
-.agents/skills/pytest-vcr/run-vertex-tests.sh tests/path/to/test.py -vv --tb=line
-```
-
-If using gcloud and auth fails:
-```bash
-gcloud auth application-default login
-gcloud config set project <your-project-id>
-```
 
 ## Full Workflow Example
 
