@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
@@ -101,6 +102,8 @@ class FallbackModel(Model):
         """
         super().__init__()
         self.models = [infer_model(default_model), *[infer_model(m) for m in fallback_models]]
+        self._entered_count = 0
+        self._enter_lock = Lock()
 
         # Parse fallback_on into exception handlers and response handlers
         self._exception_handlers = []
@@ -158,14 +161,13 @@ class FallbackModel(Model):
 
     async def __aenter__(self) -> FallbackModel:
         """Enter all sub-models so their providers can manage HTTP client lifecycle."""
-        if not hasattr(self, '_entered_count'):
-            self._entered_count = 0
-        if self._entered_count == 0:
-            async with AsyncExitStack() as exit_stack:
-                for model in self.models:
-                    await exit_stack.enter_async_context(model)
-                self._exit_stack = exit_stack.pop_all()
-        self._entered_count += 1
+        async with self._enter_lock:
+            if self._entered_count == 0:
+                async with AsyncExitStack() as exit_stack:
+                    for model in self.models:
+                        await exit_stack.enter_async_context(model)
+                    self._exit_stack = exit_stack.pop_all()
+            self._entered_count += 1
         return self
 
     async def __aexit__(
@@ -175,11 +177,10 @@ class FallbackModel(Model):
         exc_tb: TracebackType | None,
     ) -> bool | None:
         """Exit all sub-models, closing their providers' HTTP clients."""
-        if not hasattr(self, '_entered_count') or self._entered_count == 0:
-            return
-        self._entered_count -= 1
-        if self._entered_count == 0 and hasattr(self, '_exit_stack'):
-            await self._exit_stack.aclose()
+        async with self._enter_lock:
+            self._entered_count -= 1
+            if self._entered_count == 0:
+                await self._exit_stack.aclose()
 
     @property
     def model_name(self) -> str:
