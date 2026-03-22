@@ -653,11 +653,15 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 on_complete,
                             )
                             break
-                elif self.is_call_tools_node(node) and event_stream_handler is not None:
+                elif self.is_call_tools_node(node):
                     async with node.stream(agent_run.ctx) as stream:
                         run_ctx = _agent_graph.build_run_context(agent_run.ctx)
                         wrapped = await agent_run.ctx.deps.root_capability.wrap_run_event_stream(run_ctx, stream=stream)
-                        await event_stream_handler(run_ctx, wrapped)
+                        if event_stream_handler is not None:
+                            await event_stream_handler(run_ctx, wrapped)
+                        else:
+                            async for _ in wrapped:
+                                pass
 
                 next_node = await agent_run.next(node)
                 if isinstance(next_node, End) and agent_run.result is not None:

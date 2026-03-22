@@ -157,7 +157,7 @@ class AgentSpec(BaseModel):
         Returns:
             A dictionary representing the JSON schema.
         """
-        capability_schema_types = _build_capability_schema_types(_get_capability_registry(custom_capability_types))
+        capability_schema_types = _build_capability_schema_types(get_capability_registry(custom_capability_types))
 
         # Build a schema-only model with the resolved capability union
         class _AgentSpecSchema(BaseModel, extra='forbid'):
@@ -214,7 +214,7 @@ def _infer_fmt(path: Path, fmt: Literal['yaml', 'json'] | None) -> Literal['yaml
     )
 
 
-def _get_capability_registry(
+def get_capability_registry(
     custom_types: Sequence[type[AbstractCapability[Any]]] = (),
 ) -> Mapping[str, type[AbstractCapability[Any]]]:
     """Create a registry of capability types from default and custom types."""

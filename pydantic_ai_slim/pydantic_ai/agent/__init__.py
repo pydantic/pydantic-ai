@@ -17,6 +17,7 @@ from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Self, TypeVar, deprecated
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, InstrumentationNames
+from pydantic_ai._spec import load_from_registry
 
 from .. import (
     _agent_graph,
@@ -41,12 +42,12 @@ from .._agent_graph import (
 )
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
-from .._template import TemplateStr
+from .._template import TemplateStr, validate_from_spec_args
 from .._tool_manager import ParallelExecutionMode, ToolManager
 from ..builtin_tools import AbstractBuiltinTool
 from ..capabilities import AbstractCapability, CombinedCapability, HistoryProcessor as HistoryProcessorCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
-from ..output import OutputDataT, OutputSpec
+from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import (
@@ -81,6 +82,7 @@ from .abstract import (
     EventStreamHandler,
     RunOutputDataT,
 )
+from .spec import AgentSpec, get_capability_registry
 from .wrapper import WrapperAgent
 
 if TYPE_CHECKING:
@@ -91,7 +93,6 @@ if TYPE_CHECKING:
     from ..builtin_tools import AbstractBuiltinTool
     from ..mcp import MCPServer
     from ..ui._web import ModelsParam
-    from .spec import AgentSpec
 
 __all__ = (
     'Agent',
@@ -486,7 +487,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
-        description: str | None = None,
+        description: TemplateStr[Any] | str | None = None,
         model_settings: ModelSettings | None = None,
         retries: int | None = None,
         validation_context: Any = None,
@@ -520,7 +521,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
-        description: str | None = None,
+        description: TemplateStr[Any] | str | None = None,
         model_settings: ModelSettings | None = None,
         retries: int | None = None,
         validation_context: Any = None,
@@ -553,7 +554,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
-        description: str | None = None,
+        description: TemplateStr[Any] | str | None = None,
         model_settings: ModelSettings | None = None,
         retries: int | None = None,
         validation_context: Any = None,
@@ -615,16 +616,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Returns:
             A new Agent instance.
         """
-        from pydantic_ai._spec import build_registry, load_from_registry
-        from pydantic_ai._template import validate_from_spec_args
-        from pydantic_ai.agent.spec import AgentSpec as _AgentSpecModel
-        from pydantic_ai.capabilities import CAPABILITY_TYPES
-
         template_context: dict[str, Any] = {
             'deps_type': deps_type if deps_type is not type(None) else None,
         }
         if isinstance(spec, dict):
-            validated_spec = _AgentSpecModel.model_validate(spec, context=template_context)
+            validated_spec = AgentSpec.model_validate(spec, context=template_context)
         else:
             validated_spec = spec
         template_context['deps_schema'] = validated_spec.deps_schema
@@ -633,18 +629,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if output_type is not str:
             effective_output_type = output_type
         elif validated_spec.output_schema is not None:
-            from pydantic_ai.output import StructuredDict
-
             effective_output_type = StructuredDict(validated_spec.output_schema)
         else:
             effective_output_type = str
 
-        registry = build_registry(
-            custom_types=custom_capability_types,
-            defaults=tuple(CAPABILITY_TYPES.values()),
-            get_name=lambda c: c.get_serialization_name(),
-            label='capability',
-        )
+        registry = get_capability_registry(custom_capability_types)
 
         # Merge instructions from spec and arg
         merged_instructions = _instructions.normalize_instructions(validated_spec.instructions)
@@ -714,7 +703,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
-        description: str | None = None,
+        description: TemplateStr[Any] | str | None = None,
         model_settings: ModelSettings | None = None,
         retries: int | None = None,
         validation_context: Any = None,
@@ -748,7 +737,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
-        description: str | None = None,
+        description: TemplateStr[Any] | str | None = None,
         model_settings: ModelSettings | None = None,
         retries: int | None = None,
         validation_context: Any = None,
@@ -789,9 +778,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Returns:
             A new Agent instance.
         """
-        from pydantic_ai.agent.spec import AgentSpec as _AgentSpecModel
-
-        spec = _AgentSpecModel.from_file(path)
+        spec = AgentSpec.from_file(path)
         return cls.from_spec(spec, **kwargs)
 
     @staticmethod
