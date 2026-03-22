@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from pydantic_ai import AgentEventStream
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import (
@@ -23,6 +24,7 @@ from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.exceptions import SkipModelRequest, SkipToolExecution, SkipToolValidation
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    FunctionToolCallEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -2370,3 +2372,172 @@ class TestPrepareToolsCapability:
         from pydantic_ai.capabilities import PrepareTools
 
         assert PrepareTools.get_serialization_name() is None
+
+
+class TestAgentEventStream:
+    """Tests for the AgentEventStream base class."""
+
+    async def test_passthrough_all_events(self):
+        """By default, all events pass through unchanged."""
+        observed: list[AgentStreamEvent] = []
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+        )
+
+        stream_handler: AgentEventStream[AgentStreamEvent] = AgentEventStream()
+
+        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream_handler.transform_stream(stream):
+                observed.append(event)
+
+        await agent.run('hello', event_stream_handler=handler)
+        assert len(observed) > 0
+
+    async def test_selective_override_passthrough(self):
+        """Overriding one handler leaves others as passthrough."""
+        tool_calls: list[str] = []
+        all_events: list[AgentStreamEvent] = []
+
+        @dataclass
+        class ToolLogger(AgentEventStream[AgentStreamEvent]):
+            async def handle_function_tool_call(self, event: FunctionToolCallEvent) -> AsyncIterator[AgentStreamEvent]:
+                tool_calls.append(event.part.tool_name)
+                yield event
+
+        agent = Agent(
+            FunctionModel(tool_calling_model, stream_function=tool_calling_stream_function),
+        )
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'
+
+        logger = ToolLogger()
+
+        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in logger.transform_stream(stream):
+                all_events.append(event)
+
+        await agent.run('call tool', event_stream_handler=handler)
+        assert 'my_tool' in tool_calls
+        # Non-tool events also pass through (PartStartEvent, etc.)
+        assert len(all_events) > len(tool_calls)
+
+    async def test_as_event_stream_handler(self):
+        """AgentEventStream.__call__ works directly as event_stream_handler."""
+        call_count = 0
+
+        @dataclass
+        class CountingStream(AgentEventStream[AgentStreamEvent]):
+            async def handle_event(self, event: AgentStreamEvent) -> AsyncIterator[AgentStreamEvent]:
+                nonlocal call_count
+                call_count += 1
+                yield event
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+        )
+        handler = CountingStream()
+        await agent.run('hello', event_stream_handler=handler)
+        assert call_count > 0
+
+    async def test_in_wrap_run_event_stream(self):
+        """AgentEventStream works inside a capability's wrap_run_event_stream."""
+        tool_names: list[str] = []
+
+        @dataclass
+        class ToolAuditor(AgentEventStream[AgentStreamEvent]):
+            async def handle_function_tool_call(self, event: FunctionToolCallEvent) -> AsyncIterator[AgentStreamEvent]:
+                tool_names.append(event.part.tool_name)
+                yield event
+
+        @dataclass
+        class AuditCap(AbstractCapability[Any]):
+            async def wrap_run_event_stream(
+                self,
+                ctx: RunContext[Any],
+                *,
+                stream: AsyncIterable[AgentStreamEvent],
+            ) -> AsyncIterable[AgentStreamEvent]:
+                return ToolAuditor().transform_stream(stream)
+
+        agent = Agent(
+            FunctionModel(tool_calling_model, stream_function=tool_calling_stream_function),
+            capabilities=[AuditCap()],
+        )
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'
+
+        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for _ in stream:
+                pass
+
+        await agent.run('call tool', event_stream_handler=handler)
+        assert 'my_tool' in tool_names
+
+    async def test_lifecycle_hooks_fire(self):
+        """Lifecycle hooks (before_stream, after_stream) fire correctly."""
+        log: list[str] = []
+
+        @dataclass
+        class LifecycleStream(AgentEventStream[AgentStreamEvent]):
+            async def before_stream(self) -> AsyncIterator[AgentStreamEvent]:
+                log.append('before_stream')
+                return
+                yield
+
+            async def after_stream(self) -> AsyncIterator[AgentStreamEvent]:
+                log.append('after_stream')
+                return
+                yield
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+        )
+
+        handler = LifecycleStream()
+        await agent.run('hello', event_stream_handler=handler)
+        assert 'before_stream' in log
+        assert 'after_stream' in log
+
+    async def test_turn_tracking(self):
+        """Turn tracking hooks fire for request/response transitions."""
+        log: list[str] = []
+
+        @dataclass
+        class TurnTracker(AgentEventStream[AgentStreamEvent]):
+            async def before_request(self) -> AsyncIterator[AgentStreamEvent]:
+                log.append('before_request')
+                return
+                yield
+
+            async def before_response(self) -> AsyncIterator[AgentStreamEvent]:
+                log.append('before_response')
+                return
+                yield
+
+            async def after_request(self) -> AsyncIterator[AgentStreamEvent]:
+                log.append('after_request')
+                return
+                yield
+
+            async def after_response(self) -> AsyncIterator[AgentStreamEvent]:
+                log.append('after_response')
+                return
+                yield
+
+        agent = Agent(
+            FunctionModel(tool_calling_model, stream_function=tool_calling_stream_function),
+        )
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'
+
+        handler = TurnTracker()
+        await agent.run('call tool', event_stream_handler=handler)
+        # With tool calling: response → request (tool call) → response (final)
+        assert 'before_response' in log
+        assert 'before_request' in log

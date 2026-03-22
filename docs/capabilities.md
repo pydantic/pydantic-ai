@@ -408,7 +408,51 @@ class StreamAuditor(AbstractCapability[Any]):
         return _audit()
 ```
 
-For building web UIs that transform streamed events into protocol-specific formats (like SSE), see the [UI event streams](ui/overview.md) documentation and the [`UIEventStream`][pydantic_ai.ui.UIEventStream] base class.
+For more structured event handling, you can use [`AgentEventStream`][pydantic_ai.ui.AgentEventStream] — a base class with typed dispatch that routes events to specific `handle_*` methods. Override only the handlers you care about; all other events pass through unchanged:
+
+```python {title="event_stream_handler_example.py" test="skip"}
+from collections.abc import AsyncIterable, AsyncIterator
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import AgentEventStream, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.messages import AgentStreamEvent, FunctionToolCallEvent
+
+
+@dataclass
+class ToolAuditor(AgentEventStream[AgentStreamEvent]):
+    """Logs function tool calls while passing all events through."""
+
+    async def handle_function_tool_call(
+        self, event: FunctionToolCallEvent
+    ) -> AsyncIterator[AgentStreamEvent]:
+        print(f'Tool called: {event.part.tool_name}')
+        yield event  # passthrough
+
+
+@dataclass
+class AuditCapability(AbstractCapability[Any]):
+    async def wrap_run_event_stream(
+        self,
+        ctx: RunContext[Any],
+        *,
+        stream: AsyncIterable[AgentStreamEvent],
+    ) -> AsyncIterable[AgentStreamEvent]:
+        return ToolAuditor().transform_stream(stream)
+```
+
+`AgentEventStream` also works as an [`event_stream_handler`][pydantic_ai.agent.EventStreamHandler] directly via its `__call__` method:
+
+```python {title="event_stream_handler_call_example.py" test="skip"}
+from pydantic_ai import Agent, AgentEventStream
+from pydantic_ai.messages import AgentStreamEvent
+
+handler = AgentEventStream[AgentStreamEvent]()
+agent = Agent('openai:gpt-4o', event_stream_handler=handler)
+```
+
+For building web UIs that transform streamed events into protocol-specific formats (like SSE), see the [UI event streams](ui/overview.md) documentation and the [`UIEventStream`][pydantic_ai.ui.UIEventStream] base class, which extends `AgentEventStream` with encoding and response generation.
 
 ## Example: building a guardrail
 
