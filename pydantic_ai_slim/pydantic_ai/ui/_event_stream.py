@@ -92,7 +92,7 @@ class AgentEventStream(Generic[EventT]):
         This makes `AgentEventStream` compatible with
         [`EventStreamHandler`][pydantic_ai.agent.EventStreamHandler]:
 
-        ```python
+        ```python {test="skip"}
         handler = MyEventStream()
         agent = Agent('model', event_stream_handler=handler)
         ```
