@@ -32,7 +32,7 @@ from .exceptions import ToolRetryError
 from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
 from .tools import (
-    BuiltinToolFunc,
+    AgentBuiltinTool,
     DeferredToolCallResult,
     DeferredToolResult,
     DeferredToolResults,
@@ -133,7 +133,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     root_capability: AbstractCapability[DepsT]
 
-    builtin_tools: list[AbstractBuiltinTool | BuiltinToolFunc[DepsT]] = dataclasses.field(repr=False)
+    builtin_tools: list[AgentBuiltinTool[DepsT]] = dataclasses.field(repr=False)
     tool_manager: ToolManager[DepsT]
 
     tracer: Tracer
@@ -472,6 +472,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
     _result: CallToolsNode[DepsT, NodeRunEndT] | None = field(repr=False, init=False, default=None)
     _did_stream: bool = field(repr=False, init=False, default=False)
+    _last_request_context: ModelRequestContext | None = field(repr=False, init=False, default=None)
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -662,6 +663,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 model_request_parameters=model_request_parameters,
             ),
         )
+        self._last_request_context = request_context
         messages = request_context.messages
         model_settings = request_context.model_settings
         model_request_parameters = request_context.model_request_parameters
@@ -714,7 +716,21 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         response.run_id = response.run_id or ctx.state.run_id
 
         run_context = build_run_context(ctx)
-        response = await ctx.deps.root_capability.after_model_request(run_context, response=response)
+        request_context = self._last_request_context or ModelRequestContext(
+            messages=ctx.state.message_history[:],
+            model_settings=ctx.deps.get_model_settings(run_context),
+            model_request_parameters=models.ModelRequestParameters(
+                function_tools=[],
+                builtin_tools=[],
+                output_mode='text',
+                output_tools=[],
+                output_object=None,
+                allow_text_output=True,
+            ),
+        )
+        response = await ctx.deps.root_capability.after_model_request(
+            run_context, request_context=request_context, response=response
+        )
 
         # Update usage
         ctx.state.usage.incr(response.usage)

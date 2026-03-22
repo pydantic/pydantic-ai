@@ -1085,6 +1085,7 @@ class LoggingCapability(AbstractCapability[Any]):
         self,
         ctx: RunContext[Any],
         *,
+        request_context: ModelRequestContext,
         response: ModelResponse,
     ) -> ModelResponse:
         self.log.append('after_model_request')
@@ -1282,6 +1283,7 @@ class TestModelRequestHooks:
                 self,
                 ctx: RunContext[Any],
                 *,
+                request_context: ModelRequestContext,
                 response: ModelResponse,
             ) -> ModelResponse:
                 return ModelResponse(parts=[TextPart(content='modified by after hook')])
@@ -1499,6 +1501,7 @@ class TestCompositionOrder:
                 self,
                 ctx: RunContext[Any],
                 *,
+                request_context: ModelRequestContext,
                 response: ModelResponse,
             ) -> ModelResponse:
                 log.append('cap1:after')
@@ -1522,7 +1525,9 @@ class TestCompositionOrder:
                 log.append('cap2:before')
                 return request_context
 
-            async def after_model_request(self, ctx: RunContext[Any], *, response: ModelResponse) -> ModelResponse:
+            async def after_model_request(
+                self, ctx: RunContext[Any], *, request_context: ModelRequestContext, response: ModelResponse
+            ) -> ModelResponse:
                 log.append('cap2:after')
                 return response
 
@@ -1985,6 +1990,7 @@ class TestSkipModelRequestInteraction:
                 self,
                 ctx: RunContext[Any],
                 *,
+                request_context: ModelRequestContext,
                 response: ModelResponse,
             ) -> ModelResponse:
                 log.append('after_model_request')

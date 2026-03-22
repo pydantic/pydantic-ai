@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic_ai.builtin_tools import WebFetchTool
-from pydantic_ai.tools import AgentDepsT, BuiltinToolFunc, Tool
+from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
 from .builtin_tool import BuiltinToolCapability
@@ -45,7 +45,7 @@ class WebFetch(BuiltinToolCapability[AgentDepsT]):
 
     def __init__(
         self,
-        builtin: WebFetchTool | BuiltinToolFunc[AgentDepsT] | bool = True,
+        builtin: WebFetchTool | AgentBuiltinTool[AgentDepsT] | bool = True,
         local: Tool[Any] | Callable[..., Any] | Literal[False] | None = None,
         *,
         allowed_domains: list[str] | None = None,

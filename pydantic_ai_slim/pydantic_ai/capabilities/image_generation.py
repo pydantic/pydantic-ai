@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic_ai.builtin_tools import ImageGenerationTool
-from pydantic_ai.tools import AgentDepsT, BuiltinToolFunc, Tool
+from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, Tool
 
 from .builtin_tool import BuiltinToolCapability
 
@@ -20,7 +20,7 @@ class ImageGeneration(BuiltinToolCapability[AgentDepsT]):
 
     def __init__(
         self,
-        builtin: ImageGenerationTool | BuiltinToolFunc[AgentDepsT] | bool = True,
+        builtin: ImageGenerationTool | AgentBuiltinTool[AgentDepsT] | bool = True,
         local: Tool[Any] | Callable[..., Any] | Literal[False] | None = None,
     ) -> None:
         self.builtin = builtin

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlparse
 
 from pydantic_ai.builtin_tools import MCPServerTool
-from pydantic_ai.tools import AgentDepsT, BuiltinToolFunc, Tool
+from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
 from .builtin_tool import BuiltinToolCapability
@@ -47,7 +47,7 @@ class MCP(BuiltinToolCapability[AgentDepsT]):
         self,
         *,
         url: str,
-        builtin: MCPServerTool | BuiltinToolFunc[AgentDepsT] | bool = True,
+        builtin: MCPServerTool | AgentBuiltinTool[AgentDepsT] | bool = True,
         local: MCPServer | FastMCPToolset[Any] | Callable[..., Any] | Literal[False] | None = None,
         id: str | None = None,
         authorization_token: str | None = None,

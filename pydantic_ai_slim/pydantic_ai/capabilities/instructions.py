@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import _instructions
+from pydantic_ai._instructions import AgentInstructions
 from pydantic_ai._template import TemplateStr
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.tools import AgentDepsT
@@ -13,9 +13,9 @@ from pydantic_ai.tools import AgentDepsT
 class Instructions(AbstractCapability[AgentDepsT]):
     """A capability that provides static or dynamic instructions."""
 
-    instructions: _instructions.AgentInstructions[AgentDepsT]
+    instructions: AgentInstructions[AgentDepsT]
 
-    def get_instructions(self) -> _instructions.AgentInstructions[AgentDepsT] | None:
+    def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         return self.instructions
 
     @classmethod

@@ -4,11 +4,11 @@ from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
-from pydantic_ai import _instructions, _system_prompt
-from pydantic_ai.builtin_tools import AbstractBuiltinTool
+from pydantic_ai import _system_prompt
+from pydantic_ai._instructions import AgentInstructions, normalize_instructions
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
-from pydantic_ai.tools import AgentDepsT, BuiltinToolFunc, RunContext, ToolDefinition
+from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
@@ -33,10 +33,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             return self
         return replace(self, capabilities=new_caps)
 
-    def get_instructions(self) -> _instructions.AgentInstructions[AgentDepsT] | None:
+    def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         instructions: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] = []
         for capability in self.capabilities:
-            instructions.extend(_instructions.normalize_instructions(capability.get_instructions()))
+            instructions.extend(normalize_instructions(capability.get_instructions()))
         return instructions or None
 
     def get_model_settings(self) -> ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings] | None:
@@ -77,8 +77,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 toolsets.append(DynamicToolset[AgentDepsT](toolset_func=toolset))
         return CombinedToolset(toolsets) if toolsets else None
 
-    def get_builtin_tools(self) -> Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]]:
-        builtin_tools: list[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] = []
+    def get_builtin_tools(self) -> Sequence[AgentBuiltinTool[AgentDepsT]]:
+        builtin_tools: list[AgentBuiltinTool[AgentDepsT]] = []
         for capability in self.capabilities:
             builtin_tools.extend(capability.get_builtin_tools() or [])
         return builtin_tools
@@ -166,10 +166,11 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
+        request_context: ModelRequestContext,
         response: ModelResponse,
     ) -> ModelResponse:
         for capability in reversed(self.capabilities):
-            response = await capability.after_model_request(ctx, response=response)
+            response = await capability.after_model_request(ctx, request_context=request_context, response=response)
         return response
 
     async def wrap_model_request(
