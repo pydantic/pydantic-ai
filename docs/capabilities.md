@@ -31,7 +31,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import Instructions, ModelSettings, Thinking, WebSearch
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-20250514',
+    'anthropic:claude-opus-4-6',
     capabilities=[
         Instructions('You are a research assistant. Be thorough and cite sources.'),
         Thinking(),
@@ -257,7 +257,7 @@ print(logger.nodes)
 | Hook | Signature | Purpose |
 |---|---|---|
 | [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] | `(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext` | Modify messages, settings, or parameters before the model call |
-| [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request] | `(ctx: RunContext, *, response: ModelResponse) -> ModelResponse` | Modify the model's response |
+| [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request] | `(ctx: RunContext, *, request_context: ModelRequestContext, response: ModelResponse) -> ModelResponse` | Modify the model's response |
 | [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request] | `(ctx: RunContext, *, request_context: ModelRequestContext, handler: (ModelRequestContext) -> ModelResponse) -> ModelResponse` | Wrap the model call |
 
 [`ModelRequestContext`][pydantic_ai.capabilities.ModelRequestContext] bundles `messages`, `model_settings`, and `model_request_parameters` into a single object, making the signature future-proof.
@@ -376,7 +376,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, ModelRequestContext
 from pydantic_ai.messages import ModelResponse, TextPart
 from pydantic_ai.models.test import TestModel
 
@@ -389,6 +389,7 @@ class PIIRedactionGuardrail(AbstractCapability[Any]):
         self,
         ctx: RunContext[Any],
         *,
+        request_context: ModelRequestContext,
         response: ModelResponse,
     ) -> ModelResponse:
         for part in response.parts:
