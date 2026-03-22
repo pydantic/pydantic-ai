@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import inspect
-from typing import Any, Generic, cast
+from typing import Any, Generic, cast, get_args, get_origin
 
 from pydantic import GetCoreSchemaHandler, TypeAdapter
 from pydantic_core import CoreSchema, core_schema
 
 from pydantic_ai._run_context import RunContext
+from pydantic_ai._utils import get_function_type_hints
 from pydantic_ai.tools import AgentDepsT
 
 
@@ -20,6 +21,10 @@ class TemplateStr(Generic[AgentDepsT]):
 
     Uses [pydantic-handlebars](https://github.com/pydantic/pydantic-handlebars)
     for template compilation, schema validation, and rendering.
+
+    When used with an ``Agent``, ``deps_type`` is inferred automatically from
+    the agent's validation context, so you only need to pass it when constructing
+    a ``TemplateStr`` outside of an agent (e.g. for standalone rendering).
 
     Example:
         ```python {test="skip"}
@@ -35,7 +40,7 @@ class TemplateStr(Generic[AgentDepsT]):
         agent = Agent(
             'openai:gpt-5',
             deps_type=MyDeps,
-            instructions=TemplateStr('Hello {{name}}', deps_type=MyDeps),
+            instructions=TemplateStr('Hello {{name}}'),
         )
         ```
     """
@@ -131,8 +136,6 @@ def validate_from_spec_args(
     to automatically compile template strings (containing ``{{``) into TemplateStr
     instances using the deps_type/deps_schema from the validation context.
     """
-    from pydantic_ai._utils import get_function_type_hints
-
     try:
         hints = get_function_type_hints(cls.from_spec)
     except Exception:  # pragma: no cover — defensive; depends on Pydantic internals
@@ -164,10 +167,9 @@ def validate_from_spec_args(
 
 def _hint_contains_template_str(hint: Any) -> bool:
     """Check if a type hint includes TemplateStr."""
-    origin = getattr(hint, '__origin__', None)
-    if hint is TemplateStr or origin is TemplateStr:
+    if hint is TemplateStr or get_origin(hint) is TemplateStr:
         return True
-    args = getattr(hint, '__args__', None)
+    args = get_args(hint)
     if args:
         return any(_hint_contains_template_str(a) for a in args)
     return False

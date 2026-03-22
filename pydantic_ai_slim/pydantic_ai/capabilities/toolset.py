@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 from pydantic_ai.tools import AgentDepsT
-from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets import AgentToolset
 
 from .abstract import AbstractCapability
 
@@ -10,11 +10,11 @@ from .abstract import AbstractCapability
 class Toolset(AbstractCapability[AgentDepsT]):
     """A capability that provides a toolset."""
 
-    toolset: AbstractToolset[AgentDepsT]
+    toolset: AgentToolset[AgentDepsT]
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
-        return None
+        return None  # Not spec-serializable (takes a callable)
 
-    def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
+    def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         return self.toolset
