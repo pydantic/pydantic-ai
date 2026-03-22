@@ -199,7 +199,7 @@ Capabilities can hook into four lifecycle points, each with up to three variants
 
 ### Short-circuit exceptions
 
-Before diving into the individual hooks, it's worth knowing about three exceptions that allow `before_*` and `wrap_*` hooks to short-circuit the normal flow:
+Three exceptions allow hooks to short-circuit the normal flow with a replacement value:
 
 | Exception | Raised in | Effect |
 |---|---|---|
@@ -251,6 +251,38 @@ agent.run_sync('hello')
 print(logger.nodes)
 #> ['UserPromptNode', 'ModelRequestNode', 'CallToolsNode']
 ```
+
+You can also use `wrap_node_run` to modify graph progression — for example, limiting the number of model requests per run:
+
+```python {title="node_modification_example.py" test="skip" lint="skip"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_graph import End
+
+from pydantic_ai import RunContext
+from pydantic_ai._agent_graph import ModelRequestNode
+from pydantic_ai.capabilities import AbstractCapability
+
+
+@dataclass
+class MaxModelRequests(AbstractCapability[Any]):
+    """Limits the number of model requests per run by ending early."""
+
+    max_requests: int = 5
+    _count: int = 0
+
+    async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+        if isinstance(node, ModelRequestNode):
+            self._count += 1
+            if self._count > self.max_requests:
+                from pydantic_ai.result import FinalResult
+
+                return End(FinalResult(output='Max model requests reached'))
+        return await handler(node)
+```
+
+See [Iterating Over an Agent's Graph](agent.md#iterating-over-an-agents-graph) for more about the agent graph and its node types.
 
 ### Model request hooks
 
@@ -344,12 +376,14 @@ from typing import Any
 
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import AgentStreamEvent, PartStartEvent, TextPart
+from pydantic_ai.messages import AgentStreamEvent, FunctionToolCallEvent
 
 
 @dataclass
-class StreamLogger(AbstractCapability[Any]):
-    """Logs text parts as they stream."""
+class ToolCallCounter(AbstractCapability[Any]):
+    """Counts tool calls during a streamed run."""
+
+    tool_call_count: int = 0
 
     async def wrap_run_event_stream(
         self,
@@ -357,14 +391,16 @@ class StreamLogger(AbstractCapability[Any]):
         *,
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
-        async def _wrap():
+        async def _counting_stream():
             async for event in stream:
-                if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
-                    print(f'Streaming text: {event.part.content!r}')
+                if isinstance(event, FunctionToolCallEvent):
+                    self.tool_call_count += 1
                 yield event
 
-        return _wrap()
+        return _counting_stream()
 ```
+
+For building web UIs that consume streamed events, see the [UI event streams](ui/overview.md) documentation.
 
 ## Example: building a guardrail
 
@@ -576,7 +612,39 @@ agent = Agent.from_spec(
 )
 ```
 
-Override [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec] only when the constructor takes non-serializable types (like callables) or when you need to transform the spec arguments into a different constructor signature.
+Override [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec] only when the constructor takes non-serializable types (like callables) or when you need to transform the spec arguments into a different constructor signature:
+
+```python {title="from_spec_override_example.py" test="skip" lint="skip"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai.capabilities import AbstractCapability
+
+
+PROMPT_LIBRARY = {
+    'formal': 'Use formal, professional language.',
+    'casual': 'Be friendly and conversational.',
+}
+
+
+@dataclass
+class PromptStyle(AbstractCapability[Any]):
+    """Applies a prompt style from a library."""
+
+    instructions_text: str
+
+    @classmethod
+    def from_spec(cls, style_name: str) -> 'PromptStyle':
+        text = PROMPT_LIBRARY.get(style_name)
+        if text is None:
+            raise ValueError(f'Unknown style: {style_name!r}')
+        return cls(instructions_text=text)
+
+    def get_instructions(self):
+        return self.instructions_text
+```
+
+Here, `from_spec('formal')` looks up a prompt from a library — something the default `cls(style_name='formal')` can't do since `instructions_text` expects the resolved text, not a lookup key.
 
 Pass custom capability types via the `custom_capability_types` parameter so the spec resolver can find them.
 
@@ -592,11 +660,36 @@ The [`AgentSpec`][pydantic_ai.agent.spec.AgentSpec] model represents the full sp
 | `instructions` | [`TemplateStr`][pydantic_ai.TemplateStr] ` \| str \| list \| None` | System prompt instructions (supports templates) |
 | `model_settings` | `dict \| None` | Model settings |
 | `capabilities` | `list[CapabilitySpec]` | Capabilities |
+| `deps_schema` | `dict \| None` | JSON Schema for [dependencies](dependencies.md) (validates template fields) |
+| `output_schema` | `dict \| None` | JSON Schema for structured output (creates a dict-based output type) |
 | `retries` | `int` | Default tool retries |
 | `output_retries` | `int \| None` | Output validation retries |
 | `end_strategy` | `EndStrategy` | When to stop (`'early'` or `'exhaustive'`) |
 | `tool_timeout` | `float \| None` | Default tool timeout in seconds |
 | `instrument` | `bool \| None` | Enable [Logfire](logfire.md) instrumentation |
 | `metadata` | `dict \| None` | Agent metadata |
+
+When `deps_schema` or `output_schema` are provided, the agent validates dependencies and structured output against the given JSON Schema:
+
+```yaml {title="agent_with_schema.yaml" test="skip"}
+model: anthropic:claude-opus-4-6
+deps_schema:
+  type: object
+  properties:
+    user_name:
+      type: string
+  required: [user_name]
+output_schema:
+  type: object
+  properties:
+    answer:
+      type: string
+    confidence:
+      type: number
+  required: [answer, confidence]
+instructions: "You are helping {{user_name}}. Always include a confidence score."
+capabilities:
+  - Thinking
+```
 
 Specs can be loaded from files directly via [`Agent.from_file`][pydantic_ai.Agent.from_file], or via [`AgentSpec.from_file`][pydantic_ai.agent.spec.AgentSpec.from_file] for more control. Specs can be saved with [`AgentSpec.to_file`][pydantic_ai.agent.spec.AgentSpec.to_file], which also generates a JSON schema for editor autocompletion.
