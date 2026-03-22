@@ -39,6 +39,7 @@ from .._agent_graph import (
     build_run_context,
     capture_run_messages,
 )
+from .._instructions import AgentInstructions
 from .._output import OutputToolset
 from .._template import TemplateStr
 from .._tool_manager import ParallelExecutionMode, ToolManager
@@ -200,7 +201,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         *,
         output_type: OutputSpec[OutputDataT] = str,
-        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        instructions: AgentInstructions[AgentDepsT] = None,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
@@ -232,7 +233,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         *,
         output_type: OutputSpec[OutputDataT] = str,
-        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        instructions: AgentInstructions[AgentDepsT] = None,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
@@ -262,7 +263,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         *,
         output_type: OutputSpec[OutputDataT] = str,
-        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        instructions: AgentInstructions[AgentDepsT] = None,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
@@ -362,13 +363,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 a [`ConcurrencyLimiter`][pydantic_ai.ConcurrencyLimiter] for sharing limits across
                 multiple agents, or None (default) for no limiting. When the limit is reached, additional calls
                 to `run()` or `iter()` will wait until a slot becomes available.
-            capabilities: Optional list of capabilities to configure the agent with.
-                Built-in capabilities include [`Instructions`][pydantic_ai.capabilities.Instructions],
-                [`Thinking`][pydantic_ai.capabilities.Thinking],
-                [`ModelSettings`][pydantic_ai.capabilities.ModelSettings],
-                [`WebSearch`][pydantic_ai.capabilities.WebSearch],
-                [`HistoryProcessor`][pydantic_ai.capabilities.HistoryProcessor], and
-                [`Toolset`][pydantic_ai.capabilities.Toolset].
+            capabilities: Optional list of [capabilities](https://ai.pydantic.dev/capabilities/) to configure the agent with.
                 Custom capabilities can be created by subclassing
                 [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability].
         """
@@ -488,7 +483,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
         output_type: OutputSpec[Any] = str,
-        instructions: _instructions.AgentInstructions[Any] = None,
+        instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
         description: str | None = None,
@@ -522,7 +517,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
         output_type: OutputSpec[Any] = str,
-        instructions: _instructions.AgentInstructions[Any] = None,
+        instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
         description: str | None = None,
@@ -555,7 +550,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
         output_type: OutputSpec[Any] = str,
-        instructions: _instructions.AgentInstructions[Any] = None,
+        instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
         description: str | None = None,
@@ -623,7 +618,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         from pydantic_ai._spec import build_registry, load_from_registry
         from pydantic_ai._template import validate_from_spec_args
         from pydantic_ai.agent.spec import AgentSpec as _AgentSpecModel
-        from pydantic_ai.capabilities import DEFAULT_CAPABILITY_TYPES
+        from pydantic_ai.capabilities import CAPABILITY_TYPES
 
         template_context: dict[str, Any] = {
             'deps_type': deps_type if deps_type is not type(None) else None,
@@ -646,7 +641,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         registry = build_registry(
             custom_types=custom_capability_types,
-            defaults=DEFAULT_CAPABILITY_TYPES,
+            defaults=tuple(CAPABILITY_TYPES.values()),
             get_name=lambda c: c.get_serialization_name(),
             label='capability',
         )
@@ -716,7 +711,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
         output_type: OutputSpec[Any] = str,
-        instructions: _instructions.AgentInstructions[Any] = None,
+        instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
         description: str | None = None,
@@ -750,7 +745,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
         output_type: OutputSpec[Any] = str,
-        instructions: _instructions.AgentInstructions[Any] = None,
+        instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
         description: str | None = None,
@@ -874,7 +869,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        instructions: AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -894,7 +889,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        instructions: AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -914,7 +909,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        instructions: AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -1441,7 +1436,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
-        instructions: _instructions.AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        instructions: AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
         metadata: AgentMetadata[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
@@ -2071,7 +2066,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     def _get_instructions(
         self,
-        additional_instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        additional_instructions: AgentInstructions[AgentDepsT] = None,
         cap_instructions: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] | None = None,
     ) -> tuple[str | None, list[_system_prompt.SystemPromptRunner[AgentDepsT]]]:
         override_instructions = self._override_instructions.get()

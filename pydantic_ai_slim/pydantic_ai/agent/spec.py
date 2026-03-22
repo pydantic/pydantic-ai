@@ -22,9 +22,9 @@ CapabilitySpec = NamedSpec
 """The specification of a capability to be constructed.
 
 Supports the same short forms as `EvaluatorSpec`:
-* ``'MyCapability'`` — no arguments
-* ``{'MyCapability': single_arg}`` — a single positional argument
-* ``{'MyCapability': {k1: v1, k2: v2}}`` — keyword arguments
+* `'MyCapability'` — no arguments
+* `{'MyCapability': single_arg}` — a single positional argument
+* `{'MyCapability': {k1: v1, k2: v2}}` — keyword arguments
 """
 
 DEFAULT_SCHEMA_PATH_TEMPLATE = './{stem}_schema.json'
@@ -36,6 +36,7 @@ _YAML_SCHEMA_LINE_PREFIX = '# yaml-language-server: $schema='
 class AgentSpec(BaseModel):
     """Specification for constructing an Agent from a dict/YAML/JSON."""
 
+    # $schema is included to avoid validation fails from the `$schema` key, see `_add_json_schema` below for context
     json_schema_path: str | None = Field(default=None, alias='$schema')
     model: str
     name: str | None = None
@@ -217,7 +218,7 @@ def _get_capability_registry(
     custom_types: Sequence[type[AbstractCapability[Any]]] = (),
 ) -> Mapping[str, type[AbstractCapability[Any]]]:
     """Create a registry of capability types from default and custom types."""
-    from pydantic_ai.capabilities import DEFAULT_CAPABILITY_TYPES
+    from pydantic_ai.capabilities import CAPABILITY_TYPES
     from pydantic_ai.capabilities.abstract import AbstractCapability
 
     def _validate_capability(cls: type[AbstractCapability[Any]]) -> None:
@@ -228,7 +229,7 @@ def _get_capability_registry(
 
     return build_registry(
         custom_types=custom_types,
-        defaults=DEFAULT_CAPABILITY_TYPES,
+        defaults=tuple(CAPABILITY_TYPES.values()),
         get_name=lambda cls: cls.get_serialization_name(),
         label='capability',
         validate=_validate_capability,
