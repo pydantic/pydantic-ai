@@ -1000,15 +1000,42 @@ async def test_combined_propagates_for_run():
     assert run_combined.toolsets[1] is static  # unchanged
 
 
-async def test_combined_for_run_no_change():
-    """CombinedToolset returns self when no children change."""
+async def test_combined_for_run_always_fresh():
+    """CombinedToolset.for_run always returns a new instance for per-run isolation."""
     static1 = FunctionToolset(id='a')
     static2 = FunctionToolset(id='b')
     combined = CombinedToolset([static1, static2])
     ctx = build_run_context(None)
 
     run_combined = await combined.for_run(ctx)
-    assert run_combined is combined
+    assert run_combined is not combined
+    assert isinstance(run_combined, CombinedToolset)
+    # Children are unchanged (their for_run returns self)
+    assert run_combined.toolsets[0] is static1
+    assert run_combined.toolsets[1] is static2
+
+
+async def test_wrapper_propagates_for_run_step():
+    """Wrapper toolsets correctly propagate for_run_step to the wrapped toolset."""
+    inner = StatefulToolset(call_count=10)
+    wrapper = WrapperToolset(inner)
+    ctx = build_run_context(None)
+
+    # StatefulToolset doesn't override for_run_step, so inner returns self
+    step_wrapper = await wrapper.for_run_step(ctx)
+    assert step_wrapper is wrapper
+
+
+async def test_combined_propagates_for_run_step():
+    """CombinedToolset propagates for_run_step to all children."""
+    stateful = StatefulToolset(call_count=7)
+    static = FunctionToolset()
+    combined = CombinedToolset([stateful, static])
+    ctx = build_run_context(None)
+
+    # Both children return self from for_run_step, so combined returns self
+    step_combined = await combined.for_run_step(ctx)
+    assert step_combined is combined
 
 
 async def test_dynamic_toolset_for_run_step_manages_transitions():
