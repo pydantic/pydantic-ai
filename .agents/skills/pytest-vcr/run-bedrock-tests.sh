@@ -1,6 +1,6 @@
 #!/bin/bash
 # Run tests with AWS bedrock profile (assumes bedrock-test-role via ~/.aws/config).
-# Usage: .claude/skills/pytest-vcr/run-bedrock-tests.sh [pytest args...]
+# Usage: .agents/skills/pytest-vcr/run-bedrock-tests.sh [pytest args...]
 set -e
 
 export AWS_PROFILE=bedrock
