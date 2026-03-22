@@ -930,6 +930,9 @@ class StatefulToolset(AbstractToolset[None]):
     async def for_run(self, ctx: RunContext[None]) -> AbstractToolset[None]:
         return StatefulToolset(call_count=0, id=self._id)
 
+    async def for_run_step(self, ctx: RunContext[None]) -> AbstractToolset[None]:
+        return StatefulToolset(call_count=self.call_count + 1, id=self._id)
+
     async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
         return {}
 
@@ -953,12 +956,24 @@ async def test_for_run_returns_fresh_instance():
 
 
 async def test_for_run_step_default_returns_self():
-    """Default for_run_step returns self."""
-    toolset = StatefulToolset()
+    """Default for_run_step returns self for toolsets that don't override it."""
+    toolset = FunctionToolset()
     ctx = build_run_context(None)
 
     step_toolset = await toolset.for_run_step(ctx)
     assert step_toolset is toolset
+
+
+async def test_for_run_step_returns_new_instance():
+    """StatefulToolset.for_run_step returns a new instance with bumped step counter."""
+    toolset = StatefulToolset(call_count=3)
+    ctx = build_run_context(None)
+
+    step_toolset = await toolset.for_run_step(ctx)
+    assert step_toolset is not toolset
+    assert isinstance(step_toolset, StatefulToolset)
+    assert step_toolset.call_count == 4
+    assert toolset.call_count == 3  # original unchanged
 
 
 async def test_wrapper_propagates_for_run():
@@ -1015,27 +1030,54 @@ async def test_combined_for_run_always_fresh():
     assert run_combined.toolsets[1] is static2
 
 
-async def test_wrapper_propagates_for_run_step():
-    """Wrapper toolsets correctly propagate for_run_step to the wrapped toolset."""
-    inner = StatefulToolset(call_count=10)
+async def test_wrapper_propagates_for_run_step_no_change():
+    """Wrapper returns self when wrapped toolset returns self from for_run_step."""
+    inner = FunctionToolset()  # FunctionToolset.for_run_step returns self
     wrapper = WrapperToolset(inner)
     ctx = build_run_context(None)
 
-    # StatefulToolset doesn't override for_run_step, so inner returns self
     step_wrapper = await wrapper.for_run_step(ctx)
     assert step_wrapper is wrapper
 
 
+async def test_wrapper_propagates_for_run_step():
+    """Wrapper creates new wrapper when wrapped toolset returns new instance from for_run_step."""
+    inner = StatefulToolset(call_count=10)
+    wrapper = WrapperToolset(inner)
+    ctx = build_run_context(None)
+
+    step_wrapper = await wrapper.for_run_step(ctx)
+    assert step_wrapper is not wrapper
+    assert isinstance(step_wrapper, WrapperToolset)
+    inner_after = step_wrapper.wrapped
+    assert isinstance(inner_after, StatefulToolset)
+    assert inner_after.call_count == 11  # bumped by for_run_step
+
+
+async def test_combined_propagates_for_run_step_no_change():
+    """CombinedToolset returns self when no children change from for_run_step."""
+    static1 = FunctionToolset(id='a')
+    static2 = FunctionToolset(id='b')
+    combined = CombinedToolset([static1, static2])
+    ctx = build_run_context(None)
+
+    step_combined = await combined.for_run_step(ctx)
+    assert step_combined is combined
+
+
 async def test_combined_propagates_for_run_step():
-    """CombinedToolset propagates for_run_step to all children."""
+    """CombinedToolset creates new combined when a child returns new instance from for_run_step."""
     stateful = StatefulToolset(call_count=7)
     static = FunctionToolset()
     combined = CombinedToolset([stateful, static])
     ctx = build_run_context(None)
 
-    # Both children return self from for_run_step, so combined returns self
     step_combined = await combined.for_run_step(ctx)
-    assert step_combined is combined
+    assert step_combined is not combined
+    assert isinstance(step_combined, CombinedToolset)
+    assert isinstance(step_combined.toolsets[0], StatefulToolset)
+    assert step_combined.toolsets[0].call_count == 8  # bumped by for_run_step
+    assert step_combined.toolsets[1] is static  # unchanged
 
 
 async def test_dynamic_toolset_for_run_step_manages_transitions():
