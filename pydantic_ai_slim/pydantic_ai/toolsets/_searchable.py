@@ -45,7 +45,6 @@ class _SearchToolIndex:
 
 @dataclass(kw_only=True)
 class _SearchTool(ToolsetTool[AgentDepsT]):
-    deferred_tools: dict[str, ToolsetTool[AgentDepsT]]
     search_index: list[_SearchToolIndex]
 
 
@@ -111,7 +110,6 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             tool_def=search_tool_def,
             max_retries=1,
             args_validator=_search_tool_args_ta.validator,  # pyright: ignore[reportArgumentType]
-            deferred_tools=deferred,
             search_index=search_index,
         )
 
