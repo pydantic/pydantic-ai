@@ -41,7 +41,7 @@ class MCP(BuiltinToolCapability[AgentDepsT]):
     """Filter to only these tools. Requires builtin support."""
 
     description: str | None
-    """Description of the MCP server. Requires builtin support."""
+    """Description of the MCP server. Builtin-only; ignored by local tools."""
 
     def __init__(
         self,
@@ -108,4 +108,4 @@ class MCP(BuiltinToolCapability[AgentDepsT]):
     def _requires_builtin(self) -> bool:
         # allowed_tools is a genuine constraint the local fallback can't enforce;
         # description is just metadata and degrades gracefully
-        return bool(self.allowed_tools)
+        return self.allowed_tools is not None

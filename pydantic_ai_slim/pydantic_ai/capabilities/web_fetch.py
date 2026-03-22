@@ -45,9 +45,9 @@ class WebFetch(BuiltinToolCapability[AgentDepsT]):
 
     def __init__(
         self,
+        *,
         builtin: WebFetchTool | AgentBuiltinTool[AgentDepsT] | bool = True,
         local: Tool[Any] | Callable[..., Any] | Literal[False] | None = None,
-        *,
         allowed_domains: list[str] | None = None,
         blocked_domains: list[str] | None = None,
         max_uses: int | None = None,
@@ -84,4 +84,4 @@ class WebFetch(BuiltinToolCapability[AgentDepsT]):
         return Tool(_web_fetch_impl, name='web_fetch', description='Fetch the text content of a URL.')
 
     def _requires_builtin(self) -> bool:
-        return bool(self.allowed_domains or self.blocked_domains or self.max_uses)
+        return self.allowed_domains is not None or self.blocked_domains is not None or self.max_uses is not None

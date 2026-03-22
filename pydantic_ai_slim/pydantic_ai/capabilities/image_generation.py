@@ -20,6 +20,7 @@ class ImageGeneration(BuiltinToolCapability[AgentDepsT]):
 
     def __init__(
         self,
+        *,
         builtin: ImageGenerationTool | AgentBuiltinTool[AgentDepsT] | bool = True,
         local: Tool[Any] | Callable[..., Any] | Literal[False] | None = None,
     ) -> None:

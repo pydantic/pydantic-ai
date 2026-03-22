@@ -36,9 +36,9 @@ class WebSearch(BuiltinToolCapability[AgentDepsT]):
 
     def __init__(
         self,
+        *,
         builtin: WebSearchTool | AgentBuiltinTool[AgentDepsT] | bool = True,
         local: Tool[Any] | Callable[..., Any] | Literal[False] | None = None,
-        *,
         search_context_size: Literal['low', 'medium', 'high'] | None = None,
         user_location: WebSearchUserLocation | None = None,
         blocked_domains: list[str] | None = None,
@@ -80,4 +80,4 @@ class WebSearch(BuiltinToolCapability[AgentDepsT]):
             return None
 
     def _requires_builtin(self) -> bool:
-        return bool(self.blocked_domains or self.allowed_domains or self.max_uses)
+        return self.blocked_domains is not None or self.allowed_domains is not None or self.max_uses is not None
