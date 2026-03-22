@@ -28,10 +28,6 @@ class ModelSettings(AbstractCapability[AgentDepsT]):
     settings: _ModelSettings | Callable[[RunContext[AgentDepsT]], _ModelSettings]
 
     @classmethod
-    def get_serialization_name(cls) -> str | None:
-        return 'ModelSettings'
-
-    @classmethod
     def from_spec(cls, *args: Any, **kwargs: Any) -> ModelSettings[Any]:
         """Create from spec. Accepts model settings as kwargs (e.g. max_tokens=4096)."""
         if args:
