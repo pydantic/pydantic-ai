@@ -596,7 +596,7 @@ In [agent specs](#agent-specs), strings containing `{{` are automatically conver
 Capabilities integrate with the YAML/JSON agent spec system, allowing you to define agents declaratively:
 
 ```yaml {title="agent.yaml" test="skip"}
-model: anthropic:claude-sonnet-4-20250514
+model: anthropic:claude-opus-4-6
 instructions: You are a helpful research assistant.
 capabilities:
   - Thinking
@@ -701,7 +701,7 @@ class UserContext:
 
 agent = Agent.from_spec(
     {
-        'model': 'anthropic:claude-sonnet-4-20250514',
+        'model': 'anthropic:claude-opus-4-6',
         'instructions': 'You are helping {{user_name}}.',
         'capabilities': ['Thinking'],
     },
@@ -754,7 +754,7 @@ When provided (and no `output_type` keyword argument is passed to `from_spec`), 
     The model's response is not validated against the schema's `properties` or `required` fields — it is accepted as a plain dict. The schema serves as an instruction to the model, not a runtime validation constraint.
 
 ```yaml {title="agent_with_schema.yaml" test="skip"}
-model: anthropic:claude-sonnet-4-20250514
+model: anthropic:claude-opus-4-6
 deps_schema:
   type: object
   properties:
@@ -782,7 +782,7 @@ capabilities:
 from pydantic_ai.agent.spec import AgentSpec
 
 spec = AgentSpec(
-    model='anthropic:claude-sonnet-4-20250514',
+    model='anthropic:claude-opus-4-6',
     instructions='You are a helpful assistant.',
     capabilities=['Thinking', 'WebSearch'],
 )
