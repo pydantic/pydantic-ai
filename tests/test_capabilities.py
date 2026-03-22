@@ -2452,7 +2452,9 @@ class TestRunWithSpec:
         """Spec model_settings are merged with run model_settings."""
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return make_text_response('ok')
+            max_tokens = info.model_settings.get('max_tokens') if info.model_settings else None
+            temperature = info.model_settings.get('temperature') if info.model_settings else None
+            return make_text_response(f'max_tokens={max_tokens} temperature={temperature}')
 
         agent = Agent(FunctionModel(model_fn))
 
@@ -2461,7 +2463,8 @@ class TestRunWithSpec:
             spec={'model_settings': {'max_tokens': 100}},
             model_settings={'temperature': 0.5},
         )
-        assert result.output == 'ok'
+        assert 'max_tokens=100' in result.output
+        assert 'temperature=0.5' in result.output
 
     async def test_run_with_spec_partial_no_model(self):
         """Partial spec without model works if agent has a model."""

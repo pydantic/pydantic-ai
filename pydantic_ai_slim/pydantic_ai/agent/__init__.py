@@ -635,16 +635,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Returns:
             A new Agent instance.
         """
-        from pydantic_ai.agent.spec import AgentSpec as _AgentSpecModel
-
-        template_context: dict[str, Any] = {
-            'deps_type': deps_type if deps_type is not type(None) else None,
-        }
-        if isinstance(spec, dict):
-            validated_spec = _AgentSpecModel.model_validate(spec, context=template_context)
-        else:
-            validated_spec = spec
-        template_context['deps_schema'] = validated_spec.deps_schema
+        validated_spec, template_context = _validate_spec(spec, deps_type)
 
         effective_output_type: OutputSpec[Any]
         if output_type is not str:
@@ -1488,35 +1479,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if spec is None:
             return None
 
-        from pydantic_ai.agent.spec import AgentSpec as _AgentSpecModel
-
-        deps_type = self._deps_type
-        template_context: dict[str, Any] = {
-            'deps_type': deps_type if deps_type is not type(None) else None,
-        }
-        if isinstance(spec, dict):
-            validated_spec = _AgentSpecModel.model_validate(spec, context=template_context)
-        else:
-            validated_spec = spec
-        template_context['deps_schema'] = validated_spec.deps_schema
+        validated_spec, template_context = _validate_spec(spec, self._deps_type)
 
         capabilities = _capabilities_from_spec(validated_spec, custom_capability_types, template_context)
         combined = CombinedCapability(capabilities) if capabilities else None
 
         # Warn for unsupported fields with non-default values
-        _unsupported_fields = {
-            'description': None,
-            'end_strategy': 'early',
-            'retries': 1,
-            'output_retries': None,
-            'tool_timeout': None,
-            'instrument': None,
-            'output_schema': None,
-            'deps_schema': None,
-        }
-        for field_name, default_val in _unsupported_fields.items():
-            val = getattr(validated_spec, field_name, default_val)
-            if val != default_val:
+        for field_name in _UNSUPPORTED_SPEC_FIELDS:
+            field_info = type(validated_spec).model_fields[field_name]
+            if getattr(validated_spec, field_name) != field_info.default:
                 warnings.warn(
                     f'AgentSpec field {field_name!r} is not supported at run/override time and will be ignored',
                     UserWarning,
@@ -2453,6 +2424,43 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         async with self:
             yield
+
+
+_UNSUPPORTED_SPEC_FIELDS: tuple[str, ...] = (
+    'description',
+    'end_strategy',
+    'retries',
+    'output_retries',
+    'tool_timeout',
+    'instrument',
+    'output_schema',
+    'deps_schema',
+)
+"""AgentSpec fields that are not supported at run/override time."""
+
+
+def _validate_spec(
+    spec: dict[str, Any] | AgentSpec,
+    deps_type: type[Any],
+) -> tuple[AgentSpec, dict[str, Any]]:
+    """Validate a spec dict/object and build the template context.
+
+    Shared by `Agent.from_spec()` and `Agent._resolve_spec()`.
+
+    Returns:
+        A tuple of (validated_spec, template_context).
+    """
+    from pydantic_ai.agent.spec import AgentSpec as _AgentSpecModel
+
+    template_context: dict[str, Any] = {
+        'deps_type': deps_type if deps_type is not type(None) else None,
+    }
+    if isinstance(spec, dict):
+        validated_spec = _AgentSpecModel.model_validate(spec, context=template_context)
+    else:
+        validated_spec = spec
+    template_context['deps_schema'] = validated_spec.deps_schema
+    return validated_spec, template_context
 
 
 def _capabilities_from_spec(
