@@ -77,13 +77,11 @@ class MontyEnvironment(ExecutionEnvironment):
             return textwrap.dedent(
                 """
                 The runtime uses a restricted Python subset:
-                - you cannot use the standard library except builtin functions and the following modules: `sys`, `typing`, `asyncio`
-                - this means `collections`, `json`, `re`, `math`, `datetime`, `itertools`, `functools`, etc. are NOT available — use plain dicts, lists, and builtins instead
+                - you cannot use the standard library except builtin functions and the following modules: `sys`, `typing`, `asyncio`, `math`, `re`
+                - this means `collections`, `json`, `datetime`, `itertools`, `functools`, etc. are NOT available — use plain dicts, lists, and builtins instead
                 - you cannot use third party libraries
                 - you cannot define classes
-                - `sorted()` and `.sort()` do not support keyword arguments (`key=`, `reverse=`) and cannot sort lists of tuples — only sort flat lists of numbers or strings. If you need a custom sort order, build the output list manually (e.g. find max in a loop)
                 - chained subscript assignment like `x[a][b] = val` is NOT supported — read into a local variable, modify it, then assign back: `inner = x[a]; inner[b] = val; x[a] = inner`
-                - set operators (`|`, `&`, `-`, `^`) are not supported — use `set.update()`, `set.add()`, or loop to combine sets
 
                 State persists across calls — variables and functions defined in previous calls are available in subsequent calls.
 
