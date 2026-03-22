@@ -69,8 +69,12 @@ class MCP(BuiltinToolCapability[AgentDepsT]):
     def _resolved_id(self) -> str:
         if self.id:
             return self.id
-        path = urlparse(self.url).path.rstrip('/')
-        return path.split('/')[-1] if path else self.url
+        # Include hostname to avoid collisions (e.g. two /sse URLs on different hosts)
+        parsed = urlparse(self.url)
+        path = parsed.path.rstrip('/')
+        slug = path.split('/')[-1] if path else ''
+        host = parsed.hostname or ''
+        return f'{host}-{slug}' if slug else host or self.url
 
     def _default_builtin(self) -> MCPServerTool:
         return MCPServerTool(

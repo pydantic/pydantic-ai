@@ -2409,9 +2409,13 @@ class TestMCPCapability:
         assert cap.get_toolset() is not None
 
     def test_mcp_id_from_url(self):
-        """MCP auto-derives id from URL path."""
+        """MCP auto-derives id from URL including hostname to avoid collisions."""
         cap = MCP(url='https://mcp.example.com/api')
-        assert cap._resolved_id == 'api'
+        assert cap._resolved_id == 'mcp.example.com-api'
+
+        # SSE URLs include hostname to avoid collisions between different servers
+        cap_sse = MCP(url='https://server1.example.com/sse')
+        assert cap_sse._resolved_id == 'server1.example.com-sse'
 
     def test_mcp_sse_transport(self):
         """MCP with /sse URL uses MCPServerSSE for local."""

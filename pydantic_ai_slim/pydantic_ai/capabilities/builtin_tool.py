@@ -58,9 +58,7 @@ class BuiltinToolCapability(AbstractCapability[AgentDepsT], ABC):
 
         # Catch contradictory config: builtin disabled but constraint fields require it
         if self.builtin is False and self._requires_builtin():
-            raise UserError(
-                f'{type(self).__name__}: constraint fields require the builtin tool, but builtin=False'
-            )
+            raise UserError(f'{type(self).__name__}: constraint fields require the builtin tool, but builtin=False')
 
     # --- Subclass hooks ---
 
