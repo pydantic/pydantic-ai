@@ -1494,10 +1494,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Warn for unsupported fields with non-default values
         _unsupported_fields = {
+            'description': None,
             'end_strategy': 'early',
             'retries': 1,
             'output_retries': None,
             'tool_timeout': None,
+            'instrument': None,
             'output_schema': None,
             'deps_schema': None,
         }

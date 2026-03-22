@@ -877,6 +877,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 metadata=metadata,
                 infer_name=infer_name,
                 toolsets=toolsets,
+                builtin_tools=builtin_tools,
                 spec=spec,
             ) as run:
                 yield run
