@@ -114,6 +114,10 @@ class SkipModelRequest(Exception):
     """Exception to raise in before/wrap model request hooks to skip the model call.
 
     The provided response will be used instead of calling the model.
+
+    Note: when raised in `before_model_request`, any message history modifications
+    made by earlier capabilities in that hook will not be persisted to the agent's
+    message history, since the request preparation is aborted.
     """
 
     response: ModelResponse

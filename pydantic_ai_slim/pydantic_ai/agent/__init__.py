@@ -1251,6 +1251,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         # __aexit__ chains (GraphRun → anyio TaskGroup) may transform
                         # the exception (e.g. into CancelledError or ExceptionGroup).
                         _run_error = agent_run._node_error or _exc  # pyright: ignore[reportPrivateUsage]
+                        # Don't attempt recovery for GeneratorExit/KeyboardInterrupt —
+                        # awaiting _wrap_task during cleanup could delay shutdown.
+                        if isinstance(_run_error, (GeneratorExit, KeyboardInterrupt)):
+                            raise
                         # Don't re-raise yet — give wrap_run a chance to recover.
                         # If wrap_run catches the error from handler() and returns
                         # a recovery result, the exception will be suppressed.
