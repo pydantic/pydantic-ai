@@ -253,7 +253,7 @@ class CodeExecutionToolset(AbstractToolset[AgentDepsT]):
             raise
         return self
 
-    async def __aexit__(self, *args: Any) -> bool | None:
+    async def __aexit__(self, *args: object) -> bool | None:
         try:
             if self.toolset is not None:
                 return await self.toolset.__aexit__(*args)
