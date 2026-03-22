@@ -16,15 +16,17 @@ This makes them the primary extension point for Pydantic AI. Whether you're buil
 
 Pydantic AI ships with several capabilities that cover common needs:
 
-| Capability | What it provides |
-|---|---|
-| [`Instructions`][pydantic_ai.capabilities.Instructions] | Static or template-based system prompt instructions |
-| [`ModelSettings`][pydantic_ai.capabilities.ModelSettings] | Static or dynamic model settings |
-| [`Thinking`][pydantic_ai.capabilities.Thinking] | Enables model thinking/reasoning mode |
-| [`WebSearch`][pydantic_ai.capabilities.WebSearch] | Registers the web search [builtin tool](builtin-tools.md) |
-| [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] | Filters or modifies tool definitions per step |
-| [`Toolset`][pydantic_ai.capabilities.Toolset] | Wraps an [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] |
-| [`HistoryProcessor`][pydantic_ai.capabilities.HistoryProcessor] | Wraps a [history processor](message-history.md) |
+| Capability | What it provides | Spec |
+|---|---|:---:|
+| [`Instructions`][pydantic_ai.capabilities.Instructions] | Static or template-based system prompt instructions | Yes |
+| [`ModelSettings`][pydantic_ai.capabilities.ModelSettings] | Static or dynamic model settings | Yes |
+| [`Thinking`][pydantic_ai.capabilities.Thinking] | Enables model thinking/reasoning mode | Yes |
+| [`WebSearch`][pydantic_ai.capabilities.WebSearch] | Registers the web search [builtin tool](builtin-tools.md) | Yes |
+| [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] | Filters or modifies tool definitions per step | — |
+| [`Toolset`][pydantic_ai.capabilities.Toolset] | Wraps an [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] | — |
+| [`HistoryProcessor`][pydantic_ai.capabilities.HistoryProcessor] | Wraps a [history processor](message-history.md) | — |
+
+The **Spec** column indicates whether the capability can be used in [agent specs](#agent-specs) (YAML/JSON). Capabilities marked **—** take non-serializable arguments (callables, toolset objects) and can only be used in Python code.
 
 ```python {title="builtin_capabilities.py"}
 from pydantic_ai import Agent
@@ -118,42 +120,10 @@ The full set of configuration methods:
 
 | Method | Return type | Purpose |
 |---|---|---|
-| [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions] | [`AgentInstructions`][pydantic_ai._instructions.AgentInstructions] ` \| None` | System prompt additions (static strings, [template strings](#template-instructions), or callables) |
+| [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions] | [`AgentInstructions`][pydantic_ai._instructions.AgentInstructions] ` \| None` | System prompt additions (static strings, [template strings](#template-strings), or callables) |
 | [`get_model_settings()`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] | [`AgentModelSettings`][pydantic_ai.agent.abstract.AgentModelSettings] ` \| None` | Model settings dict, or a callable for [per-step settings](#dynamic-model-settings) |
 | [`get_toolset()`][pydantic_ai.capabilities.AbstractCapability.get_toolset] | [`AgentToolset`][pydantic_ai.toolsets.AgentToolset] ` \| None` | A [toolset](toolsets.md) to register with the agent |
 | [`get_builtin_tools()`][pydantic_ai.capabilities.AbstractCapability.get_builtin_tools] | `Sequence[AbstractBuiltinTool]` | [Builtin tools](builtin-tools.md) to register |
-
-### Template instructions
-
-Instructions can use Handlebars-style templates that are rendered against the agent's [dependencies](dependencies.md) at runtime:
-
-```python {title="template_instructions.py"}
-from dataclasses import dataclass
-
-from pydantic_ai import Agent, TemplateStr
-from pydantic_ai.capabilities import Instructions
-from pydantic_ai.models.test import TestModel
-
-
-@dataclass
-class UserProfile:
-    name: str
-    role: str
-
-
-agent = Agent(
-    TestModel(),
-    deps_type=UserProfile,
-    capabilities=[
-        Instructions(TemplateStr('You are assisting {{name}}, who is a {{role}}.')),
-    ],
-)
-result = agent.run_sync('hello', deps=UserProfile(name='Alice', role='engineer'))
-print(result.output)
-#> success (no tool calls)
-```
-
-Template strings are automatically detected (by the presence of `{{`) when loading from [spec files](#agent-specs).
 
 ### Dynamic model settings
 
@@ -563,6 +533,64 @@ print(counter.count)
 #> 0
 ```
 
+## Template strings
+
+[`TemplateStr`][pydantic_ai.TemplateStr] lets you write Handlebars-style templates (`{{variable}}`) that are rendered against the agent's [dependencies](dependencies.md) at runtime. Template strings work anywhere instructions or descriptions are accepted — in Python code, in capabilities, and in [agent specs](#agent-specs).
+
+```python {title="template_instructions.py"}
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, TemplateStr
+from pydantic_ai.capabilities import Instructions
+from pydantic_ai.models.test import TestModel
+
+
+@dataclass
+class UserProfile:
+    name: str
+    role: str
+
+
+agent = Agent(
+    TestModel(),
+    deps_type=UserProfile,
+    capabilities=[
+        Instructions(TemplateStr('You are assisting {{name}}, who is a {{role}}.')),
+    ],
+)
+result = agent.run_sync('hello', deps=UserProfile(name='Alice', role='engineer'))
+print(result.output)
+#> success (no tool calls)
+```
+
+Template variables are resolved from the fields of the `deps` object. When a `deps_type` is provided, template variable names are validated at construction time.
+
+You can also pass template strings directly to the `Agent` constructor:
+
+```python {title="template_agent_instructions.py"}
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, TemplateStr
+from pydantic_ai.models.test import TestModel
+
+
+@dataclass
+class Config:
+    language: str
+
+
+agent = Agent(
+    TestModel(),
+    deps_type=Config,
+    instructions=TemplateStr('Always respond in {{language}}.'),
+)
+result = agent.run_sync('hello', deps=Config(language='French'))
+print(result.output)
+#> success (no tool calls)
+```
+
+In [agent specs](#agent-specs), strings containing `{{` are automatically converted to template strings — no explicit `TemplateStr` wrapper is needed. This applies to the `instructions` and `description` fields.
+
 ## Agent specs
 
 Capabilities integrate with the YAML/JSON agent spec system, allowing you to define agents declaratively:
@@ -575,14 +603,6 @@ capabilities:
   - WebSearch
   - ModelSettings:
       max_tokens: 8192
-```
-
-Load it with [`Agent.from_file`][pydantic_ai.Agent.from_file]:
-
-```python {title="from_file_example.py" test="skip"}
-from pydantic_ai import Agent
-
-agent = Agent.from_file('agent.yaml')
 ```
 
 ### Spec syntax
@@ -656,31 +676,85 @@ In YAML this would be `- ConditionalTools: {hidden_tools: [dangerous_tool]}`. In
 
 Pass custom capability types via the `custom_capability_types` parameter so the spec resolver can find them.
 
+### Loading specs
+
+[`Agent.from_file`][pydantic_ai.Agent.from_file] loads a spec from a YAML or JSON file and constructs an agent:
+
+```python {title="from_file_example.py" test="skip"}
+from pydantic_ai import Agent
+
+agent = Agent.from_file('agent.yaml')
+```
+
+[`Agent.from_spec`][pydantic_ai.Agent.from_spec] accepts a dict or [`AgentSpec`][pydantic_ai.agent.spec.AgentSpec] instance and supports additional keyword arguments that supplement or override the spec:
+
+```python {title="from_spec_example.py" test="skip"}
+from dataclasses import dataclass
+
+from pydantic_ai import Agent
+
+
+@dataclass
+class UserContext:
+    user_name: str
+
+
+agent = Agent.from_spec(
+    {
+        'model': 'anthropic:claude-sonnet-4-20250514',
+        'instructions': 'You are helping {{user_name}}.',
+        'capabilities': ['Thinking'],
+    },
+    deps_type=UserContext,
+)
+```
+
+Keyword arguments interact with spec fields as follows:
+
+* **Scalar fields** (`model`, `name`, `retries`, `end_strategy`, etc.) — the keyword argument overrides the spec value when provided.
+* **`instructions`** — merged: spec instructions come first, then keyword argument instructions.
+* **`capabilities`** — merged: spec capabilities come first, then keyword argument capabilities.
+* **`model_settings`** — merged additively: keyword argument settings override matching spec settings.
+* **`output_type`** — takes precedence over `output_schema` from the spec.
+
+When `deps_type` is passed, [template strings](#template-strings) in the spec's `instructions`, `description`, and capability arguments are compiled and validated against the deps type at construction time.
+
+For more control over spec loading, use [`AgentSpec.from_file`][pydantic_ai.agent.spec.AgentSpec.from_file] to load the spec separately before passing it to `Agent.from_spec`.
+
 ### `AgentSpec`
 
-The [`AgentSpec`][pydantic_ai.agent.spec.AgentSpec] model represents the full spec structure. Beyond capabilities, it supports:
+The [`AgentSpec`][pydantic_ai.agent.spec.AgentSpec] model represents the full spec structure:
 
 | Field | Type | Description |
 |---|---|---|
 | `model` | `str` | Model name (required) |
 | `name` | `str \| None` | Agent name |
-| `description` | [`TemplateStr`][pydantic_ai.TemplateStr] ` \| str \| None` | Agent description (supports templates) |
-| `instructions` | [`TemplateStr`][pydantic_ai.TemplateStr] ` \| str \| list \| None` | System prompt instructions (supports templates) |
+| `description` | `str \| None` | Agent description (supports [templates](#template-strings)) |
+| `instructions` | `str \| list[str] \| None` | System prompt instructions (supports [templates](#template-strings)) |
 | `model_settings` | `dict \| None` | Model settings |
-| `capabilities` | `list[CapabilitySpec]` | Capabilities |
-| `deps_schema` | `dict \| None` | JSON Schema for [dependencies](dependencies.md) (validates template fields) |
-| `output_schema` | `dict \| None` | JSON Schema for structured output (creates a dict-based output type) |
-| `retries` | `int` | Default tool retries |
+| `capabilities` | `list` | Capabilities (see [spec syntax](#spec-syntax)) |
+| `deps_schema` | `dict \| None` | JSON Schema for [template string](#template-strings) validation (see below) |
+| `output_schema` | `dict \| None` | JSON Schema for [structured output](output.md) (see below) |
+| `retries` | `int` | Default tool retries (default: `1`) |
 | `output_retries` | `int \| None` | Output validation retries |
 | `end_strategy` | `EndStrategy` | When to stop (`'early'` or `'exhaustive'`) |
 | `tool_timeout` | `float \| None` | Default tool timeout in seconds |
 | `instrument` | `bool \| None` | Enable [Logfire](logfire.md) instrumentation |
 | `metadata` | `dict \| None` | Agent metadata |
 
-When `deps_schema` or `output_schema` are provided, the agent validates dependencies and structured output against the given JSON Schema:
+#### `deps_schema`
+
+When loading a spec without a Python `deps_type`, `deps_schema` provides a JSON Schema that is used to validate [template string](#template-strings) variable names at construction time. It does **not** validate the actual deps object at runtime — it only ensures that template variables like `{{user_name}}` correspond to properties defined in the schema.
+
+#### `output_schema`
+
+When provided (and no `output_type` keyword argument is passed to `from_spec`), `output_schema` defines the structure the model should produce as its final output. Under the hood, it creates a [`StructuredDict`][pydantic_ai.output.StructuredDict] output type: the JSON Schema is sent to the model API so the model knows what structure to produce, and the response is returned as a `dict[str, Any]`.
+
+!!! note
+    The model's response is not validated against the schema's `properties` or `required` fields — it is accepted as a plain dict. The schema serves as an instruction to the model, not a runtime validation constraint.
 
 ```yaml {title="agent_with_schema.yaml" test="skip"}
-model: anthropic:claude-opus-4-6
+model: anthropic:claude-sonnet-4-20250514
 deps_schema:
   type: object
   properties:
@@ -700,4 +774,20 @@ capabilities:
   - Thinking
 ```
 
-Specs can be loaded from files directly via [`Agent.from_file`][pydantic_ai.Agent.from_file], or via [`AgentSpec.from_file`][pydantic_ai.agent.spec.AgentSpec.from_file] for more control. Specs can be saved with [`AgentSpec.to_file`][pydantic_ai.agent.spec.AgentSpec.to_file], which also generates a JSON schema for editor autocompletion.
+### Saving specs
+
+[`AgentSpec.to_file`][pydantic_ai.agent.spec.AgentSpec.to_file] saves a spec to YAML or JSON and optionally generates a companion JSON Schema file for editor autocompletion:
+
+```python {title="save_spec_example.py" test="skip"}
+from pydantic_ai.agent.spec import AgentSpec
+
+spec = AgentSpec(
+    model='anthropic:claude-sonnet-4-20250514',
+    instructions='You are a helpful assistant.',
+    capabilities=['Thinking', 'WebSearch'],
+)
+spec.to_file('agent.yaml')
+# Also generates ./agent_schema.json for editor autocompletion
+```
+
+The generated JSON Schema file enables autocompletion and validation in editors that support the [YAML Language Server](https://github.com/redhat-developer/yaml-language-server) protocol. Pass `schema_path=None` to skip schema generation.

@@ -175,19 +175,20 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     async def __anext__(
         self,
     ) -> _agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]:
-        """Advance to the next node automatically based on the last returned node."""
+        """Advance to the next node automatically based on the last returned node.
+
+        Note: this uses the graph run's internal iteration which does NOT call
+        `wrap_node_run`. Use `next()` for capability-hooked iteration, or use
+        `agent.run()` which drives via `next()` automatically.
+        """
         if self._result_override is not None:
             raise StopAsyncIteration
-        next_node = self.next_node
-        if isinstance(next_node, End):
-            raise StopAsyncIteration
         try:
-            return await self.next(next_node)
+            task = await anext(self._graph_run)
         except BaseException as exc:
-            # Store the original exception before it passes through context manager
-            # __aexit__ chains (e.g. GraphRun) that may transform it.
             self._node_error = exc
             raise
+        return self._task_to_node(task)
 
     def _task_to_node(
         self, task: EndMarker[FinalResult[OutputDataT]] | JoinItem | Sequence[GraphTaskRequest]

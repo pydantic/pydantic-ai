@@ -280,7 +280,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             toolsets=toolsets,
             builtin_tools=builtin_tools,
         ) as agent_run:
-            async for node in agent_run:
+            # Drive via next() so wrap_node_run hooks fire for each node.
+            node = agent_run.next_node
+            while not isinstance(node, End):
                 if event_stream_handler is not None and (
                     self.is_model_request_node(node) or self.is_call_tools_node(node)
                 ):
@@ -288,6 +290,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                         run_ctx = _agent_graph.build_run_context(agent_run.ctx)
                         wrapped = await agent_run.ctx.deps.root_capability.wrap_run_event_stream(run_ctx, stream=stream)
                         await event_stream_handler(run_ctx, wrapped)
+                node = await agent_run.next(node)  # pyright: ignore[reportArgumentType]
 
         assert agent_run.result is not None, 'The graph run did not finish properly'
         return agent_run.result
