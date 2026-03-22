@@ -86,5 +86,5 @@ class CohereProvider(Provider[AsyncClientV2]):
 
     def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
         self._client._client_wrapper.httpx_client.httpx_client = http_client  # pyright: ignore[reportPrivateUsage]
-        if self._v1_client is not None:
+        if self._v1_client is not None:  # pragma: no branch
             self._v1_client._client_wrapper.httpx_client.httpx_client = http_client  # pyright: ignore[reportPrivateUsage]
