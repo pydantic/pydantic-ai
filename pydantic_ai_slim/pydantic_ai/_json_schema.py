@@ -85,7 +85,7 @@ class JsonSchemaTransformer(ABC):
     def _handle(self, schema: JsonSchema) -> JsonSchema:
         # JSON Schema allows boolean values: true = accept anything, false = accept nothing
         if isinstance(schema, bool):
-            return self.transform(schema)
+            return schema
 
         nested_refs = 0
         if self.prefer_inlined_defs:
