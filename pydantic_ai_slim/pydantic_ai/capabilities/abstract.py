@@ -49,6 +49,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     Built-in capabilities:
 
+    - [`BuiltinTool`][pydantic_ai.capabilities.BuiltinTool] — registers a builtin tool with the agent
     - [`Instructions`][pydantic_ai.capabilities.Instructions] — static or template-based system prompt instructions
     - [`Thinking`][pydantic_ai.capabilities.Thinking] — enables model thinking/reasoning mode
     - [`ModelSettings`][pydantic_ai.capabilities.ModelSettings] — provides extra model settings

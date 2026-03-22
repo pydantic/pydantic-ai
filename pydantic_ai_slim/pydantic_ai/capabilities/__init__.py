@@ -1,6 +1,7 @@
 from typing import Any
 
 from .abstract import AbstractCapability, ModelRequestContext
+from .builtin_tool import BuiltinTool
 from .combined import CombinedCapability
 from .history_processor import HistoryProcessor
 from .instructions import Instructions
@@ -14,6 +15,7 @@ from .toolset import Toolset
 from .web_search import WebSearch
 
 DEFAULT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (
+    BuiltinTool,
     Instructions,
     ModelSettings,
     Thinking,
@@ -25,6 +27,7 @@ DEFAULT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (
 CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
     for cls in (
+        BuiltinTool,
         HistoryProcessor,
         Instructions,
         ModelSettings,
@@ -40,6 +43,7 @@ __all__ = [
     'ModelRequestContext',
     'CAPABILITY_TYPES',
     'DEFAULT_CAPABILITY_TYPES',
+    'BuiltinTool',
     'Instructions',
     'HistoryProcessor',
     'ModelSettings',
