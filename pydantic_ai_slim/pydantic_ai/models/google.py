@@ -785,15 +785,13 @@ class GoogleModel(Model[Client]):
                         if part.tool_name is None:
                             message_parts.append({'text': part.model_response()})
                         else:
-                            message_parts.append(
-                                {
-                                    'function_response': {
-                                        'name': part.tool_name,
-                                        'response': {'error': part.model_response()},
-                                        'id': part.tool_call_id,
-                                    }
-                                }
-                            )
+                            function_response: FunctionResponseDict = {
+                                'name': part.tool_name,
+                                'response': {'error': part.model_response()},
+                            }
+                            if not _utils.is_auto_generated_tool_call_id(part.tool_call_id):
+                                function_response['id'] = part.tool_call_id
+                            message_parts.append({'function_response': function_response})
                     else:
                         assert_never(part)
 
@@ -869,8 +867,9 @@ class GoogleModel(Model[Client]):
         function_response_dict: FunctionResponseDict = {
             'name': part.tool_name,
             'response': response,
-            'id': part.tool_call_id,
         }
+        if not _utils.is_auto_generated_tool_call_id(part.tool_call_id):
+            function_response_dict['id'] = part.tool_call_id
         if function_response_parts:
             function_response_dict['parts'] = function_response_parts
 
@@ -1271,7 +1270,9 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
         thinking_part_signature = None
 
         if isinstance(item, ToolCallPart):
-            function_call = FunctionCallDict(name=item.tool_name, args=item.args_as_dict(), id=item.tool_call_id)
+            function_call = FunctionCallDict(name=item.tool_name, args=item.args_as_dict())
+            if not _utils.is_auto_generated_tool_call_id(item.tool_call_id):
+                function_call['id'] = item.tool_call_id
             part['function_call'] = function_call
             if function_call_requires_signature and not part.get('thought_signature'):
                 # Per https://ai.google.dev/gemini-api/docs/thought-signatures#faqs:
