@@ -17,9 +17,8 @@ from pydantic import BaseModel
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent
-from pydantic_ai._utils import is_str_dict
 from pydantic_ai.exceptions import UnexpectedModelBehavior
-from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.run import AgentRunResult
 
 from .conftest import try_import
@@ -59,7 +58,7 @@ def _mock_api_keys(monkeypatch: pytest.MonkeyPatch) -> None:
 
 class EvalOutput(BaseModel):
     tool_calls: list[str]
-    search_interactions: list[tuple[Any, Any]]
+    search_args: list[dict[str, str]]
 
 
 class EvalMetadata(BaseModel):
@@ -110,15 +109,9 @@ if evals_available():
         evaluation_name: str | None = field(default='keyword_count')
 
         def evaluate(self, ctx: EvaluatorContext[str, EvalOutput, EvalMetadata]) -> int | dict[str, int]:
-            if not ctx.output.search_interactions:
+            if not ctx.output.search_args:
                 return {}
-            args = ctx.output.search_interactions[0][0]
-            if isinstance(args, str):
-                args = json.loads(args)
-            if is_str_dict(args):
-                keywords_str = args.get('keywords', '')
-            else:
-                return 0
+            keywords_str = ctx.output.search_args[0].get('keywords', '')
             return len(keywords_str.split())
 
 
@@ -135,20 +128,16 @@ def _extract_tool_calls(result: AgentRunResult[str]) -> list[str]:
     return tool_calls
 
 
-def _extract_search_interactions(result: AgentRunResult[str]) -> list[tuple[Any, Any]]:
-    """Extract (keywords_args, return_content) pairs from search_tools calls."""
-    calls: dict[str, Any] = {}
-    interactions: list[tuple[Any, Any]] = []
+def _extract_search_args(result: AgentRunResult[str]) -> list[dict[str, str]]:
+    """Extract parsed keyword args dicts from search_tools calls."""
+    args_list: list[dict[str, str]] = []
     for msg in result.all_messages():
         if isinstance(msg, ModelResponse):
             for part in msg.parts:
-                if isinstance(part, ToolCallPart) and part.tool_name == 'search_tools':
-                    calls[part.tool_call_id] = part.args
-        elif isinstance(msg, ModelRequest):
-            for part in msg.parts:
-                if isinstance(part, ToolReturnPart) and part.tool_name == 'search_tools':
-                    interactions.append((calls.get(part.tool_call_id), part.content))
-    return interactions
+                if isinstance(part, ToolCallPart) and part.tool_name == 'search_tools' and part.args is not None:
+                    raw_args: dict[str, Any] = json.loads(part.args) if isinstance(part.args, str) else part.args
+                    args_list.append({k: str(v) for k, v in raw_args.items()})
+    return args_list
 
 
 def _build_agent(model_name: str) -> Agent[None, str]:
@@ -237,12 +226,8 @@ def _summarize_report(report: Any) -> dict[str, ScenarioSummary]:
     for case in report.cases:
         output: EvalOutput = case.output
         keywords: str | None = None
-        if output.search_interactions:
-            args = output.search_interactions[0][0]
-            if isinstance(args, str):
-                args = json.loads(args)
-            if is_str_dict(args):
-                keywords = args.get('keywords')
+        if output.search_args:
+            keywords = output.search_args[0].get('keywords')
         summary[case.name] = ScenarioSummary(keywords=keywords, tool_calls=output.tool_calls)
     return summary
 
@@ -330,11 +315,11 @@ async def test_tool_search_eval(allow_model_requests: None, case: ModelCase) -> 
     async def task(prompt: str) -> EvalOutput:
         try:
             result = await agent.run(prompt)
-        except UnexpectedModelBehavior:
-            return EvalOutput(tool_calls=[], search_interactions=[])
+        except UnexpectedModelBehavior:  # pragma: no cover
+            return EvalOutput(tool_calls=[], search_args=[])
         return EvalOutput(
             tool_calls=_extract_tool_calls(result),
-            search_interactions=_extract_search_interactions(result),
+            search_args=_extract_search_args(result),
         )
 
     dataset = _build_dataset()
