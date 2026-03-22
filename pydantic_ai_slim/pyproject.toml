@@ -106,7 +106,7 @@ cli = [
     "prompt-toolkit>=3",
     "argcomplete>=3.5.0",
     "pyperclip>=1.9.0",
-    "pyyaml>=6.0.2",
+    "pydantic-ai-slim[spec]",
 ]
 # MCP
 mcp = ["mcp>=1.25.0,<2.0"]
@@ -130,6 +130,8 @@ temporal = ["temporalio==1.20.0"]
 dbos = ["dbos>=2.10.0"]
 # Prefect
 prefect = ["prefect>=3.4.21"]
+# Spec (YAML agent specs)
+spec = ["pyyaml>=6.0.2"]
 # Templates
 handlebars = ["pydantic-handlebars>=0.1.0"]
 

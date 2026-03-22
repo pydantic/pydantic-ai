@@ -108,7 +108,9 @@ def load_agent(agent_path: str) -> Agent[Any, Any] | None:
     """
     path = Path(agent_path)
     if path.suffix in ('.yaml', '.yml', '.json'):  # pragma: no cover
-        return _load_agent_from_spec_file(path)
+        if not path.is_file():
+            return None
+        return Agent.from_file(path)
 
     sys.path.insert(0, str(Path.cwd()))
     try:
@@ -118,17 +120,6 @@ def load_agent(agent_path: str) -> Agent[Any, Any] | None:
         return obj  # pyright: ignore[reportUnknownVariableType]
     except ValidationError:
         return None
-
-
-def _load_agent_from_spec_file(path: Path) -> Agent[Any, Any] | None:  # pragma: no cover
-    """Load an agent from a YAML or JSON spec file using Agent.from_spec."""
-    from pydantic_ai.agent.spec import AgentSpec
-
-    if not path.is_file():
-        return None
-
-    spec = AgentSpec.from_file(path)
-    return Agent.from_spec(spec)
 
 
 @cli_agent.system_prompt

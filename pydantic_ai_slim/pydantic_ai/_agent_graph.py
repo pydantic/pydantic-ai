@@ -728,6 +728,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 allow_text_output=True,
             ),
         )
+        run_context.model_settings = request_context.model_settings
         response = await ctx.deps.root_capability.after_model_request(
             run_context, request_context=request_context, response=response
         )

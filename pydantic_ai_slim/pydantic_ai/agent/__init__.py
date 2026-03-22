@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequen
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
 
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
@@ -697,6 +697,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         cls,
         path: Path | str,
         *,
+        fmt: Literal['yaml', 'json'] | None = None,
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
         output_type: OutputSpec[Any] = str,
@@ -730,6 +731,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         cls,
         path: Path | str,
         *,
+        fmt: Literal['yaml', 'json'] | None = None,
         deps_type: type[T],
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
@@ -762,6 +764,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def from_file(
         cls,
         path: Path | str,
+        *,
+        fmt: Literal['yaml', 'json'] | None = None,
         **kwargs: Any,
     ) -> Agent[Any, Any]:
         """Construct an Agent from a YAML or JSON spec file.
@@ -769,16 +773,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         This is a convenience method equivalent to
         ``Agent.from_spec(AgentSpec.from_file(path), ...)``.
 
-        The file format is inferred from the extension (`.yaml`/`.yml` or `.json`).
+        The file format is inferred from the extension (`.yaml`/`.yml` or `.json`)
+        unless overridden with the ``fmt`` argument.
 
         Args:
             path: Path to the spec file.
+            fmt: Format of the file. If None, inferred from file extension.
             **kwargs: All other arguments are forwarded to [`from_spec`][pydantic_ai.Agent.from_spec].
 
         Returns:
             A new Agent instance.
         """
-        spec = AgentSpec.from_file(path)
+        spec = AgentSpec.from_file(path, fmt=fmt)
         return cls.from_spec(spec, **kwargs)
 
     @staticmethod
