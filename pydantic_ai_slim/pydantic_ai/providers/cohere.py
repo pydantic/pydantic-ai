@@ -28,7 +28,7 @@ class CohereProvider(Provider[AsyncClientV2]):
 
     @property
     def base_url(self) -> str:
-        client_wrapper = self.client._client_wrapper  # type: ignore
+        client_wrapper = self.client._client_wrapper  # pyright: ignore[reportPrivateUsage]
         return str(client_wrapper.get_base_url())
 
     @property
@@ -84,7 +84,7 @@ class CohereProvider(Provider[AsyncClientV2]):
                 self._client = AsyncClientV2(api_key=api_key, httpx_client=http_client, base_url=base_url)
                 self._v1_client = AsyncClient(api_key=api_key, httpx_client=http_client, base_url=base_url)
 
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:  # pragma: no cover
-        self._client._client_wrapper.httpx_client.httpx_client = http_client  # type: ignore
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client._client_wrapper.httpx_client.httpx_client = http_client  # pyright: ignore[reportPrivateUsage]
         if self._v1_client is not None:
-            self._v1_client._client_wrapper.httpx_client.httpx_client = http_client  # type: ignore
+            self._v1_client._client_wrapper.httpx_client.httpx_client = http_client  # pyright: ignore[reportPrivateUsage]

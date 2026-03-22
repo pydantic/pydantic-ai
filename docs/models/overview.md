@@ -67,6 +67,29 @@ When you instantiate an [`Agent`][pydantic_ai.Agent] with just a name formatted 
 Pydantic AI will automatically select the appropriate model class, provider, and profile.
 If you want to use a different provider or profile, you can instantiate a model class directly and pass in `provider` and/or `profile` arguments.
 
+## HTTP Client Lifecycle
+
+When a [`Provider`][pydantic_ai.providers.Provider] creates its own HTTP client (i.e. you don't pass a custom `http_client`), it owns that client's lifecycle. Using the [`Agent`][pydantic_ai.Agent] as an async context manager ensures the HTTP client is closed cleanly on exit:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+
+async def main():
+    async with agent:
+        result = await agent.run('What is the capital of France?')
+        print(result.output)
+        #> The capital of France is Paris.
+```
+
+You can also use a [`Model`][pydantic_ai.models.Model] or [`Provider`][pydantic_ai.providers.Provider] directly as an async context manager for the same effect.
+
+If you provide your own `http_client`, you are responsible for closing it yourself.
+
+!!! note
+    When not using a context manager, providers will emit a `ResourceWarning` during garbage collection if their HTTP client was never closed. This is a reminder to use the context manager pattern for proper cleanup.
+
 ## Custom Models
 
 !!! note

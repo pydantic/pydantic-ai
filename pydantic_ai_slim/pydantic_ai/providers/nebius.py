@@ -104,5 +104,5 @@ class NebiusProvider(Provider[AsyncOpenAI]):
             self._http_client_factory = create_async_http_client
             self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
 
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:  # pragma: no cover
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
         self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

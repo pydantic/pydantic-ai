@@ -27,11 +27,11 @@ class GoogleProvider(Provider[Client]):
 
     @property
     def name(self) -> str:
-        return 'google-vertex' if self._client._api_client.vertexai else 'google-gla'  # type: ignore[reportPrivateUsage]
+        return 'google-vertex' if self._client._api_client.vertexai else 'google-gla'  # pyright: ignore[reportPrivateUsage]
 
     @property
     def base_url(self) -> str:
-        return str(self._client._api_client._http_options.base_url)  # type: ignore[reportPrivateUsage]
+        return str(self._client._api_client._http_options.base_url)  # pyright: ignore[reportPrivateUsage]
 
     @property
     def client(self) -> Client:
@@ -156,10 +156,10 @@ class GoogleProvider(Provider[Client]):
         else:
             self._client = client  # pragma: no cover
 
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:  # pragma: no cover
-        api_client = self._client._api_client  # type: ignore[reportPrivateUsage]
-        api_client._async_httpx_client = http_client  # type: ignore[reportPrivateUsage]
-        api_client._http_options.httpx_async_client = http_client  # type: ignore[reportPrivateUsage]
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        api_client = self._client._api_client  # pyright: ignore[reportPrivateUsage]
+        api_client._async_httpx_client = http_client  # pyright: ignore[reportPrivateUsage]
+        api_client._http_options.httpx_async_client = http_client  # pyright: ignore[reportPrivateUsage]
 
 
 VertexAILocation = Literal[
