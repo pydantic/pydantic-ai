@@ -87,3 +87,37 @@ def test_schema_defs_not_modified():
 
     # Verify the result is correct
     assert result == original_schema_copy
+
+
+def test_boolean_schema_nodes():
+    """Test that boolean JSON Schema nodes (true/false) are handled correctly.
+
+    In JSON Schema, `true` means 'accept anything' (equivalent to {})
+    and `false` means 'accept nothing' (equivalent to {'not': {}}).
+    See: https://github.com/pydantic/pydantic-ai/issues/4771
+    """
+
+    class PassthroughTransformer(JsonSchemaTransformer):
+        def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
+            return schema
+
+    schema = {
+        'type': 'object',
+        'properties': {
+            'fields': {
+                'type': 'array',
+                'items': {
+                    'type': 'object',
+                    'properties': {
+                        'value': True,
+                        'denied': False,
+                    },
+                },
+            },
+        },
+    }
+
+    result = PassthroughTransformer(schema).walk()
+    # Boolean nodes should be preserved
+    assert result['properties']['fields']['items']['properties']['value'] is True
+    assert result['properties']['fields']['items']['properties']['denied'] is False
