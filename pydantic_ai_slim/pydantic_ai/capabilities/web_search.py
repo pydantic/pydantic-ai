@@ -75,7 +75,7 @@ class WebSearch(BuiltinToolCapability[AgentDepsT]):
         try:
             from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool
 
-            return duckduckgo_search_tool()  # pyright: ignore[reportUnknownVariableType]
+            return duckduckgo_search_tool()
         except ImportError:
             return None
 

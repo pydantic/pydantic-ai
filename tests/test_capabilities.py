@@ -2388,9 +2388,10 @@ class TestImageGenerationCapability:
 
 
 try:
-    import mcp  # noqa: F401
+    import mcp as _mcp  # noqa: F401
 
     has_mcp = True
+    del _mcp
 except ImportError:
     has_mcp = False
 
@@ -2410,12 +2411,18 @@ class TestMCPCapability:
 
     def test_mcp_id_from_url(self):
         """MCP auto-derives id from URL including hostname to avoid collisions."""
+        from pydantic_ai.builtin_tools import MCPServerTool
+
         cap = MCP(url='https://mcp.example.com/api')
-        assert cap._resolved_id == 'mcp.example.com-api'
+        builtin = cap.get_builtin_tools()[0]
+        assert isinstance(builtin, MCPServerTool)
+        assert builtin.id == 'mcp.example.com-api'
 
         # SSE URLs include hostname to avoid collisions between different servers
         cap_sse = MCP(url='https://server1.example.com/sse')
-        assert cap_sse._resolved_id == 'server1.example.com-sse'
+        builtin_sse = cap_sse.get_builtin_tools()[0]
+        assert isinstance(builtin_sse, MCPServerTool)
+        assert builtin_sse.id == 'server1.example.com-sse'
 
     def test_mcp_sse_transport(self):
         """MCP with /sse URL uses MCPServerSSE for local."""
