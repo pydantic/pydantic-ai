@@ -659,6 +659,13 @@ To define a fully custom toolset with its own logic to list available tools and 
 
 If you want to reuse a network connection or session across tool listings and calls during an agent run, you can implement [`__aenter__()`][pydantic_ai.toolsets.AbstractToolset.__aenter__] and [`__aexit__()`][pydantic_ai.toolsets.AbstractToolset.__aexit__].
 
+### Per-run and per-step lifecycle
+
+Toolsets support lifecycle hooks for per-run isolation and per-step state management:
+
+- [`for_run(ctx)`][pydantic_ai.toolsets.AbstractToolset.for_run] -- called once per agent run, before `__aenter__`. Return a fresh instance to isolate state between runs. Default: returns `self`.
+- [`for_run_step(ctx)`][pydantic_ai.toolsets.AbstractToolset.for_run_step] -- called at the start of each run step. Manage internal transitions (e.g. refreshing tool availability) in-place. Default: returns `self`.
+
 ## Third-Party Toolsets
 
 ### MCP Servers
