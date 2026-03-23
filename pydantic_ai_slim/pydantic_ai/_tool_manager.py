@@ -436,7 +436,7 @@ class ToolManager(Generic[AgentDepsT]):
         try:
             tool_result = await self._run_execute_hooks(validated, usage=usage)
         except SkipToolExecution as e:
-            if usage is not None:
+            if usage is not None:  # pragma: no branch — agent always passes usage
                 usage.tool_calls += 1
             return e.result
 

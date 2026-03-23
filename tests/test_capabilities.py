@@ -3147,3 +3147,263 @@ class TestGetWrapperToolsetHook:
                 ),
             ]
         )
+
+
+# --- from_spec error cases ---
+
+
+def test_from_spec_no_model_raises():
+    """from_spec() without model raises UserError."""
+    with pytest.raises(UserError, match='`model` must be provided'):
+        Agent.from_spec({'capabilities': [{'Instructions': 'hello'}]})
+
+
+# --- run() with spec: additional merge scenarios ---
+
+
+class TestRunWithSpecAdditional:
+    async def test_run_with_spec_and_run_instructions_merged(self):
+        """When run() passes both instructions and spec instructions, they merge."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions = next(
+                (m.instructions for m in messages if isinstance(m, ModelRequest) and m.instructions), None
+            )
+            return make_text_response(f'instructions: {instructions}')
+
+        agent = Agent(FunctionModel(model_fn))
+
+        result = await agent.run(
+            'hello',
+            spec={'instructions': 'spec instructions'},
+            instructions='run instructions',
+        )
+        assert 'run instructions' in result.output
+        assert 'spec instructions' in result.output
+
+    async def test_run_with_spec_metadata_only(self):
+        """Spec metadata is used when run() doesn't pass metadata."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('ok')
+
+        agent = Agent(FunctionModel(model_fn))
+
+        result = await agent.run('hello', spec={'metadata': {'from': 'spec'}})
+        assert result.metadata == {'from': 'spec'}
+
+    async def test_run_with_spec_metadata_callable_merged(self):
+        """Callable metadata from run() merges with spec metadata."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('ok')
+
+        agent = Agent(FunctionModel(model_fn))
+
+        def dynamic_metadata(ctx: RunContext[None]) -> dict[str, Any]:
+            return {'dynamic': 'value'}
+
+        result = await agent.run(
+            'hello',
+            spec={'metadata': {'spec_key': 'spec_val'}},
+            metadata=dynamic_metadata,
+        )
+        assert result.metadata is not None
+        assert result.metadata['spec_key'] == 'spec_val'
+        assert result.metadata['dynamic'] == 'value'
+
+    async def test_run_with_spec_model_settings_callable_passthrough(self):
+        """Callable model_settings from run() bypasses spec model_settings merge."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            temperature = info.model_settings.get('temperature') if info.model_settings else None
+            max_tokens = info.model_settings.get('max_tokens') if info.model_settings else None
+            return make_text_response(f'temperature={temperature} max_tokens={max_tokens}')
+
+        agent = Agent(FunctionModel(model_fn))
+
+        def dynamic_settings(ctx: RunContext[None]) -> _ModelSettings:
+            return {'temperature': 0.9}
+
+        result = await agent.run(
+            'hello',
+            spec={'model_settings': {'max_tokens': 100}},
+            model_settings=dynamic_settings,
+        )
+        # Callable model_settings bypass spec merge — spec model_settings are handled
+        # via the capability layer instead
+        assert 'temperature=0.9' in result.output
+
+
+# --- override() with spec: additional field tests ---
+
+
+class TestOverrideWithSpecAdditional:
+    async def test_override_with_spec_name(self):
+        """Override with spec providing agent name."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('ok')
+
+        agent = Agent(FunctionModel(model_fn), name='original')
+
+        with agent.override(spec={'name': 'spec-name'}):
+            assert agent.name == 'spec-name'
+            result = await agent.run('hello')
+        assert result.output == 'ok'
+        assert agent.name == 'original'
+
+    async def test_override_with_spec_model(self):
+        """Override with spec providing model."""
+        agent = Agent('test', name='test-agent')
+
+        with agent.override(spec={'model': 'test'}):
+            result = await agent.run('hello')
+        assert result.output == 'success (no tool calls)'
+
+    async def test_override_with_spec_model_settings(self):
+        """Override with spec providing model_settings."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            max_tokens = info.model_settings.get('max_tokens') if info.model_settings else None
+            return make_text_response(f'max_tokens={max_tokens}')
+
+        agent = Agent(FunctionModel(model_fn))
+
+        with agent.override(spec={'model_settings': {'max_tokens': 42}}):
+            result = await agent.run('hello')
+        assert 'max_tokens=42' in result.output
+
+    async def test_override_with_spec_metadata(self):
+        """Override with spec providing metadata."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('ok')
+
+        agent = Agent(FunctionModel(model_fn))
+
+        with agent.override(spec={'metadata': {'env': 'test'}}):
+            result = await agent.run('hello')
+        assert result.metadata == {'env': 'test'}
+
+
+# --- Capability construction tests ---
+
+
+def test_web_fetch_with_constraints():
+    """WebFetch capability populates builtin tool with all constraint kwargs."""
+    cap = WebFetch(
+        allowed_domains=['example.com'],
+        blocked_domains=['bad.com'],
+        max_uses=5,
+        enable_citations=True,
+        max_content_tokens=1000,
+    )
+    builtin_tools = cap.get_builtin_tools()
+    assert len(builtin_tools) == 1
+    tool = builtin_tools[0]
+    assert isinstance(tool, WebFetchTool)
+    assert tool.allowed_domains == ['example.com']
+    assert tool.blocked_domains == ['bad.com']
+    assert tool.max_uses == 5
+    assert tool.enable_citations is True
+    assert tool.max_content_tokens == 1000
+    # Constraint fields require builtin
+    assert cap._requires_builtin() is True  # pyright: ignore[reportPrivateUsage]
+
+
+def test_web_fetch_unique_id():
+    """WebFetch returns the correct builtin unique_id."""
+    cap = WebFetch()
+    assert cap._builtin_unique_id() == 'web_fetch'  # pyright: ignore[reportPrivateUsage]
+
+
+def test_web_search_with_constraints():
+    """WebSearch capability populates builtin tool with all constraint kwargs."""
+    from pydantic_ai.builtin_tools import WebSearchUserLocation
+
+    cap = WebSearch(
+        search_context_size='high',
+        user_location=WebSearchUserLocation(city='NYC', country='US'),
+        blocked_domains=['bad.com'],
+        allowed_domains=['good.com'],
+        max_uses=3,
+    )
+    builtin_tools = cap.get_builtin_tools()
+    assert len(builtin_tools) == 1
+    tool = builtin_tools[0]
+    assert isinstance(tool, WebSearchTool)
+    assert tool.search_context_size == 'high'
+    assert tool.user_location is not None
+    assert tool.blocked_domains == ['bad.com']
+    assert tool.allowed_domains == ['good.com']
+    assert tool.max_uses == 3
+    assert cap._requires_builtin() is True  # pyright: ignore[reportPrivateUsage]
+
+
+def test_web_search_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
+    """WebSearch._default_local() returns None when duckduckgo is not installed."""
+    import builtins
+
+    original_import = builtins.__import__
+
+    def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == 'pydantic_ai.common_tools.duckduckgo':
+            raise ImportError('mocked')
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', mock_import)
+    cap = WebSearch(builtin=False)
+    # With builtin disabled and no duckduckgo, local is None
+    assert cap.local is None
+
+
+def test_mcp_default_builtin():
+    """MCP capability constructs the default builtin MCPServerTool."""
+    cap = MCP(url='http://example.com/mcp')
+    builtin_tools = cap.get_builtin_tools()
+    assert len(builtin_tools) == 1
+    tool = builtin_tools[0]
+    assert isinstance(tool, MCPServerTool)
+    assert tool.url == 'http://example.com/mcp'
+
+
+@pytest.mark.filterwarnings('ignore::DeprecationWarning')
+def test_builtin_or_local_base_no_default_builtin():
+    """BuiltinOrLocalTool base class with builtin=True raises (no _default_builtin)."""
+    from pydantic_ai.capabilities.builtin_or_local import BuiltinOrLocalTool
+
+    with pytest.raises(UserError, match='builtin=True requires a subclass'):
+        BuiltinOrLocalTool()
+
+
+def test_builtin_tool_from_spec_no_args():
+    """BuiltinTool.from_spec() with no arguments raises TypeError."""
+    from pydantic_ai.capabilities.builtin_or_local import BuiltinTool as BuiltinToolCapDirect
+
+    with pytest.raises(TypeError, match='requires either a `tool` argument'):
+        BuiltinToolCapDirect.from_spec()
+
+
+@pytest.mark.filterwarnings('ignore::DeprecationWarning')
+def test_builtin_or_local_builtin_unique_id_non_abstract():
+    """_builtin_unique_id() raises when builtin is callable (not AbstractBuiltinTool)."""
+    from pydantic_ai.capabilities.builtin_or_local import BuiltinOrLocalTool
+
+    cap = BuiltinOrLocalTool.__new__(BuiltinOrLocalTool)
+    cap.builtin = lambda ctx: WebSearchTool()
+    cap.local = False
+
+    with pytest.raises(UserError, match='cannot derive builtin_unique_id'):
+        cap._builtin_unique_id()  # pyright: ignore[reportPrivateUsage]
+
+
+def test_validate_capability_not_dataclass():
+    """Custom capability type without @dataclass raises ValueError."""
+    from pydantic_ai.agent.spec import get_capability_registry
+
+    class NotADataclass(AbstractCapability[Any]):
+        pass
+
+    with pytest.raises(ValueError, match='must be decorated with `@dataclass`'):
+        get_capability_registry(custom_types=(NotADataclass,))

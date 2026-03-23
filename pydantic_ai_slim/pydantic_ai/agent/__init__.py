@@ -1332,7 +1332,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                                     _run_error = None  # Recovery succeeded
                                 except BaseException:
                                     pass  # wrap_run didn't recover
-                            elif not _wrap_task.done():
+                            elif (
+                                not _wrap_task.done()
+                            ):  # pragma: no branch — _run_done.set() can't complete _wrap_task synchronously
                                 _wrap_task.cancel()
                                 try:
                                     await _wrap_task
@@ -2284,7 +2286,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             for cap_ts in cap_toolsets if cap_toolsets is not None else self._cap_toolsets:
                 if isinstance(cap_ts, AbstractToolset):
                     toolsets.append(cap_ts)  # pyright: ignore[reportUnknownArgumentType]
-                else:
+                else:  # pragma: no cover — get_toolset() always returns AbstractToolset
                     toolsets.append(DynamicToolset(cap_ts))
 
         return toolsets

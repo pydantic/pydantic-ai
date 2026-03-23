@@ -436,31 +436,36 @@ async def _prepare_request_parameters(
 
 @dataclasses.dataclass
 class _SkipStreamedResponse(models.StreamedResponse):
-    """Minimal StreamedResponse for SkipModelRequest — yields no events."""
+    """Minimal StreamedResponse for SkipModelRequest — yields no events.
+
+    These properties implement the StreamedResponse ABC but are never accessed:
+    the streaming skip path always resolves via the _run_result shortcut in
+    StreamedRunResult, so the AgentStream wrapping this response is discarded.
+    """
 
     _response: _messages.ModelResponse = field(repr=False)
 
     @property
-    def model_name(self) -> str:
+    def model_name(self) -> str:  # pragma: no cover
         return self._response.model_name or ''
 
     @property
-    def provider_name(self) -> str | None:
+    def provider_name(self) -> str | None:  # pragma: no cover
         return None
 
     @property
-    def provider_url(self) -> str | None:
+    def provider_url(self) -> str | None:  # pragma: no cover
         return None
 
     @property
-    def timestamp(self) -> datetime:
+    def timestamp(self) -> datetime:  # pragma: no cover
         return self._response.timestamp
 
     async def _get_event_iterator(self) -> AsyncIterator[_messages.ModelResponseStreamEvent]:
         return
         yield  # pragma: no cover
 
-    def get(self) -> _messages.ModelResponse:
+    def get(self) -> _messages.ModelResponse:  # pragma: no cover
         return self._response
 
 

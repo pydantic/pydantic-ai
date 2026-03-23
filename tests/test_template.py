@@ -314,3 +314,50 @@ class TestTemplateStrRender:
         deps = MyDeps(name='Bob', age=25)
         ctx = _make_run_context(deps)
         assert t.render(deps) == t(ctx)
+
+    def test_render_with_non_dict_deps(self) -> None:
+        """When deps dump to a non-dict value, render falls through to no-context render."""
+        t: TemplateStr[Any] = TemplateStr('Static text')
+        # A string dumps to a string (not a dict), so the template renders without context
+        result = t.render('some string deps')
+        assert result == 'Static text'
+
+
+@dataclass
+class _MixedCap(AbstractCapability[Any]):
+    """Capability with both TemplateStr and non-TemplateStr params in from_spec."""
+
+    label: str = ''
+    template: str = ''
+
+    @classmethod
+    def from_spec(cls, label: str, template: TemplateStr[Any] | str = '') -> _MixedCap:
+        return cls(label=label, template=str(template))
+
+
+class TestValidateFromSpecArgsMixedParams:
+    def test_skips_non_template_params_in_mixed_signature(self) -> None:
+        """When from_spec has both TemplateStr and non-TemplateStr params, non-template params are skipped."""
+        ctx: dict[str, Any] = {'deps_type': MyDeps}
+        args, _kwargs = validate_from_spec_args(_MixedCap, ('my-label', 'Hello {{name}}'), {}, ctx)
+        # label (str hint) should be unchanged
+        assert args[0] == 'my-label'
+        assert isinstance(args[0], str)
+        assert not isinstance(args[0], TemplateStr)
+        # template (TemplateStr | str hint) should be converted
+        assert isinstance(args[1], TemplateStr)
+
+
+class TestTemplateStrDescription:
+    async def test_agent_run_with_template_description(self) -> None:
+        """Agent with TemplateStr description renders it during run (for OTel span attributes)."""
+        from pydantic_ai import Agent
+
+        agent: Agent[MyDeps, str] = Agent.from_spec(
+            {'model': 'test', 'description': 'Helper for {{name}}'},
+            deps_type=MyDeps,
+        )
+        assert isinstance(agent._description, TemplateStr)  # pyright: ignore[reportPrivateUsage]
+        # Running the agent triggers description rendering in span attributes
+        result = await agent.run('hi', deps=MyDeps(name='Alice', age=30))
+        assert result.output == 'success (no tool calls)'

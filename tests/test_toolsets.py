@@ -1113,6 +1113,62 @@ async def test_dynamic_toolset_for_run_step_manages_transitions():
     assert original._toolset is None  # pyright: ignore[reportPrivateUsage]
 
 
+async def test_dynamic_toolset_for_run_step_same_instance_skips_transition():
+    """DynamicToolset skips transition when factory returns the same instance."""
+    stable_toolset = FunctionToolset[None](id='stable')
+
+    def factory(ctx: RunContext[None]) -> FunctionToolset[None]:
+        return stable_toolset
+
+    original = DynamicToolset[None](toolset_func=factory, per_run_step=True)
+    ctx = build_run_context(None)
+
+    run_toolset = await original.for_run(ctx)
+    assert isinstance(run_toolset, DynamicToolset)
+
+    async with run_toolset:
+        # First step: evaluates factory, sets _toolset
+        step1 = await run_toolset.for_run_step(ctx)
+        assert step1 is run_toolset
+        assert run_toolset._toolset is stable_toolset  # pyright: ignore[reportPrivateUsage]
+
+        # Second step: factory returns same instance, early return without transition
+        step2 = await run_toolset.for_run_step(ctx)
+        assert step2 is run_toolset
+        assert run_toolset._toolset is stable_toolset  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_dynamic_toolset_for_run_step_factory_returns_none():
+    """DynamicToolset handles factory returning None after previously returning a toolset."""
+    call_count = 0
+
+    def factory(ctx: RunContext[None]) -> FunctionToolset[None] | None:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return FunctionToolset[None](id='first')
+        return None
+
+    original = DynamicToolset[None](toolset_func=factory, per_run_step=True)
+    ctx = build_run_context(None)
+
+    run_toolset = await original.for_run(ctx)
+    assert isinstance(run_toolset, DynamicToolset)
+
+    async with run_toolset:
+        # First step: factory returns a toolset
+        await run_toolset.for_run_step(ctx)
+        assert run_toolset._toolset is not None  # pyright: ignore[reportPrivateUsage]
+
+        # Second step: factory returns None — old toolset exited, new is None
+        await run_toolset.for_run_step(ctx)
+        assert run_toolset._toolset is None  # pyright: ignore[reportPrivateUsage]
+
+        # Tools should be empty when _toolset is None
+        tools = await run_toolset.get_tools(ctx)
+        assert tools == {}
+
+
 async def test_dynamic_toolset_per_run_step_false_for_run_evaluates():
     """DynamicToolset with per_run_step=False evaluates factory in for_run."""
     call_count = 0
