@@ -54,9 +54,9 @@ These are equivalent to passing the same configuration through separate `Agent` 
 
 Each accepts `builtin` and `local` keyword arguments to control which side is used:
 
-```python {title="builtin_tool_capabilities.py"}
+```python {title="builtin_tool_capabilities.py" test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import WebSearch, WebFetch, MCP
+from pydantic_ai.capabilities import MCP, WebFetch, WebSearch
 
 agent = Agent(
     'openai:gpt-4o',
@@ -73,19 +73,19 @@ agent = Agent(
 
 To disable the local fallback (builtin-only, errors on unsupported models):
 
-```python {title="builtin_only.py" test="skip"}
+```python {title="builtin_only.py" test="skip" lint="skip"}
 WebSearch(local=False)
 ```
 
 To disable the builtin (always use local):
 
-```python {title="local_only.py" test="skip"}
+```python {title="local_only.py" test="skip" lint="skip"}
 WebSearch(builtin=False)
 ```
 
 Constraint fields like `allowed_domains` or `blocked_domains` require the builtin — the local fallback can't enforce them. When these are set and the model doesn't support the builtin, a [`UserError`][pydantic_ai.exceptions.UserError] is raised:
 
-```python {title="constraints.py" test="skip"}
+```python {title="constraints.py" test="skip" lint="skip"}
 # Only search example.com — requires builtin support
 WebSearch(allowed_domains=['example.com'])
 ```
