@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from dirty_equals import IsDatetime, IsStr
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent
@@ -29,6 +30,7 @@ from pydantic_ai.messages import (
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -37,7 +39,7 @@ from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.toolsets._dynamic import ToolsetFunc
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ._inline_snapshot import snapshot
 
@@ -2390,6 +2392,23 @@ class TestOverrideWithSpec:
             result = await agent.run('hello')
 
         assert 'from spec' in result.output
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    instructions='from spec',
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='instructions: from spec')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=3),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_override_with_spec_explicit_param_wins(self):
         """Explicit override param beats spec value."""
@@ -2407,6 +2426,23 @@ class TestOverrideWithSpec:
 
         assert 'explicit' in result.output
         assert 'from spec' not in result.output
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    instructions='explicit',
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='instructions: explicit')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_override_with_spec_capabilities(self):
         """Override with spec capabilities replaces agent's existing capabilities."""
@@ -2424,6 +2460,23 @@ class TestOverrideWithSpec:
             # Override replaces: only spec capability instructions, not agent's
             assert 'from-spec-cap' in result.output
             assert 'agent-cap' not in result.output
+            assert result.all_messages() == snapshot(
+                [
+                    ModelRequest(
+                        parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                        timestamp=IsDatetime(),
+                        instructions='from-spec-cap',
+                        run_id=IsStr(),
+                    ),
+                    ModelResponse(
+                        parts=[TextPart(content='instructions: from-spec-cap')],
+                        usage=RequestUsage(input_tokens=51, output_tokens=2),
+                        model_name='function:model_fn:',
+                        timestamp=IsDatetime(),
+                        run_id=IsStr(),
+                    ),
+                ]
+            )
 
 
 class TestRunWithSpec:
@@ -2442,6 +2495,33 @@ class TestRunWithSpec:
         # Both original and spec instructions should be present
         assert 'original' in result.output
         assert 'also from spec' in result.output
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    instructions="""\
+original
+also from spec\
+""",
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        TextPart(
+                            content="""\
+instructions: original
+also from spec\
+"""
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=51, output_tokens=5),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_run_with_spec_model_as_fallback(self):
         """Spec model is used as fallback when no run-time model is provided."""
@@ -2449,6 +2529,22 @@ class TestRunWithSpec:
 
         result = await agent.run('hello', spec={'model': 'test'})
         assert result.output == 'success (no tool calls)'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='success (no tool calls)')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=4),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_run_with_spec_model_settings_merged(self):
         """Spec model_settings are merged with run model_settings."""
@@ -2467,6 +2563,22 @@ class TestRunWithSpec:
         )
         assert 'max_tokens=100' in result.output
         assert 'temperature=0.5' in result.output
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='max_tokens=100 temperature=0.5')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=3),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_run_with_spec_partial_no_model(self):
         """Partial spec without model works if agent has a model."""
@@ -2481,6 +2593,23 @@ class TestRunWithSpec:
 
         result = await agent.run('hello', spec={'instructions': 'be helpful'})
         assert 'be helpful' in result.output
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    instructions='be helpful',
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='instructions: be helpful')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=3),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_run_with_spec_capabilities(self):
         """Run with spec capabilities merges with agent's root capability."""
@@ -2504,6 +2633,33 @@ class TestRunWithSpec:
         # Both should be present (additive)
         assert 'agent-level' in result.output
         assert 'extra from spec cap' in result.output
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    instructions="""\
+agent-level
+extra from spec cap\
+""",
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        TextPart(
+                            content="""\
+instructions: agent-level
+extra from spec cap\
+"""
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=51, output_tokens=6),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_run_with_spec_metadata_merged(self):
         """Spec metadata is merged with run metadata."""
@@ -2521,8 +2677,23 @@ class TestRunWithSpec:
         assert result.output == 'ok'
         # Run metadata should take precedence, spec metadata should be present
         assert result.metadata is not None
-        assert result.metadata.get('run_key') == 'run_val'
-        assert result.metadata.get('spec_key') == 'spec_val'
+        assert result.metadata == snapshot({'agent_key': 'agent_val', 'spec_key': 'spec_val', 'run_key': 'run_val'})
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='ok')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=1),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_spec_unsupported_fields_warns(self):
         """Non-default unsupported fields produce warnings."""

@@ -122,7 +122,6 @@ NoneType = type(None)
 class _ResolvedSpec:
     """Result of resolving an AgentSpec for use at run/override time."""
 
-    spec: AgentSpec
     capability: CombinedCapability[Any] | None
     instructions: list[str | _system_prompt.SystemPromptFunc[Any]]
     model: str | None
@@ -1106,18 +1105,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Per-run capability: re-extract get_*() if for_run returns a different instance
         run_capability = await effective_capability.for_run(initial_ctx)
         cap_toolsets: list[AgentToolset[AgentDepsT]] | None
+
         if run_capability is not effective_capability:
-            cap_instructions = _instructions.normalize_instructions(run_capability.get_instructions())
-            cap_builtin_tools = list(run_capability.get_builtin_tools())
-            cap_model_settings = run_capability.get_model_settings()
-            cap_ts = run_capability.get_toolset()
-            cap_toolsets = [cap_ts] if cap_ts is not None else []
+            source_cap = run_capability
         elif override_cap is not None or (resolved is not None and resolved.capability is not None):
-            # Re-extract from effective_capability since it differs from self._root_capability
-            cap_instructions = _instructions.normalize_instructions(effective_capability.get_instructions())
-            cap_builtin_tools = list(effective_capability.get_builtin_tools())
-            cap_model_settings = effective_capability.get_model_settings()
-            cap_ts = effective_capability.get_toolset()
+            source_cap = effective_capability
+        else:
+            source_cap = None
+
+        if source_cap is not None:
+            cap_instructions = _instructions.normalize_instructions(source_cap.get_instructions())
+            cap_builtin_tools = list(source_cap.get_builtin_tools())
+            cap_model_settings = source_cap.get_model_settings()
+            cap_ts = source_cap.get_toolset()
             cap_toolsets = [cap_ts] if cap_ts is not None else []
         else:
             cap_instructions = None  # use init-time defaults
@@ -1504,7 +1504,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 )
 
         return _ResolvedSpec(
-            spec=validated_spec,
             capability=combined,
             instructions=_instructions.normalize_instructions(validated_spec.instructions)
             if validated_spec.instructions
@@ -1547,7 +1546,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 per-run `metadata` argument is ignored.
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
                 When set, any per-run `model_settings` argument is ignored.
-            spec: Optional agent spec providing defaults for override. Explicit params take precedence over spec values.
+            spec: Optional agent spec providing defaults for override. Explicit params take precedence
+                over spec values. When the spec includes `capabilities`, they replace (not merge with)
+                the agent's existing capabilities. To add capabilities without replacing, pass `spec`
+                to `run()` or `iter()` instead.
         """
         resolved = self._resolve_spec(spec)
 
