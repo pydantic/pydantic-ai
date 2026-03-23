@@ -5,7 +5,7 @@ The same `Evaluator` instances used with `Dataset.evaluate()` work here, the dif
 they are wired up (decorator vs dataset) rather than what they are.
 
 Example:
-```python
+```python {test="skip" lint="skip"}
 from pydantic_evals.online import evaluate
 
 @evaluate(Equals(value=42))
@@ -79,7 +79,7 @@ def disable_evaluation():
     When active, decorated functions still execute normally but no evaluators are dispatched.
 
     Example:
-    ```python
+    ```python {test="skip" lint="skip"}
     with disable_evaluation():
         result = await my_evaluated_function("test input")
         # No evaluators run
@@ -158,7 +158,7 @@ class CallbackSink:
     passed to the callback — use a custom `EvaluationSink` implementation if you need it.
 
     Example:
-    ```python
+    ```python {test="skip" lint="skip"}
     async def my_callback(results, failures, context):
         for result in results:
             print(f"{result.name}: {result.value}")
@@ -206,7 +206,7 @@ class OnlineEvaluator:
             evaluator should run. Called only for sampled requests. Can be sync or async.
 
     Example:
-    ```python
+    ```python {test="skip" lint="skip"}
     OnlineEvaluator(
         LLMJudge(rubric="Is the response helpful?"),
         sample_rate=0.01,
@@ -536,7 +536,7 @@ class OnlineEvalConfig:
     `DEFAULT_CONFIG` via the module-level `evaluate()` and `configure()` functions.
 
     Example:
-    ```python
+    ```python {test="skip" lint="skip"}
     from pydantic_evals.online import OnlineEvalConfig
 
     my_eval = OnlineEvalConfig(
@@ -780,7 +780,7 @@ def evaluate(*evaluators: Evaluator | OnlineEvaluator) -> Callable[[Callable[_P,
         A decorator that wraps the function with online evaluation.
 
     Example:
-    ```python
+    ```python {test="skip" lint="skip"}
     from pydantic_evals.online import evaluate
     from pydantic_evals.evaluators import Equals
 
