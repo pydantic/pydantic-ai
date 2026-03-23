@@ -4240,6 +4240,113 @@ class TestHooksCapability:
 
         assert repr(hooks) == "Hooks({'before_model_request': 1})"
 
+    async def test_on_run_error_recovery(self):
+        from pydantic_ai.capabilities.hooks import Hooks
+
+        hooks = Hooks()
+
+        @hooks.on_run_error
+        async def recover(ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            return AgentRunResult(output='recovered from run error')
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[hooks])
+        result = await agent.run('hello')
+        assert result.output == 'recovered from run error'
+
+    async def test_on_run_error_chaining(self):
+        from pydantic_ai.capabilities.hooks import Hooks
+
+        hooks = Hooks()
+
+        @hooks.on_run_error
+        async def first_handler(ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            raise ValueError('transformed by first')
+
+        @hooks.on_run_error
+        async def second_handler(ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            return AgentRunResult(output=f'caught: {error}')
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('original error')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[hooks])
+        result = await agent.run('hello')
+        assert 'transformed by first' in result.output
+
+    async def test_error_hook_chaining(self):
+        from pydantic_ai.capabilities.hooks import Hooks
+
+        hooks = Hooks()
+
+        @hooks.on_model_request_error
+        async def first(
+            ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            raise ValueError('transformed')
+
+        @hooks.on_model_request_error
+        async def second(
+            ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content=f'recovered: {error}')])
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('original')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[hooks])
+        result = await agent.run('hello')
+        assert 'transformed' in result.output
+
+    async def test_wrap_run_event_stream(self):
+        from pydantic_ai.capabilities.hooks import Hooks
+
+        hooks = Hooks()
+        events_seen: list[str] = []
+
+        @hooks.wrap_run_event_stream
+        async def observe_stream(
+            ctx: RunContext[Any], *, stream: AsyncIterable[AgentStreamEvent]
+        ) -> AsyncIterable[AgentStreamEvent]:
+            async for event in stream:
+                events_seen.append(type(event).__name__)
+                yield event
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[hooks],
+        )
+        async with agent.run_stream('hello') as stream:
+            await stream.get_output()
+        assert len(events_seen) > 0
+
+    async def test_hooks_with_streaming_run(self):
+        """Hooks capability used during a streaming run exercises the default wrap_run_event_stream path."""
+        from pydantic_ai.capabilities.hooks import Hooks
+
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.before_model_request
+        async def log_request(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            call_log.append('before_model_request')
+            return request_context
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[hooks],
+        )
+        async with agent.run_stream('hello') as stream:
+            await stream.get_output()
+        assert 'before_model_request' in call_log
+
+    async def test_get_serialization_name(self):
+        from pydantic_ai.capabilities.hooks import Hooks
+
+        assert Hooks.get_serialization_name() is None
+
     async def test_default_on_tool_execute_error_reraises(self):
         """The default on_tool_execute_error just re-raises, exercised with a minimal capability."""
 

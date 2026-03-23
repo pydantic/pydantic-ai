@@ -98,12 +98,9 @@ class _HookSlot(Generic[_FuncT]):
                 return self._default(*args, **kwargs)
             return self._dispatch(self.funcs, self._name, *args, **kwargs)
 
-        if callable(first):
-            # Bare decorator: @hooks.before_model_request
-            self.funcs.append(_HookEntry(first))
-            return first
-
-        raise TypeError(f'Expected a callable or RunContext, got {type(first).__name__}')
+        # Bare decorator: @hooks.before_model_request
+        self.funcs.append(_HookEntry(first))
+        return first
 
     def _make_decorator(self, *, timeout: float | None = None) -> Callable[[_FuncT], _FuncT]:
         def decorator(func: _FuncT) -> _FuncT:
@@ -136,11 +133,9 @@ class _ToolHookSlot(_HookSlot[_FuncT]):
                 return self._default(*args, **kwargs)
             return self._dispatch(self.funcs, self._name, *args, **kwargs)
 
-        if callable(first):
-            self.funcs.append(_ToolHookEntry(first))
-            return first
-
-        raise TypeError(f'Expected a callable or RunContext, got {type(first).__name__}')
+        # Bare decorator: @hooks.before_tool_execute
+        self.funcs.append(_ToolHookEntry(first))
+        return first
 
     def _make_tool_decorator(
         self, *, timeout: float | None = None, tools: Sequence[str] | None = None
