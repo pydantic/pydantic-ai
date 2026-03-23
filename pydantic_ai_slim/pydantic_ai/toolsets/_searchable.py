@@ -95,6 +95,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
                 description_lower=tool.tool_def.description.lower() if tool.tool_def.description else None,
             )
             for name, tool in deferred.items()
+            if name not in discovered
         ]
 
         search_tool_def = ToolDefinition(
