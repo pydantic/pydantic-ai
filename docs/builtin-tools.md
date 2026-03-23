@@ -390,7 +390,7 @@ For more details, check the [API documentation][pydantic_ai.builtin_tools.ImageG
 | `output_format` | ✅ | ✅ (Vertex AI only) |
 | `partial_images` | ✅ | ❌ |
 | `quality` | ✅ | ❌ |
-| `size` | ✅ (auto (default), 1024x1024, 1024x1536, 1536x1024) | ✅ (1K (default), 2K, 4K) |
+| `size` | ✅ (auto (default), 1024x1024, 1024x1536, 1536x1024) | ✅ (512, 1K (default), 2K, 4K) |
 | `aspect_ratio` | ✅ (1:1, 2:3, 3:2) | ✅ (1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9) |
 
 !!! note "Notes"

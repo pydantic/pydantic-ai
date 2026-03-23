@@ -476,55 +476,50 @@ async def test_complex_agent_run_in_workflow(
                                 )
                             ],
                         ),
+                        BasicSpan(content='running tool: get_country'),
                         BasicSpan(
-                            content='running 2 tools',
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
                             children=[
-                                BasicSpan(content='running tool: get_country'),
                                 BasicSpan(
-                                    content='StartActivity:agent__complex_agent__event_stream_handler',
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=1'),
+                                        BasicSpan(
+                                            content=IsStr(
+                                                regex=r'{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
+                                            )
+                                        ),
+                                    ],
+                                )
+                            ],
+                        ),
+                        BasicSpan(
+                            content='running tool: get_product_name',
+                            children=[
+                                BasicSpan(
+                                    content='StartActivity:agent__complex_agent__mcp_server__mcp__call_tool',
                                     children=[
                                         BasicSpan(
-                                            content='RunActivity:agent__complex_agent__event_stream_handler',
-                                            children=[
-                                                BasicSpan(content='ctx.run_step=1'),
-                                                BasicSpan(
-                                                    content=IsStr(
-                                                        regex=r'{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
-                                                    )
-                                                ),
-                                            ],
+                                            content='RunActivity:agent__complex_agent__mcp_server__mcp__call_tool'
                                         )
                                     ],
-                                ),
+                                )
+                            ],
+                        ),
+                        BasicSpan(
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
                                 BasicSpan(
-                                    content='running tool: get_product_name',
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
                                     children=[
+                                        BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='StartActivity:agent__complex_agent__mcp_server__mcp__call_tool',
-                                            children=[
-                                                BasicSpan(
-                                                    content='RunActivity:agent__complex_agent__mcp_server__mcp__call_tool'
-                                                )
-                                            ],
-                                        )
+                                            content=IsStr(
+                                                regex=r'{"result":{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
+                                            )
+                                        ),
                                     ],
-                                ),
-                                BasicSpan(
-                                    content='StartActivity:agent__complex_agent__event_stream_handler',
-                                    children=[
-                                        BasicSpan(
-                                            content='RunActivity:agent__complex_agent__event_stream_handler',
-                                            children=[
-                                                BasicSpan(content='ctx.run_step=1'),
-                                                BasicSpan(
-                                                    content=IsStr(
-                                                        regex=r'{"result":{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
-                                                    )
-                                                ),
-                                            ],
-                                        )
-                                    ],
-                                ),
+                                )
                             ],
                         ),
                         BasicSpan(
@@ -582,37 +577,32 @@ async def test_complex_agent_run_in_workflow(
                             ],
                         ),
                         BasicSpan(
-                            content='running 1 tool',
+                            content='running tool: get_weather',
                             children=[
                                 BasicSpan(
-                                    content='running tool: get_weather',
+                                    content='StartActivity:agent__complex_agent__toolset__<agent>__call_tool',
                                     children=[
                                         BasicSpan(
-                                            content='StartActivity:agent__complex_agent__toolset__<agent>__call_tool',
-                                            children=[
-                                                BasicSpan(
-                                                    content='RunActivity:agent__complex_agent__toolset__<agent>__call_tool'
-                                                )
-                                            ],
+                                            content='RunActivity:agent__complex_agent__toolset__<agent>__call_tool'
                                         )
                                     ],
-                                ),
+                                )
+                            ],
+                        ),
+                        BasicSpan(
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
                                 BasicSpan(
-                                    content='StartActivity:agent__complex_agent__event_stream_handler',
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
                                     children=[
+                                        BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='RunActivity:agent__complex_agent__event_stream_handler',
-                                            children=[
-                                                BasicSpan(content='ctx.run_step=2'),
-                                                BasicSpan(
-                                                    content=IsStr(
-                                                        regex=r'{"result":{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
-                                                    )
-                                                ),
-                                            ],
-                                        )
+                                            content=IsStr(
+                                                regex=r'{"result":{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
+                                            )
+                                        ),
                                     ],
-                                ),
+                                )
                             ],
                         ),
                         BasicSpan(
@@ -1218,7 +1208,7 @@ dynamic_toolset_agent = Agent(TestModel(), name='dynamic_toolset_agent', deps_ty
 def my_dynamic_toolset(ctx: RunContext[DynamicToolsetDeps]) -> FunctionToolset[DynamicToolsetDeps]:
     toolset = FunctionToolset[DynamicToolsetDeps](id='dynamic_weather')
 
-    @toolset.tool
+    @toolset.tool_plain
     def get_dynamic_weather(location: str) -> str:
         """Get the weather for a location."""
         user = ctx.deps.user_name
@@ -3685,30 +3675,29 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                     parts=[
                         ToolReturnPart(
                             tool_name='get_multimodal_content',
-                            content=['test', 'See file 4effda', 'See file eb8998'],
-                            tool_call_id='pyd_ai_tool_call_id__get_multimodal_content',
-                            timestamp=IsDatetime(),
-                        ),
-                        UserPromptPart(
                             content=[
-                                'This is file 4effda:',
+                                'test',
                                 BinaryContent(data=b'\x89PNG', media_type='image/png', _identifier='4effda'),
-                                'This is file eb8998:',
                                 DocumentUrl(
                                     url='https://example.com/doc/12345',
                                     _media_type='application/pdf',
                                     _identifier='eb8998',
                                 ),
                             ],
+                            tool_call_id='pyd_ai_tool_call_id__get_multimodal_content',
                             timestamp=IsDatetime(),
-                        ),
+                        )
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
-                    parts=[TextPart(content='{"get_multimodal_content":["test","See file 4effda","See file eb8998"]}')],
-                    usage=RequestUsage(input_tokens=84, output_tokens=13),
+                    parts=[
+                        TextPart(
+                            content='{"get_multimodal_content":["test",{"data":"iVBORw==","media_type":"image/png","vendor_metadata":null,"kind":"binary","identifier":"4effda"},{"url":"https://example.com/doc/12345","force_download":false,"vendor_metadata":null,"kind":"document-url","media_type":"application/pdf","identifier":"eb8998"}]}'
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=62, output_tokens=34),
                     model_name='test',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -3721,15 +3710,18 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
         # on DocumentUrl, so the snapshot comparison doesn't actually verify it. The media_type
         # cannot be inferred from the URL, so if serialization loses it, accessing media_type
         # would raise an error.
-        media_types = [
-            (type(content).__name__, content.media_type)
-            for message in messages
-            for part in message.parts
-            if isinstance(part, UserPromptPart)
-            for content in part.content
-            if isinstance(content, (BinaryContent, DocumentUrl))
-        ]
-        # Should have 4 items: 2 BinaryContent (input + tool return) and 2 DocumentUrl (input + tool return)
+        media_types: list[tuple[str, str]] = []
+        for message in messages:
+            for part in message.parts:
+                if isinstance(part, UserPromptPart):
+                    for content in part.content:
+                        if isinstance(content, (BinaryContent, DocumentUrl)):
+                            media_types.append((type(content).__name__, content.media_type))
+                elif isinstance(part, ToolReturnPart):
+                    for content in part.content_items():
+                        if isinstance(content, (BinaryContent, DocumentUrl)):
+                            media_types.append((type(content).__name__, content.media_type))
+        # Should have 4 items: 2 from user input, 2 from tool return
         assert media_types == [
             ('BinaryContent', 'image/png'),
             ('DocumentUrl', 'application/pdf'),
