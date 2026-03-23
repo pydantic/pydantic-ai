@@ -32,6 +32,8 @@ async def test_feature(model: Model, stream: bool):
 For cartesian product tests, use a dict to map parameter combinations to expected results:
 
 ```python
+from vcr.cassette import Cassette
+
 from pydantic_ai.models import Model
 
 # expectation can be a dataclass, for more complex cases
