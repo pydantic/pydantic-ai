@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from dirty_equals import IsDatetime, IsStr
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent
@@ -42,6 +41,7 @@ from pydantic_ai.toolsets._dynamic import ToolsetFunc
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ._inline_snapshot import snapshot
+from .conftest import IsDatetime, IsStr
 
 pytestmark = [
     pytest.mark.anyio,
