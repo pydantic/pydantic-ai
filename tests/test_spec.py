@@ -151,7 +151,7 @@ class TestBuildRegistry:
 
     def test_validate_callback(self):
         def validate(cls: type[Any]) -> None:
-            if cls.__name__ == 'Foo':  # pragma: no cover
+            if cls.__name__ == 'Foo':
                 raise ValueError('Foo is not allowed')
 
         with pytest.raises(ValueError, match='Foo is not allowed'):

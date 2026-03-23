@@ -138,7 +138,7 @@ def validate_from_spec_args(
     """
     try:
         hints = get_function_type_hints(cls.from_spec)
-    except Exception:  # pragma: no cover — defensive; depends on Pydantic internals
+    except Exception:
         return args, kwargs
 
     hints.pop('return', None)
