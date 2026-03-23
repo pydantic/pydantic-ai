@@ -25,4 +25,4 @@ class HistoryProcessor(AbstractCapability[AgentDepsT]):
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
-        return None
+        return None  # Not spec-serializable (takes a callable)

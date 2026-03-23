@@ -10,13 +10,14 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequen
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
 
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Self, TypeVar, deprecated
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, InstrumentationNames
+from pydantic_ai._spec import load_from_registry
 
 from .. import (
     _agent_graph,
@@ -39,13 +40,14 @@ from .._agent_graph import (
     build_run_context,
     capture_run_messages,
 )
+from .._instructions import AgentInstructions
 from .._output import OutputToolset
-from .._template import TemplateStr
+from .._template import TemplateStr, validate_from_spec_args
 from .._tool_manager import ParallelExecutionMode, ToolManager
 from ..builtin_tools import AbstractBuiltinTool
 from ..capabilities import AbstractCapability, CombinedCapability, HistoryProcessor as HistoryProcessorCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
-from ..output import OutputDataT, OutputSpec
+from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import (
@@ -80,6 +82,7 @@ from .abstract import (
     EventStreamHandler,
     RunOutputDataT,
 )
+from .spec import AgentSpec, get_capability_registry
 from .wrapper import WrapperAgent
 
 if TYPE_CHECKING:
@@ -90,7 +93,6 @@ if TYPE_CHECKING:
     from ..builtin_tools import AbstractBuiltinTool
     from ..mcp import MCPServer
     from ..ui._web import ModelsParam
-    from .spec import AgentSpec
 
 __all__ = (
     'Agent',
@@ -200,7 +202,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         *,
         output_type: OutputSpec[OutputDataT] = str,
-        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        instructions: AgentInstructions[AgentDepsT] = None,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
@@ -232,7 +234,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         *,
         output_type: OutputSpec[OutputDataT] = str,
-        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        instructions: AgentInstructions[AgentDepsT] = None,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
@@ -262,7 +264,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         *,
         output_type: OutputSpec[OutputDataT] = str,
-        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        instructions: AgentInstructions[AgentDepsT] = None,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
@@ -362,13 +364,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 a [`ConcurrencyLimiter`][pydantic_ai.ConcurrencyLimiter] for sharing limits across
                 multiple agents, or None (default) for no limiting. When the limit is reached, additional calls
                 to `run()` or `iter()` will wait until a slot becomes available.
-            capabilities: Optional list of capabilities to configure the agent with.
-                Built-in capabilities include [`Instructions`][pydantic_ai.capabilities.Instructions],
-                [`Thinking`][pydantic_ai.capabilities.Thinking],
-                [`ModelSettings`][pydantic_ai.capabilities.ModelSettings],
-                [`WebSearch`][pydantic_ai.capabilities.WebSearch],
-                [`HistoryProcessor`][pydantic_ai.capabilities.HistoryProcessor], and
-                [`Toolset`][pydantic_ai.capabilities.Toolset].
+            capabilities: Optional list of [capabilities](https://ai.pydantic.dev/capabilities/) to configure the agent with.
                 Custom capabilities can be created by subclassing
                 [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability].
         """
@@ -488,10 +484,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
         output_type: OutputSpec[Any] = str,
-        instructions: _instructions.AgentInstructions[Any] = None,
+        instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
-        description: str | None = None,
+        description: TemplateStr[Any] | str | None = None,
         model_settings: ModelSettings | None = None,
         retries: int | None = None,
         validation_context: Any = None,
@@ -522,10 +518,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
         output_type: OutputSpec[Any] = str,
-        instructions: _instructions.AgentInstructions[Any] = None,
+        instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
-        description: str | None = None,
+        description: TemplateStr[Any] | str | None = None,
         model_settings: ModelSettings | None = None,
         retries: int | None = None,
         validation_context: Any = None,
@@ -555,10 +551,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
         output_type: OutputSpec[Any] = str,
-        instructions: _instructions.AgentInstructions[Any] = None,
+        instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
-        description: str | None = None,
+        description: TemplateStr[Any] | str | None = None,
         model_settings: ModelSettings | None = None,
         retries: int | None = None,
         validation_context: Any = None,
@@ -620,16 +616,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Returns:
             A new Agent instance.
         """
-        from pydantic_ai._spec import build_registry, load_from_registry
-        from pydantic_ai._template import validate_from_spec_args
-        from pydantic_ai.agent.spec import AgentSpec as _AgentSpecModel
-        from pydantic_ai.capabilities import DEFAULT_CAPABILITY_TYPES
-
         template_context: dict[str, Any] = {
             'deps_type': deps_type if deps_type is not type(None) else None,
         }
         if isinstance(spec, dict):
-            validated_spec = _AgentSpecModel.model_validate(spec, context=template_context)
+            validated_spec = AgentSpec.model_validate(spec, context=template_context)
         else:
             validated_spec = spec
         template_context['deps_schema'] = validated_spec.deps_schema
@@ -638,18 +629,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if output_type is not str:
             effective_output_type = output_type
         elif validated_spec.output_schema is not None:
-            from pydantic_ai.output import StructuredDict
-
             effective_output_type = StructuredDict(validated_spec.output_schema)
         else:
             effective_output_type = str
 
-        registry = build_registry(
-            custom_types=custom_capability_types,
-            defaults=DEFAULT_CAPABILITY_TYPES,
-            get_name=lambda c: c.get_serialization_name(),
-            label='capability',
-        )
+        registry = get_capability_registry(custom_capability_types)
 
         # Merge instructions from spec and arg
         merged_instructions = _instructions.normalize_instructions(validated_spec.instructions)
@@ -713,13 +697,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         cls,
         path: Path | str,
         *,
+        fmt: Literal['yaml', 'json'] | None = None,
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
         output_type: OutputSpec[Any] = str,
-        instructions: _instructions.AgentInstructions[Any] = None,
+        instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
-        description: str | None = None,
+        description: TemplateStr[Any] | str | None = None,
         model_settings: ModelSettings | None = None,
         retries: int | None = None,
         validation_context: Any = None,
@@ -746,14 +731,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         cls,
         path: Path | str,
         *,
+        fmt: Literal['yaml', 'json'] | None = None,
         deps_type: type[T],
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
         output_type: OutputSpec[Any] = str,
-        instructions: _instructions.AgentInstructions[Any] = None,
+        instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
-        description: str | None = None,
+        description: TemplateStr[Any] | str | None = None,
         model_settings: ModelSettings | None = None,
         retries: int | None = None,
         validation_context: Any = None,
@@ -778,6 +764,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def from_file(
         cls,
         path: Path | str,
+        *,
+        fmt: Literal['yaml', 'json'] | None = None,
         **kwargs: Any,
     ) -> Agent[Any, Any]:
         """Construct an Agent from a YAML or JSON spec file.
@@ -785,18 +773,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         This is a convenience method equivalent to
         ``Agent.from_spec(AgentSpec.from_file(path), ...)``.
 
-        The file format is inferred from the extension (`.yaml`/`.yml` or `.json`).
+        The file format is inferred from the extension (`.yaml`/`.yml` or `.json`)
+        unless overridden with the ``fmt`` argument.
 
         Args:
             path: Path to the spec file.
+            fmt: Format of the file. If None, inferred from file extension.
             **kwargs: All other arguments are forwarded to [`from_spec`][pydantic_ai.Agent.from_spec].
 
         Returns:
             A new Agent instance.
         """
-        from pydantic_ai.agent.spec import AgentSpec as _AgentSpecModel
-
-        spec = _AgentSpecModel.from_file(path)
+        spec = AgentSpec.from_file(path, fmt=fmt)
         return cls.from_spec(spec, **kwargs)
 
     @staticmethod
@@ -874,7 +862,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        instructions: AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -894,7 +882,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        instructions: AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -914,7 +902,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        instructions: AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -950,6 +938,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             print(nodes)
             '''
             [
+                UserPromptNode(
+                    user_prompt='What is the capital of France?',
+                    instructions_functions=[],
+                    system_prompts=(),
+                    system_prompt_functions=[],
+                    system_prompt_dynamic_functions={},
+                ),
                 ModelRequestNode(
                     request=ModelRequest(
                         parts=[
@@ -1251,6 +1246,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         # __aexit__ chains (GraphRun → anyio TaskGroup) may transform
                         # the exception (e.g. into CancelledError or ExceptionGroup).
                         _run_error = agent_run._node_error or _exc  # pyright: ignore[reportPrivateUsage]
+                        # Don't attempt recovery for GeneratorExit/KeyboardInterrupt —
+                        # awaiting _wrap_task during cleanup could delay shutdown.
+                        if isinstance(_run_error, (GeneratorExit, KeyboardInterrupt)):
+                            raise
                         # Don't re-raise yet — give wrap_run a chance to recover.
                         # If wrap_run catches the error from handler() and returns
                         # a recovery result, the exception will be suppressed.
@@ -1430,7 +1429,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
-        instructions: _instructions.AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        instructions: AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
         metadata: AgentMetadata[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
@@ -2060,7 +2059,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     def _get_instructions(
         self,
-        additional_instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        additional_instructions: AgentInstructions[AgentDepsT] = None,
         cap_instructions: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] | None = None,
     ) -> tuple[str | None, list[_system_prompt.SystemPromptRunner[AgentDepsT]]]:
         override_instructions = self._override_instructions.get()

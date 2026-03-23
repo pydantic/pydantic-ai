@@ -280,7 +280,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             toolsets=toolsets,
             builtin_tools=builtin_tools,
         ) as agent_run:
-            async for node in agent_run:
+            # Drive via next() so wrap_node_run hooks fire for each node.
+            node = agent_run.next_node
+            while not isinstance(node, End):
                 if event_stream_handler is not None and (
                     self.is_model_request_node(node) or self.is_call_tools_node(node)
                 ):
@@ -288,6 +290,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                         run_ctx = _agent_graph.build_run_context(agent_run.ctx)
                         wrapped = await agent_run.ctx.deps.root_capability.wrap_run_event_stream(run_ctx, stream=stream)
                         await event_stream_handler(run_ctx, wrapped)
+                node = await agent_run.next(node)  # pyright: ignore[reportArgumentType]
 
         assert agent_run.result is not None, 'The graph run did not finish properly'
         return agent_run.result
@@ -650,11 +653,15 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 on_complete,
                             )
                             break
-                elif self.is_call_tools_node(node) and event_stream_handler is not None:
+                elif self.is_call_tools_node(node):
                     async with node.stream(agent_run.ctx) as stream:
                         run_ctx = _agent_graph.build_run_context(agent_run.ctx)
                         wrapped = await agent_run.ctx.deps.root_capability.wrap_run_event_stream(run_ctx, stream=stream)
-                        await event_stream_handler(run_ctx, wrapped)
+                        if event_stream_handler is not None:
+                            await event_stream_handler(run_ctx, wrapped)
+                        else:
+                            async for _ in wrapped:
+                                pass
 
                 next_node = await agent_run.next(node)
                 if isinstance(next_node, End) and agent_run.result is not None:
@@ -1098,6 +1105,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             print(nodes)
             '''
             [
+                UserPromptNode(
+                    user_prompt='What is the capital of France?',
+                    instructions_functions=[],
+                    system_prompts=(),
+                    system_prompt_functions=[],
+                    system_prompt_dynamic_functions={},
+                ),
                 ModelRequestNode(
                     request=ModelRequest(
                         parts=[
