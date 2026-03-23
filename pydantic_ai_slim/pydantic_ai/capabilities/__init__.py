@@ -16,6 +16,7 @@ from .abstract import (
 )
 from .builtin_or_local import BuiltinOrLocalTool, BuiltinTool
 from .combined import CombinedCapability
+from .fastmcp import FastMCP
 from .history_processor import HistoryProcessor
 from .image_generation import ImageGeneration
 from .instructions import Instructions
@@ -37,6 +38,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
     for cls in (
         BuiltinTool,
+        FastMCP,
         HistoryProcessor,
         ImageGeneration,
         Instructions,
@@ -66,6 +68,7 @@ __all__ = [
     'BuiltinOrLocalTool',
     'BuiltinToolCapability',
     'CAPABILITY_TYPES',
+    'FastMCP',
     'ImageGeneration',
     'Instructions',
     'HistoryProcessor',
