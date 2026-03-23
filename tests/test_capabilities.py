@@ -2517,25 +2517,25 @@ class TestPrepareToolsCapability:
         result = await agent.run('hello')
         assert result.output == "tools: ['public_tool']"
 
-    async def test_prepare_tools_none_returns_all(self):
-        """PrepareTools treats None return as 'keep all tools'."""
+    async def test_prepare_tools_none_disables_all(self):
+        """PrepareTools treats None return as 'disable all tools', consistent with ToolsPrepareFunc docs."""
         from pydantic_ai.capabilities import PrepareTools
 
-        async def noop_prepare(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+        async def disable_all(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
             return None
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             tool_names = [t.name for t in info.function_tools]
             return make_text_response(f'tools: {sorted(tool_names)}')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[PrepareTools(noop_prepare)])
+        agent = Agent(FunctionModel(model_fn), capabilities=[PrepareTools(disable_all)])
 
         @agent.tool_plain
         def my_tool() -> str:
             return 'result'  # pragma: no cover
 
         result = await agent.run('hello')
-        assert result.output == "tools: ['my_tool']"
+        assert result.output == 'tools: []'
 
     async def test_prepare_tools_modifies_definitions(self):
         """PrepareTools can modify tool definitions (e.g. set strict mode)."""
