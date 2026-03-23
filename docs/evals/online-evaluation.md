@@ -28,7 +28,7 @@ from pydantic_evals.evaluators import (
     EvaluatorContext,
     EvaluatorFailure,
 )
-from pydantic_evals.online import configure, evaluate
+from pydantic_evals.online import OnlineEvalConfig, wait_for_evaluations
 
 
 # A custom evaluator — same class you'd use with Dataset.evaluate()
@@ -51,11 +51,10 @@ async def log_results(
         results_log.append(f'{r.name}={r.value}')
 
 
-# Configure the global default to use our logging sink
-configure(default_sink=log_results)
+config = OnlineEvalConfig(default_sink=log_results)
 
 
-@evaluate(OutputNotEmpty())
+@config.evaluate(OutputNotEmpty())
 async def summarize(text: str) -> str:
     # In a real app, this would call an LLM
     return f'Summary of: {text}'
@@ -66,8 +65,7 @@ async def main():
     print(result)
     #> Summary of: Pydantic AI is a Python agent framework.
 
-    # Give background evaluation a moment to complete
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
     print(results_log)
     #> ['OutputNotEmpty=True']
 
@@ -124,7 +122,7 @@ from pydantic_evals.evaluators import (
     EvaluatorContext,
     EvaluatorFailure,
 )
-from pydantic_evals.online import OnlineEvalConfig
+from pydantic_evals.online import OnlineEvalConfig, wait_for_evaluations
 
 
 @dataclass
@@ -161,7 +159,7 @@ async def main():
     result = await my_function('What is 2+2?')
     print(result)
     #> Answer to: What is 2+2?
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
     print(results_log)
     #> ['IsNonEmpty=True']
 
@@ -279,7 +277,11 @@ from pydantic_evals.evaluators import (
     EvaluatorContext,
     EvaluatorFailure,
 )
-from pydantic_evals.online import OnlineEvalConfig, disable_evaluation
+from pydantic_evals.online import (
+    OnlineEvalConfig,
+    disable_evaluation,
+    wait_for_evaluations,
+)
 
 
 @dataclass
@@ -315,13 +317,13 @@ async def main():
         print(result)
         #> 42
 
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
     print(f'evaluations run: {len(results_log)}')
     #> evaluations run: 0
 
     # Evaluators resume outside the block
     await my_function(21)
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
     print(f'evaluations run: {len(results_log)}')
     #> evaluations run: 1
 
@@ -344,7 +346,11 @@ from pydantic_evals.evaluators import (
     EvaluatorContext,
     EvaluatorFailure,
 )
-from pydantic_evals.online import OnlineEvalConfig, OnlineEvaluator
+from pydantic_evals.online import (
+    OnlineEvalConfig,
+    OnlineEvaluator,
+    wait_for_evaluations,
+)
 
 results_log: list[str] = []
 
@@ -380,12 +386,12 @@ async def generate(prompt: str) -> str:
 
 async def main():
     await generate('hi')  # output is 15 chars — gate blocks
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
     print(f'after short output: {len(results_log)} evaluations')
     #> after short output: 0 evaluations
 
     await generate('tell me a long story about dragons')  # output is 49 chars — gate allows
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
     print(f'after long output: {len(results_log)} evaluations')
     #> after long output: 1 evaluations
 
@@ -410,7 +416,7 @@ from pydantic_evals.evaluators import (
     EvaluatorContext,
     EvaluatorFailure,
 )
-from pydantic_evals.online import OnlineEvalConfig
+from pydantic_evals.online import OnlineEvalConfig, wait_for_evaluations
 
 results_log: list[str] = []
 
@@ -442,8 +448,8 @@ result = process('hello')
 print(result)
 #> HELLO
 
-# For sync functions, evaluators run in a background thread
-asyncio.run(asyncio.sleep(0.5))
+# wait_for_evaluations() awaits async tasks and joins background threads
+asyncio.run(wait_for_evaluations())
 print(results_log)
 #> ['OutputCheck=True']
 ```
@@ -465,7 +471,11 @@ from pydantic_evals.evaluators import (
     EvaluatorContext,
     EvaluatorFailure,
 )
-from pydantic_evals.online import OnlineEvalConfig, OnlineEvaluator
+from pydantic_evals.online import (
+    OnlineEvalConfig,
+    OnlineEvaluator,
+    wait_for_evaluations,
+)
 
 default_log: list[str] = []
 special_log: list[str] = []
@@ -514,7 +524,7 @@ async def my_function(x: int) -> int:
 
 async def main():
     await my_function(42)
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
 
     print(f'default: {default_log}')
     #> default: ['FastCheck']
