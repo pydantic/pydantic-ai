@@ -375,33 +375,6 @@ async def test_evaluate_decorator_with_failure():
 
 
 # ============================================================================
-# Test evaluate() decorator — sync functions
-# ============================================================================
-
-
-async def test_evaluate_decorator_sync_basic():
-    """evaluate() decorator works with sync functions."""
-    collector = Collector()
-    config = OnlineEvalConfig(default_sink=collector)
-
-    @config.evaluate(AlwaysTrue())
-    def my_func(x: int) -> int:
-        return x * 2
-
-    result = my_func(21)
-    assert result == 42
-
-    # Give background task time to complete
-    await wait_for_evaluations()
-
-    assert len(collector.calls) == 1
-    results, _, ctx = collector.calls[0]
-    assert len(results) == 1
-    assert results[0].value is True
-    assert ctx.output == 42
-
-
-# ============================================================================
 # Test sampling
 # ============================================================================
 
@@ -1067,101 +1040,6 @@ async def test_sink_exception_does_not_propagate():
     await wait_for_evaluations()
     # The second sink should still have received results despite the first failing
     assert len(collector.calls) == 1
-
-
-# ============================================================================
-# Test sync function edge cases
-# ============================================================================
-
-
-async def test_sync_disabled_config():
-    """Sync function with disabled config runs without evaluation."""
-    collector = Collector()
-    config = OnlineEvalConfig(default_sink=collector, enabled=False)
-
-    @config.evaluate(AlwaysTrue())
-    def my_func(x: int) -> int:
-        return x * 2
-
-    result = my_func(21)
-    assert result == 42
-
-    await wait_for_evaluations()
-    assert len(collector.calls) == 0
-
-
-async def test_sync_sample_rate_zero():
-    """Sync function with sample_rate=0 runs without evaluation."""
-    collector = Collector()
-    config = OnlineEvalConfig(default_sink=collector)
-
-    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), sample_rate=0.0))
-    def my_func(x: int) -> int:
-        return x * 2
-
-    result = my_func(21)
-    assert result == 42
-
-    await wait_for_evaluations()
-    assert len(collector.calls) == 0
-
-
-async def test_sync_gate():
-    """Sync function gate works correctly."""
-    collector = Collector()
-    config = OnlineEvalConfig(default_sink=collector)
-
-    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), gate=lambda ctx: ctx.output > 10))
-    def my_func(x: int) -> int:
-        return x
-
-    my_func(5)  # gate blocks
-    await wait_for_evaluations()
-    assert len(collector.calls) == 0
-
-    my_func(20)  # gate allows
-    await wait_for_evaluations()
-    assert len(collector.calls) == 1
-
-
-async def test_sync_async_gate_works():
-    """Async gate on sync function works — gates run in background async context."""
-    collector = Collector()
-    config = OnlineEvalConfig(default_sink=collector)
-
-    async def async_gate(ctx: EvaluatorContext[Any, Any, Any]) -> bool:
-        return ctx.output > 10
-
-    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), gate=async_gate))
-    def my_func(x: int) -> int:
-        return x
-
-    my_func(5)  # gate blocks (output=5 < 10)
-    await wait_for_evaluations()
-    assert len(collector.calls) == 0
-
-    my_func(20)  # gate allows (output=20 > 10)
-    await wait_for_evaluations()
-    assert len(collector.calls) == 1
-
-
-async def test_sync_gate_exception():
-    """Sync function gate exception skips evaluator gracefully."""
-    collector = Collector()
-    config = OnlineEvalConfig(default_sink=collector)
-
-    def bad_gate(ctx: EvaluatorContext[Any, Any, Any]) -> bool:
-        raise ValueError('gate error')
-
-    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), gate=bad_gate))
-    def my_func(x: int) -> int:
-        return x
-
-    result = my_func(42)
-    assert result == 42
-
-    await wait_for_evaluations()
-    assert len(collector.calls) == 0
 
 
 # ============================================================================

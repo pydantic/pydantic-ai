@@ -831,5 +831,10 @@ async def wait_for_evaluations() -> None:
     if _background_tasks:
         await asyncio.gather(*_background_tasks, return_exceptions=True)
     # Join all pending background threads (from sync function dispatch)
+    _join_background_threads()
+
+
+def _join_background_threads() -> None:
+    """Join all pending background threads. Used internally by wait_for_evaluations."""
     for thread in list(_background_threads):
         thread.join(timeout=10.0)
