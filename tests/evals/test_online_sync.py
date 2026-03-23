@@ -8,6 +8,7 @@ are called from non-async code (CLI scripts, synchronous web frameworks, etc.).
 
 from __future__ import annotations as _annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -21,7 +22,7 @@ with try_import() as imports_successful:
     from pydantic_evals.online import (
         OnlineEvalConfig,
         OnlineEvaluator,
-        _join_background_threads,  # pyright: ignore[reportPrivateUsage]
+        wait_for_evaluations,
     )
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')
@@ -66,7 +67,7 @@ def test_sync_background_thread_dispatch():
     result = my_func(21)
     assert result == 42
 
-    _join_background_threads()
+    asyncio.run(wait_for_evaluations())
 
     assert len(collector.calls) == 1
     results, _, ctx = collector.calls[0]
@@ -86,11 +87,11 @@ def test_sync_background_thread_gate():
         return x
 
     my_func(5)  # gate blocks
-    _join_background_threads()
+    asyncio.run(wait_for_evaluations())
     assert len(collector.calls) == 0
 
     my_func(20)  # gate allows
-    _join_background_threads()
+    asyncio.run(wait_for_evaluations())
     assert len(collector.calls) == 1
 
 
@@ -107,11 +108,11 @@ def test_sync_background_thread_async_gate():
         return x
 
     my_func(5)  # gate blocks
-    _join_background_threads()
+    asyncio.run(wait_for_evaluations())
     assert len(collector.calls) == 0
 
     my_func(20)  # gate allows
-    _join_background_threads()
+    asyncio.run(wait_for_evaluations())
     assert len(collector.calls) == 1
 
 
@@ -127,7 +128,7 @@ def test_sync_background_thread_disabled():
     result = my_func(42)
     assert result == 42
 
-    _join_background_threads()
+    asyncio.run(wait_for_evaluations())
     assert len(collector.calls) == 0
 
 
@@ -143,7 +144,7 @@ def test_sync_background_thread_sample_rate_zero():
     result = my_func(42)
     assert result == 42
 
-    _join_background_threads()
+    asyncio.run(wait_for_evaluations())
     assert len(collector.calls) == 0
 
 
@@ -162,5 +163,5 @@ def test_sync_background_thread_gate_exception():
     result = my_func(42)
     assert result == 42
 
-    _join_background_threads()
+    asyncio.run(wait_for_evaluations())
     assert len(collector.calls) == 0
