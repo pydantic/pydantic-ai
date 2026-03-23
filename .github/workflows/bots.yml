@@ -114,6 +114,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
+      - name: Checkout repository
+        if: steps.check-label.outputs.has_label == 'false'
+        uses: actions/checkout@v6
+
       - name: Determine category label with Claude Code
         if: steps.check-label.outputs.has_label == 'false'
         uses: anthropics/claude-code-action@v1
