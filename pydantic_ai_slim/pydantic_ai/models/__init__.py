@@ -796,16 +796,32 @@ class Model(ABC):
         if params.allow_image_output and not self.profile.supports_image_output:
             raise UserError('Image output is not supported by this model.')
 
-        # Check if builtin tools are supported
-        if params.builtin_tools:
+        # Check builtin tools and handle fallback swap
+        if params.builtin_tools or any(t.prefer_builtin for t in params.function_tools):
             supported_types = self.profile.supported_builtin_tools
-            unsupported = [tool for tool in params.builtin_tools if not isinstance(tool, tuple(supported_types))]
-            if unsupported:
-                unsupported_names = [type(tool).__name__ for tool in unsupported]
+
+            supported_builtins = [t for t in params.builtin_tools if isinstance(t, tuple(supported_types))]
+            unsupported_builtins = [t for t in params.builtin_tools if not isinstance(t, tuple(supported_types))]
+
+            supported_ids = {t.unique_id for t in supported_builtins}
+            unsupported_ids = {t.unique_id for t in unsupported_builtins}
+            fallback_ids = {t.prefer_builtin for t in params.function_tools if t.prefer_builtin}
+
+            # Error only for unsupported builtins that have no local fallback
+            without_fallback = unsupported_ids - fallback_ids
+            if without_fallback:
+                unsupported_names = [type(t).__name__ for t in unsupported_builtins if t.unique_id in without_fallback]
                 supported_names = [t.__name__ for t in supported_types]
                 raise UserError(
                     f'Builtin tool(s) {unsupported_names} not supported by this model. Supported: {supported_names}'
                 )
+
+            # Remove local fallback tools whose preferred builtin IS supported (model handles natively)
+            # Remove unsupported builtins (their local fallbacks stay)
+            function_tools = [
+                t for t in params.function_tools if not t.prefer_builtin or t.prefer_builtin not in supported_ids
+            ]
+            params = replace(params, builtin_tools=supported_builtins, function_tools=function_tools)
 
         return model_settings, params
 
