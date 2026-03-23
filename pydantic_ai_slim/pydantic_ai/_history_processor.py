@@ -24,5 +24,3 @@ HistoryProcessor = (
 
 Can optionally accept a `RunContext` as a parameter.
 """
-
-
