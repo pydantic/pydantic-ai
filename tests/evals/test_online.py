@@ -955,3 +955,171 @@ async def test_multiple_sinks():
 
     assert len(collector1.calls) == 1
     assert len(collector2.calls) == 1
+
+
+# ============================================================================
+# Test fractional sample rate
+# ============================================================================
+
+
+async def test_fractional_sample_rate():
+    """Fractional sample_rate evaluates a subset of calls."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), sample_rate=0.5))
+    async def my_func(x: int) -> int:
+        return x
+
+    # Run many times — with 0.5 rate, we should get some but not all
+    for _ in range(50):
+        await my_func(42)
+
+    await asyncio.sleep(0.2)
+    # Statistically, should get roughly 25 ± some variance, but definitely not 0 or 50
+    assert 5 < len(collector.calls) < 45
+
+
+# ============================================================================
+# Test sample_rate callable exception
+# ============================================================================
+
+
+async def test_sample_rate_callable_exception_skips_evaluator():
+    """Exception in sample_rate callable skips the evaluator without breaking the function."""
+    collector = Collector()
+
+    def bad_rate() -> float:
+        raise ValueError('rate error')
+
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), sample_rate=bad_rate))
+    async def my_func(x: int) -> int:
+        return x
+
+    result = await my_func(42)
+    assert result == 42
+
+    await asyncio.sleep(0.1)
+    assert len(collector.calls) == 0
+
+
+# ============================================================================
+# Test sink exception handling
+# ============================================================================
+
+
+async def test_sink_exception_does_not_propagate():
+    """Exception in a sink is logged but does not break other sinks."""
+
+    class FailingSink:
+        async def submit(self, **kwargs: Any) -> None:
+            raise ValueError('sink error')
+
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=[FailingSink(), CallbackSink(collector)])
+
+    @config.evaluate(AlwaysTrue())
+    async def my_func(x: int) -> int:
+        return x
+
+    result = await my_func(42)
+    assert result == 42
+
+    await asyncio.sleep(0.1)
+    # The second sink should still have received results despite the first failing
+    assert len(collector.calls) == 1
+
+
+# ============================================================================
+# Test sync function edge cases
+# ============================================================================
+
+
+async def test_sync_disabled_config():
+    """Sync function with disabled config runs without evaluation."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector, enabled=False)
+
+    @config.evaluate(AlwaysTrue())
+    def my_func(x: int) -> int:
+        return x * 2
+
+    result = my_func(21)
+    assert result == 42
+
+    await asyncio.sleep(0.1)
+    assert len(collector.calls) == 0
+
+
+async def test_sync_sample_rate_zero():
+    """Sync function with sample_rate=0 runs without evaluation."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), sample_rate=0.0))
+    def my_func(x: int) -> int:
+        return x * 2
+
+    result = my_func(21)
+    assert result == 42
+
+    await asyncio.sleep(0.1)
+    assert len(collector.calls) == 0
+
+
+async def test_sync_gate():
+    """Sync function gate works correctly."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), gate=lambda ctx: ctx.output > 10))
+    def my_func(x: int) -> int:
+        return x
+
+    my_func(5)  # gate blocks
+    await asyncio.sleep(0.3)
+    assert len(collector.calls) == 0
+
+    my_func(20)  # gate allows
+    await asyncio.sleep(0.3)
+    assert len(collector.calls) == 1
+
+
+async def test_sync_async_gate_skipped():
+    """Async gate on sync function is skipped with warning."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    async def async_gate(ctx: EvaluatorContext[Any, Any, Any]) -> bool:
+        return True
+
+    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), gate=async_gate))
+    def my_func(x: int) -> int:
+        return x
+
+    result = my_func(42)
+    assert result == 42
+
+    await asyncio.sleep(0.3)
+    assert len(collector.calls) == 0  # skipped because gate is async
+
+
+async def test_sync_gate_exception():
+    """Sync function gate exception skips evaluator gracefully."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    def bad_gate(ctx: EvaluatorContext[Any, Any, Any]) -> bool:
+        raise ValueError('gate error')
+
+    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), gate=bad_gate))
+    def my_func(x: int) -> int:
+        return x
+
+    result = my_func(42)
+    assert result == 42
+
+    await asyncio.sleep(0.3)
+    assert len(collector.calls) == 0

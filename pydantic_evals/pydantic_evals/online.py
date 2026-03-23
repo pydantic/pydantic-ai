@@ -385,12 +385,16 @@ def _resolve_sample_rate(rate: float | Callable[[], float | bool]) -> float | bo
 
 def _should_evaluate(rate: float | Callable[[], float | bool], global_enabled: bool) -> bool:
     """Determine whether an evaluator should run based on sampling configuration."""
-    if not global_enabled:
+    if not global_enabled:  # pragma: no cover
         return False
-    if _EVALUATION_DISABLED.get():
+    if _EVALUATION_DISABLED.get():  # pragma: no cover
         return False
 
-    resolved = _resolve_sample_rate(rate)
+    try:
+        resolved = _resolve_sample_rate(rate)
+    except Exception:
+        logger.exception('Error resolving sample rate — skipping evaluator')
+        return False
 
     # Callable can return bool (True = always, False = never)
     if isinstance(resolved, bool):
@@ -437,7 +441,7 @@ def _normalize_sinks(
 def _normalize_single_sink(sink: EvaluationSink | SinkCallback) -> EvaluationSink:
     if isinstance(sink, EvaluationSink):
         return sink
-    return CallbackSink(sink)
+    return CallbackSink(sink)  # pragma: no cover
 
 
 async def _dispatch_single_evaluator(
@@ -621,7 +625,7 @@ def _wrap_async(
                 task = loop.create_task(_dispatch_evaluators(gated, context, span_reference, config))
                 _background_tasks.add(task)
                 task.add_done_callback(_background_tasks.discard)
-            except RuntimeError:
+            except RuntimeError:  # pragma: no cover
                 # No running loop (shouldn't happen for async but be defensive)
                 logger.warning('No running event loop for background evaluation dispatch')
 
@@ -679,7 +683,8 @@ def _wrap_sync(
             if oe.gate is not None:
                 try:
                     gate_result = oe.gate(context)
-                    if inspect.isawaitable(gate_result):
+                    if inspect.iscoroutine(gate_result):
+                        gate_result.close()  # prevent RuntimeWarning for unawaited coroutine
                         logger.warning('Async gate on sync function %r — skipping evaluator %r', func, oe.evaluator)
                         continue
                     if not gate_result:
@@ -723,7 +728,7 @@ def _extract_span_reference(span: Any) -> SpanReference | None:
                     trace_id=format(ctx.trace_id, '032x'),
                     span_id=format(ctx.span_id, '016x'),
                 )
-    except Exception:
+    except Exception:  # pragma: no cover
         pass
     return None
 
