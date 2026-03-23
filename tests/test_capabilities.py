@@ -1782,6 +1782,24 @@ class TestStreamingHooks:
             output = await stream.get_output()
         assert output == 'skipped in stream'
 
+    async def test_skip_model_request_from_wrap_model_request(self):
+        """SkipModelRequest raised inside wrap_model_request is handled in non-streaming."""
+
+        @dataclass
+        class WrapSkipCap(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: Any,
+            ) -> ModelResponse:
+                raise SkipModelRequest(ModelResponse(parts=[TextPart(content='wrap-skipped')]))
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[WrapSkipCap()])
+        result = await agent.run('hello')
+        assert result.output == 'wrap-skipped'
+
     async def test_skip_model_request_from_wrap_model_request_streaming(self):
         """SkipModelRequest raised inside wrap_model_request during streaming is handled."""
 
@@ -2291,7 +2309,7 @@ class TestWrapNodeRunHook:
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
             async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
-                return await handler(node)
+                return await handler(node)  # pragma: no cover — bare async for doesn't call this
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[NodeObserverCap()])
 
@@ -3638,7 +3656,9 @@ class TestRunErrorHooks:
                     self.log.append('wrap_run:caught')
                     return AgentRunResult(output='wrap_recovered')
 
-            async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            async def on_run_error(  # pragma: no cover — verifying this is NOT called
+                self, ctx: RunContext[Any], *, error: BaseException
+            ) -> AgentRunResult[Any]:
                 self.log.append('on_run_error')
                 raise error
 
@@ -3670,7 +3690,7 @@ class TestRunErrorHooks:
         agent = Agent(FunctionModel(failing_model), capabilities=[cap])
         async with agent.iter('hello') as agent_run:
             node = agent_run.next_node
-            while not isinstance(node, End):
+            while not isinstance(node, End):  # pragma: no branch
                 node = await agent_run.next(node)
         assert cap.called
         assert agent_run.result is not None
@@ -3756,6 +3776,43 @@ class TestModelRequestErrorHooks:
         await agent.run('hello')
         assert 'on_model_request_error' not in cap.log
 
+    async def test_default_on_model_request_error_reraises(self):
+        """Default on_model_request_error re-raises, exercised with a minimal capability."""
+
+        @dataclass
+        class MinimalCap(AbstractCapability[Any]):
+            def get_instructions(self):
+                return 'Be helpful.'
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[MinimalCap()])
+        with pytest.raises(RuntimeError, match='model exploded'):
+            await agent.run('hello')
+
+    async def test_default_on_model_request_error_reraises_streaming(self):
+        """Default on_model_request_error re-raises in streaming path (wrap_task error after stream consumed)."""
+
+        @dataclass
+        class PostProcessFailCap(AbstractCapability[Any]):
+            """wrap_model_request that fails AFTER handler returns (post-processing error)."""
+
+            def get_instructions(self):
+                return 'Be helpful.'
+
+            async def wrap_model_request(self, ctx: RunContext[Any], *, request_context: Any, handler: Any) -> Any:
+                await handler(request_context)
+                raise RuntimeError('post-processing exploded')
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[PostProcessFailCap()],
+        )
+        with pytest.raises(RuntimeError, match='post-processing exploded'):
+            async with agent.run_stream('hello') as stream:
+                await stream.get_output()
+
 
 # --- Tool validate error hook tests ---
 
@@ -3837,6 +3894,43 @@ class TestToolValidateErrorHooks:
         result = await agent.run('greet someone')
         assert received_name == 'recovered-name'
         assert 'hello recovered-name' in result.output
+
+    async def test_default_on_tool_validate_error_reraises(self):
+        """The default on_tool_validate_error re-raises, exercised with a minimal capability."""
+
+        @dataclass
+        class MinimalCap(AbstractCapability[Any]):
+            def get_instructions(self):
+                return 'Be helpful.'
+
+        call_count = 0
+
+        def bad_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return make_text_response(f'got: {part.content}')
+            if info.function_tools:
+                tool = info.function_tools[0]
+                if call_count <= 1:
+                    return ModelResponse(
+                        parts=[ToolCallPart(tool_name=tool.name, args='{"wrong": 1}', tool_call_id='call-1')]
+                    )
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=tool.name, args='{"name": "correct"}', tool_call_id='call-2')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        agent = Agent(FunctionModel(bad_args_model), capabilities=[MinimalCap()])
+
+        @agent.tool_plain
+        def greet(name: str) -> str:
+            return f'hello {name}'
+
+        result = await agent.run('greet someone')
+        assert 'hello correct' in result.output
 
 
 # --- Tool execute error hook tests ---
@@ -4145,3 +4239,22 @@ class TestHooksCapability:
             return request_context
 
         assert repr(hooks) == "Hooks({'before_model_request': 1})"
+
+    async def test_default_on_tool_execute_error_reraises(self):
+        """The default on_tool_execute_error just re-raises, exercised with a minimal capability."""
+
+        @dataclass
+        class MinimalCap(AbstractCapability[Any]):
+            """Capability that doesn't override error hooks."""
+
+            def get_instructions(self):
+                return 'Be helpful.'
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[MinimalCap()])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            raise ValueError('tool failed')
+
+        with pytest.raises(ValueError, match='tool failed'):
+            await agent.run('call the tool')
