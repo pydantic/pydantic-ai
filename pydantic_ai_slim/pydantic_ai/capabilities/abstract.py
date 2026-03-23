@@ -3,20 +3,50 @@ from __future__ import annotations
 from abc import ABC
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic
+from typing import TYPE_CHECKING, Any, Generic, TypeAlias
 
 from pydantic_ai._instructions import AgentInstructions
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
-from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
     from pydantic_ai.agent.abstract import AgentModelSettings
+    from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
     from pydantic_graph import End
+
+# --- Handler type aliases for use in hook method signatures ---
+# These make it easier to write correct type annotations when subclassing AbstractCapability.
+
+AgentNode: TypeAlias = '_agent_graph.AgentNode[AgentDepsT, Any]'
+"""Type alias for an agent graph node (`UserPromptNode`, `ModelRequestNode`, `CallToolsNode`)."""
+
+NodeResult: TypeAlias = '_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]'
+"""Type alias for the result of executing an agent graph node: either the next node or `End`."""
+
+WrapRunHandler: TypeAlias = 'Callable[[], Awaitable[AgentRunResult[Any]]]'
+"""Handler type for [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run]."""
+
+WrapNodeRunHandler: TypeAlias = 'Callable[[_agent_graph.AgentNode[AgentDepsT, Any]], Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]]]'
+"""Handler type for [`wrap_node_run`][pydantic_ai.capabilities.AbstractCapability.wrap_node_run]."""
+
+WrapModelRequestHandler: TypeAlias = 'Callable[[ModelRequestContext], Awaitable[ModelResponse]]'
+"""Handler type for [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request]."""
+
+RawToolArgs: TypeAlias = 'str | dict[str, Any]'
+"""Type alias for raw (pre-validation) tool arguments."""
+
+ValidatedToolArgs: TypeAlias = 'dict[str, Any]'
+"""Type alias for validated tool arguments."""
+
+WrapToolValidateHandler: TypeAlias = 'Callable[[str | dict[str, Any]], Awaitable[dict[str, Any]]]'
+"""Handler type for [`wrap_tool_validate`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_validate]."""
+
+WrapToolExecuteHandler: TypeAlias = 'Callable[[dict[str, Any]], Awaitable[Any]]'
+"""Handler type for [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute]."""
 
 
 @dataclass
@@ -153,7 +183,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        handler: Callable[[], Awaitable[AgentRunResult[Any]]],
+        handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
         """Wraps the entire agent run. handler() executes the run."""
         return await handler()
@@ -162,12 +192,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        node: _agent_graph.AgentNode[AgentDepsT, Any],
-        handler: Callable[
-            [_agent_graph.AgentNode[AgentDepsT, Any]],
-            Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
-        ],
-    ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+        node: AgentNode[AgentDepsT],
+        handler: WrapNodeRunHandler[AgentDepsT],
+    ) -> NodeResult[AgentDepsT]:
         """Wraps execution of each agent graph node (run step).
 
         Called for every node in the agent graph (`UserPromptNode`,
@@ -222,7 +249,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         request_context: ModelRequestContext,
-        handler: Callable[[ModelRequestContext], Awaitable[ModelResponse]],
+        handler: WrapModelRequestHandler,
     ) -> ModelResponse:
         """Wraps the model request. handler() calls the model."""
         return await handler(request_context)
@@ -234,8 +261,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
-        args: str | dict[str, Any],
-    ) -> str | dict[str, Any]:
+        args: RawToolArgs,
+    ) -> RawToolArgs:
         """Modify raw args before validation."""
         return args
 
@@ -244,8 +271,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
-        args: dict[str, Any],
-    ) -> dict[str, Any]:
+        args: ValidatedToolArgs,
+    ) -> ValidatedToolArgs:
         """Modify validated args. Called only on successful validation."""
         return args
 
@@ -254,9 +281,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
-        args: str | dict[str, Any],
-        handler: Callable[[str | dict[str, Any]], Awaitable[dict[str, Any]]],
-    ) -> dict[str, Any]:
+        args: RawToolArgs,
+        handler: WrapToolValidateHandler,
+    ) -> ValidatedToolArgs:
         """Wraps tool argument validation. handler() runs the validation."""
         return await handler(args)
 
@@ -267,8 +294,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
-        args: dict[str, Any],
-    ) -> dict[str, Any]:
+        args: ValidatedToolArgs,
+    ) -> ValidatedToolArgs:
         """Modify validated args before execution."""
         return args
 
@@ -277,7 +304,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
-        args: dict[str, Any],
+        args: ValidatedToolArgs,
         result: Any,
     ) -> Any:
         """Modify result after execution."""
@@ -288,8 +315,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
-        args: dict[str, Any],
-        handler: Callable[[dict[str, Any]], Awaitable[Any]],
+        args: ValidatedToolArgs,
+        handler: WrapToolExecuteHandler,
     ) -> Any:
         """Wraps tool execution. handler() runs the tool."""
         return await handler(args)

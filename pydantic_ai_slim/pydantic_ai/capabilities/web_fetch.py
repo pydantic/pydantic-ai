@@ -6,26 +6,16 @@ from typing import Any, Literal
 
 from pydantic_ai.builtin_tools import WebFetchTool
 from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, Tool
-from pydantic_ai.toolsets import AbstractToolset
 
-from .builtin_tool import BuiltinToolCapability
-
-
-async def _web_fetch_impl(url: str) -> str:
-    """Fetch the text content of a URL with SSRF protection."""
-    # TODO: Convert HTML to markdown for better LLM consumption (needs html-to-markdown package)
-    from pydantic_ai._ssrf import safe_download
-
-    response = await safe_download(url)
-    return response.text
+from .builtin_or_local import BuiltinOrLocalTool
 
 
 @dataclass(init=False)
-class WebFetch(BuiltinToolCapability[AgentDepsT]):
+class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
     """URL fetching capability.
 
-    Uses the model's builtin URL fetching when available, falling back to a local
-    httpx-based fetcher with SSRF protection otherwise.
+    Uses the model's builtin URL fetching when available. No default local
+    fallback — provide a custom `local` tool if needed.
     """
 
     allowed_domains: list[str] | None
@@ -79,9 +69,6 @@ class WebFetch(BuiltinToolCapability[AgentDepsT]):
 
     def _builtin_unique_id(self) -> str:
         return WebFetchTool.kind
-
-    def _default_local(self) -> Tool[Any] | AbstractToolset[Any] | None:
-        return Tool(_web_fetch_impl, name='web_fetch', description='Fetch the text content of a URL.')
 
     def _requires_builtin(self) -> bool:
         return self.allowed_domains is not None or self.blocked_domains is not None or self.max_uses is not None

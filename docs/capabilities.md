@@ -21,9 +21,8 @@ Pydantic AI ships with several capabilities that cover common needs:
 | [`BuiltinTool`][pydantic_ai.capabilities.BuiltinTool] | Registers a [builtin tool](builtin-tools.md) with the agent | Yes |
 | [`Instructions`][pydantic_ai.capabilities.Instructions] | Static or template-based system prompt instructions | Yes |
 | [`ModelSettings`][pydantic_ai.capabilities.ModelSettings] | Static or dynamic model settings | Yes |
-| [`Thinking`][pydantic_ai.capabilities.Thinking] | Enables model thinking/reasoning mode | Yes |
 | [`WebSearch`][pydantic_ai.capabilities.WebSearch] | Web search — builtin when supported, local fallback otherwise | Yes |
-| [`WebFetch`][pydantic_ai.capabilities.WebFetch] | URL fetching — builtin when supported, local fallback otherwise | Yes |
+| [`WebFetch`][pydantic_ai.capabilities.WebFetch] | URL fetching — builtin when supported, custom local fallback | Yes |
 | [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | Image generation — builtin when supported, custom local fallback | Yes |
 | [`MCP`][pydantic_ai.capabilities.MCP] | MCP server — builtin when supported, direct connection otherwise | Yes |
 | [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] | Filters or modifies tool definitions per step | — |
@@ -34,13 +33,12 @@ The **Spec** column indicates whether the capability can be used in [agent specs
 
 ```python {title="builtin_capabilities.py"}
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import Instructions, ModelSettings, Thinking, WebSearch
+from pydantic_ai.capabilities import Instructions, ModelSettings, WebSearch
 
 agent = Agent(
     'anthropic:claude-opus-4-6',
     capabilities=[
         Instructions('You are a research assistant. Be thorough and cite sources.'),
-        Thinking(),
         WebSearch(),
         ModelSettings({'max_tokens': 8192}),
     ],
@@ -60,11 +58,11 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import MCP, WebFetch, WebSearch
 
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5.2',
     capabilities=[
         # Auto-detects DuckDuckGo as local fallback
         WebSearch(),
-        # Auto-detects httpx fetcher as local fallback
+        # Builtin URL fetching; provide local= for fallback
         WebFetch(),
         # Auto-detects transport from URL
         MCP(url='https://mcp.example.com/api'),
@@ -261,6 +259,8 @@ class NodeLogger(AbstractCapability[Any]):
     nodes: list[str] = field(default_factory=lambda: [])
 
     async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+        # Tip: use AgentNode, WrapNodeRunHandler, NodeResult from pydantic_ai.capabilities
+        # for full type safety when subclassing
         self.nodes.append(type(node).__name__)
         return await handler(node)
 
@@ -280,9 +280,8 @@ from typing import Any
 
 from pydantic_graph import End
 
-from pydantic_ai import RunContext
-from pydantic_ai._agent_graph import ModelRequestNode
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai import ModelRequestNode, RunContext
+from pydantic_ai.capabilities import AbstractCapability, AgentNode, NodeResult, WrapNodeRunHandler
 from pydantic_ai.result import FinalResult
 
 
@@ -291,12 +290,17 @@ class MaxModelRequests(AbstractCapability[Any]):
     """Limits the number of model requests per run by ending early."""
 
     max_requests: int = 5
-    _count: int = 0
+    count: int = 0
 
-    async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+    async def for_run(self, ctx: RunContext[Any]) -> 'MaxModelRequests':
+        return MaxModelRequests(max_requests=self.max_requests)  # fresh per run
+
+    async def wrap_node_run(
+        self, ctx: RunContext[Any], *, node: AgentNode[Any], handler: WrapNodeRunHandler[Any]
+    ) -> NodeResult[Any]:
         if isinstance(node, ModelRequestNode):
-            self._count += 1
-            if self._count > self.max_requests:
+            self.count += 1
+            if self.count > self.max_requests:
                 return End(FinalResult(output='Max model requests reached'))
         return await handler(node)
 ```
@@ -311,7 +315,7 @@ See [Iterating Over an Agent's Graph](agent.md#iterating-over-an-agents-graph) f
 | [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request] | `(ctx: RunContext, *, request_context: ModelRequestContext, response: ModelResponse) -> ModelResponse` | Modify the model's response |
 | [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request] | `(ctx: RunContext, *, request_context: ModelRequestContext, handler: (ModelRequestContext) -> ModelResponse) -> ModelResponse` | Wrap the model call |
 
-[`ModelRequestContext`][pydantic_ai.capabilities.ModelRequestContext] bundles `messages`, `model_settings`, and `model_request_parameters` into a single object, making the signature future-proof.
+[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] bundles `messages`, `model_settings`, and `model_request_parameters` into a single object, making the signature future-proof.
 
 ### Tool hooks
 
@@ -487,8 +491,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import AbstractCapability, ModelRequestContext
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelResponse, TextPart
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.test import TestModel
 
 
@@ -535,9 +540,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.capabilities.abstract import ModelRequestContext
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    WrapModelRequestHandler,
+    WrapToolExecuteHandler,
+)
 from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.test import TestModel
 
 
@@ -550,7 +559,7 @@ class VerboseLogging(AbstractCapability[Any]):
         ctx: RunContext[Any],
         *,
         request_context: ModelRequestContext,
-        handler: Any,
+        handler: WrapModelRequestHandler,
     ) -> ModelResponse:
         print(f'  Model request (step {ctx.run_step}, {len(request_context.messages)} messages)')
         #>   Model request (step 1, 1 messages)
@@ -565,7 +574,7 @@ class VerboseLogging(AbstractCapability[Any]):
         *,
         call: ToolCallPart,
         args: dict[str, Any],
-        handler: Any,
+        handler: WrapToolExecuteHandler,
     ) -> Any:
         print(f'  Tool call: {call.tool_name}({args})')
         result = await handler(args)
@@ -600,7 +609,7 @@ from typing import Any
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.capabilities.abstract import ModelRequestContext
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.test import TestModel
 
 
@@ -696,7 +705,6 @@ Capabilities integrate with the YAML/JSON agent spec system, allowing you to def
 model: anthropic:claude-opus-4-6
 instructions: You are a helpful research assistant.
 capabilities:
-  - Thinking
   - WebSearch
   - ModelSettings:
       max_tokens: 8192
@@ -801,7 +809,7 @@ agent = Agent.from_spec(
     {
         'model': 'anthropic:claude-opus-4-6',
         'instructions': 'You are helping {{user_name}}.',
-        'capabilities': ['Thinking'],
+        'capabilities': ['WebSearch'],
     },
     deps_type=UserContext,
 )
@@ -869,7 +877,7 @@ output_schema:
   required: [answer, confidence]
 instructions: "You are helping {{user_name}}. Always include a confidence score."
 capabilities:
-  - Thinking
+  - WebSearch
 ```
 
 ### Saving specs
@@ -882,7 +890,7 @@ from pydantic_ai.agent.spec import AgentSpec
 spec = AgentSpec(
     model='anthropic:claude-opus-4-6',
     instructions='You are a helpful assistant.',
-    capabilities=['Thinking', 'WebSearch'],
+    capabilities=['WebSearch'],
 )
 spec.to_file('agent.yaml')
 # Also generates ./agent_schema.json for editor autocompletion

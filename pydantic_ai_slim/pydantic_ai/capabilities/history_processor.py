@@ -1,9 +1,15 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from pydantic_ai import _history_processor
 from pydantic_ai.tools import AgentDepsT, RunContext
 
-from .abstract import AbstractCapability, ModelRequestContext
+from .abstract import AbstractCapability
+
+if TYPE_CHECKING:
+    from pydantic_ai.models import ModelRequestContext
 
 
 @dataclass

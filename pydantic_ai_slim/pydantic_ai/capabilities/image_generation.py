@@ -7,15 +7,15 @@ from typing import Any, Literal
 from pydantic_ai.builtin_tools import ImageGenerationTool
 from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, Tool
 
-from .builtin_tool import BuiltinToolCapability
+from .builtin_or_local import BuiltinOrLocalTool
 
 
 @dataclass(init=False)
-class ImageGeneration(BuiltinToolCapability[AgentDepsT]):
+class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
     """Image generation capability.
 
     Uses the model's builtin image generation when available. No default local
-    fallback — provide a custom ``local`` tool if needed.
+    fallback — provide a custom `local` tool if needed.
     """
 
     def __init__(

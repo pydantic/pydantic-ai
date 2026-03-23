@@ -12,10 +12,11 @@ from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, RunContext, ToolDefi
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
-from .abstract import AbstractCapability, ModelRequestContext
+from .abstract import AbstractCapability
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
+    from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
     from pydantic_graph import End

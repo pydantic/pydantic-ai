@@ -1,7 +1,20 @@
 from typing import Any
 
-from .abstract import AbstractCapability, ModelRequestContext
-from .builtin_tool import BuiltinTool, BuiltinToolCapability
+from typing_extensions import deprecated
+
+from .abstract import (
+    AbstractCapability,
+    AgentNode,
+    NodeResult,
+    RawToolArgs,
+    ValidatedToolArgs,
+    WrapModelRequestHandler,
+    WrapNodeRunHandler,
+    WrapRunHandler,
+    WrapToolExecuteHandler,
+    WrapToolValidateHandler,
+)
+from .builtin_or_local import BuiltinOrLocalTool, BuiltinTool
 from .combined import CombinedCapability
 from .history_processor import HistoryProcessor
 from .image_generation import ImageGeneration
@@ -12,10 +25,13 @@ from .mcp import MCP
 # and users rarely need both this and settings.ModelSettings in the same scope.
 from .model_settings import ModelSettings
 from .prepare_tools import PrepareTools
-from .thinking import Thinking
 from .toolset import Toolset
 from .web_fetch import WebFetch
 from .web_search import WebSearch
+
+BuiltinToolCapability = deprecated('BuiltinToolCapability is deprecated, use BuiltinOrLocalTool instead')(
+    BuiltinOrLocalTool
+)
 
 CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
@@ -27,7 +43,6 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         MCP,
         ModelSettings,
         PrepareTools,
-        Thinking,
         Toolset,
         WebFetch,
         WebSearch,
@@ -38,8 +53,17 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
 
 __all__ = [
     'AbstractCapability',
-    'ModelRequestContext',
+    'AgentNode',
+    'NodeResult',
+    'RawToolArgs',
+    'ValidatedToolArgs',
+    'WrapModelRequestHandler',
+    'WrapNodeRunHandler',
+    'WrapRunHandler',
+    'WrapToolExecuteHandler',
+    'WrapToolValidateHandler',
     'BuiltinTool',
+    'BuiltinOrLocalTool',
     'BuiltinToolCapability',
     'CAPABILITY_TYPES',
     'ImageGeneration',
@@ -48,7 +72,6 @@ __all__ = [
     'MCP',
     'ModelSettings',
     'PrepareTools',
-    'Thinking',
     'Toolset',
     'WebFetch',
     'WebSearch',

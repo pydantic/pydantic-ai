@@ -10,7 +10,7 @@ from pydantic_ai.builtin_tools import MCPServerTool
 from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
-from .builtin_tool import BuiltinToolCapability
+from .builtin_or_local import BuiltinOrLocalTool
 
 if TYPE_CHECKING:
     from pydantic_ai.mcp import MCPServer
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 
 @dataclass(init=False)
-class MCP(BuiltinToolCapability[AgentDepsT]):
+class MCP(BuiltinOrLocalTool[AgentDepsT]):
     """MCP server capability.
 
     Uses the model's builtin MCP server support when available, connecting
@@ -38,7 +38,7 @@ class MCP(BuiltinToolCapability[AgentDepsT]):
     """HTTP headers for MCP server requests. Passed to both builtin and local."""
 
     allowed_tools: list[str] | None
-    """Filter to only these tools. Requires builtin support."""
+    """Filter to only these tools. Applied to both builtin and local."""
 
     description: str | None
     """Description of the MCP server. Builtin-only; ignored by local tools."""
@@ -105,7 +105,9 @@ class MCP(BuiltinToolCapability[AgentDepsT]):
 
         return MCPServerStreamableHTTP(self.url, headers=local_headers or None)
 
-    def _requires_builtin(self) -> bool:
-        # allowed_tools is a genuine constraint the local fallback can't enforce;
-        # description is just metadata and degrades gracefully
-        return self.allowed_tools is not None
+    def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
+        toolset = super().get_toolset()
+        if toolset is not None and self.allowed_tools is not None:
+            allowed = set(self.allowed_tools)
+            return toolset.filtered(lambda _ctx, tool_def: tool_def.name in allowed)
+        return toolset

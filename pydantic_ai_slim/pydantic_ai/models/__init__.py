@@ -813,7 +813,11 @@ class Model(ABC):
                 unsupported_names = [type(t).__name__ for t in unsupported_builtins if t.unique_id in without_fallback]
                 supported_names = [t.__name__ for t in supported_types]
                 raise UserError(
-                    f'Builtin tool(s) {unsupported_names} not supported by this model. Supported: {supported_names}'
+                    f'Builtin tool(s) {unsupported_names} not supported by this model. '
+                    f'Supported: {supported_names}. '
+                    f'To use these tools with this model, provide a local fallback via '
+                    f'BuiltinOrLocalTool(builtin=..., local=...) or the `local` parameter '
+                    f'of the capability (e.g. ImageGeneration(local=my_func)).'
                 )
 
             # Remove local fallback tools whose preferred builtin IS supported (model handles natively)

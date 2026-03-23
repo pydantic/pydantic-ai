@@ -9,7 +9,10 @@ from typing import Any
 import pytest
 
 from pydantic_ai._run_context import RunContext
+from pydantic_ai._spec import NamedSpec
 from pydantic_ai.agent import Agent
+from pydantic_ai.agent.spec import AgentSpec
+from pydantic_ai.builtin_tools import CodeExecutionTool, ImageGenerationTool, MCPServerTool, WebFetchTool, WebSearchTool
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
@@ -17,12 +20,12 @@ from pydantic_ai.capabilities import (
     ImageGeneration,
     Instructions,
     ModelSettings,
-    Thinking,
     Toolset,
     WebFetch,
     WebSearch,
 )
-from pydantic_ai.capabilities.abstract import AbstractCapability, ModelRequestContext
+from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities.builtin_or_local import BuiltinTool as BuiltinToolCap
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.exceptions import SkipModelRequest, SkipToolExecution, SkipToolValidation, UserError
 from pydantic_ai.messages import (
@@ -35,8 +38,10 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.tools import ToolDefinition
@@ -60,7 +65,6 @@ def test_capability_types() -> None:
             'Instructions': Instructions,
             'MCP': MCP,
             'ModelSettings': ModelSettings,
-            'Thinking': Thinking,
             'WebFetch': WebFetch,
             'WebSearch': WebSearch,
         }
@@ -74,7 +78,6 @@ def test_agent_from_spec_basic():
             'model': 'test',
             'capabilities': [
                 {'Instructions': 'You are a helpful agent.'},
-                'Thinking',
                 'WebSearch',
                 {'ModelSettings': {'max_tokens': 4096}},
             ],
@@ -134,14 +137,11 @@ def test_agent_from_spec_custom_capability():
 
 def test_agent_from_spec_with_agent_spec_object():
     """Test Agent.from_spec with an AgentSpec instance."""
-    from pydantic_ai._spec import NamedSpec
-    from pydantic_ai.agent.spec import AgentSpec
-
     spec = AgentSpec(
         model='test',
         capabilities=[
             NamedSpec(name='Instructions', arguments=('You are helpful.',)),
-            NamedSpec(name='Thinking', arguments=None),
+            NamedSpec(name='WebSearch', arguments=None),
         ],
     )
     agent = Agent.from_spec(spec)
@@ -194,16 +194,12 @@ def test_agent_from_spec_output_type_takes_precedence():
 
 def test_agent_from_spec_output_schema_invalid():
     """Test Agent.from_spec with a non-object output_schema raises UserError."""
-    from pydantic_ai.exceptions import UserError
-
     with pytest.raises(UserError, match='Schema must be an object'):
         Agent.from_spec({'model': 'test', 'output_schema': {'type': 'string'}})
 
 
 async def test_agent_from_spec_output_schema_integration():
     """Test Agent.from_spec with output_schema produces dict output."""
-    from pydantic_ai.models.test import TestModel
-
     schema = {
         'type': 'object',
         'properties': {
@@ -359,8 +355,6 @@ def test_agent_from_spec_capabilities_merged():
 
 
 def test_model_json_schema_with_capabilities():
-    from pydantic_ai.agent.spec import AgentSpec
-
     schema = AgentSpec.model_json_schema_with_capabilities()
 
     assert schema['type'] == 'object'
@@ -392,15 +386,12 @@ def test_model_json_schema_with_capabilities():
         'Instructions',
         'MCP',
         'ModelSettings',
-        'Thinking',
         'WebFetch',
         'WebSearch',
     }
 
 
 def test_model_json_schema_with_custom_capabilities():
-    from pydantic_ai.agent.spec import AgentSpec
-
     schema = AgentSpec.model_json_schema_with_capabilities(
         custom_capability_types=[CustomCapability],
     )
@@ -420,18 +411,14 @@ def test_model_json_schema_with_custom_capabilities():
 
     assert 'CustomCapability' in capability_names
     # Default capabilities should still be present
-    assert 'Thinking' in capability_names
     assert 'WebSearch' in capability_names
 
 
 def test_builtin_tools_param_wrapped_as_capabilities():
     """The builtin_tools parameter items are wrapped in BuiltinTool capabilities."""
-    from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
-    from pydantic_ai.capabilities.builtin_tool import BuiltinTool
-
     agent = Agent('test', builtin_tools=[WebSearchTool(), CodeExecutionTool()])
     children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
-    builtin_caps = [c for c in children if isinstance(c, BuiltinTool)]
+    builtin_caps = [c for c in children if isinstance(c, BuiltinToolCap)]
     assert len(builtin_caps) == 2
     assert isinstance(builtin_caps[0].tool, WebSearchTool)
     assert isinstance(builtin_caps[1].tool, CodeExecutionTool)
@@ -441,9 +428,6 @@ def test_builtin_tools_param_wrapped_as_capabilities():
 
 def test_agent_from_spec_builtin_tool():
     """BuiltinTool capability can be constructed from spec."""
-    from pydantic_ai.builtin_tools import WebSearchTool
-    from pydantic_ai.capabilities.builtin_tool import BuiltinTool
-
     agent = Agent.from_spec(
         {
             'model': 'test',
@@ -453,16 +437,13 @@ def test_agent_from_spec_builtin_tool():
         }
     )
     children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
-    builtin_caps = [c for c in children if isinstance(c, BuiltinTool)]
+    builtin_caps = [c for c in children if isinstance(c, BuiltinToolCap)]
     assert len(builtin_caps) == 1
     assert isinstance(builtin_caps[0].tool, WebSearchTool)
 
 
 def test_agent_from_spec_builtin_tool_with_options():
     """BuiltinTool spec supports builtin tool configuration options."""
-    from pydantic_ai.builtin_tools import WebSearchTool
-    from pydantic_ai.capabilities.builtin_tool import BuiltinTool
-
     agent = Agent.from_spec(
         {
             'model': 'test',
@@ -472,7 +453,7 @@ def test_agent_from_spec_builtin_tool_with_options():
         }
     )
     children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
-    builtin_caps = [c for c in children if isinstance(c, BuiltinTool)]
+    builtin_caps = [c for c in children if isinstance(c, BuiltinToolCap)]
     assert len(builtin_caps) == 1
     tool = builtin_caps[0].tool
     assert isinstance(tool, WebSearchTool)
@@ -481,9 +462,6 @@ def test_agent_from_spec_builtin_tool_with_options():
 
 def test_agent_from_spec_builtin_tool_explicit_form():
     """BuiltinTool spec supports the explicit {tool: ...} form."""
-    from pydantic_ai.builtin_tools import CodeExecutionTool
-    from pydantic_ai.capabilities.builtin_tool import BuiltinTool
-
     agent = Agent.from_spec(
         {
             'model': 'test',
@@ -493,16 +471,12 @@ def test_agent_from_spec_builtin_tool_explicit_form():
         }
     )
     children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
-    builtin_caps = [c for c in children if isinstance(c, BuiltinTool)]
+    builtin_caps = [c for c in children if isinstance(c, BuiltinToolCap)]
     assert len(builtin_caps) == 1
     assert isinstance(builtin_caps[0].tool, CodeExecutionTool)
 
 
 def test_save_schema(tmp_path: str):
-    from pathlib import Path
-
-    from pydantic_ai.agent.spec import AgentSpec
-
     schema_path = Path(tmp_path) / 'agent_spec.schema.json'
     AgentSpec._save_schema(schema_path)  # pyright: ignore[reportPrivateUsage]
 
@@ -521,10 +495,6 @@ def test_save_schema(tmp_path: str):
 
 
 def test_from_file_yaml(tmp_path: str):
-    from pathlib import Path
-
-    from pydantic_ai.agent.spec import AgentSpec
-
     spec_path = Path(tmp_path) / 'agent.yaml'
     spec_path.write_text('model: test\nname: my-agent\ninstructions: Be helpful\n', encoding='utf-8')
     spec = AgentSpec.from_file(spec_path)
@@ -534,10 +504,6 @@ def test_from_file_yaml(tmp_path: str):
 
 
 def test_from_file_json(tmp_path: str):
-    from pathlib import Path
-
-    from pydantic_ai.agent.spec import AgentSpec
-
     spec_path = Path(tmp_path) / 'agent.json'
     spec_path.write_text('{"model": "test", "name": "my-agent"}', encoding='utf-8')
     spec = AgentSpec.from_file(spec_path)
@@ -547,10 +513,6 @@ def test_from_file_json(tmp_path: str):
 
 def test_from_file_with_schema_field(tmp_path: str):
     """$schema field in the file should be accepted and not cause validation errors."""
-    from pathlib import Path
-
-    from pydantic_ai.agent.spec import AgentSpec
-
     spec_path = Path(tmp_path) / 'agent.yaml'
     spec_path.write_text('model: test\n', encoding='utf-8')
 
@@ -563,8 +525,6 @@ def test_from_file_with_schema_field(tmp_path: str):
 
 
 def test_agent_from_file_yaml(tmp_path: str):
-    from pathlib import Path
-
     spec_path = Path(tmp_path) / 'agent.yaml'
     spec_path.write_text('model: test\nname: my-agent\ninstructions: Be helpful\n', encoding='utf-8')
     agent = Agent.from_file(spec_path)
@@ -573,8 +533,6 @@ def test_agent_from_file_yaml(tmp_path: str):
 
 
 def test_agent_from_file_json(tmp_path: str):
-    from pathlib import Path
-
     spec_path = Path(tmp_path) / 'agent.json'
     spec_path.write_text('{"model": "test", "name": "json-agent"}', encoding='utf-8')
     agent = Agent.from_file(spec_path)
@@ -582,8 +540,6 @@ def test_agent_from_file_json(tmp_path: str):
 
 
 def test_agent_from_file_with_overrides(tmp_path: str):
-    from pathlib import Path
-
     spec_path = Path(tmp_path) / 'agent.yaml'
     spec_path.write_text('model: test\nname: spec-name\nretries: 5\n', encoding='utf-8')
     agent = Agent.from_file(spec_path, name='override-name', retries=2)
@@ -592,10 +548,6 @@ def test_agent_from_file_with_overrides(tmp_path: str):
 
 
 def test_to_file_yaml(tmp_path: str):
-    from pathlib import Path
-
-    from pydantic_ai.agent.spec import AgentSpec
-
     spec = AgentSpec(model='test', name='my-agent', instructions='Be helpful')
     spec_path = Path(tmp_path) / 'agent.yaml'
     spec.to_file(spec_path)
@@ -613,9 +565,6 @@ def test_to_file_yaml(tmp_path: str):
 
 def test_to_file_json(tmp_path: str):
     import json
-    from pathlib import Path
-
-    from pydantic_ai.agent.spec import AgentSpec
 
     spec = AgentSpec(model='test', name='my-agent')
     spec_path = Path(tmp_path) / 'agent.json'
@@ -632,10 +581,6 @@ def test_to_file_json(tmp_path: str):
 
 
 def test_to_file_no_schema(tmp_path: str):
-    from pathlib import Path
-
-    from pydantic_ai.agent.spec import AgentSpec
-
     spec = AgentSpec(model='test')
     spec_path = Path(tmp_path) / 'agent.yaml'
     spec.to_file(spec_path, schema_path=None)
@@ -649,10 +594,6 @@ def test_to_file_no_schema(tmp_path: str):
 
 
 def test_to_file_roundtrip_yaml(tmp_path: str):
-    from pathlib import Path
-
-    from pydantic_ai.agent.spec import AgentSpec
-
     spec = AgentSpec(model='test', name='roundtrip', instructions=['Be helpful', 'Be concise'])
     spec_path = Path(tmp_path) / 'agent.yaml'
     spec.to_file(spec_path)
@@ -664,10 +605,6 @@ def test_to_file_roundtrip_yaml(tmp_path: str):
 
 
 def test_to_file_roundtrip_json(tmp_path: str):
-    from pathlib import Path
-
-    from pydantic_ai.agent.spec import AgentSpec
-
     spec = AgentSpec(model='test', name='roundtrip', retries=3)
     spec_path = Path(tmp_path) / 'agent.json'
     spec.to_file(spec_path)
@@ -698,8 +635,6 @@ class ToolsetFuncCapability(AbstractCapability[None]):
 
 async def test_capability_returning_toolset_func():
     """Test that a capability returning a ToolsetFunc works with an agent."""
-    from pydantic_ai.models.test import TestModel
-
     agent = Agent(
         TestModel(),
         capabilities=[ToolsetFuncCapability()],
@@ -730,8 +665,6 @@ async def test_capability_returning_toolset_func():
 
 async def test_capability_returning_toolset_func_combined():
     """Test that a ToolsetFunc capability works alongside other capabilities via CombinedCapability."""
-    from pydantic_ai.models.test import TestModel
-
     agent = Agent(
         TestModel(),
         capabilities=[
@@ -781,11 +714,6 @@ def test_model_settings_callable_get_model_settings():
 
 async def test_model_settings_static_before_model_request():
     """Static ModelSettings passes through before_model_request without modification."""
-    from pydantic_ai.capabilities.abstract import ModelRequestContext
-    from pydantic_ai.models import ModelRequestParameters
-    from pydantic_ai.models.test import TestModel
-    from pydantic_ai.result import RunUsage
-
     cap = ModelSettings(settings=_ModelSettings(max_tokens=200))
 
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[])
@@ -843,8 +771,6 @@ def test_toolset_capability_get_toolset():
 
 async def test_toolset_capability_in_agent():
     """A Toolset capability's tools are available to the agent."""
-    from pydantic_ai.models.test import TestModel
-
     ts = FunctionToolset[None]()
 
     @ts.tool_plain
@@ -885,8 +811,6 @@ def test_infer_fmt_unknown_extension():
 
 def test_invalid_custom_capability_type():
     """Passing a non-AbstractCapability subclass to model_json_schema_with_capabilities raises ValueError."""
-    from pydantic_ai.agent.spec import AgentSpec
-
     with pytest.raises(ValueError, match='must be subclasses of AbstractCapability'):
         AgentSpec.model_json_schema_with_capabilities(
             custom_capability_types=[str],  # type: ignore[list-item]
@@ -895,8 +819,6 @@ def test_invalid_custom_capability_type():
 
 def test_to_file_with_path_schema_path(tmp_path: str):
     """to_file works when schema_path is passed as a relative Path (not str), triggering the non-str branch."""
-    from pydantic_ai.agent.spec import AgentSpec
-
     spec = AgentSpec(model='test', name='path-schema')
     spec_path = Path(tmp_path) / 'agent.yaml'
     # Pass a relative Path (not str) to exercise the isinstance(schema_path, str) == False branch
@@ -1054,31 +976,6 @@ async def test_concurrent_runs_capability_isolation():
     results = await asyncio.gather(agent.run('A'), agent.run('B'))
     assert results[0].output == 'Done'
     assert results[1].output == 'Done'
-
-
-async def test_thinking_capability_applies_settings():
-    """Thinking capability's model settings are applied to the model request."""
-
-    agent = Agent('test', capabilities=[Thinking()])
-    result = await agent.run('hi')
-    # The agent ran successfully — verify that the Thinking settings were included
-    # by checking that the capability produces non-None model settings
-    cap_settings = agent._root_capability.get_model_settings()  # pyright: ignore[reportPrivateUsage]
-    assert cap_settings is not None
-    assert not callable(cap_settings)
-    assert cap_settings.get('anthropic_thinking') == {'type': 'adaptive'}
-    assert cap_settings.get('openai_reasoning_effort') == 'high'
-    # Verify the run itself succeeds
-    assert result.output is not None
-
-
-def test_thinking_from_spec_rejects_args():
-    """Thinking.from_spec raises TypeError when given arguments."""
-    with pytest.raises(TypeError, match='does not accept arguments'):
-        Thinking.from_spec('extra')
-
-    with pytest.raises(TypeError, match='does not accept arguments'):
-        Thinking.from_spec(budget=100)
 
 
 # --- Hooks test helpers ---
@@ -2335,14 +2232,12 @@ class TestWrapNodeRunHook:
         assert log[3] == 'outer:after:ModelRequestNode'
 
 
-# --- BuiltinToolCapability tests ---
+# --- BuiltinOrLocalTool tests ---
 
 
 class TestWebSearchCapability:
     def test_websearch_default_with_supporting_model(self):
         """WebSearch() with a model that supports builtin web search → builtin used, local removed."""
-        from pydantic_ai.builtin_tools import WebSearchTool
-
         cap = WebSearch()
         builtins = cap.get_builtin_tools()
         assert len(builtins) == 1
@@ -2354,9 +2249,6 @@ class TestWebSearchCapability:
 
     def test_websearch_default_with_nonsupporting_model(self, allow_model_requests: None):
         """WebSearch() with a model that doesn't support builtin → DuckDuckGo fallback used."""
-        from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
-        from pydantic_ai.models.function import FunctionModel
-        from pydantic_ai.profiles import ModelProfile
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             # When called with tools, call the first one
@@ -2380,9 +2272,6 @@ class TestWebSearchCapability:
 
     def test_websearch_local_false_with_nonsupporting_model(self, allow_model_requests: None):
         """WebSearch(local=False) with non-supporting model → UserError."""
-        from pydantic_ai.models.function import FunctionModel
-        from pydantic_ai.profiles import ModelProfile
-
         model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
         agent = Agent(model, capabilities=[WebSearch(local=False)])
         with pytest.raises(UserError, match='not supported'):
@@ -2398,9 +2287,6 @@ class TestWebSearchCapability:
 
     def test_websearch_requires_builtin_with_constraints(self, allow_model_requests: None):
         """WebSearch(allowed_domains=...) with non-supporting model → UserError."""
-        from pydantic_ai.models.function import FunctionModel
-        from pydantic_ai.profiles import ModelProfile
-
         model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
         agent = Agent(model, capabilities=[WebSearch(allowed_domains=['example.com'])])
         with pytest.raises(UserError, match='not supported'):
@@ -2429,20 +2315,17 @@ class TestWebSearchCapability:
 
 class TestWebFetchCapability:
     def test_webfetch_default(self):
-        """WebFetch() provides builtin + local fallback."""
-        from pydantic_ai.builtin_tools import WebFetchTool
-
+        """WebFetch() provides builtin, no default local fallback."""
         cap = WebFetch()
         builtins = cap.get_builtin_tools()
         assert len(builtins) == 1
         assert isinstance(builtins[0], WebFetchTool)
-        assert cap.get_toolset() is not None
+        # No default local fallback — user must provide their own
+        assert cap.local is None
+        assert cap.get_toolset() is None
 
     def test_webfetch_requires_builtin_with_constraints(self, allow_model_requests: None):
         """WebFetch(blocked_domains=...) with non-supporting model → UserError."""
-        from pydantic_ai.models.function import FunctionModel
-        from pydantic_ai.profiles import ModelProfile
-
         model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
         agent = Agent(model, capabilities=[WebFetch(blocked_domains=['evil.com'])])
         with pytest.raises(UserError, match='not supported'):
@@ -2452,8 +2335,6 @@ class TestWebFetchCapability:
 class TestImageGenerationCapability:
     def test_image_generation_default(self):
         """ImageGeneration() provides only builtin, no local fallback."""
-        from pydantic_ai.builtin_tools import ImageGenerationTool
-
         cap = ImageGeneration()
         builtins = cap.get_builtin_tools()
         assert len(builtins) == 1
@@ -2487,8 +2368,6 @@ except ImportError:
 class TestMCPCapability:
     def test_mcp_default(self):
         """MCP(url=...) provides builtin + local fallback."""
-        from pydantic_ai.builtin_tools import MCPServerTool
-
         cap = MCP(url='https://mcp.example.com/api')
         builtins = cap.get_builtin_tools()
         assert len(builtins) == 1
@@ -2498,8 +2377,6 @@ class TestMCPCapability:
 
     def test_mcp_id_from_url(self):
         """MCP auto-derives id from URL including hostname to avoid collisions."""
-        from pydantic_ai.builtin_tools import MCPServerTool
-
         cap = MCP(url='https://mcp.example.com/api')
         builtin = cap.get_builtin_tools()[0]
         assert isinstance(builtin, MCPServerTool)
@@ -2533,15 +2410,15 @@ class TestMCPCapability:
         assert isinstance(cap.local, MCPServerStreamableHTTP)
         assert cap.local.headers == {'Authorization': 'Bearer xyz'}
 
-    def test_mcp_requires_builtin_with_allowed_tools(self, allow_model_requests: None):
-        """MCP(allowed_tools=...) with non-supporting model → UserError."""
-        from pydantic_ai.models.function import FunctionModel
-        from pydantic_ai.profiles import ModelProfile
+    def test_mcp_allowed_tools_filters_local(self):
+        """MCP(allowed_tools=...) applies FilteredToolset to the local toolset."""
+        from pydantic_ai.toolsets.filtered import FilteredToolset
 
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
-        agent = Agent(model, capabilities=[MCP(url='https://mcp.example.com/api', allowed_tools=['tool1'])])
-        with pytest.raises(UserError, match='not supported'):
-            agent.run_sync('use mcp')
+        cap = MCP(url='https://mcp.example.com/api', allowed_tools=['tool1'])
+        toolset = cap.get_toolset()
+        assert toolset is not None
+        # The outer toolset should be a FilteredToolset wrapping the prepared toolset
+        assert isinstance(toolset, FilteredToolset)
 
     def test_mcp_url_required(self):
         """MCP without url raises TypeError."""
@@ -2554,8 +2431,6 @@ class TestNamedSpecDictRoundTrip:
 
     def test_model_settings_dict_round_trip(self):
         """ModelSettings with a dict positional arg survives serialize -> deserialize."""
-        from pydantic_ai._spec import NamedSpec
-
         spec = NamedSpec(name='ModelSettings', arguments=({'max_tokens': 4096, 'temperature': 0.5},))
 
         # Serialize with short form
@@ -2576,16 +2451,12 @@ class TestNamedSpecDictRoundTrip:
 
     def test_non_dict_positional_arg_uses_short_form(self):
         """A non-dict positional arg still uses the compact short form."""
-        from pydantic_ai._spec import NamedSpec
-
         spec = NamedSpec(name='Instructions', arguments=('Be helpful.',))
         serialized = spec.model_dump(context={'use_short_form': True})
         assert serialized == {'Instructions': 'Be helpful.'}
 
     def test_kwargs_still_use_short_form(self):
         """Kwargs (dict arguments) still use the short form correctly."""
-        from pydantic_ai._spec import NamedSpec
-
         spec = NamedSpec(name='ModelSettings', arguments={'max_tokens': 4096})
         serialized = spec.model_dump(context={'use_short_form': True})
         assert serialized == {'ModelSettings': {'max_tokens': 4096}}

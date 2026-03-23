@@ -71,6 +71,12 @@ EventStreamHandler: TypeAlias = Callable[
 
 AgentMetadata = dict[str, Any] | Callable[[RunContext[AgentDepsT]], dict[str, Any]]
 
+AgentInstructions = _instructions.AgentInstructions
+"""Type alias for agent instructions — a string, `TemplateStr`, callable, or sequence thereof."""
+
+Instructions = AgentInstructions
+"""Deprecated: use `AgentInstructions` instead."""
+
 AgentModelSettings = ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings]
 
 

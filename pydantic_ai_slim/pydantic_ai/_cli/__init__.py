@@ -97,8 +97,8 @@ def load_agent(agent_path: str) -> Agent[Any, Any] | None:
     """Load an agent from a module path or a YAML/JSON spec file.
 
     Supports two formats:
-    - Module path in uvicorn style: ``'module:variable'``, e.g. ``'test_agent:my_agent'``
-    - File path to a YAML or JSON agent spec: e.g. ``'agent.yml'``, ``'agent.yaml'``, ``'agent.json'``
+    - Module path in uvicorn style: `'module:variable'`, e.g. `'test_agent:my_agent'`
+    - File path to a YAML or JSON agent spec: e.g. `'agent.yml'`, `'agent.yaml'`, `'agent.json'`
 
     Args:
         agent_path: Module path or file path to load the agent from.

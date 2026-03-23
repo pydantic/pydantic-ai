@@ -781,10 +781,10 @@ def _denial_reason(part: ToolUIPart | DynamicToolUIPart) -> str:
 def _extract_metadata_ui_parts(tool_result: ToolReturnPart) -> list[UIMessagePart]:
     """Convert data-carrying chunks from tool metadata into UIMessageParts.
 
-    Both this dump path and the streaming path use ``iter_metadata_chunks``,
-    but the streaming path yields raw chunk objects (preserving ``transient``
+    Both this dump path and the streaming path use `iter_metadata_chunks`,
+    but the streaming path yields raw chunk objects (preserving `transient`
     and other chunk-specific fields) while this path converts to persisted
-    ``UIMessagePart`` equivalents — matching Vercel AI SDK semantics where
+    `UIMessagePart` equivalents — matching Vercel AI SDK semantics where
     transient data is streamed but not persisted.
     """
     parts: list[UIMessagePart] = []

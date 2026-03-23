@@ -8,11 +8,11 @@ from pydantic_ai.builtin_tools import WebSearchTool, WebSearchUserLocation
 from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
-from .builtin_tool import BuiltinToolCapability
+from .builtin_or_local import BuiltinOrLocalTool
 
 
 @dataclass(init=False)
-class WebSearch(BuiltinToolCapability[AgentDepsT]):
+class WebSearch(BuiltinOrLocalTool[AgentDepsT]):
     """Web search capability.
 
     Uses the model's builtin web search when available, falling back to a local

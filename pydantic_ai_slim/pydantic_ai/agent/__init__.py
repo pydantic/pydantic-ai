@@ -46,7 +46,7 @@ from .._template import TemplateStr, validate_from_spec_args
 from .._tool_manager import ParallelExecutionMode, ToolManager
 from ..builtin_tools import AbstractBuiltinTool
 from ..capabilities import AbstractCapability, CombinedCapability
-from ..capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
+from ..capabilities.builtin_or_local import BuiltinTool as BuiltinToolCap
 from ..capabilities.history_processor import HistoryProcessor as HistoryProcessorCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from ..output import OutputDataT, OutputSpec, StructuredDict
@@ -601,7 +601,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Args:
             spec: The agent specification, either a dict or an `AgentSpec` instance.
             deps_type: The type of the dependencies for the agent. When provided,
-                template strings in capabilities (e.g. ``"Hello {{name}}"``) are
+                template strings in capabilities (e.g. `"Hello {{name}}"`) are
                 compiled and validated against this type.
             custom_capability_types: Additional capability classes to make available
                 beyond the built-in defaults.
@@ -768,10 +768,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """Construct an Agent from a YAML or JSON spec file.
 
         This is a convenience method equivalent to
-        ``Agent.from_spec(AgentSpec.from_file(path), ...)``.
+        `Agent.from_spec(AgentSpec.from_file(path), ...)`.
 
         The file format is inferred from the extension (`.yaml`/`.yml` or `.json`)
-        unless overridden with the ``fmt`` argument.
+        unless overridden with the `fmt` argument.
 
         Args:
             path: Path to the spec file.
@@ -1141,7 +1141,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             )
             merged = merge_model_settings(merged, resolved_agent)
 
-            # Capability settings (e.g. from Thinking, ModelSettings capabilities), cached at init
+            # Capability settings (e.g. from ModelSettings capabilities), cached at init
             run_context.model_settings = merged
             cap_settings = cap_model_settings
             resolved_cap = cap_settings(run_context) if callable(cap_settings) else cap_settings

@@ -117,7 +117,7 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         Called at the start of each run step. Override this to return a modified
         instance for per-step state transitions. If returning a new instance,
         you are responsible for managing any lifecycle transitions (exiting old
-        inner toolsets, entering new ones). Default: return ``self`` (no per-step changes).
+        inner toolsets, entering new ones). Default: return `self` (no per-step changes).
         """
         return self
 

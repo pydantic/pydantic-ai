@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Literal
@@ -40,8 +39,8 @@ class BuiltinTool(AbstractCapability[AgentDepsT]):
 
         Supports two YAML forms:
 
-        - Flat: ``{BuiltinTool: {kind: web_search, search_context_size: high}}``
-        - Explicit: ``{BuiltinTool: {tool: {kind: web_search}}}``
+        - Flat: `{BuiltinTool: {kind: web_search, search_context_size: high}}`
+        - Explicit: `{BuiltinTool: {tool: {kind: web_search}}}`
         """
         if tool is not None:
             validated = _BUILTIN_TOOL_ADAPTER.validate_python(tool)
@@ -56,41 +55,47 @@ class BuiltinTool(AbstractCapability[AgentDepsT]):
 
 
 @dataclass
-class BuiltinToolCapability(AbstractCapability[AgentDepsT], ABC):
-    """Base class for capabilities that pair a provider builtin tool with a local fallback.
+class BuiltinOrLocalTool(AbstractCapability[AgentDepsT]):
+    """Capability that pairs a provider builtin tool with a local fallback.
 
     When the model supports the builtin natively, the local fallback is removed.
     When the model doesn't support the builtin, it is removed and the local tool stays.
 
-    Subclasses must override :meth:`_default_builtin` and :meth:`_builtin_unique_id`.
-    They may also override :meth:`_default_local` and :meth:`_requires_builtin`.
+    Can be used directly by providing `builtin` and `local` arguments, or subclassed
+    to set defaults via `_default_builtin`, `_default_local`, and `_requires_builtin`.
     """
 
     builtin: AgentBuiltinTool[AgentDepsT] | bool = True
     """Configure the provider builtin tool.
 
-    - ``True`` (default): use the default builtin tool configuration.
-    - ``False``: disable the builtin; always use the local tool.
-    - An ``AbstractBuiltinTool`` instance: use this specific configuration.
-    - A callable (``BuiltinToolFunc``): dynamically create the builtin per-run via ``RunContext``.
+    - `True` (default): use the default builtin tool configuration (subclasses only).
+    - `False`: disable the builtin; always use the local tool.
+    - An `AbstractBuiltinTool` instance: use this specific configuration.
+    - A callable (`BuiltinToolFunc`): dynamically create the builtin per-run via `RunContext`.
     """
 
     local: Tool[Any] | Callable[..., Any] | AbstractToolset[Any] | Literal[False] | None = None
     """Configure the local fallback tool.
 
-    - ``None`` (default): auto-detect a local fallback via :meth:`_default_local`.
-    - ``False``: disable the local fallback; only use the builtin.
-    - A ``Tool`` or ``AbstractToolset`` instance: use this specific local tool.
-    - A bare callable: automatically wrapped in a ``Tool``.
+    - `None` (default): auto-detect a local fallback via `_default_local`.
+    - `False`: disable the local fallback; only use the builtin.
+    - A `Tool` or `AbstractToolset` instance: use this specific local tool.
+    - A bare callable: automatically wrapped in a `Tool`.
     """
 
     def __post_init__(self) -> None:
         if self.builtin is False and self.local is False:
             raise UserError(f'{type(self).__name__}: both builtin and local cannot be False')
 
-        # Resolve builtin=True → default instance
+        # Resolve builtin=True → default instance (subclass hook)
         if self.builtin is True:
-            self.builtin = self._default_builtin()
+            default = self._default_builtin()
+            if default is None:
+                raise UserError(
+                    f'{type(self).__name__}: builtin=True requires a subclass that overrides '
+                    f'_default_builtin(), or pass an AbstractBuiltinTool instance directly'
+                )
+            self.builtin = default
 
         # Resolve local: None → default, callable → Tool
         if self.local is None:
@@ -102,17 +107,28 @@ class BuiltinToolCapability(AbstractCapability[AgentDepsT], ABC):
         if self.builtin is False and self._requires_builtin():
             raise UserError(f'{type(self).__name__}: constraint fields require the builtin tool, but builtin=False')
 
-    # --- Subclass hooks ---
+    # --- Subclass hooks (not abstract — direct use is supported) ---
 
-    @abstractmethod
-    def _default_builtin(self) -> AbstractBuiltinTool:
-        """Create the default builtin tool instance."""
-        ...
+    def _default_builtin(self) -> AbstractBuiltinTool | None:
+        """Create the default builtin tool instance.
 
-    @abstractmethod
+        Override in subclasses. Returns None by default (direct use requires
+        passing an explicit `AbstractBuiltinTool` instance as `builtin`).
+        """
+        return None
+
     def _builtin_unique_id(self) -> str:
-        """The unique_id used for ``prefer_builtin`` on local tool definitions."""
-        ...
+        """The unique_id used for `prefer_builtin` on local tool definitions.
+
+        By default, derived from the builtin tool's `unique_id` property.
+        Override in subclasses for custom behavior.
+        """
+        builtin = self.builtin
+        if isinstance(builtin, AbstractBuiltinTool):
+            return builtin.unique_id
+        raise UserError(
+            f'{type(self).__name__}: cannot derive builtin_unique_id — override _builtin_unique_id() in your subclass'
+        )
 
     def _default_local(self) -> Tool[Any] | AbstractToolset[Any] | None:
         """Auto-detect a local fallback. Override in subclasses that have one."""
@@ -122,10 +138,10 @@ class BuiltinToolCapability(AbstractCapability[AgentDepsT], ABC):
         """Return True if capability-level constraint fields require the builtin.
 
         When True, the local fallback is suppressed. If the model doesn't support
-        the builtin, ``UserError`` is raised — preventing silent constraint violation.
+        the builtin, `UserError` is raised — preventing silent constraint violation.
 
         Override in subclasses that expose builtin-only constraint fields
-        (e.g. ``allowed_domains``, ``blocked_domains``).
+        (e.g. `allowed_domains`, `blocked_domains`).
         """
         return False
 

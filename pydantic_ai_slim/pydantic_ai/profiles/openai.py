@@ -75,7 +75,7 @@ class OpenAIModelProfile(ModelProfile):
     # safe to pass that value along.  Default is `True` to preserve existing
     # behaviour for OpenAI itself and most providers.
     openai_supports_tool_choice_required: bool = True
-    """Whether the provider accepts the value ``tool_choice='required'`` in the request payload."""
+    """Whether the provider accepts the value `tool_choice='required'` in the request payload."""
 
     openai_system_prompt_role: OpenAISystemPromptRole | None = None
     """The role to use for the system prompt message. If not provided, defaults to `'system'`."""

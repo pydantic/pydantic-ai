@@ -16,15 +16,15 @@ from pydantic_ai.tools import AgentDepsT
 class TemplateStr(Generic[AgentDepsT]):
     """A Handlebars template string that renders against `RunContext.deps`.
 
-    When used in type hints, strings containing ``{{`` are automatically
+    When used in type hints, strings containing `{{` are automatically
     compiled as Handlebars templates during Pydantic validation.
 
     Uses [pydantic-handlebars](https://github.com/pydantic/pydantic-handlebars)
     for template compilation, schema validation, and rendering.
 
-    When used with an ``Agent``, ``deps_type`` is inferred automatically from
+    When used with an `Agent`, `deps_type` is inferred automatically from
     the agent's validation context, so you only need to pass it when constructing
-    a ``TemplateStr`` outside of an agent (e.g. for standalone rendering).
+    a `TemplateStr` outside of an agent (e.g. for standalone rendering).
 
     Example:
         ```python {test="skip"}
@@ -83,7 +83,7 @@ class TemplateStr(Generic[AgentDepsT]):
         return self._compiled_untyped.render()
 
     def __call__(self, ctx: RunContext[AgentDepsT]) -> str:
-        """Render the template against ``ctx.deps``."""
+        """Render the template against `ctx.deps`."""
         return self.render(ctx.deps)
 
     @classmethod
@@ -130,10 +130,10 @@ def validate_from_spec_args(
 ) -> tuple[tuple[Any, ...], dict[str, Any]]:
     """Validate from_spec arguments, resolving TemplateStr types via Pydantic.
 
-    Inspects the ``from_spec`` method's type hints to find parameters that accept
+    Inspects the `from_spec` method's type hints to find parameters that accept
     TemplateStr. For those parameters, values are validated through Pydantic's
-    ``TypeAdapter``, which invokes ``TemplateStr.__get_pydantic_core_schema__``
-    to automatically compile template strings (containing ``{{``) into TemplateStr
+    `TypeAdapter`, which invokes `TemplateStr.__get_pydantic_core_schema__`
+    to automatically compile template strings (containing `{{`) into TemplateStr
     instances using the deps_type/deps_schema from the validation context.
     """
     try:
