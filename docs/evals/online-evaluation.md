@@ -171,7 +171,7 @@ asyncio.run(main())
 
 [`EvaluationSink`][pydantic_evals.online.EvaluationSink] is a protocol for evaluation result destinations. Results flow through pluggable sinks rather than being hardcoded to one destination.
 
-The built-in [`CallbackSink`][pydantic_evals.online.CallbackSink] wraps any callable (sync or async) that accepts results, failures, and context. You can also pass a bare callable wherever a sink is expected — it's auto-wrapped in a `CallbackSink`.
+The built-in [`CallbackSink`][pydantic_evals.online.CallbackSink] wraps any callable (sync or async) that accepts results, failures, and context. You can also pass a bare callable wherever a sink is expected — it's auto-wrapped in a [`CallbackSink`][pydantic_evals.online.CallbackSink].
 
 For custom sinks, implement the [`EvaluationSink`][pydantic_evals.online.EvaluationSink] protocol:
 
@@ -600,7 +600,7 @@ asyncio.run(main())
 
 ### EvaluatorContextSource Protocol
 
-For fetching context data from external storage (like Logfire), the [`EvaluatorContextSource`][pydantic_evals.online.EvaluatorContextSource] protocol defines a batch-first interface. Use [`rebuild_context()`][pydantic_evals.online.rebuild_context] and [`rebuild_contexts()`][pydantic_evals.online.rebuild_contexts] to reconstruct `EvaluatorContext` objects from stored data:
+For fetching context data from external storage (like Logfire), the [`EvaluatorContextSource`][pydantic_evals.online.EvaluatorContextSource] protocol defines a batch-first interface. Use [`rebuild_context()`][pydantic_evals.online.rebuild_context] and [`rebuild_contexts()`][pydantic_evals.online.rebuild_contexts] to reconstruct [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext] objects from stored data:
 
 ```python
 import asyncio

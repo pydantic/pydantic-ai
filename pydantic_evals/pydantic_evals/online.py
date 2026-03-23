@@ -836,7 +836,7 @@ def configure(
         DEFAULT_CONFIG.metadata = metadata
 
 
-async def wait_for_evaluations() -> None:
+async def wait_for_evaluations(*, timeout: float = 30.0) -> None:
     """Wait for all pending background evaluation tasks and threads to complete.
 
     This is useful in tests to deterministically wait for background evaluators
@@ -844,7 +844,10 @@ async def wait_for_evaluations() -> None:
 
     For async tasks (dispatched from async decorated functions), this awaits them directly.
     For background threads (dispatched from sync decorated functions called outside an
-    async context), this joins them.
+    async context), this joins them with the given timeout.
+
+    Args:
+        timeout: Maximum seconds to wait for each background thread. Defaults to 30.
     """
     # Await all pending async tasks (using anyio for backend compatibility)
     if _background_tasks:
@@ -852,7 +855,10 @@ async def wait_for_evaluations() -> None:
             for task in list(_background_tasks):
                 tg.start_soon(_wait_task, task)
     # Join all pending background threads (from sync function dispatch)
-    _join_background_threads()
+    for thread in list(_background_threads):
+        thread.join(timeout=timeout)
+        if thread.is_alive():  # pragma: no cover
+            logger.warning('Background evaluation thread did not complete within %.1fs timeout', timeout)
 
 
 async def _wait_task(task: asyncio.Task[Any]) -> None:
@@ -861,9 +867,3 @@ async def _wait_task(task: asyncio.Task[Any]) -> None:
         await task
     except Exception:  # pragma: no cover
         pass  # Exceptions are handled inside _dispatch_single_evaluator
-
-
-def _join_background_threads() -> None:
-    """Join all pending background threads. Used internally by wait_for_evaluations."""
-    for thread in list(_background_threads):
-        thread.join(timeout=10.0)
