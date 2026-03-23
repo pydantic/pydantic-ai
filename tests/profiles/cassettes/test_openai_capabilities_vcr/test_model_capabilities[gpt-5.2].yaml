@@ -1,0 +1,213 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '117'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input: Say "hi"
+      max_output_tokens: 16
+      model: gpt-5.2
+      reasoning:
+        effort: none
+      store: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1255'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '469'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1772841065
+      created_at: 1772841064
+      error: null
+      frequency_penalty: 0.0
+      id: resp_09c2647f80f4362b0169ab6868ec688196b863c9b61944ae1b
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: 16
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.2-2025-12-11
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: hi
+          type: output_text
+        id: msg_09c2647f80f4362b0169ab68693c0481968f87ae5713c49066
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: none
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 10
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 5
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 15
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '104'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=K7ULbQ81mK2cLo8nf.O3tGq3ZhOZFi85OirR5V9rX1Q-1772841064.8574045-1.0.1.1-lTmz5qBv3zQfEd0dB_EPu83dJec0D6Go.mRerKuG3lAamLAG2.THMhNsqGqdPfyuJ6mirc9lAN9fq7oMoaQPeUvrHPtB758E4YNdPV2RqET9ZZyHpLiroyTZ0nNHhw4T
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input: Say "hi"
+      max_output_tokens: 16
+      model: gpt-5.2
+      store: false
+      temperature: 0.5
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1255'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '387'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1772841065
+      created_at: 1772841065
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0fba4f8078da3f130169ab6869967c8190a265a78898698063
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: 16
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.2-2025-12-11
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: hi
+          type: output_text
+        id: msg_0fba4f8078da3f130169ab6869db1081909b82043a7e571c12
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: none
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: false
+      temperature: 0.5
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 10
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 5
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 15
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

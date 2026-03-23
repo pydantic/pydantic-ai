@@ -1,0 +1,160 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '127'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input: Say "hi"
+      max_output_tokens: 16
+      model: gpt-5-chat-latest
+      reasoning:
+        effort: none
+      store: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '196'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '53'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    parsed_body:
+      error:
+        code: unsupported_parameter
+        message: 'Unsupported parameter: ''reasoning.effort'' is not supported with this model.'
+        param: reasoning.effort
+        type: invalid_request_error
+    status:
+      code: 400
+      message: Bad Request
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '114'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=TGo2Wu.Fyji8fHtnz9t7x.cksXQWQeAJrje0PP1qF80-1772841059.0482671-1.0.1.1-JpnOoNTOShOneQ.emZQBPEWlG62vk5s_yYfLJjtTTf0.YqsdMR.1iF526Eqdm6Tr9GfgoQrTFPbNcdJyjr8ces0LI1q.kUqFQpQyw_sT_oXIiHK2g4y1wWiwqmX9Gaz9
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input: Say "hi"
+      max_output_tokens: 16
+      model: gpt-5-chat-latest
+      store: false
+      temperature: 0.5
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1291'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '562'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1772841059
+      created_at: 1772841059
+      error: null
+      frequency_penalty: 0.0
+      id: resp_037a7f95d21760cf0169ab686360c88191a5ef8a435eb636ab
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: 16
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-chat-latest
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: "Hi! \U0001F44B How are you doing today?"
+          type: output_text
+        id: msg_037a7f95d21760cf0169ab6863d90881919ac2a0957764340a
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: false
+      temperature: 0.5
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 11
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 11
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 22
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1
