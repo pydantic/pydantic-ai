@@ -1,6 +1,7 @@
 from typing import Any
 
 from .abstract import AbstractCapability, ModelRequestContext
+from .builtin_tool import BuiltinTool
 from .combined import CombinedCapability
 from .history_processor import HistoryProcessor
 from .instructions import Instructions
@@ -16,6 +17,7 @@ from .web_search import WebSearch
 CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
     for cls in (
+        BuiltinTool,
         HistoryProcessor,
         Instructions,
         ModelSettings,
@@ -32,6 +34,7 @@ __all__ = [
     'AbstractCapability',
     'ModelRequestContext',
     'CAPABILITY_TYPES',
+    'BuiltinTool',
     'Instructions',
     'HistoryProcessor',
     'ModelSettings',
