@@ -1094,19 +1094,25 @@ class LoggingCapability(AbstractCapability[Any]):
         return response
 
     async def before_tool_validate(
-        self, ctx: RunContext[Any], *, call: ToolCallPart, args: str | dict[str, Any]
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: str | dict[str, Any]
     ) -> str | dict[str, Any]:
         self.log.append(f'before_tool_validate:{call.tool_name}')
         return args
 
     async def after_tool_validate(
-        self, ctx: RunContext[Any], *, call: ToolCallPart, args: dict[str, Any]
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
     ) -> dict[str, Any]:
         self.log.append(f'after_tool_validate:{call.tool_name}')
         return args
 
     async def wrap_tool_validate(
-        self, ctx: RunContext[Any], *, call: ToolCallPart, args: str | dict[str, Any], handler: Any
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: str | dict[str, Any],
+        handler: Any,
     ) -> dict[str, Any]:
         self.log.append(f'wrap_tool_validate:{call.tool_name}:before')
         result = await handler(args)
@@ -1114,19 +1120,19 @@ class LoggingCapability(AbstractCapability[Any]):
         return result
 
     async def before_tool_execute(
-        self, ctx: RunContext[Any], *, call: ToolCallPart, args: dict[str, Any]
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
     ) -> dict[str, Any]:
         self.log.append(f'before_tool_execute:{call.tool_name}')
         return args
 
     async def after_tool_execute(
-        self, ctx: RunContext[Any], *, call: ToolCallPart, args: dict[str, Any], result: Any
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any], result: Any
     ) -> Any:
         self.log.append(f'after_tool_execute:{call.tool_name}')
         return result
 
     async def wrap_tool_execute(
-        self, ctx: RunContext[Any], *, call: ToolCallPart, args: dict[str, Any], handler: Any
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any], handler: Any
     ) -> Any:
         self.log.append(f'wrap_tool_execute:{call.tool_name}:before')
         result = await handler(args)
@@ -1156,13 +1162,19 @@ class LoggingCapability(AbstractCapability[Any]):
         raise error
 
     async def on_tool_validate_error(
-        self, ctx: RunContext[Any], *, call: ToolCallPart, args: Any, error: Any
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Any
     ) -> dict[str, Any]:
         self.log.append(f'on_tool_validate_error:{call.tool_name}')
         raise error
 
     async def on_tool_execute_error(
-        self, ctx: RunContext[Any], *, call: ToolCallPart, args: dict[str, Any], error: Exception
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        error: Exception,
     ) -> Any:
         self.log.append(f'on_tool_execute_error:{call.tool_name}')
         raise error
@@ -1363,7 +1375,7 @@ class TestToolValidateHooks:
         @dataclass
         class ModifyArgsCap(AbstractCapability[Any]):
             async def before_tool_validate(
-                self, ctx: RunContext[Any], *, call: ToolCallPart, args: str | dict[str, Any]
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: str | dict[str, Any]
             ) -> str | dict[str, Any]:
                 # Inject an argument
                 if isinstance(args, dict):
@@ -1387,7 +1399,7 @@ class TestToolValidateHooks:
         @dataclass
         class SkipValidateCap(AbstractCapability[Any]):
             async def before_tool_validate(
-                self, ctx: RunContext[Any], *, call: ToolCallPart, args: str | dict[str, Any]
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: str | dict[str, Any]
             ) -> str | dict[str, Any]:
                 raise SkipToolValidation({'name': 'skip-validated'})
 
@@ -1403,6 +1415,31 @@ class TestToolValidateHooks:
 
         await agent.run('greet someone')
         assert received_name == 'skip-validated'
+
+    async def test_tool_def_matches_called_tool(self):
+        """Verify tool_def is the correct ToolDefinition for the tool being called."""
+        received_tool_defs: list[ToolDefinition] = []
+
+        @dataclass
+        class CaptureCap(AbstractCapability[Any]):
+            async def before_tool_validate(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: str | dict[str, Any]
+            ) -> str | dict[str, Any]:
+                received_tool_defs.append(tool_def)
+                return args
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[CaptureCap()])
+
+        @agent.tool_plain(description='Say hello')
+        def my_tool() -> str:
+            return 'tool result'
+
+        await agent.run('call the tool')
+        assert len(received_tool_defs) == 1
+        td = received_tool_defs[0]
+        assert td.name == 'my_tool'
+        assert td.description == 'Say hello'
+        assert td.kind == 'function'
 
 
 class TestToolExecuteHooks:
@@ -1424,7 +1461,13 @@ class TestToolExecuteHooks:
         @dataclass
         class ModifyResultCap(AbstractCapability[Any]):
             async def after_tool_execute(
-                self, ctx: RunContext[Any], *, call: ToolCallPart, args: dict[str, Any], result: Any
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                result: Any,
             ) -> Any:
                 return f'modified: {result}'
 
@@ -1452,7 +1495,7 @@ class TestToolExecuteHooks:
         @dataclass
         class SkipExecCap(AbstractCapability[Any]):
             async def before_tool_execute(
-                self, ctx: RunContext[Any], *, call: ToolCallPart, args: dict[str, Any]
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
             ) -> dict[str, Any]:
                 raise SkipToolExecution('denied')
 
@@ -1487,7 +1530,13 @@ class TestToolExecuteHooks:
             caught_error: str | None = None
 
             async def wrap_tool_execute(
-                self, ctx: RunContext[Any], *, call: ToolCallPart, args: dict[str, Any], handler: Any
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                handler: Any,
             ) -> Any:
                 try:
                     return await handler(args)
@@ -3759,7 +3808,7 @@ class TestToolValidateErrorHooks:
         @dataclass
         class RecoverValidateCap(AbstractCapability[Any]):
             async def on_tool_validate_error(
-                self, ctx: RunContext[Any], *, call: ToolCallPart, args: Any, error: Any
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Any
             ) -> dict[str, Any]:
                 return {'name': 'recovered-name'}
 
@@ -3821,7 +3870,13 @@ class TestToolExecuteErrorHooks:
         @dataclass
         class RecoverExecCap(AbstractCapability[Any]):
             async def on_tool_execute_error(
-                self, ctx: RunContext[Any], *, call: ToolCallPart, args: dict[str, Any], error: Exception
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                error: Exception,
             ) -> Any:
                 return 'fallback result'
 
