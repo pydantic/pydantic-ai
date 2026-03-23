@@ -5,10 +5,20 @@ The same `Evaluator` instances used with `Dataset.evaluate()` work here, the dif
 they are wired up (decorator vs dataset) rather than what they are.
 
 Example:
-```python {test="skip" lint="skip"}
+```python
+from dataclasses import dataclass
+
+from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 from pydantic_evals.online import evaluate
 
-@evaluate(Equals(value=42))
+
+@dataclass
+class IsNonEmpty(Evaluator):
+    def evaluate(self, ctx: EvaluatorContext) -> bool:
+        return bool(ctx.output)
+
+
+@evaluate(IsNonEmpty())
 async def my_function(x: int) -> int:
     return x
 ```
@@ -77,13 +87,6 @@ def disable_evaluation():
     """Context manager to disable all online evaluation in the current context.
 
     When active, decorated functions still execute normally but no evaluators are dispatched.
-
-    Example:
-    ```python {test="skip" lint="skip"}
-    with disable_evaluation():
-        result = await my_evaluated_function("test input")
-        # No evaluators run
-    ```
     """
     token = _EVALUATION_DISABLED.set(True)
     try:
@@ -156,15 +159,6 @@ class CallbackSink:
 
     The callback receives the results, failures, and context. The span_reference is not
     passed to the callback — use a custom `EvaluationSink` implementation if you need it.
-
-    Example:
-    ```python {test="skip" lint="skip"}
-    async def my_callback(results, failures, context):
-        for result in results:
-            print(f"{result.name}: {result.value}")
-
-    sink = CallbackSink(my_callback)
-    ```
     """
 
     def __init__(self, callback: SinkCallback) -> None:
@@ -204,15 +198,6 @@ class OnlineEvaluator:
         max_concurrency: Maximum number of concurrent evaluations for this evaluator.
         gate: Optional predicate that receives the `EvaluatorContext` and returns whether the
             evaluator should run. Called only for sampled requests. Can be sync or async.
-
-    Example:
-    ```python {test="skip" lint="skip"}
-    OnlineEvaluator(
-        LLMJudge(rubric="Is the response helpful?"),
-        sample_rate=0.01,
-        max_concurrency=5,
-    )
-    ```
     """
 
     evaluator: Evaluator
@@ -534,20 +519,6 @@ class OnlineEvalConfig:
 
     Create instances for different evaluation configurations, or use the global
     `DEFAULT_CONFIG` via the module-level `evaluate()` and `configure()` functions.
-
-    Example:
-    ```python {test="skip" lint="skip"}
-    from pydantic_evals.online import OnlineEvalConfig
-
-    my_eval = OnlineEvalConfig(
-        default_sink=my_sink,
-        default_sample_rate=0.1,
-    )
-
-    @my_eval.evaluate(LLMJudge(rubric="Is the response helpful?"))
-    async def my_function(query: str) -> str:
-        ...
-    ```
     """
 
     default_sink: EvaluationSink | Sequence[EvaluationSink] | SinkCallback | None = None
@@ -780,11 +751,20 @@ def evaluate(*evaluators: Evaluator | OnlineEvaluator) -> Callable[[Callable[_P,
         A decorator that wraps the function with online evaluation.
 
     Example:
-    ```python {test="skip" lint="skip"}
-    from pydantic_evals.online import evaluate
-    from pydantic_evals.evaluators import Equals
+    ```python
+    from dataclasses import dataclass
 
-    @evaluate(Equals(value=42))
+    from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+    from pydantic_evals.online import evaluate
+
+
+    @dataclass
+    class IsNonEmpty(Evaluator):
+        def evaluate(self, ctx: EvaluatorContext) -> bool:
+            return bool(ctx.output)
+
+
+    @evaluate(IsNonEmpty())
     async def my_function(x: int) -> int:
         return x
     ```
