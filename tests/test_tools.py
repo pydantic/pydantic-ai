@@ -1185,9 +1185,7 @@ def test_prepare_mutation_does_not_leak_between_runs():
     test_model = TestModel()
     agent = Agent(test_model, deps_type=str)
 
-    async def prepare_greet(
-        ctx: RunContext[str], tool_def: ToolDefinition
-    ) -> ToolDefinition | None:
+    async def prepare_greet(ctx: RunContext[str], tool_def: ToolDefinition) -> ToolDefinition | None:
         if ctx.deps == 'human':
             tool_def.parameters_json_schema['properties']['name']['description'] = 'Name of the human to greet.'
         return tool_def
@@ -1210,9 +1208,7 @@ def test_prepare_mutation_does_not_leak_between_runs():
 def test_prepare_tools_mutation_does_not_leak_between_runs():
     test_model = TestModel()
 
-    async def prepare_tool_defs(
-        ctx: RunContext[str], tool_defs: list[ToolDefinition]
-    ) -> list[ToolDefinition] | None:
+    async def prepare_tool_defs(ctx: RunContext[str], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
         if ctx.deps == 'human':
             tool_defs[0].description = 'Tool for human prompts'
         return tool_defs

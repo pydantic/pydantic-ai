@@ -150,6 +150,8 @@ async def test_toolset_tool_python_signature_property():
     assert list(sig.params) == ['a', 'b']
     assert str(sig.return_type) == 'int'
 
+    assert await managed_toolset.handle_call(ToolCallPart(tool_name='add', args={'a': 1, 'b': 2})) == 3
+
 
 async def test_function_toolset_with_defaults():
     defaults_toolset = FunctionToolset[None](require_parameter_descriptions=True)

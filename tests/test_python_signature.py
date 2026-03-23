@@ -177,7 +177,11 @@ def test_dedup_replaces_nested_generic_and_union_refs_with_canonical():
     )
     sig2 = FunctionSignature(
         name='tool_b',
-        params={'wrapper': FunctionParam(name='wrapper', type=wrapper, default=None)},
+        params={
+            'wrapper': FunctionParam(name='wrapper', type=wrapper, default=None),
+            'tags': FunctionParam(name='tags', type=GenericTypeExpr(base='list', args=['str']), default=None),
+            'label': FunctionParam(name='label', type=UnionTypeExpr(members=['str', 'None']), default=None),
+        },
         return_type=GenericTypeExpr(base='list', args=[user2]),
         referenced_types=[user2, wrapper],
     )
@@ -1132,6 +1136,7 @@ async def tool(*, item: Container) -> Any:
 
 def test_collect_referenced_types_skips_already_registered():
     """When a $def name is already in referenced_types, _collect_referenced_types skips it."""
+
     class _Address(BaseModel):
         street: str
 
