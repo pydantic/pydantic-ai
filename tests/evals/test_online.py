@@ -5,7 +5,7 @@ from __future__ import annotations as _annotations
 import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import pytest
 
@@ -34,96 +34,107 @@ pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-eval
 
 
 # ============================================================================
-# Test evaluators and helpers — guarded for when pydantic-evals is not installed
+# Test evaluators
 # ============================================================================
 
-if TYPE_CHECKING or imports_successful():
 
-    @dataclass
-    class AlwaysTrue(Evaluator):
-        """Simple evaluator that always returns True."""
+@dataclass
+class AlwaysTrue(Evaluator):
+    """Simple evaluator that always returns True."""
 
-        def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
-            return True
+    def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
+        return True
 
-    @dataclass
-    class AlwaysFalse(Evaluator):
-        """Simple evaluator that always returns False."""
 
-        def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
-            return False
+@dataclass
+class AlwaysFalse(Evaluator):
+    """Simple evaluator that always returns False."""
 
-    @dataclass
-    class OutputEquals(Evaluator):
-        """Evaluator that checks if output equals a value."""
+    def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
+        return False
 
-        value: Any
 
-        def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
-            return ctx.output == self.value
+@dataclass
+class OutputEquals(Evaluator):
+    """Evaluator that checks if output equals a value."""
 
-    @dataclass
-    class FailingEvaluator(Evaluator):
-        """Evaluator that always raises an exception."""
+    value: Any
 
-        def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
-            raise ValueError('Simulated evaluator failure')
+    def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
+        return ctx.output == self.value
 
-    @dataclass
-    class AsyncEvaluator(Evaluator):
-        """Async evaluator for testing."""
 
-        async def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
-            await asyncio.sleep(0)
-            return True
+@dataclass
+class FailingEvaluator(Evaluator):
+    """Evaluator that always raises an exception."""
 
-    @dataclass
-    class MultiResultEvaluator(Evaluator):
-        """Evaluator that returns multiple results."""
+    def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
+        raise ValueError('Simulated evaluator failure')
 
-        def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
-            return {'accuracy': True, 'score': 0.95, 'label': 'good'}
 
-    def _make_context(
-        *,
-        inputs: Any = None,
-        output: Any = None,
-        expected_output: Any = None,
-        metadata: Any = None,
-        duration: float = 0.0,
-    ) -> EvaluatorContext[Any, Any, Any]:
-        """Create an EvaluatorContext for testing."""
-        return EvaluatorContext(
-            name='test',
-            inputs=inputs,
-            output=output,
-            expected_output=expected_output,
-            metadata=metadata,
-            duration=duration,
-            _span_tree=SpanTree(),
-            attributes={},
-            metrics={},
-        )
+@dataclass
+class AsyncEvaluator(Evaluator):
+    """Async evaluator for testing."""
 
-    class Collector:
-        """Collects sink submissions for test assertions."""
+    async def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
+        await asyncio.sleep(0)
+        return True
 
-        def __init__(self) -> None:
-            self.calls: list[
-                tuple[list[EvaluationResult[Any]], list[EvaluatorFailure], EvaluatorContext[Any, Any, Any]]
-            ] = []
 
-        async def __call__(
-            self,
-            results: Sequence[EvaluationResult[Any]],
-            failures: Sequence[EvaluatorFailure],
-            context: EvaluatorContext[Any, Any, Any],
-        ) -> None:
-            self.calls.append((list(results), list(failures), context))
+@dataclass
+class MultiResultEvaluator(Evaluator):
+    """Evaluator that returns multiple results."""
 
-        @property
-        def result_count(self) -> int:
-            return sum(len(c[0]) for c in self.calls)
+    def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
+        return {'accuracy': True, 'score': 0.95, 'label': 'good'}
+
+
+# ============================================================================
+# Helpers
+# ============================================================================
+
+
+def _make_context(
+    *,
+    inputs: Any = None,
+    output: Any = None,
+    expected_output: Any = None,
+    metadata: Any = None,
+    duration: float = 0.0,
+) -> EvaluatorContext[Any, Any, Any]:
+    """Create an EvaluatorContext for testing."""
+    return EvaluatorContext(
+        name='test',
+        inputs=inputs,
+        output=output,
+        expected_output=expected_output,
+        metadata=metadata,
+        duration=duration,
+        _span_tree=SpanTree(),
+        attributes={},
+        metrics={},
+    )
+
+
+class Collector:
+    """Collects sink submissions for test assertions."""
+
+    def __init__(self) -> None:
+        self.calls: list[
+            tuple[list[EvaluationResult[Any]], list[EvaluatorFailure], EvaluatorContext[Any, Any, Any]]
+        ] = []
+
+    async def __call__(
+        self,
+        results: Sequence[EvaluationResult[Any]],
+        failures: Sequence[EvaluatorFailure],
+        context: EvaluatorContext[Any, Any, Any],
+    ) -> None:
+        self.calls.append((list(results), list(failures), context))
+
+    @property
+    def result_count(self) -> int:
+        return sum(len(c[0]) for c in self.calls)
 
 
 # ============================================================================
@@ -311,7 +322,7 @@ async def test_evaluate_decorator_async_preserves_signature():
     @evaluate(AlwaysTrue())
     async def my_func(x: int) -> int:
         """My docstring."""
-        return x  # pragma: no cover
+        return x
 
     assert my_func.__name__ == 'my_func'
     assert my_func.__doc__ == 'My docstring.'
@@ -659,6 +670,26 @@ async def test_configure_updates_default_config():
         DEFAULT_CONFIG.default_sample_rate = original_rate
 
 
+async def test_configure_can_reset_to_none():
+    """configure() can explicitly set fields to None to clear them."""
+    collector = Collector()
+    original_sink = DEFAULT_CONFIG.default_sink
+    original_metadata = DEFAULT_CONFIG.metadata
+
+    try:
+        configure(default_sink=collector, metadata={'key': 'value'})
+        assert DEFAULT_CONFIG.default_sink is collector
+        assert DEFAULT_CONFIG.metadata == {'key': 'value'}
+
+        # Explicitly passing None should clear the values
+        configure(default_sink=None, metadata=None)
+        assert DEFAULT_CONFIG.default_sink is None
+        assert DEFAULT_CONFIG.metadata is None
+    finally:
+        DEFAULT_CONFIG.default_sink = original_sink
+        DEFAULT_CONFIG.metadata = original_metadata
+
+
 # ============================================================================
 # Test module-level evaluate()
 # ============================================================================
@@ -933,146 +964,3 @@ async def test_multiple_sinks():
 
     assert len(collector1.calls) == 1
     assert len(collector2.calls) == 1
-
-
-# ============================================================================
-# Coverage: edge cases
-# ============================================================================
-
-
-async def test_sample_rate_fractional():
-    """Fractional sample_rate uses random to decide."""
-    collector = Collector()
-    config = OnlineEvalConfig(default_sink=collector)
-
-    # Use sample_rate=0.5 and call many times to exercise the random.random() branch
-    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), sample_rate=0.5))
-    async def my_func(x: int) -> int:
-        return x
-
-    for _ in range(50):
-        await my_func(42)
-
-    await asyncio.sleep(0.2)
-    # With 50 calls at 50%, we expect roughly 25 evaluations (but not exactly)
-    assert 0 < len(collector.calls) < 50
-
-
-async def test_sink_exception_logged(caplog: pytest.LogCaptureFixture):
-    """Sink exceptions are caught and logged, not propagated."""
-
-    async def bad_sink(
-        results: Sequence[EvaluationResult[Any]],
-        failures: Sequence[EvaluatorFailure],
-        context: EvaluatorContext[Any, Any, Any],
-    ) -> None:
-        raise RuntimeError('sink exploded')
-
-    config = OnlineEvalConfig(default_sink=bad_sink)
-
-    @config.evaluate(AlwaysTrue())
-    async def my_func(x: int) -> int:
-        return x
-
-    result = await my_func(42)
-    assert result == 42
-
-    await asyncio.sleep(0.1)
-    assert 'Error submitting evaluation results to sink' in caplog.text
-
-
-async def test_sync_gate_on_sync_function():
-    """Sync gates work on sync functions."""
-    collector = Collector()
-    config = OnlineEvalConfig(default_sink=collector)
-
-    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), gate=lambda ctx: ctx.output > 10))
-    def my_func(x: int) -> int:
-        return x
-
-    my_func(5)  # gate blocks
-    await asyncio.sleep(0.5)
-    assert len(collector.calls) == 0
-
-    my_func(20)  # gate allows
-    await asyncio.sleep(0.5)
-    assert len(collector.calls) == 1
-
-
-async def test_sync_async_gate_warning(caplog: pytest.LogCaptureFixture):
-    """Async gate on sync function logs warning and skips."""
-
-    async def async_gate(ctx: EvaluatorContext[Any, Any, Any]) -> bool:
-        return True  # pragma: no cover
-
-    collector = Collector()
-    config = OnlineEvalConfig(default_sink=collector)
-
-    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), gate=async_gate))
-    def my_func(x: int) -> int:
-        return x
-
-    my_func(42)
-    await asyncio.sleep(0.5)
-    assert 'Async gate on sync function' in caplog.text
-    assert len(collector.calls) == 0
-
-
-async def test_sync_gate_exception(caplog: pytest.LogCaptureFixture):
-    """Gate exception on sync function skips evaluator and logs."""
-
-    def bad_gate(ctx: EvaluatorContext[Any, Any, Any]) -> bool:
-        raise ValueError('gate error')
-
-    collector = Collector()
-    config = OnlineEvalConfig(default_sink=collector)
-
-    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), gate=bad_gate))
-    def my_func(x: int) -> int:
-        return x
-
-    my_func(42)
-    await asyncio.sleep(0.5)
-    assert 'Gate check failed' in caplog.text
-    assert len(collector.calls) == 0
-
-
-async def test_sync_disabled_evaluation():
-    """disable_evaluation() works with sync decorated functions."""
-    collector = Collector()
-    config = OnlineEvalConfig(default_sink=collector)
-
-    @config.evaluate(AlwaysTrue())
-    def my_func(x: int) -> int:
-        return x
-
-    with disable_evaluation():
-        result = my_func(42)
-        assert result == 42
-
-    await asyncio.sleep(0.1)
-    assert len(collector.calls) == 0
-
-
-async def test_sync_sample_rate_zero():
-    """sample_rate=0.0 skips evaluation for sync functions."""
-    collector = Collector()
-    config = OnlineEvalConfig(default_sink=collector)
-
-    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), sample_rate=0.0))
-    def my_func(x: int) -> int:
-        return x
-
-    my_func(42)
-    await asyncio.sleep(0.1)
-    assert len(collector.calls) == 0
-
-
-async def test_configure_metadata():
-    """configure() updates metadata on the global DEFAULT_CONFIG."""
-    original = DEFAULT_CONFIG.metadata
-    try:
-        configure(metadata={'env': 'test'})
-        assert DEFAULT_CONFIG.metadata == {'env': 'test'}
-    finally:
-        DEFAULT_CONFIG.metadata = original

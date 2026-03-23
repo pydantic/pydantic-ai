@@ -5,11 +5,12 @@ The same `Evaluator` instances used with `Dataset.evaluate()` work here, the dif
 they are wired up (decorator vs dataset) rather than what they are.
 
 Example:
-```python {test="skip" lint="skip"}
+```python
 from pydantic_evals.online import evaluate
 
-@evaluate(my_evaluator)
-async def my_function(x: str) -> str: ...
+@evaluate(Equals(value=42))
+async def my_function(x: int) -> int:
+    return x
 ```
 """
 
@@ -30,6 +31,7 @@ from typing import Any, Protocol, runtime_checkable
 import anyio
 from typing_extensions import ParamSpec, TypeVar
 
+from ._utils import UNSET, Unset, logfire_span
 from .evaluators._run_evaluator import run_evaluator
 from .evaluators.context import EvaluatorContext
 from .evaluators.evaluator import EvaluationResult, Evaluator, EvaluatorFailure
@@ -59,6 +61,10 @@ logger = logging.getLogger('pydantic_evals.online')
 _P = ParamSpec('_P')
 _R = TypeVar('_R')
 
+# Strong references to background tasks to prevent garbage collection.
+# See: https://docs.python.org/3/library/asyncio-task.html#creating-tasks
+_background_tasks: set[asyncio.Task[Any]] = set()
+
 # ============================================================================
 # Context variable for disabling evaluation
 # ============================================================================
@@ -73,9 +79,9 @@ def disable_evaluation():
     When active, decorated functions still execute normally but no evaluators are dispatched.
 
     Example:
-    ```python {test="skip" lint="skip"}
+    ```python
     with disable_evaluation():
-        result = await my_evaluated_function('test input')
+        result = await my_evaluated_function("test input")
         # No evaluators run
     ```
     """
@@ -91,7 +97,7 @@ def disable_evaluation():
 # ============================================================================
 
 
-@dataclass
+@dataclass(kw_only=True)
 class SpanReference:
     """Identifies a span that evaluation results should be associated with.
 
@@ -152,10 +158,10 @@ class CallbackSink:
     passed to the callback — use a custom `EvaluationSink` implementation if you need it.
 
     Example:
-    ```python {test="skip" lint="skip"}
+    ```python
     async def my_callback(results, failures, context):
         for result in results:
-            print(f'{result.name}: {result.value}')
+            print(f"{result.name}: {result.value}")
 
     sink = CallbackSink(my_callback)
     ```
@@ -183,7 +189,7 @@ class CallbackSink:
 # ============================================================================
 
 
-@dataclass
+@dataclass(kw_only=True)
 class OnlineEvaluator:
     """Wraps an `Evaluator` with per-evaluator online configuration.
 
@@ -200,9 +206,9 @@ class OnlineEvaluator:
             evaluator should run. Called only for sampled requests. Can be sync or async.
 
     Example:
-    ```python {test="skip" lint="skip"}
+    ```python
     OnlineEvaluator(
-        LLMJudge(rubric='Is the response helpful?'),
+        LLMJudge(rubric="Is the response helpful?"),
         sample_rate=0.01,
         max_concurrency=5,
     )
@@ -225,7 +231,7 @@ class OnlineEvaluator:
 # ============================================================================
 
 
-@dataclass
+@dataclass(kw_only=True)
 class EvaluatorContextData:
     """All the data needed to construct an `EvaluatorContext`, fetched in one shot.
 
@@ -394,9 +400,9 @@ def _resolve_sample_rate(rate: float | Callable[[], float | bool]) -> float | bo
 
 def _should_evaluate(rate: float | Callable[[], float | bool], global_enabled: bool) -> bool:
     """Determine whether an evaluator should run based on sampling configuration."""
-    if not global_enabled:  # pragma: no cover
+    if not global_enabled:
         return False
-    if _EVALUATION_DISABLED.get():  # pragma: no cover
+    if _EVALUATION_DISABLED.get():
         return False
 
     resolved = _resolve_sample_rate(rate)
@@ -446,7 +452,7 @@ def _normalize_sinks(
 def _normalize_single_sink(sink: EvaluationSink | SinkCallback) -> EvaluationSink:
     if isinstance(sink, EvaluationSink):
         return sink
-    return CallbackSink(sink)  # pragma: no cover
+    return CallbackSink(sink)
 
 
 async def _dispatch_single_evaluator(
@@ -522,7 +528,7 @@ def _capture_inputs(func: Callable[..., Any], args: tuple[Any, ...], kwargs: dic
 # ============================================================================
 
 
-@dataclass
+@dataclass(kw_only=True)
 class OnlineEvalConfig:
     """Holds cross-evaluator defaults for online evaluation.
 
@@ -530,7 +536,7 @@ class OnlineEvalConfig:
     `DEFAULT_CONFIG` via the module-level `evaluate()` and `configure()` functions.
 
     Example:
-    ```python {test="skip" lint="skip"}
+    ```python
     from pydantic_evals.online import OnlineEvalConfig
 
     my_eval = OnlineEvalConfig(
@@ -538,8 +544,9 @@ class OnlineEvalConfig:
         default_sample_rate=0.1,
     )
 
-    @my_eval.evaluate(my_evaluator)
-    async def my_function(query: str) -> str: ...
+    @my_eval.evaluate(LLMJudge(rubric="Is the response helpful?"))
+    async def my_function(query: str) -> str:
+        ...
     ```
     """
 
@@ -603,8 +610,6 @@ def _wrap_async(
         inputs = _capture_inputs(func, args, kwargs)
 
         # Run the function with span tree capture
-        from ._utils import logfire_span
-
         with logfire_span('evaluate {func_name}', func_name=func.__qualname__) as span, context_subtree() as span_tree:
             t0 = time.perf_counter()
             result = await func(*args, **kwargs)
@@ -642,8 +647,10 @@ def _wrap_async(
             # Dispatch evaluators in the background
             try:
                 loop = asyncio.get_running_loop()
-                loop.create_task(_dispatch_evaluators(gated, context, span_reference, config))
-            except RuntimeError:  # pragma: no cover
+                task = loop.create_task(_dispatch_evaluators(gated, context, span_reference, config))
+                _background_tasks.add(task)
+                task.add_done_callback(_background_tasks.discard)
+            except RuntimeError:
                 # No running loop (shouldn't happen for async but be defensive)
                 logger.warning('No running event loop for background evaluation dispatch')
 
@@ -674,8 +681,6 @@ def _wrap_sync(
         inputs = _capture_inputs(func, args, kwargs)
 
         # Run the function with span tree capture
-        from ._utils import logfire_span
-
         with logfire_span('evaluate {func_name}', func_name=func.__qualname__) as span, context_subtree() as span_tree:
             t0 = time.perf_counter()
             result = func(*args, **kwargs)
@@ -703,11 +708,7 @@ def _wrap_sync(
             if oe.gate is not None:
                 try:
                     gate_result = oe.gate(context)
-                    if inspect.iscoroutine(gate_result):
-                        gate_result.close()  # prevent 'coroutine was never awaited' warning
-                        logger.warning('Async gate on sync function %r — skipping evaluator %r', func, oe.evaluator)
-                        continue
-                    if inspect.isawaitable(gate_result):  # pragma: no cover
+                    if inspect.isawaitable(gate_result):
                         logger.warning('Async gate on sync function %r — skipping evaluator %r', func, oe.evaluator)
                         continue
                     if not gate_result:
@@ -721,7 +722,9 @@ def _wrap_sync(
             # Try to dispatch to an existing event loop, or start a background thread
             try:
                 loop = asyncio.get_running_loop()
-                loop.create_task(_dispatch_evaluators(gated, context, span_reference, config))
+                task = loop.create_task(_dispatch_evaluators(gated, context, span_reference, config))
+                _background_tasks.add(task)
+                task.add_done_callback(_background_tasks.discard)
             except RuntimeError:
                 # No running loop — run in a background thread
                 import threading
@@ -749,9 +752,9 @@ def _extract_span_reference(span: Any) -> SpanReference | None:
                     trace_id=format(ctx.trace_id, '032x'),
                     span_id=format(ctx.span_id, '016x'),
                 )
-    except Exception:  # pragma: no cover
+    except Exception:
         pass
-    return None  # pragma: no cover
+    return None
 
 
 # ============================================================================
@@ -778,9 +781,8 @@ def evaluate(*evaluators: Evaluator | OnlineEvaluator) -> Callable[[Callable[_P,
 
     Example:
     ```python
-    from pydantic_evals.evaluators import Equals
     from pydantic_evals.online import evaluate
-
+    from pydantic_evals.evaluators import Equals
 
     @evaluate(Equals(value=42))
     async def my_function(x: int) -> int:
@@ -792,26 +794,27 @@ def evaluate(*evaluators: Evaluator | OnlineEvaluator) -> Callable[[Callable[_P,
 
 def configure(
     *,
-    default_sink: EvaluationSink | Sequence[EvaluationSink] | SinkCallback | None = None,
-    default_sample_rate: float | Callable[[], float | bool] | None = None,
-    enabled: bool | None = None,
-    metadata: dict[str, Any] | None = None,
+    default_sink: EvaluationSink | Sequence[EvaluationSink] | SinkCallback | None | Unset = UNSET,
+    default_sample_rate: float | Callable[[], float | bool] | Unset = UNSET,
+    enabled: bool | Unset = UNSET,
+    metadata: dict[str, Any] | None | Unset = UNSET,
 ) -> None:
     """Configure the global default `OnlineEvalConfig`.
 
-    Only provided values are updated; `None` arguments are ignored.
+    Only provided values are updated; unset arguments are ignored.
+    Pass `None` explicitly to clear `default_sink` or `metadata`.
 
     Args:
-        default_sink: Default sink(s) for evaluators.
+        default_sink: Default sink(s) for evaluators. Pass `None` to clear.
         default_sample_rate: Default sample rate for evaluators.
         enabled: Whether online evaluation is enabled.
-        metadata: Metadata to include in evaluator contexts.
+        metadata: Metadata to include in evaluator contexts. Pass `None` to clear.
     """
-    if default_sink is not None:
+    if not isinstance(default_sink, Unset):
         DEFAULT_CONFIG.default_sink = default_sink
-    if default_sample_rate is not None:
+    if not isinstance(default_sample_rate, Unset):
         DEFAULT_CONFIG.default_sample_rate = default_sample_rate
-    if enabled is not None:
+    if not isinstance(enabled, Unset):
         DEFAULT_CONFIG.enabled = enabled
-    if metadata is not None:
+    if not isinstance(metadata, Unset):
         DEFAULT_CONFIG.metadata = metadata
