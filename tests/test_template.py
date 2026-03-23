@@ -154,7 +154,7 @@ class TestValidateFromSpecArgs:
 
             @classmethod
             def from_spec(cls, value: str = '') -> PlainCap:
-                return cls(value=value)
+                return cls(value=value)  # pragma: lax no cover
 
         ctx: dict[str, Any] = {'deps_type': MyDeps}
         args, _kwargs = validate_from_spec_args(PlainCap, ('Hello {{name}}',), {}, ctx)
@@ -332,7 +332,7 @@ class _MixedCap(AbstractCapability[Any]):
 
     @classmethod
     def from_spec(cls, label: str, template: TemplateStr[Any] | str = '') -> _MixedCap:
-        return cls(label=label, template=str(template))
+        return cls(label=label, template=str(template))  # pragma: lax no cover
 
 
 class TestValidateFromSpecArgsMixedParams:

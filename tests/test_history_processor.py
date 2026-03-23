@@ -1684,7 +1684,7 @@ def test_takes_ctx_returns_false_for_untyped_processor():
     from pydantic_ai._utils import takes_run_context
 
     def untyped_processor(messages) -> list[ModelMessage]:  # pyright: ignore[reportUnknownParameterType,reportMissingParameterType]
-        return messages  # pyright: ignore[reportUnknownVariableType]
+        return messages  # pyright: ignore[reportUnknownVariableType] # pragma: no cover
 
     # When first param has no type annotation, takes_run_context returns False
     assert takes_run_context(untyped_processor) is False  # pyright: ignore[reportUnknownArgumentType]

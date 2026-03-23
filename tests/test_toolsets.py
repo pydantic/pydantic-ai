@@ -834,7 +834,7 @@ async def test_dynamic_toolset():
 
 async def test_dynamic_toolset_empty():
     def no_toolset_func(ctx: RunContext[None]) -> None:
-        return None
+        return None  # pragma: no cover
 
     original_toolset = DynamicToolset[None](toolset_func=no_toolset_func)
 
@@ -925,7 +925,7 @@ class StatefulToolset(AbstractToolset[None]):
 
     @property
     def id(self) -> str | None:
-        return self._id
+        return self._id  # pragma: no cover
 
     async def for_run(self, ctx: RunContext[None]) -> AbstractToolset[None]:
         return StatefulToolset(call_count=0, id=self._id)
@@ -934,13 +934,13 @@ class StatefulToolset(AbstractToolset[None]):
         return StatefulToolset(call_count=self.call_count + 1, id=self._id)
 
     async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
-        return {}
+        return {}  # pragma: no cover
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
     ) -> Any:
-        self.call_count += 1
-        return self.call_count
+        self.call_count += 1  # pragma: no cover
+        return self.call_count  # pragma: no cover
 
 
 async def test_for_run_returns_fresh_instance():
@@ -1208,7 +1208,7 @@ async def test_concurrent_runs_dont_share_state():
 
         @property
         def id(self) -> str | None:
-            return 'counting'
+            return 'counting'  # pragma: no cover
 
         async def for_run(self, ctx: RunContext[None]) -> AbstractToolset[None]:
             return CountingToolset()

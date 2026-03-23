@@ -372,7 +372,7 @@ def test_model_json_schema_with_capabilities():
     for entry in any_of:
         if 'const' in entry:
             capability_names.add(entry['const'])
-        elif '$ref' in entry:
+        elif '$ref' in entry:  # pragma: no branch
             # Extract the name from refs like '#/$defs/spec_Instructions'
             ref = entry['$ref']
             ref_name = ref.rsplit('/', 1)[-1]
@@ -402,7 +402,7 @@ def test_model_json_schema_with_custom_capabilities():
     for entry in any_of:
         if 'const' in entry:
             capability_names.add(entry['const'])
-        elif '$ref' in entry:
+        elif '$ref' in entry:  # pragma: no branch
             ref = entry['$ref']
             ref_name = ref.rsplit('/', 1)[-1]
             for prefix in ('spec_', 'short_spec_'):
@@ -702,7 +702,7 @@ def test_model_settings_callable_get_model_settings():
     """Callable ModelSettings returns the callable from get_model_settings for resolution in the chain."""
 
     def dynamic_settings(ctx: RunContext[None]) -> _ModelSettings:
-        return _ModelSettings(temperature=0.9)
+        return _ModelSettings(temperature=0.9)  # pragma: no cover
 
     cap = ModelSettings(settings=dynamic_settings)
 
@@ -887,13 +887,13 @@ async def test_for_run_with_different_toolset():
 
     @toolset_a.tool_plain
     def tool_a() -> str:
-        return 'a'
+        return 'a'  # pragma: no cover
 
     toolset_b = FunctionToolset(id='b')
 
     @toolset_b.tool_plain
     def tool_b() -> str:
-        return 'b'
+        return 'b'  # pragma: no cover
 
     class SwitchingCap(AbstractCapability[None]):
         def __init__(self, use_b: bool = False):
@@ -1008,7 +1008,7 @@ async def tool_calling_stream_function(
         yield {0: DeltaToolCall(name=tool.name, json_args='{}', tool_call_id='call-1')}
         return
 
-    yield 'no tools available'
+    yield 'no tools available'  # pragma: no cover
 
 
 def tool_calling_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1024,7 +1024,7 @@ def tool_calling_model(messages: list[ModelMessage], info: AgentInfo) -> ModelRe
         tool = info.function_tools[0]
         return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args='{}', tool_call_id='call-1')])
 
-    return make_text_response('no tools available')
+    return make_text_response('no tools available')  # pragma: no cover
 
 
 # --- Logging capability for testing ---
@@ -1319,7 +1319,7 @@ class TestToolValidateHooks:
             ) -> str | dict[str, Any]:
                 # Inject an argument
                 if isinstance(args, dict):
-                    return {**args, 'name': 'injected'}
+                    return {**args, 'name': 'injected'}  # pragma: no cover
                 return {'name': 'injected'}
 
         agent = Agent(FunctionModel(tool_calling_model), capabilities=[ModifyArgsCap()])
@@ -1389,7 +1389,7 @@ class TestToolExecuteHooks:
                 return ModelResponse(
                     parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
                 )
-            return make_text_response('no tools')
+            return make_text_response('no tools')  # pragma: no cover
 
         agent = Agent(FunctionModel(model_fn), capabilities=[ModifyResultCap()])
 
@@ -1417,7 +1417,7 @@ class TestToolExecuteHooks:
                 return ModelResponse(
                     parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
                 )
-            return make_text_response('no tools')
+            return make_text_response('no tools')  # pragma: no cover
 
         agent = Agent(FunctionModel(model_fn), capabilities=[SkipExecCap()])
 
@@ -1426,8 +1426,8 @@ class TestToolExecuteHooks:
         @agent.tool_plain
         def my_tool() -> str:
             nonlocal tool_was_called
-            tool_was_called = True
-            return 'should not be called'
+            tool_was_called = True  # pragma: no cover
+            return 'should not be called'  # pragma: no cover
 
         result = await agent.run('call tool')
         assert not tool_was_called
@@ -1925,7 +1925,7 @@ class TestWrapRunShortCircuit:
         async with agent.iter('hello') as agent_run:
             nodes: list[Any] = []
             async for node in agent_run:
-                nodes.append(node)
+                nodes.append(node)  # pragma: no cover
         # Iteration should stop immediately (no graph nodes executed)
         assert nodes == []
         assert agent_run.result is not None
@@ -2017,11 +2017,11 @@ class TestPrepareToolsHook:
 
         @agent.tool_plain
         def hidden_tool() -> str:
-            return 'hidden'
+            return 'hidden'  # pragma: no cover
 
         @agent.tool_plain
         def visible_tool() -> str:
-            return 'visible'
+            return 'visible'  # pragma: no cover
 
         result = await agent.run('hello')
         assert result.output == "tools: ['visible_tool']"
@@ -2048,7 +2048,7 @@ class TestPrepareToolsHook:
 
         @agent.tool_plain
         def my_tool() -> str:
-            return 'result'
+            return 'result'  # pragma: no cover
 
         await agent.run('hello')
         # The capability should have seen 0 output tools (no output_type set),
@@ -2078,7 +2078,7 @@ class TestPrepareToolsHook:
         @agent.tool_plain
         def my_tool() -> str:
             """Original description."""
-            return 'result'
+            return 'result'  # pragma: no cover
 
         result = await agent.run('hello')
         assert '[PREFIXED] Original description.' in result.output
@@ -2109,7 +2109,7 @@ class TestPrepareToolsHook:
         @agent.tool_plain
         def tool() -> str:
             """desc"""
-            return 'r'
+            return 'r'  # pragma: no cover
 
         result = await agent.run('hello')
         # A runs first, then B, so suffix order is _A_B
@@ -2262,7 +2262,7 @@ class TestWebSearchCapability:
                         ToolCallPart(tool_name=info.function_tools[0].name, args='{"query": "test"}', tool_call_id='c1')
                     ]
                 )
-            return ModelResponse(parts=[TextPart(content='no tools')])
+            return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
 
         model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
         agent = Agent(model, capabilities=[WebSearch()])
@@ -2307,7 +2307,7 @@ class TestWebSearchCapability:
         from pydantic_ai.tools import Tool
 
         def my_search(query: str) -> str:
-            return f'results for {query}'
+            return f'results for {query}'  # pragma: no cover
 
         cap = WebSearch(local=my_search)
         assert isinstance(cap.local, Tool)
@@ -2348,7 +2348,7 @@ class TestImageGenerationCapability:
         from pydantic_ai.tools import Tool
 
         def my_gen(prompt: str) -> str:
-            return 'image_url'
+            return 'image_url'  # pragma: no cover
 
         cap = ImageGeneration(local=my_gen)
         assert isinstance(cap.local, Tool)
@@ -2494,11 +2494,11 @@ class TestPrepareToolsCapability:
 
         @agent.tool_plain
         def secret_tool() -> str:
-            return 'secret'
+            return 'secret'  # pragma: no cover
 
         @agent.tool_plain
         def public_tool() -> str:
-            return 'public'
+            return 'public'  # pragma: no cover
 
         result = await agent.run('hello')
         assert result.output == "tools: ['public_tool']"
@@ -2518,7 +2518,7 @@ class TestPrepareToolsCapability:
 
         @agent.tool_plain
         def my_tool() -> str:
-            return 'result'
+            return 'result'  # pragma: no cover
 
         result = await agent.run('hello')
         assert result.output == "tools: ['my_tool']"
@@ -2540,7 +2540,7 @@ class TestPrepareToolsCapability:
 
         @agent.tool_plain
         def my_tool() -> str:
-            return 'result'
+            return 'result'  # pragma: no cover
 
         result = await agent.run('hello')
         assert result.output == 'strict: [True]'
@@ -2897,7 +2897,7 @@ class TestGetWrapperToolsetHook:
 
         @agent.tool_plain
         def my_tool() -> str:
-            return 'result'
+            return 'result'  # pragma: no cover
 
         result = await agent.run('hello')
         assert result.output == "tools: ['cap_my_tool']"
@@ -2935,7 +2935,7 @@ class TestGetWrapperToolsetHook:
 
         @agent.tool_plain
         def my_tool() -> str:
-            return 'result'
+            return 'result'  # pragma: no cover
 
         async with agent.run_stream('hello') as result:
             output = await result.get_output()
@@ -2993,7 +2993,7 @@ class TestGetWrapperToolsetHook:
 
         @agent.tool_plain
         def my_tool() -> str:
-            return 'result'
+            return 'result'  # pragma: no cover
 
         result = await agent.run('hello')
         assert result.output == "tools: ['my_tool']"
@@ -3036,7 +3036,7 @@ class TestGetWrapperToolsetHook:
 
         @agent.tool_plain
         def tool() -> str:
-            return 'r'
+            return 'r'  # pragma: no cover
 
         result = await agent.run('hello')
         # First cap wraps innermost (a_tool), then second wraps that (b_a_tool)
@@ -3080,7 +3080,7 @@ class TestGetWrapperToolsetHook:
 
         @agent.tool_plain
         def my_tool() -> str:
-            return 'result'
+            return 'result'  # pragma: no cover
 
         result = await agent.run('hello')
         # The per-run instance should use 'runtime' prefix, not 'default'
@@ -3126,7 +3126,7 @@ class TestGetWrapperToolsetHook:
         @agent.tool_plain
         def my_tool() -> str:
             """Original."""
-            return 'result'
+            return 'result'  # pragma: no cover
 
         result = await agent.run('hello')
         # Both agent prepare_tools (description) and capability wrapper (prefix) should apply
@@ -3394,7 +3394,7 @@ def test_builtin_or_local_with_explicit_builtin():
 
     def my_local_tool() -> str:
         """A local fallback tool."""
-        return 'local result'
+        return 'local result'  # pragma: no cover
 
     cap = BuiltinOrLocalTool(builtin=WebSearchTool(), local=my_local_tool)
     # get_builtin_tools returns the explicit builtin

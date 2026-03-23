@@ -151,7 +151,7 @@ class TestBuildRegistry:
 
     def test_validate_callback(self):
         def validate(cls: type[Any]) -> None:
-            if cls.__name__ == 'Foo':
+            if cls.__name__ == 'Foo':  # pragma: no cover
                 raise ValueError('Foo is not allowed')
 
         with pytest.raises(ValueError, match='Foo is not allowed'):
@@ -222,7 +222,7 @@ class TestLoadFromRegistry:
 class TestBuildSchemaTypes:
     def test_no_params_class(self):
         class NoParams:
-            def __init__(self): ...
+            def __init__(self): ...  # pragma: no cover
 
         registry = {'NoParams': NoParams}
         types = build_schema_types(registry)
@@ -231,7 +231,7 @@ class TestBuildSchemaTypes:
 
     def test_single_param_class(self):
         class SingleParam:
-            def __init__(self, x: int): ...
+            def __init__(self, x: int): ...  # pragma: no cover
 
         registry = {'SingleParam': SingleParam}
         types = build_schema_types(registry)
@@ -239,14 +239,14 @@ class TestBuildSchemaTypes:
 
     def test_multi_param_class(self):
         class MultiParam:
-            def __init__(self, x: int, y: str): ...
+            def __init__(self, x: int, y: str): ...  # pragma: no cover
 
         registry = {'MultiParam': MultiParam}
         types = build_schema_types(registry)
         assert len(types) >= 1
 
     def test_custom_schema_target(self):
-        def my_factory(name: str, count: int = 1) -> None: ...
+        def my_factory(name: str, count: int = 1) -> None: ...  # pragma: no cover
 
         registry = {'MyClass': object}
         types = build_schema_types(
