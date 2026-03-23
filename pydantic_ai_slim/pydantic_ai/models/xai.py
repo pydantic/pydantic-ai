@@ -1083,7 +1083,7 @@ def _extract_usage(
             usage_data[f'server_side_tools_{tool_name}'] = count
 
     # Build details from non-standard fields
-    details = {k: v for k, v in usage_data.items() if k not in {'prompt_tokens', 'completion_tokens'}}
+    details = {k: v for k, v in usage_data.items() if k not in {'prompt_tokens', 'completion_tokens', 'cached_prompt_text_tokens'}}
 
     extracted = RequestUsage.extract(
         dict(model=model, usage=usage_data),
