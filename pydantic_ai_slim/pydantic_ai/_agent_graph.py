@@ -504,6 +504,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(ctx)
         except exceptions.SkipModelRequest as e:
             # SkipModelRequest in stream path: yield an empty stream and finish handling
+            # new_message_index wasn't updated in _prepare_request, fix it here
+            ctx.deps.new_message_index = _first_new_message_index(
+                ctx.state.message_history, ctx.state.run_id, resumed_request=ctx.deps.resumed_request
+            )
             self._did_stream = True
             ctx.state.usage.requests += 1
             skip_mrp = await _prepare_request_parameters(ctx)
@@ -623,6 +627,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         try:
             model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(ctx)
         except exceptions.SkipModelRequest as e:
+            # new_message_index wasn't updated in _prepare_request, fix it here
+            ctx.deps.new_message_index = _first_new_message_index(
+                ctx.state.message_history, ctx.state.run_id, resumed_request=ctx.deps.resumed_request
+            )
             ctx.state.usage.requests += 1
             return await self._finish_handling(ctx, e.response)
 
