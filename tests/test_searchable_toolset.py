@@ -104,7 +104,7 @@ async def test_search_tool_def_description_and_schema():
                 }
             },
             'required': ['keywords'],
-            'title': '_SearchToolArgs',
+            'title': 'SearchToolArgs',
             'type': 'object',
         }
     )

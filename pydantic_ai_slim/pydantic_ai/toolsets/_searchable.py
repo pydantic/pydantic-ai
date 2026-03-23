@@ -32,7 +32,11 @@ class _SearchToolArgs(TypedDict):
     ]
 
 
+# TypeAdapter doesn't support config= for TypedDict, so we fix the title on the generated schema
+# to avoid leaking the private class name '_SearchToolArgs' to the model.
 _search_tool_args_ta = TypeAdapter(_SearchToolArgs)
+_SEARCH_TOOL_SCHEMA = _search_tool_args_ta.json_schema()
+_SEARCH_TOOL_SCHEMA['title'] = 'SearchToolArgs'
 
 
 @dataclass(kw_only=True)
@@ -102,7 +106,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
                 ' Each keyword is matched independently against tool names and descriptions.'
                 ' If no tools are found, they do not exist — do not retry.'
             ),
-            parameters_json_schema=_search_tool_args_ta.json_schema(),
+            parameters_json_schema=_SEARCH_TOOL_SCHEMA,
         )
 
         search_tool = _SearchTool(
