@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 import anyio
+import sniffio
 from typing_extensions import ParamSpec, TypeVar
 
 from ._utils import UNSET, Unset, logfire_span
@@ -78,6 +79,34 @@ _R = TypeVar('_R')
 # See: https://docs.python.org/3/library/asyncio-task.html#creating-tasks
 _background_tasks: set[asyncio.Task[Any]] = set()
 _background_threads: set[threading.Thread] = set()
+
+
+async def _spawn_background_task(coro: Any) -> None:
+    """Spawn a fire-and-forget background task using the current async backend.
+
+    Uses sniffio to detect the backend (asyncio or trio) and dispatches accordingly.
+    The task is tracked in _background_tasks for deterministic cleanup via wait_for_evaluations().
+    """
+    try:
+        library = sniffio.current_async_library()
+    except sniffio.AsyncLibraryNotFoundError:  # pragma: no cover
+        logger.warning('No async library detected — cannot dispatch background evaluation')
+        return
+
+    if library == 'trio':  # pragma: no cover
+        try:
+            import trio.lowlevel  # pyright: ignore[reportMissingImports]
+
+            trio.lowlevel.spawn_system_task(coro)  # pyright: ignore[reportUnknownMemberType]
+        except ImportError:
+            logger.warning('trio detected but not installed — cannot dispatch background evaluation')
+    else:
+        # asyncio (or any asyncio-compatible backend)
+        loop = asyncio.get_running_loop()
+        task = loop.create_task(coro)
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
+
 
 # ============================================================================
 # Context variable for disabling evaluation
@@ -635,14 +664,7 @@ def _wrap_async(
         span_reference = _extract_span_reference(span)
 
         # Dispatch all sampled evaluators to the background — gate checks happen there
-        try:
-            loop = asyncio.get_running_loop()
-            task = loop.create_task(_dispatch_evaluators(sampled, context, span_reference, config))
-            _background_tasks.add(task)
-            task.add_done_callback(_background_tasks.discard)
-        except RuntimeError:  # pragma: no cover
-            # No running loop (shouldn't happen for async but be defensive)
-            logger.warning('No running event loop for background evaluation dispatch')
+        await _spawn_background_task(_dispatch_evaluators(sampled, context, span_reference, config))
 
         return result
 
@@ -824,11 +846,21 @@ async def wait_for_evaluations() -> None:
     For background threads (dispatched from sync decorated functions called outside an
     async context), this joins them.
     """
-    # Await all pending async tasks
+    # Await all pending async tasks (using anyio for backend compatibility)
     if _background_tasks:
-        await asyncio.gather(*_background_tasks, return_exceptions=True)
+        async with anyio.create_task_group() as tg:
+            for task in list(_background_tasks):
+                tg.start_soon(_wait_task, task)
     # Join all pending background threads (from sync function dispatch)
     _join_background_threads()
+
+
+async def _wait_task(task: asyncio.Task[Any]) -> None:
+    """Await an asyncio.Task, suppressing exceptions (they're already logged by the task)."""
+    try:
+        await task
+    except Exception:
+        pass  # Exceptions are handled inside _dispatch_single_evaluator
 
 
 def _join_background_threads() -> None:
