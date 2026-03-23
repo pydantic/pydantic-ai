@@ -3360,6 +3360,7 @@ def test_web_search_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
 
 def test_mcp_default_builtin():
     """MCP capability constructs the default builtin MCPServerTool."""
+    pytest.importorskip('mcp', reason='mcp package not installed')
     cap = MCP(url='http://example.com/mcp')
     builtin_tools = cap.get_builtin_tools()
     assert len(builtin_tools) == 1
