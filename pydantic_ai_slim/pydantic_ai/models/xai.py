@@ -1089,7 +1089,7 @@ def _extract_usage(
         dict(model=model, usage=usage_data),
         provider=provider,
         provider_url=provider_url,
-        provider_fallback='x_ai',  # Pricing file is defined as x_ai.yml
+        provider_fallback='x-ai',  # Pricing file is defined as x_ai.yml
         details=details or None,
     )
 
