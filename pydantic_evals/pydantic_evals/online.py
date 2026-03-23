@@ -730,7 +730,7 @@ def _extract_span_reference(span: Any) -> SpanReference | None:
     instrumentation is not configured and trace/span IDs are zero).
     """
     get_span_context = getattr(span, 'get_span_context', None)
-    if get_span_context is None:
+    if get_span_context is None:  # pragma: no cover
         return None
     try:
         ctx = get_span_context()

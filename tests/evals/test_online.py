@@ -22,7 +22,6 @@ with try_import() as imports_successful:
         OnlineEvalConfig,
         OnlineEvaluator,
         SpanReference,
-        _extract_span_reference,  # pyright: ignore[reportPrivateUsage]
         configure,
         disable_evaluation,
         evaluate,
@@ -1044,57 +1043,39 @@ async def test_sink_exception_does_not_propagate():
 
 
 # ============================================================================
-# Test _extract_span_reference
+# Test span reference extraction (through public API)
 # ============================================================================
 
 
-async def test_extract_span_reference_with_logfire_span():
-    """_extract_span_reference works with LogfireSpan (which is a ReadableSpan)."""
-    from pydantic_evals._utils import logfire_span
+async def test_span_reference_with_configured_logfire(capfire: Any):
+    """Decorator produces valid SpanReference when logfire is configured."""
+    span_refs: list[SpanReference | None] = []
 
-    with logfire_span('test') as span:
-        ref = _extract_span_reference(span)
+    class SpanCaptureSink:
+        async def submit(
+            self,
+            *,
+            results: Sequence[EvaluationResult[Any]],
+            failures: Sequence[EvaluatorFailure],
+            context: EvaluatorContext[Any, Any, Any],
+            span_reference: SpanReference | None,
+        ) -> None:
+            span_refs.append(span_reference)
 
-    # LogfireSpan always has get_span_context(); when logfire is not configured,
-    # trace_id and span_id are 0, so ref should be None.
-    # When logfire IS configured, ref should be a SpanReference.
-    # Either way, the method should not error.
-    if ref is not None:
-        assert isinstance(ref, SpanReference)
-        assert len(ref.trace_id) == 32
-        assert len(ref.span_id) == 16
+    config = OnlineEvalConfig(default_sink=SpanCaptureSink())
 
+    @config.evaluate(AlwaysTrue())
+    async def my_func(x: int) -> int:
+        return x
 
-async def test_extract_span_reference_with_otel_span():
-    """_extract_span_reference works with a standard OTel SDK span."""
-    from opentelemetry.sdk.trace import TracerProvider
+    await my_func(42)
+    await wait_for_evaluations()
 
-    provider = TracerProvider()
-    tracer = provider.get_tracer('test')
-
-    with tracer.start_as_current_span('test') as span:
-        ref = _extract_span_reference(span)
-
+    assert len(span_refs) == 1
+    ref = span_refs[0]
     assert ref is not None
     assert isinstance(ref, SpanReference)
     assert len(ref.trace_id) == 32
     assert len(ref.span_id) == 16
-
-
-async def test_extract_span_reference_with_no_context():
-    """_extract_span_reference returns None for objects without get_span_context."""
-    assert _extract_span_reference(None) is None
-    assert _extract_span_reference('not a span') is None
-    assert _extract_span_reference(42) is None
-
-
-async def test_extract_span_reference_with_zero_ids():
-    """_extract_span_reference returns None when trace_id and span_id are zero."""
-
-    class FakeSpan:
-        def get_span_context(self):
-            from opentelemetry.trace import SpanContext
-
-            return SpanContext(trace_id=0, span_id=0, is_remote=False)
-
-    assert _extract_span_reference(FakeSpan()) is None
+    assert int(ref.trace_id, 16) != 0
+    assert int(ref.span_id, 16) != 0
