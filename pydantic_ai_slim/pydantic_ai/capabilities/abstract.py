@@ -6,9 +6,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic
 
 from pydantic_ai._instructions import AgentInstructions
-from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse, ToolCallPart
-from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AgentToolset
 
@@ -18,19 +17,6 @@ if TYPE_CHECKING:
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
     from pydantic_graph import End
-
-
-@dataclass
-class ModelRequestContext:
-    """Context passed to and returned from [`AbstractCapability.before_model_request`][pydantic_ai.capabilities.abstract.AbstractCapability.before_model_request].
-
-    Wrapping these parameters in a dataclass instead of a tuple makes the signature
-    future-proof: new fields can be added without breaking existing implementations.
-    """
-
-    messages: list[ModelMessage]
-    model_settings: ModelSettings | None
-    model_request_parameters: ModelRequestParameters
 
 
 @dataclass
@@ -47,20 +33,12 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request] hooks
     are called to allow dynamic adjustments.
 
-    Built-in capabilities:
+    See the [capabilities documentation](capabilities.md) for built-in capabilities.
 
-    - [`BuiltinTool`][pydantic_ai.capabilities.BuiltinTool] — registers a builtin tool with the agent
-    - [`Instructions`][pydantic_ai.capabilities.Instructions] — static or template-based system prompt instructions
-    - [`Thinking`][pydantic_ai.capabilities.Thinking] — enables model thinking/reasoning mode
-    - [`ModelSettings`][pydantic_ai.capabilities.ModelSettings] — provides extra model settings
-    - [`WebSearch`][pydantic_ai.capabilities.WebSearch] — registers the web search builtin tool
-    - [`HistoryProcessor`][pydantic_ai.capabilities.HistoryProcessor] — wraps a history processor as a capability
-    - [`Toolset`][pydantic_ai.capabilities.Toolset] — registers a toolset with the agent
-
-    Custom capabilities that should work with YAML/JSON specs (via
-    [`Agent.from_spec`][pydantic_ai.Agent.from_spec]) can override
     [`get_serialization_name`][pydantic_ai.capabilities.AbstractCapability.get_serialization_name]
-    and [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec].
+    and [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec] support
+    YAML/JSON specs (via [`Agent.from_spec`][pydantic_ai.Agent.from_spec]); they have
+    sensible defaults and typically don't need to be overridden.
     """
 
     @classmethod
@@ -89,7 +67,12 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return self
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
-        """Return static instructions to include in the system prompt, or None."""
+        """Return instructions to include in the system prompt, or None.
+
+        The returned value can be a static string, a [`TemplateStr`][pydantic_ai.TemplateStr],
+        or a callable that receives [`RunContext`][pydantic_ai.tools.RunContext] and returns
+        instructions dynamically.
+        """
         return None
 
     def get_model_settings(self) -> AgentModelSettings[AgentDepsT] | None:
@@ -175,6 +158,12 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         Override to inspect or modify nodes before execution, inspect or modify
         the returned next node, call `handler` multiple times (retry), or
         return a different node to redirect graph progression.
+
+        Note: this hook fires when using [`agent.run()`][pydantic_ai.Agent.run] and when
+        manually driving an [`agent.iter()`][pydantic_ai.Agent.iter] run with
+        [`next()`][pydantic_ai.result.AgentRun.next], but it does **not** fire when
+        iterating over the run with bare `async for` (which yields stream events, not
+        node results).
         """
         return await handler(node)
 

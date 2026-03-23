@@ -287,16 +287,14 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
             parent_span = basic_spans_by_id[parent_id]
             parent_span.children.append(basic_span)
 
-    # Normalize spans: sort children (concurrent span order is non-deterministic)
-    # and strip JSON event content (contains run-specific tool_call_ids)
-    def _normalize_spans(span: BasicSpan) -> None:
+    # Strip JSON event content spans (contain run-specific tool_call_ids)
+    def _strip_json_spans(span: BasicSpan) -> None:
         span.children = [c for c in span.children if not c.content.startswith('{')]
-        span.children.sort(key=lambda s: s.content)
         for child in span.children:
-            _normalize_spans(child)
+            _strip_json_spans(child)
 
     assert root_span is not None
-    _normalize_spans(root_span)
+    _strip_json_spans(root_span)
 
     # Assert the root span and its structure matches expected hierarchy
     assert root_span == snapshot(
@@ -306,6 +304,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                 BasicSpan(
                     content='complex_agent run',
                     children=[
+                        BasicSpan(content='complex_agent__mcp_server__mcp.get_tools'),
                         BasicSpan(
                             content='chat gpt-4o',
                             children=[
@@ -315,6 +314,15 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                 )
                             ],
                         ),
+                        BasicSpan(content='event_stream_handler', children=[BasicSpan(content='ctx.run_step=1')]),
+                        BasicSpan(content='event_stream_handler', children=[BasicSpan(content='ctx.run_step=1')]),
+                        BasicSpan(content='running tool: get_country'),
+                        BasicSpan(
+                            content='running tool: get_product_name',
+                            children=[BasicSpan(content='complex_agent__mcp_server__mcp.call_tool')],
+                        ),
+                        BasicSpan(content='event_stream_handler', children=[BasicSpan(content='ctx.run_step=1')]),
+                        BasicSpan(content='event_stream_handler', children=[BasicSpan(content='ctx.run_step=1')]),
                         BasicSpan(
                             content='chat gpt-4o',
                             children=[
@@ -324,6 +332,9 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                 )
                             ],
                         ),
+                        BasicSpan(content='event_stream_handler', children=[BasicSpan(content='ctx.run_step=2')]),
+                        BasicSpan(content='running tool: get_weather', children=[BasicSpan(content='get_weather')]),
+                        BasicSpan(content='event_stream_handler', children=[BasicSpan(content='ctx.run_step=2')]),
                         BasicSpan(
                             content='chat gpt-4o',
                             children=[
@@ -333,19 +344,6 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                 )
                             ],
                         ),
-                        BasicSpan(content='complex_agent__mcp_server__mcp.get_tools'),
-                        BasicSpan(content='event_stream_handler', children=[BasicSpan(content='ctx.run_step=1')]),
-                        BasicSpan(content='event_stream_handler', children=[BasicSpan(content='ctx.run_step=1')]),
-                        BasicSpan(content='event_stream_handler', children=[BasicSpan(content='ctx.run_step=1')]),
-                        BasicSpan(content='event_stream_handler', children=[BasicSpan(content='ctx.run_step=1')]),
-                        BasicSpan(content='event_stream_handler', children=[BasicSpan(content='ctx.run_step=2')]),
-                        BasicSpan(content='event_stream_handler', children=[BasicSpan(content='ctx.run_step=2')]),
-                        BasicSpan(content='running tool: get_country'),
-                        BasicSpan(
-                            content='running tool: get_product_name',
-                            children=[BasicSpan(content='complex_agent__mcp_server__mcp.call_tool')],
-                        ),
-                        BasicSpan(content='running tool: get_weather', children=[BasicSpan(content='get_weather')]),
                     ],
                 )
             ],

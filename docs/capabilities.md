@@ -196,6 +196,9 @@ Three exceptions allow hooks to short-circuit the normal flow with a replacement
 
 The [`wrap_node_run`][pydantic_ai.capabilities.AbstractCapability.wrap_node_run] hook fires for every node in the [agent graph](agent.md#iterating-over-an-agents-graph) ([`UserPromptNode`][pydantic_ai._agent_graph.UserPromptNode], [`ModelRequestNode`][pydantic_ai._agent_graph.ModelRequestNode], [`CallToolsNode`][pydantic_ai._agent_graph.CallToolsNode]). The `handler` executes the node and returns the next node (or [`End`][pydantic_graph.nodes.End]). Override this to observe node transitions, add per-step logging, or modify graph progression:
 
+!!! note
+    `wrap_node_run` hooks are called automatically by [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and [`agent_run.next()`][pydantic_ai.run.AgentRun.next]. However, they are **not** called when iterating with bare `async for node in agent_run:` over [`agent.iter()`][pydantic_ai.agent.Agent.iter], since that uses the graph run's internal iteration. Always use `agent_run.next(node)` to advance the run if you need `wrap_node_run` hooks to fire.
+
 ```python {title="node_logging_example.py"}
 from dataclasses import dataclass, field
 from typing import Any
@@ -234,6 +237,7 @@ from pydantic_graph import End
 from pydantic_ai import RunContext
 from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.result import FinalResult
 
 
 @dataclass
@@ -247,8 +251,6 @@ class MaxModelRequests(AbstractCapability[Any]):
         if isinstance(node, ModelRequestNode):
             self._count += 1
             if self._count > self.max_requests:
-                from pydantic_ai.result import FinalResult
-
                 return End(FinalResult(output='Max model requests reached'))
         return await handler(node)
 ```
@@ -334,7 +336,7 @@ The list includes all tool kinds (function, output, unapproved) — use `tool_de
 
 ### Event stream hook
 
-For streamed runs ([`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream], [UI event streams](ui/overview.md)), capabilities can observe or transform the event stream:
+For runs with event streaming ([`run_stream_events`][pydantic_ai.agent.AbstractAgent.run_stream_events], [`event_stream_handler`][pydantic_ai.agent.Agent.__init__], [UI event streams](ui/overview.md)), capabilities can observe or transform the event stream:
 
 | Hook | Signature | Purpose |
 |---|---|---|
@@ -378,6 +380,9 @@ class StreamAuditor(AbstractCapability[Any]):
 
         return _audit()
 ```
+
+!!! note
+    The inner async generator pattern shown above will become more ergonomic with the `AgentEventStream` base class ([PR #4775](https://github.com/pydantic/pydantic-ai/pull/4775)).
 
 For building web UIs that transform streamed events into protocol-specific formats (like SSE), see the [UI event streams](ui/overview.md) documentation and the [`UIEventStream`][pydantic_ai.ui.UIEventStream] base class.
 
@@ -623,6 +628,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai import Agent
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability
 
 
@@ -636,7 +642,7 @@ class RateLimit(AbstractCapability[Any]):
 # In YAML: `- RateLimit: {rpm: 30}`
 # In Python:
 agent = Agent.from_spec(
-    {'model': 'test', 'capabilities': [{'RateLimit': {'rpm': 30}}]},
+    AgentSpec(model='test', capabilities=[{'RateLimit': {'rpm': 30}}]),
     custom_capability_types=[RateLimit],
 )
 ```

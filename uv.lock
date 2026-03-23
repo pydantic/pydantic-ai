@@ -6921,6 +6921,9 @@ retries = [
 sentence-transformers = [
     { name = "sentence-transformers", marker = "python_full_version < '3.14' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
 ]
+spec = [
+    { name = "pyyaml" },
+]
 tavily = [
     { name = "tavily-python" },
 ]
@@ -6988,6 +6991,7 @@ requires-dist = [
     { name = "pydantic-handlebars", marker = "extra == 'handlebars'", specifier = ">=0.1.0" },
     { name = "pyperclip", marker = "extra == 'cli'", specifier = ">=1.9.0" },
     { name = "pyyaml", marker = "extra == 'cli'", specifier = ">=6.0.2" },
+    { name = "pyyaml", marker = "extra == 'spec'", specifier = ">=6.0.2" },
     { name = "requests", marker = "extra == 'vertexai'", specifier = ">=2.32.2" },
     { name = "rich", marker = "extra == 'cli'", specifier = ">=13" },
     { name = "sentence-transformers", marker = "python_full_version < '3.14' and extra == 'sentence-transformers'", specifier = ">=5.2.0" },
@@ -7007,7 +7011,7 @@ requires-dist = [
     { name = "voyageai", marker = "python_full_version < '3.14' and extra == 'voyageai'", specifier = ">=0.3.7" },
     { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.5.0" },
 ]
-provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "fastmcp", "google", "groq", "handlebars", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "outlines-llamacpp", "outlines-mlxlm", "outlines-sglang", "outlines-transformers", "outlines-vllm-offline", "prefect", "retries", "sentence-transformers", "tavily", "temporal", "ui", "vertexai", "voyageai", "web", "xai"]
+provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "fastmcp", "google", "groq", "handlebars", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "outlines-llamacpp", "outlines-mlxlm", "outlines-sglang", "outlines-transformers", "outlines-vllm-offline", "prefect", "retries", "sentence-transformers", "spec", "tavily", "temporal", "ui", "vertexai", "voyageai", "web", "xai"]
 
 [[package]]
 name = "pydantic-core"

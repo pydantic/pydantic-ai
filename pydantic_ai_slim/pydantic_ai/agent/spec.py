@@ -22,9 +22,9 @@ CapabilitySpec = NamedSpec
 """The specification of a capability to be constructed.
 
 Supports the same short forms as `EvaluatorSpec`:
-* ``'MyCapability'`` — no arguments
-* ``{'MyCapability': single_arg}`` — a single positional argument
-* ``{'MyCapability': {k1: v1, k2: v2}}`` — keyword arguments
+* `'MyCapability'` — no arguments
+* `{'MyCapability': single_arg}` — a single positional argument
+* `{'MyCapability': {k1: v1, k2: v2}}` — keyword arguments
 """
 
 DEFAULT_SCHEMA_PATH_TEMPLATE = './{stem}_schema.json'
@@ -36,6 +36,7 @@ _YAML_SCHEMA_LINE_PREFIX = '# yaml-language-server: $schema='
 class AgentSpec(BaseModel):
     """Specification for constructing an Agent from a dict/YAML/JSON."""
 
+    # $schema is included to avoid validation fails from the `$schema` key, see `_add_json_schema` below for context
     json_schema_path: str | None = Field(default=None, alias='$schema')
     model: str
     name: str | None = None
@@ -70,18 +71,45 @@ class AgentSpec(BaseModel):
         path = Path(path)
         fmt = _infer_fmt(path, fmt)
         content = path.read_text(encoding='utf-8')
+        return cls.from_text(content, fmt=fmt)
 
+    @classmethod
+    def from_text(
+        cls,
+        text: str,
+        fmt: Literal['yaml', 'json'] = 'yaml',
+    ) -> AgentSpec:
+        """Parse YAML or JSON text into an AgentSpec.
+
+        Args:
+            text: The string content to parse.
+            fmt: Format of the content. Must be either 'yaml' or 'json'.
+
+        Returns:
+            A new AgentSpec instance.
+        """
         if fmt == 'json':
-            data = _json.loads(content)
+            data = _json.loads(text)
         else:
             try:
                 import yaml
             except ImportError:  # pragma: no cover — requires PyYAML to not be installed
                 raise ImportError(
-                    'PyYAML is required to load YAML agent specs. Install it with: pip install "pydantic-ai-slim[cli]"'
+                    'PyYAML is required to load YAML agent specs. Install it with: pip install "pydantic-ai-slim[spec]"'
                 ) from None
-            data = yaml.safe_load(content)
+            data = yaml.safe_load(text)
+        return cls.from_dict(data)
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> AgentSpec:
+        """Validate a dictionary into an AgentSpec.
+
+        Args:
+            data: Dictionary representation of the agent spec.
+
+        Returns:
+            A new AgentSpec instance.
+        """
         return cls.model_validate(data)
 
     def to_file(
@@ -121,7 +149,7 @@ class AgentSpec(BaseModel):
                 import yaml
             except ImportError:  # pragma: no cover — requires PyYAML to not be installed
                 raise ImportError(
-                    'PyYAML is required to save YAML agent specs. Install it with: pip install "pydantic-ai-slim[cli]"'
+                    'PyYAML is required to save YAML agent specs. Install it with: pip install "pydantic-ai-slim[spec]"'
                 ) from None
             dumped_data = self.model_dump(mode='json', by_alias=True, context=context, exclude_defaults=True)
             content = yaml.dump(dumped_data, sort_keys=False)
@@ -156,9 +184,15 @@ class AgentSpec(BaseModel):
         Returns:
             A dictionary representing the JSON schema.
         """
-        capability_schema_types = _build_capability_schema_types(_get_capability_registry(custom_capability_types))
+        capability_schema_types = _build_capability_schema_types(get_capability_registry(custom_capability_types))
 
-        # Build a schema-only model with the resolved capability union
+        # Build a schema-only model with the resolved capability union.
+        # NOTE: This duplicates the field list from AgentSpec above. We can't inherit from
+        # AgentSpec because the types intentionally differ for schema generation:
+        # - TemplateStr is replaced with plain str (templates are just strings in YAML/JSON)
+        # - capabilities uses a resolved Union of typed schema models instead of CapabilitySpec
+        # - extra='forbid' enables strict validation in the generated schema
+        # When adding or removing fields on AgentSpec, update this class to match.
         class _AgentSpecSchema(BaseModel, extra='forbid'):
             model: str
             name: str | None = None
@@ -213,11 +247,11 @@ def _infer_fmt(path: Path, fmt: Literal['yaml', 'json'] | None) -> Literal['yaml
     )
 
 
-def _get_capability_registry(
+def get_capability_registry(
     custom_types: Sequence[type[AbstractCapability[Any]]] = (),
 ) -> Mapping[str, type[AbstractCapability[Any]]]:
     """Create a registry of capability types from default and custom types."""
-    from pydantic_ai.capabilities import DEFAULT_CAPABILITY_TYPES
+    from pydantic_ai.capabilities import CAPABILITY_TYPES
     from pydantic_ai.capabilities.abstract import AbstractCapability
 
     def _validate_capability(cls: type[AbstractCapability[Any]]) -> None:
@@ -225,10 +259,12 @@ def _get_capability_registry(
             raise ValueError(
                 f'All custom capability classes must be subclasses of AbstractCapability, but {cls} is not'
             )
+        if '__dataclass_fields__' not in cls.__dict__:
+            raise ValueError(f'All custom capability classes must be decorated with `@dataclass`, but {cls} is not')
 
     return build_registry(
         custom_types=custom_types,
-        defaults=DEFAULT_CAPABILITY_TYPES,
+        defaults=tuple(CAPABILITY_TYPES.values()),
         get_name=lambda cls: cls.get_serialization_name(),
         label='capability',
         validate=_validate_capability,

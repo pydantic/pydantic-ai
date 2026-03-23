@@ -42,14 +42,13 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         new_toolsets = [await t.for_run(ctx) for t in self.toolsets]
-        if all(new is old for new, old in zip(new_toolsets, self.toolsets)):
-            return self
         return replace(self, toolsets=new_toolsets)
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        for t in self.toolsets:
-            await t.for_run_step(ctx)
-        return self
+        new_toolsets = [await t.for_run_step(ctx) for t in self.toolsets]
+        if all(new is old for new, old in zip(new_toolsets, self.toolsets)):
+            return self
+        return replace(self, toolsets=new_toolsets)
 
     async def __aenter__(self) -> Self:
         async with AsyncExitStack() as exit_stack:
