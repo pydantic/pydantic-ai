@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '232'
+      - '274'
       content-type:
       - application/json
       host:
@@ -19,10 +19,12 @@ interactions:
       - parts:
         - text: Find me a good pizza place near here.
         role: user
-      generationConfig: {}
+      generationConfig:
+        responseModalities:
+        - TEXT
       toolConfig:
         retrievalConfig:
-          latLng:
+          lat_lng:
             latitude: 37.7879
             longitude: -122.4075
       tools:
@@ -30,45 +32,143 @@ interactions:
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
   response:
     headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1654'
+      - '4303'
       content-type:
       - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=12049
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
     parsed_body:
       candidates:
       - content:
           parts:
           - text: |-
-              Based on your location near Union Square in San Francisco, here are some great pizza places nearby:
+              Here are a couple of good pizza places open near you right now:
 
-              1. **Tony's Pizza Napoletana** - Award-winning Neapolitan pizza in North Beach, a short ride away.
-              2. **Pizzeria Delfina** - Excellent thin-crust pizzas with seasonal toppings.
-              3. **Slice House by Tony Gemignani** - Great by-the-slice options close to your area.
-
-              Enjoy your pizza!
+              *   **Yummy Pizza (Ofarrell)** is rated 4.5 stars and is located 1.7 kilometers away (about an 8.3-minute drive). It's open until 4:00 AM today, so it will be closing soon.
+              *   **Halal Modena pizza** is open 24 hours and has a rating of 4.2 stars. It is 1.3 kilometers away, which is about a 6.3-minute drive.
           role: model
         finishReason: STOP
         groundingMetadata:
           groundingChunks:
           - maps:
-              placeId: ChIJN1t_tDeuEmsRUsoyG83frY4
-              title: Tony's Pizza Napoletana
-              uri: https://maps.google.com/?cid=11111111111111111
+              placeId: places/ChIJKUfC29-BhYARU9YtRGpZZ5s
+              title: Yummy Pizza (Ofarrell)
+              uri: https://maps.google.com/?cid=11198017311425287763
           - maps:
-              placeId: ChIJeRpOeF67j4AR9ydy_PIi01Q
-              title: Pizzeria Delfina
-              uri: https://maps.google.com/?cid=22222222222222222
-          index: 0
+              placeId: places/ChIJ7ymBV4SAhYARgSD86TcaTyQ
+              title: Halal Modena pizza
+              uri: https://maps.google.com/?cid=2616338735976685697
+          - maps:
+              placeId: places/ChIJlaytwp2BhYARgbDHNIYbPd8
+              title: Big Apple Pizza N Grill
+              uri: https://maps.google.com/?cid=16086043707262349441
+          - maps:
+              placeId: places/ChIJBdX8aYSAhYARCZaRBA5eGlA
+              title: Supremo Pizza
+              uri: https://maps.google.com/?cid=5772029286727915017
+          - maps:
+              placeId: places/ChIJE3fY7pSAhYAR_YgdwW0FPK8
+              title: Fresco Pizza Shawarma
+              uri: https://maps.google.com/?cid=12626973424189540605
+          - maps:
+              placeId: places/ChIJkV25rZaAhYARoj4Odxd8A5I
+              title: Irving Pizza
+              uri: https://maps.google.com/?cid=10521389594691124898
+          - maps:
+              placeId: places/ChIJme7OPZSAhYARGr0Gfccu2Oo
+              title: Mustafio's Pizza
+              uri: https://maps.google.com/?cid=16922327034175601946
+          - maps:
+              placeId: places/ChIJkVLoONZ_j4ARx2vJ4umERnI
+              title: Uncle Vito's Pizza
+              uri: https://maps.google.com/?cid=8234415108760628167
+          - maps:
+              placeId: places/ChIJRSaWbCB-j4ARjBp8ul5ONuM
+              title: Pizza Zone N Grill
+              uri: https://maps.google.com/?cid=16372359664114604684
+          - maps:
+              placeId: places/ChIJWzpoEFqBhYAR-aJMm4sGrMc
+              title: Union Square Pizza & Kitchen
+              uri: https://maps.google.com/?cid=14387882106217603833
+          - maps:
+              placeId: places/ChIJa0-vxJGAhYARWDlVhVwnmok
+              title: Milan Pizza
+              uri: https://maps.google.com/?cid=9915280807936997720
+          - maps:
+              placeId: places/ChIJAyOgwo2AhYARCCxZE4yahWU
+              title: Del Popolo
+              uri: https://maps.google.com/?cid=7315423096143948808
+          - maps:
+              placeId: places/ChIJW2MjXCSBhYARjytrcSshpuI
+              title: King of Gluten Free Pizza
+              uri: https://maps.google.com/?cid=16331777569175841679
+          - maps:
+              placeId: places/ChIJhxhwkomAhYAReZ8jCsmHd5U
+              title: Escape From New York Pizza
+              uri: https://maps.google.com/?cid=10770226331408113529
+          - maps:
+              placeId: places/ChIJdSi1MZGAhYARjEThAVgfyCE
+              title: Piccolo Italia
+              uri: https://maps.google.com/?cid=2434230061442876556
+          - maps:
+              placeId: places/ChIJo3JcWI-AhYAR-i7B7QujS_Q
+              title: Abe's Pizza
+              uri: https://maps.google.com/?cid=17603342840136543994
+          - maps:
+              placeId: places/ChIJsX-W442AhYARIPlNz5rFS44
+              title: Parrot Pizzeria & Rotisserie
+              uri: https://maps.google.com/?cid=10253506245332695328
+          - maps:
+              placeId: places/ChIJmx3iW_GAhYARrlV9H2vyE-E
+              title: Golden Boy Pizza
+              uri: https://maps.google.com/?cid=16218573224995018158
+          - maps:
+              placeId: places/ChIJm_AHaZKAhYARwFzqP49IC4o
+              title: Gusto Pinsa Romana
+              uri: https://maps.google.com/?cid=9947123982067719360
+          - maps:
+              placeId: places/ChIJ8beMEuOBhYAR_82lwoNSvQ0
+              title: Pie Punks
+              uri: https://maps.google.com/?cid=990038218951216639
+          groundingSupports:
+          - groundingChunkIndices:
+            - 0
+            segment:
+              endIndex: 237
+              startIndex: 179
+              text: It's open until 4:00 AM today, so it will be closing soon.
+          - groundingChunkIndices:
+            - 1
+            segment:
+              endIndex: 374
+              startIndex: 313
+              text: It is 1.3 kilometers away, which is about a 6.3-minute drive.
+          webSearchQueries:
+          - pizza place near me
+        index: 0
       modelVersion: gemini-2.5-flash
-      responseId: mapstest002xyz
+      responseId: cMq_abf6CNa4kdUP1dr14Qo
       usageMetadata:
-        candidatesTokenCount: 87
+        candidatesTokenCount: 133
         promptTokenCount: 10
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 10
-        thoughtsTokenCount: 38
-        totalTokenCount: 135
+        thoughtsTokenCount: 2754
+        toolUsePromptTokenCount: 101
+        toolUsePromptTokensDetails:
+        - modality: TEXT
+          tokenCount: 101
+        totalTokenCount: 2998
     status:
       code: 200
       message: OK

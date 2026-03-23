@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '268'
+      - '309'
       content-type:
       - application/json
       host:
@@ -19,7 +19,9 @@ interactions:
       - parts:
         - text: What are some highly rated coffee shops near Union Square in San Francisco?
         role: user
-      generationConfig: {}
+      generationConfig:
+        responseModalities:
+        - TEXT
       systemInstruction:
         parts:
         - text: You are a helpful assistant.
@@ -29,10 +31,20 @@ interactions:
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
   response:
     headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1842'
+      - '6876'
       content-type:
       - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=4592
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
     parsed_body:
       candidates:
       - content:
@@ -40,35 +52,171 @@ interactions:
           - text: |-
               Here are some highly rated coffee shops near Union Square in San Francisco:
 
-              1. **Sightglass Coffee** - Known for their carefully sourced beans and excellent espresso drinks. A local favourite.
-              2. **Blue Bottle Coffee** - A Bay Area staple offering high-quality pour-overs and lattes.
-              3. **Equator Coffees** - Organic and fair-trade coffee with a relaxed atmosphere.
-              4. **Peet's Coffee** - A classic California coffee chain with strong espresso options.
-
-              All of these are within easy walking distance of Union Square and are highly reviewed!
+              *   **Scullery** is a petite neighborhood coffee shop offering coffee, tea, toast, and pastries, with a rating of 4.7 stars from 552 reviews.
+              *   **The Coffee Movement** is a tiny coffee shop with outdoor benches, known for high-quality espresso, lattes, and seasonal drinks, holding a 4.7-star rating from 1290 reviews.
+              *   **Mellis Cafe** is a relaxed breakfast eatery serving bagels, coffee, sandwiches, and more, with a 4.8-star rating from 527 reviews.
+              *   **Fresh Brew Coffee** is a snug cafe offering American and Vietnamese sandwiches, coffee drinks, and breakfast bites, boasting a 4.8-star rating from 793 reviews.
+              *   **Bella Cafe** has a 4.7-star rating from 107 reviews and offers coffee, desserts, and even cocktails.
+              *   **Taylor Street Coffee Shop**, a small and bustling spot, serves traditional American breakfast and lunch, including coffee, and has a rating of 4.6 stars from 1725 reviews.
+              *   **Caffe Central** is a fashionable coffee house that uses organic, micro-roasted beans in its brews, with a rating of 4.5 stars from 1464 reviews.
+              *   **Home Coffee Roasters** is a stylish coffee shop known for espresso, creative latte art, and avocado toast, with a 4.5-star rating from 718 reviews.
           role: model
         finishReason: STOP
         groundingMetadata:
           groundingChunks:
           - maps:
-              placeId: ChIJIQBpAG2ahYAR_6128GcTUEo
-              title: Sightglass Coffee
-              uri: https://maps.google.com/?cid=12345678901234567
+              placeId: places/ChIJh10OvJGAhYAR3PXa3UKPE5A
+              title: Scullery
+              uri: https://maps.google.com/?cid=10381799083371853276
           - maps:
-              placeId: ChIJ4zGFAZpYwokRGUGph3Mf37k
+              placeId: places/ChIJoTMb3PKAhYARsXkQt469sBw
+              title: The Coffee Movement
+              uri: https://maps.google.com/?cid=2067360649617373617
+          - maps:
+              placeId: places/ChIJP4XqxHaBhYARyv4l-nqkDIo
+              title: Mellis Cafe
+              uri: https://maps.google.com/?cid=9947506525044342474
+          - maps:
+              placeId: places/ChIJd9gqk42AhYARDYc6gRcfCms
+              title: Fresh Brew Coffee
+              uri: https://maps.google.com/?cid=7713011497638201101
+          - maps:
+              placeId: places/ChIJL73LQQCBhYARQEwD-1oshk4
+              title: Bella Cafe
+              uri: https://maps.google.com/?cid=5658258751107583040
+          - maps:
+              placeId: places/ChIJ74kEx4-AhYAR4fCWv7CI6h4
+              title: Taylor Street Coffee Shop
+              uri: https://maps.google.com/?cid=2227743258398093537
+          - maps:
+              placeId: places/ChIJO4z2So-AhYARIJ9Y5RRTcQ0
+              title: Caffe Central
+              uri: https://maps.google.com/?cid=968646744073608992
+          - maps:
+              placeId: places/ChIJkXXugh2BhYAR2nQNOhnYDmA
+              title: Home Coffee Roasters
+              uri: https://maps.google.com/?cid=6921707280174773466
+          - maps:
+              placeId: places/ChIJTebs7YWAhYARum8zCZd1gao
+              title: Cable Car CoffeeSF
+              uri: https://maps.google.com/?cid=12286230549998301114
+          - maps:
+              placeId: places/ChIJmRBAGYh_j4ARuOFprBGKIxI
+              title: Telescope Coffee
+              uri: https://maps.google.com/?cid=1307040125379273144
+          - maps:
+              placeId: places/ChIJf-V9OIKAhYARu8bBG2S6RME
+              title: Sightglass Coffee
+              uri: https://maps.google.com/?cid=13926460886861596347
+          - maps:
+              placeId: places/ChIJz3x2x8mBhYARLWezcHMmSYI
+              title: Metropolitan Coffee
+              uri: https://maps.google.com/?cid=9388077175484409645
+          - maps:
+              placeId: places/ChIJJeHer46AhYAR9LikMlCe1ug
+              title: Sutter Street Cafe
+              uri: https://maps.google.com/?cid=16777771529099589876
+          - maps:
+              placeId: places/ChIJ3da1WXCBhYAR7ye5adJwtqk
+              title: Bluestone Lane Theatre District Coffee Shop
+              uri: https://maps.google.com/?cid=12229085887190345711
+          - maps:
+              placeId: places/ChIJ3UFdD2KAhYARYOHf4j7DshM
               title: Blue Bottle Coffee
-              uri: https://maps.google.com/?cid=98765432109876543
-          index: 0
+              uri: https://maps.google.com/?cid=1419411507436839264
+          - maps:
+              placeId: places/ChIJC2jb8DWBhYARo4AAX78U50c
+              title: The Coffee Berry SF
+              uri: https://maps.google.com/?cid=5181132708478222499
+          - maps:
+              placeId: places/ChIJL86gDJmBhYARjQPJ6NsYQZQ
+              title: Delah Coffee
+              uri: https://maps.google.com/?cid=10682847123881919373
+          - maps:
+              placeId: places/ChIJj59sltB_j4ARhSZ6rQ4tKKU
+              title: Cento Coffee
+              uri: https://maps.google.com/?cid=11900811556389791365
+          - maps:
+              placeId: places/ChIJTTq11ZmBhYARmN1Y-YkucFs
+              title: Juniper
+              uri: https://maps.google.com/?cid=6588817424971783576
+          - maps:
+              placeId: places/ChIJ20Ta-TmBhYAR0sHU-G-fzs8
+              title: Golden Goat Coffee
+              uri: https://maps.google.com/?cid=14974081114318356946
+          groundingSupports:
+          - groundingChunkIndices:
+            - 0
+            segment:
+              endIndex: 218
+              startIndex: 77
+              text: '*   **Scullery** is a petite neighborhood coffee shop offering coffee, tea, toast, and pastries, with
+                a rating of 4.7 stars from 552 reviews.'
+          - groundingChunkIndices:
+            - 1
+            segment:
+              endIndex: 397
+              startIndex: 219
+              text: '*   **The Coffee Movement** is a tiny coffee shop with outdoor benches, known for high-quality espresso,
+                lattes, and seasonal drinks, holding a 4.7-star rating from 1290 reviews.'
+          - groundingChunkIndices:
+            - 2
+            segment:
+              endIndex: 534
+              startIndex: 398
+              text: '*   **Mellis Cafe** is a relaxed breakfast eatery serving bagels, coffee, sandwiches, and more, with
+                a 4.8-star rating from 527 reviews.'
+          - groundingChunkIndices:
+            - 3
+            segment:
+              endIndex: 701
+              startIndex: 535
+              text: '*   **Fresh Brew Coffee** is a snug cafe offering American and Vietnamese sandwiches, coffee drinks,
+                and breakfast bites, boasting a 4.8-star rating from 793 reviews.'
+          - groundingChunkIndices:
+            - 4
+            segment:
+              endIndex: 808
+              startIndex: 702
+              text: '*   **Bella Cafe** has a 4.7-star rating from 107 reviews and offers coffee, desserts, and even cocktails.'
+          - groundingChunkIndices:
+            - 5
+            segment:
+              endIndex: 986
+              startIndex: 809
+              text: '*   **Taylor Street Coffee Shop**, a small and bustling spot, serves traditional American breakfast and
+                lunch, including coffee, and has a rating of 4.6 stars from 1725 reviews.'
+          - groundingChunkIndices:
+            - 6
+            segment:
+              endIndex: 1137
+              startIndex: 987
+              text: '*   **Caffe Central** is a fashionable coffee house that uses organic, micro-roasted beans in its brews,
+                with a rating of 4.5 stars from 1464 reviews.'
+          - groundingChunkIndices:
+            - 7
+            segment:
+              endIndex: 1291
+              startIndex: 1138
+              text: '*   **Home Coffee Roasters** is a stylish coffee shop known for espresso, creative latte art, and avocado
+                toast, with a 4.5-star rating from 718 reviews.'
+          webSearchQueries:
+          - coffee shops near Union Square San Francisco
+        index: 0
       modelVersion: gemini-2.5-flash
-      responseId: mapstest001abc
+      responseId: YMq_af3DL7P1xs0P5O7yiQ8
       usageMetadata:
-        candidatesTokenCount: 105
-        promptTokenCount: 18
+        candidatesTokenCount: 360
+        promptTokenCount: 22
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 18
-        thoughtsTokenCount: 42
-        totalTokenCount: 165
+          tokenCount: 22
+        thoughtsTokenCount: 235
+        toolUsePromptTokenCount: 121
+        toolUsePromptTokensDetails:
+        - modality: TEXT
+          tokenCount: 121
+        totalTokenCount: 738
     status:
       code: 200
       message: OK
