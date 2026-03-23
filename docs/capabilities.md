@@ -104,13 +104,13 @@ hooks = Hooks()
 @hooks.before_model_request
 async def log_request(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
     print(f'Sending {len(request_context.messages)} messages to the model')
+    #> Sending 1 messages to the model
     return request_context
 
 
 agent = Agent('test', capabilities=[hooks])
 result = agent.run_sync('Hello!')
 print(result.output)
-#> Sending 1 messages to the model
 #> success (no tool calls)
 ```
 
@@ -124,13 +124,13 @@ from pydantic_ai.models import ModelRequestContext
 
 async def log_request(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
     print(f'Sending {len(request_context.messages)} messages to the model')
+    #> Sending 1 messages to the model
     return request_context
 
 
 agent = Agent('test', capabilities=[Hooks(before_model_request=log_request)])
 result = agent.run_sync('Hello!')
 print(result.output)
-#> Sending 1 messages to the model
 #> success (no tool calls)
 ```
 
