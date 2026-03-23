@@ -1,10 +1,10 @@
 [build-system]
-requires = ['hatchling']
+requires = ['hatchling', 'uv-dynamic-versioning>=0.7.0']
 build-backend = 'hatchling.build'
 
 [project]
 name = 'pydantic-harness'
-version = '0.0.1'
+dynamic = ['version']
 description = 'Agent harness for composable, reusable AI agent capabilities, built on PydanticAI'
 readme = 'README.md'
 requires-python = '>=3.10'
@@ -41,6 +41,14 @@ lint = [
     'ruff>=0.14',
     'pyright>=1.1.408',
 ]
+
+[tool.hatch.version]
+source = 'uv-dynamic-versioning'
+
+[tool.uv-dynamic-versioning]
+vcs = 'git'
+style = 'pep440'
+bump = true
 
 [tool.hatch.build.targets.wheel]
 packages = ['src/pydantic_harness']
