@@ -380,6 +380,21 @@ async def rebuild_contexts(
 # ============================================================================
 
 
+def _resolve_online_evaluators(
+    evaluators: tuple[Evaluator | OnlineEvaluator, ...],
+    config: OnlineEvalConfig,
+) -> list[OnlineEvaluator]:
+    """Resolve a mixed list of Evaluators and OnlineEvaluators at call time.
+
+    Bare Evaluators are wrapped in OnlineEvaluator using the config's current defaults.
+    OnlineEvaluator instances are used as-is with their explicit settings.
+    """
+    return [
+        e if isinstance(e, OnlineEvaluator) else OnlineEvaluator(evaluator=e, sample_rate=config.default_sample_rate)
+        for e in evaluators
+    ]
+
+
 def _resolve_sample_rate(rate: float | Callable[[], float | bool]) -> float | bool:
     """Resolve a sample rate value, calling it if it's a callable."""
     if callable(rate):
@@ -544,8 +559,9 @@ class OnlineEvalConfig:
     ) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]:
         """Decorator to attach online evaluators to a function.
 
-        Bare `Evaluator` instances are auto-wrapped in `OnlineEvaluator` with this config's defaults.
-        The decorated function's signature and return type are preserved.
+        Bare `Evaluator` instances are auto-wrapped in `OnlineEvaluator` at call time using
+        this config's current defaults, so changes to the config after decoration take effect.
+        `OnlineEvaluator` instances use their own explicit settings.
 
         Args:
             *evaluators: Evaluators to attach. Can be `Evaluator` or `OnlineEvaluator` instances.
@@ -553,23 +569,19 @@ class OnlineEvalConfig:
         Returns:
             A decorator that wraps the function with online evaluation.
         """
-        online_evals = [
-            e if isinstance(e, OnlineEvaluator) else OnlineEvaluator(evaluator=e, sample_rate=self.default_sample_rate)
-            for e in evaluators
-        ]
 
         def decorator(func: Callable[_P, _R]) -> Callable[_P, _R]:
             if inspect.iscoroutinefunction(func):
-                return _wrap_async(func, online_evals, self)  # pyright: ignore[reportReturnType]
+                return _wrap_async(func, evaluators, self)  # pyright: ignore[reportReturnType]
             else:
-                return _wrap_sync(func, online_evals, self)
+                return _wrap_sync(func, evaluators, self)
 
         return decorator
 
 
 def _wrap_async(
     func: Callable[_P, Awaitable[_R]],
-    online_evals: list[OnlineEvaluator],
+    evaluators: tuple[Evaluator | OnlineEvaluator, ...],
     config: OnlineEvalConfig,
 ) -> Callable[_P, Awaitable[_R]]:
     """Wrap an async function with online evaluation."""
@@ -579,6 +591,9 @@ def _wrap_async(
         # If evaluation is globally disabled, just run the function
         if not config.enabled or _EVALUATION_DISABLED.get():
             return await func(*args, **kwargs)
+
+        # Resolve bare Evaluators to OnlineEvaluators using config's current defaults
+        online_evals = _resolve_online_evaluators(evaluators, config)
 
         # Determine which evaluators are sampled (before running the function)
         sampled = [oe for oe in online_evals if _should_evaluate(oe.sample_rate, config.enabled)]
@@ -640,7 +655,7 @@ def _wrap_async(
 
 def _wrap_sync(
     func: Callable[_P, _R],
-    online_evals: list[OnlineEvaluator],
+    evaluators: tuple[Evaluator | OnlineEvaluator, ...],
     config: OnlineEvalConfig,
 ) -> Callable[_P, _R]:
     """Wrap a sync function with online evaluation."""
@@ -650,6 +665,9 @@ def _wrap_sync(
         # If evaluation is globally disabled, just run the function
         if not config.enabled or _EVALUATION_DISABLED.get():
             return func(*args, **kwargs)
+
+        # Resolve bare Evaluators to OnlineEvaluators using config's current defaults
+        online_evals = _resolve_online_evaluators(evaluators, config)
 
         # Determine which evaluators are sampled
         sampled = [oe for oe in online_evals if _should_evaluate(oe.sample_rate, config.enabled)]

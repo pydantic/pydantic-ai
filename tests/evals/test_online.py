@@ -937,6 +937,40 @@ async def test_bare_evaluator_uses_config_defaults():
     assert len(collector.calls) == 0
 
 
+async def test_bare_evaluator_late_binds_config_defaults():
+    """Config defaults are resolved at call time, not decoration time."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector, default_sample_rate=0.0)
+
+    @config.evaluate(AlwaysTrue())  # bare evaluator, sample_rate resolved at call time
+    async def my_func(x: int) -> int:
+        return x
+
+    # Initially sample_rate=0.0 — no evaluations
+    await my_func(42)
+    await wait_for_evaluations()
+    assert len(collector.calls) == 0
+
+    # Change config after decoration — should take effect
+    config.default_sample_rate = 1.0
+    await my_func(42)
+    await wait_for_evaluations()
+    assert len(collector.calls) == 1
+
+    # OnlineEvaluator with explicit sample_rate is NOT affected by config changes
+    collector2 = Collector()
+    config2 = OnlineEvalConfig(default_sink=collector2, default_sample_rate=1.0)
+
+    @config2.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), sample_rate=0.0))
+    async def my_func2(x: int) -> int:
+        return x
+
+    config2.default_sample_rate = 1.0  # this should NOT override the explicit 0.0
+    await my_func2(42)
+    await wait_for_evaluations()
+    assert len(collector2.calls) == 0  # still 0 because OnlineEvaluator has explicit sample_rate=0.0
+
+
 # ============================================================================
 # Test multiple sinks
 # ============================================================================
