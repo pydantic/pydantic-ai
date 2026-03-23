@@ -301,7 +301,14 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                 pass
             return self._task_to_node(task)
 
-        return await self.ctx.deps.root_capability.wrap_node_run(run_context, node=node, handler=_step_handler)
+        cap = self.ctx.deps.root_capability
+        node = await cap.before_node_run(run_context, node=node)
+        try:
+            result = await cap.wrap_node_run(run_context, node=node, handler=_step_handler)
+        except BaseException as e:
+            result = await cap.on_node_run_error(run_context, node=node, error=e)
+        result = await cap.after_node_run(run_context, node=node, result=result)
+        return result
 
     # TODO (v2): Make this a property
     def usage(self) -> _usage.RunUsage:

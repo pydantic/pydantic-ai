@@ -5,7 +5,10 @@ from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias
 
+from pydantic import ValidationError
+
 from pydantic_ai._instructions import AgentInstructions
+from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
@@ -203,6 +206,49 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return await handler()
 
+    async def on_run_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        error: BaseException,
+    ) -> AgentRunResult[Any]:
+        """Called when the agent run fails with an exception.
+
+        This is the error counterpart to
+        [`after_run`][pydantic_ai.capabilities.AbstractCapability.after_run]:
+        while ``after_run`` is called on success, ``on_run_error`` is called on
+        failure (after [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run]
+        has had its chance to recover).
+
+        **Raise** the original ``error`` (or a different exception) to propagate it.
+        **Return** an [`AgentRunResult`][pydantic_ai.run.AgentRunResult] to suppress
+        the error and recover the run.
+
+        Not called for ``GeneratorExit`` or ``KeyboardInterrupt``.
+        """
+        raise error
+
+    # --- Node run lifecycle hooks ---
+
+    async def before_node_run(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        node: AgentNode[AgentDepsT],
+    ) -> AgentNode[AgentDepsT]:
+        """Called before each graph node executes. Can observe or replace the node."""
+        return node
+
+    async def after_node_run(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        node: AgentNode[AgentDepsT],
+        result: NodeResult[AgentDepsT],
+    ) -> NodeResult[AgentDepsT]:
+        """Called after each graph node succeeds. Can modify the result (next node or ``End``)."""
+        return result
+
     async def wrap_node_run(
         self,
         ctx: RunContext[AgentDepsT],
@@ -227,6 +273,27 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         node results).
         """
         return await handler(node)
+
+    async def on_node_run_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        node: AgentNode[AgentDepsT],
+        error: BaseException,
+    ) -> NodeResult[AgentDepsT]:
+        """Called when a graph node fails with an exception.
+
+        This is the error counterpart to
+        [`after_node_run`][pydantic_ai.capabilities.AbstractCapability.after_node_run].
+
+        **Raise** the original ``error`` (or a different exception) to propagate it.
+        **Return** a next node or ``End`` to recover and continue the graph.
+
+        Useful for recovering from
+        [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior]
+        by redirecting to a different node (e.g. retry with different model settings).
+        """
+        raise error
 
     # --- Event stream hook ---
 
@@ -269,6 +336,26 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Wraps the model request. handler() calls the model."""
         return await handler(request_context)
 
+    async def on_model_request_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        request_context: ModelRequestContext,
+        error: Exception,
+    ) -> ModelResponse:
+        """Called when a model request fails with an exception.
+
+        This is the error counterpart to
+        [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request].
+
+        **Raise** the original ``error`` (or a different exception) to propagate it.
+        **Return** a [`ModelResponse`][pydantic_ai.messages.ModelResponse] to suppress
+        the error and use the response as if the model call succeeded.
+
+        Not called for [`SkipModelRequest`][pydantic_ai.exceptions.SkipModelRequest].
+        """
+        raise error
+
     # --- Tool validate lifecycle hooks ---
 
     async def before_tool_validate(
@@ -301,6 +388,28 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     ) -> ValidatedToolArgs:
         """Wraps tool argument validation. handler() runs the validation."""
         return await handler(args)
+
+    async def on_tool_validate_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        args: RawToolArgs,
+        error: ValidationError | ModelRetry,
+    ) -> ValidatedToolArgs:
+        """Called when tool argument validation fails.
+
+        This is the error counterpart to
+        [`after_tool_validate`][pydantic_ai.capabilities.AbstractCapability.after_tool_validate].
+        Fires for [`ValidationError`][pydantic.ValidationError] (schema mismatch) and
+        [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] (custom validator rejection).
+
+        **Raise** the original ``error`` (or a different exception) to propagate it.
+        **Return** validated args to suppress the error and continue as if validation passed.
+
+        Not called for [`SkipToolValidation`][pydantic_ai.exceptions.SkipToolValidation].
+        """
+        raise error
 
     # --- Tool execute lifecycle hooks ---
 
@@ -335,3 +444,26 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     ) -> Any:
         """Wraps tool execution. handler() runs the tool."""
         return await handler(args)
+
+    async def on_tool_execute_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        args: ValidatedToolArgs,
+        error: Exception,
+    ) -> Any:
+        """Called when tool execution fails with an exception.
+
+        This is the error counterpart to
+        [`after_tool_execute`][pydantic_ai.capabilities.AbstractCapability.after_tool_execute].
+
+        **Raise** the original ``error`` (or a different exception) to propagate it.
+        **Return** any value to suppress the error and use it as the tool result.
+
+        Not called for control flow exceptions
+        ([`SkipToolExecution`][pydantic_ai.exceptions.SkipToolExecution],
+        [`CallDeferred`][pydantic_ai.exceptions.CallDeferred],
+        [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired]).
+        """
+        raise error

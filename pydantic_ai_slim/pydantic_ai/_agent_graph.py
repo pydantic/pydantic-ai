@@ -563,6 +563,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 model_response = wrap_task.result()
             except exceptions.SkipModelRequest as e:
                 model_response = e.response
+            except Exception as e:
+                model_response = await ctx.deps.root_capability.on_model_request_error(
+                    run_context, request_context=wrap_request_context, error=e
+                )
             self._did_stream = True
             ctx.state.usage.requests += 1
             skip_sr = _SkipStreamedResponse(model_request_parameters=model_request_parameters, _response=model_response)
@@ -592,7 +596,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 except (asyncio.CancelledError, BaseException):
                     pass
             else:
-                model_response = await wrap_task
+                try:
+                    model_response = await wrap_task
+                except Exception as e:
+                    model_response = await ctx.deps.root_capability.on_model_request_error(
+                        run_context, request_context=wrap_request_context, error=e
+                    )
                 await self._finish_handling(ctx, model_response)
                 assert self._result is not None
 
@@ -632,18 +641,23 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     req_ctx.messages, req_ctx.model_settings, req_ctx.model_request_parameters
                 )
 
+        request_context = ModelRequestContext(
+            messages=message_history,
+            model_settings=model_settings,
+            model_request_parameters=model_request_parameters,
+        )
         try:
             model_response = await ctx.deps.root_capability.wrap_model_request(
                 run_context,
-                request_context=ModelRequestContext(
-                    messages=message_history,
-                    model_settings=model_settings,
-                    model_request_parameters=model_request_parameters,
-                ),
+                request_context=request_context,
                 handler=model_handler,
             )
         except exceptions.SkipModelRequest as e:
             model_response = e.response
+        except Exception as e:
+            model_response = await ctx.deps.root_capability.on_model_request_error(
+                run_context, request_context=request_context, error=e
+            )
         ctx.state.usage.requests += 1
 
         return await self._finish_handling(ctx, model_response)

@@ -15,7 +15,15 @@ from typing_extensions import deprecated
 from . import messages as _messages
 from ._instrumentation import InstrumentationNames
 from ._run_context import AgentDepsT, RunContext
-from .exceptions import ModelRetry, SkipToolExecution, SkipToolValidation, ToolRetryError, UnexpectedModelBehavior
+from .exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    ModelRetry,
+    SkipToolExecution,
+    SkipToolValidation,
+    ToolRetryError,
+    UnexpectedModelBehavior,
+)
 from .messages import ToolCallPart
 from .tools import ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
@@ -248,8 +256,11 @@ class ToolManager(Generic[AgentDepsT]):
             raw_args: str | dict[str, Any] = call.args if call.args is not None else {}
             raw_args = await cap.before_tool_validate(ctx, call=call, args=raw_args)
 
-            # wrap_tool_validate wraps the validation
-            validated_args = await cap.wrap_tool_validate(ctx, call=call, args=raw_args, handler=do_validate)
+            # wrap_tool_validate wraps the validation; on_tool_validate_error on failure
+            try:
+                validated_args = await cap.wrap_tool_validate(ctx, call=call, args=raw_args, handler=do_validate)
+            except (ValidationError, ModelRetry) as e:
+                validated_args = await cap.on_tool_validate_error(ctx, call=call, args=raw_args, error=e)
 
             # after_tool_validate
             validated_args = await cap.after_tool_validate(ctx, call=call, args=validated_args)
@@ -281,8 +292,13 @@ class ToolManager(Generic[AgentDepsT]):
             # before_tool_execute
             args = await cap.before_tool_execute(ctx, call=call, args=validated.validated_args)
 
-            # wrap_tool_execute wraps the execution
-            tool_result = await cap.wrap_tool_execute(ctx, call=call, args=args, handler=do_execute)
+            # wrap_tool_execute wraps the execution; on_tool_execute_error on failure
+            try:
+                tool_result = await cap.wrap_tool_execute(ctx, call=call, args=args, handler=do_execute)
+            except (SkipToolExecution, CallDeferred, ApprovalRequired):
+                raise  # Control flow, not errors
+            except Exception as e:
+                tool_result = await cap.on_tool_execute_error(ctx, call=call, args=args, error=e)
 
             # after_tool_execute
             tool_result = await cap.after_tool_execute(ctx, call=call, args=args, result=tool_result)
