@@ -1,0 +1,46 @@
+interactions:
+  - request:
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate, br
+        connection:
+          - keep-alive
+        content-length:
+          - "160"
+        content-type:
+          - application/json
+        host:
+          - mock.databricks.com
+      method: POST
+      parsed_body:
+        messages:
+          - content: What is the capital of France? lowercase, one word reply, no punctuation.
+            role: user
+        model: databricks-gpt-5-2
+        stream: false
+      uri: https://mock.databricks.com/serving-endpoints/chat/completions
+    response:
+      headers:
+        content-type:
+          - application/json
+      parsed_body:
+        choices:
+          - finish_reason: stop
+            index: 0
+            message:
+              content: paris
+              role: assistant
+        created: 1768819934
+        id: chatcmpl-sdk-auth-test
+        model: gpt-5.2-2025-12-11
+        object: chat.completion
+        usage:
+          completion_tokens: 5
+          prompt_tokens: 22
+          total_tokens: 27
+      status:
+        code: 200
+        message: OK
+version: 1

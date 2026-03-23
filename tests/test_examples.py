@@ -205,6 +205,8 @@ def test_docs_examples(
     env.set('PYDANTIC_AI_GATEWAY_API_KEY', 'testing')
     env.set('VOYAGE_API_KEY', 'testing')
     env.set('XAI_API_KEY', 'testing')
+    env.set('DATABRICKS_API_KEY', 'testing')
+    env.set('DATABRICKS_BASE_URL', 'https://mock.databricks.com')
     env.set('TAVILY_API_KEY', 'testing')
 
     prefix_settings = example.prefix_settings()

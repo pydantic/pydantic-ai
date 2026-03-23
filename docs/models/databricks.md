@@ -1,0 +1,98 @@
+# Databricks
+
+## Install
+
+To use [`DatabricksModel`][pydantic_ai.models.databricks.DatabricksModel], you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `databricks` optional group:
+
+```bash
+pip/uv-add "pydantic-ai-slim[databricks]"
+```
+
+## Configuration
+
+To use [Databricks](https://docs.databricks.com/aws/en/machine-learning/foundation-model-apis/) you will need access to a Databricks workspace. You can get one for free from [here](https://www.databricks.com/learn/free-edition).
+
+[`DatabricksModelName`][pydantic_ai.providers.databricks.DatabricksModelName] contains a list of the most popular models available on databricks via the Foundation Models API.
+
+## Environment variable
+
+Once you have the API key, you can set it as an environment variable:
+
+```bash
+export DATABRICKS_API_KEY='your-api-key'
+export DATABRICKS_BASE_URL='your-databricks-workspace-url'
+```
+
+You can then use [`DatabricksModel`][pydantic_ai.models.databricks.DatabricksModel] by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('databricks:databricks-gpt-5-2')
+...
+```
+
+Or initialise the model directly with just the model name:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.databricks import DatabricksModel
+
+model = DatabricksModel('databricks-gpt-5-2')
+agent = Agent(model)
+...
+```
+
+## `provider` argument
+
+You can provide a custom [`Provider`][pydantic_ai.providers.Provider] via the `provider` argument:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.databricks import DatabricksModel
+from pydantic_ai.providers.databricks import DatabricksProvider
+
+model = DatabricksModel('databricks-gpt-5-2', provider=DatabricksProvider(api_key='your-databricks-token', base_url='your-databricks-host'))
+agent = Agent(model)
+...
+```
+
+You can also customize the [`DatabricksProvider`][pydantic_ai.providers.databricks.DatabricksProvider] with a custom `http_client`:
+
+```python
+from httpx import AsyncClient
+
+from pydantic_ai import Agent
+from pydantic_ai.models.databricks import DatabricksModel
+from pydantic_ai.providers.databricks import DatabricksProvider
+
+custom_http_client = AsyncClient(timeout=30)
+model = DatabricksModel(
+    'databricks-gpt-5-2',
+    provider=DatabricksProvider(api_key='your-api-key', http_client=custom_http_client),
+)
+agent = Agent(model)
+...
+```
+
+## `workspace_client` argument
+
+For advanced authentication scenarios (service principals, Azure AD, managed identity),
+you can pass a pre-configured Databricks `WorkspaceClient` directly:
+
+```python {test="skip"}
+from databricks.sdk import WorkspaceClient
+
+from pydantic_ai import Agent
+from pydantic_ai.models.databricks import DatabricksModel
+from pydantic_ai.providers.databricks import DatabricksProvider
+
+ws = WorkspaceClient(host='https://your-workspace.databricks.com')
+provider = DatabricksProvider(workspace_client=ws)
+model = DatabricksModel('databricks-gpt-5-2', provider=provider)
+agent = Agent(model)
+...
+```
+
+The `WorkspaceClient` handles host discovery and token refresh automatically,
+supporting all [Databricks authentication methods](https://docs.databricks.com/en/dev-tools/auth/index.html).

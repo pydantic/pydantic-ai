@@ -1,0 +1,41 @@
+interactions:
+  - request:
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate, br
+        connection:
+          - keep-alive
+        content-type:
+          - application/json
+        host:
+          - mock.databricks.com
+      method: POST
+      parsed_body:
+        messages:
+          - content: Think about nothing.
+            role: user
+        model: databricks-gpt-5-2
+        stream: true
+        stream_options:
+          include_usage: true
+      uri: https://mock.databricks.com/serving-endpoints/chat/completions
+    response:
+      body:
+        string: |+
+          data: {"id":"chatcmpl-empty-reasoning","object":"chat.completion.chunk","created":1768820000,"model":"databricks-gpt-5-2","choices":[{"index":0,"delta":{"role":"assistant","content":[{"type":"reasoning"}]},"finish_reason":null}],"usage":null}
+
+          data: {"id":"chatcmpl-empty-reasoning","object":"chat.completion.chunk","created":1768820000,"model":"databricks-gpt-5-2","choices":[{"index":0,"delta":{"content":[{"type":"text","text":"Done."}]},"finish_reason":null}],"usage":null}
+
+          data: {"id":"chatcmpl-empty-reasoning","object":"chat.completion.chunk","created":1768820000,"model":"databricks-gpt-5-2","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":null}
+
+          data: {"model":"databricks-gpt-5-2","choices":[],"usage":{"completion_tokens":5,"prompt_tokens":8,"total_tokens":13},"object":"chat.completion.chunk","id":"chatcmpl-empty-reasoning","created":1768820000}
+
+      headers:
+        content-type:
+          - text/event-stream
+      status:
+        code: 200
+        message: OK
+version: 1

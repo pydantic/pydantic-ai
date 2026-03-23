@@ -1,0 +1,41 @@
+interactions:
+  - request:
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate, br
+        connection:
+          - keep-alive
+        content-type:
+          - application/json
+        host:
+          - mock.databricks.com
+      method: POST
+      parsed_body:
+        messages:
+          - content: What is 2+2? Think step by step.
+            role: user
+        model: databricks-gpt-5-2
+        stream: true
+        stream_options:
+          include_usage: true
+      uri: https://mock.databricks.com/serving-endpoints/chat/completions
+    response:
+      body:
+        string: |+
+          data: {"id":"chatcmpl-stream-structured","object":"chat.completion.chunk","created":1768820000,"model":"databricks-gpt-5-2","choices":[{"index":0,"delta":{"role":"assistant","content":[{"type":"reasoning","text":"Let me think..."}]},"finish_reason":null}],"usage":null}
+
+          data: {"id":"chatcmpl-stream-structured","object":"chat.completion.chunk","created":1768820000,"model":"databricks-gpt-5-2","choices":[{"index":0,"delta":{"content":[{"type":"text","text":"The answer is 4."}]},"finish_reason":null}],"usage":null}
+
+          data: {"id":"chatcmpl-stream-structured","object":"chat.completion.chunk","created":1768820000,"model":"databricks-gpt-5-2","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":null}
+
+          data: {"model":"databricks-gpt-5-2","choices":[],"usage":{"completion_tokens":10,"prompt_tokens":12,"total_tokens":22},"object":"chat.completion.chunk","id":"chatcmpl-stream-structured","created":1768820000}
+
+      headers:
+        content-type:
+          - text/event-stream
+      status:
+        code: 200
+        message: OK
+version: 1

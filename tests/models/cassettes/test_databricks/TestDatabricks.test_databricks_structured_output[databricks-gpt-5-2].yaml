@@ -1,0 +1,107 @@
+interactions:
+  - request:
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate, br
+        connection:
+          - keep-alive
+        content-length:
+          - "499"
+        content-type:
+          - application/json
+        host:
+          - mock.databricks.com
+      method: POST
+      parsed_body:
+        messages:
+          - content: Tell me about Tokyo. Provide a structured response.
+            role: user
+        model: databricks-gpt-5-2
+        stream: false
+        tool_choice: required
+        tools:
+          - function:
+              description: The final response which ends this conversation
+              name: final_result
+              parameters:
+                properties:
+                  city:
+                    type: string
+                  country:
+                    type: string
+                  population_approx:
+                    type: integer
+                required:
+                  - city
+                  - country
+                  - population_approx
+                title: CityInfo
+                type: object
+            type: function
+      uri: https://mock.databricks.com/serving-endpoints/chat/completions
+    response:
+      headers:
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+          - h3=":443"; ma=86400, h3-29=":443"; ma=86400
+        content-length:
+          - "1101"
+        content-type:
+          - application/json
+        openai-organization:
+          - databricks-serverless
+        openai-processing-ms:
+          - "516"
+        openai-project:
+          - proj_XWG0smJyU1OZznEnXiHbHa7z
+        openai-version:
+          - "2020-10-01"
+        server-timing:
+          - request_id;dur=0;desc="fe9ac26b-ef1a-48a2-803b-c35756645665", client_protocol;dur=0;desc="HTTP/1.1"
+        strict-transport-security:
+          - max-age=31536000; includeSubDomains; preload
+        transfer-encoding:
+          - chunked
+        vary:
+          - Accept-Encoding
+      parsed_body:
+        choices:
+          - finish_reason: tool_calls
+            index: 0
+            message:
+              annotations: []
+              content: null
+              refusal: null
+              role: assistant
+              tool_calls:
+                - function:
+                    arguments: '{"city":"Tokyo","country":"Japan","population_approx":14000000}'
+                    name: final_result
+                  id: call_ZbNYyCYmHzVTkYom32i829y4
+                  type: function
+        created: 1768819952
+        id: chatcmpl-CzhA0H1xx3en560fQ16fD1PYxyRto
+        model: gpt-5.2-2025-12-11
+        object: chat.completion
+        service_tier: default
+        system_fingerprint: null
+        usage:
+          completion_tokens: 29
+          completion_tokens_details:
+            accepted_prediction_tokens: 0
+            audio_tokens: 0
+            reasoning_tokens: 0
+            rejected_prediction_tokens: 0
+          prompt_tokens: 150
+          prompt_tokens_details:
+            audio_tokens: 0
+            cached_tokens: 0
+          total_tokens: 179
+      status:
+        code: 200
+        message: OK
+version: 1

@@ -1,0 +1,45 @@
+interactions:
+  - request:
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate, br
+        connection:
+          - keep-alive
+        content-type:
+          - application/json
+        host:
+          - mock.databricks.com
+      method: POST
+      parsed_body:
+        messages:
+          - content: Hello
+            role: user
+        model: databricks-gpt-5-2
+        stream: false
+      uri: https://mock.databricks.com/serving-endpoints/chat/completions
+    response:
+      headers:
+        content-type:
+          - application/json
+      parsed_body:
+        choices:
+          - finish_reason: stop
+            index: 0
+            message:
+              content: Hi there!
+              role: assistant
+        created: 1768820000
+        id: chatcmpl-safety-test
+        model: databricks-gpt-5-2
+        object: chat.completion
+        safety_identifier: safety-abc-123
+        usage:
+          completion_tokens: 3
+          prompt_tokens: 5
+          total_tokens: 8
+      status:
+        code: 200
+        message: OK
+version: 1
