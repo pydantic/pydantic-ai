@@ -464,6 +464,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         Not called for control flow exceptions
         ([`SkipToolExecution`][pydantic_ai.exceptions.SkipToolExecution],
         [`CallDeferred`][pydantic_ai.exceptions.CallDeferred],
-        [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired]).
+        [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired])
+        or retry signals ([`ToolRetryError`][pydantic_ai.exceptions.ToolRetryError]
+        from [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]).
+        Use [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute]
+        to intercept retries.
         """
         raise error
