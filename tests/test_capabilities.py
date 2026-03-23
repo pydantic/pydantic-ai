@@ -3899,3 +3899,249 @@ class TestToolExecuteErrorHooks:
 
         result = await agent.run('call tool')
         assert 'fallback result' in result.output
+
+
+# --- Hooks capability tests ---
+
+
+class TestHooksCapability:
+    """Tests for the Hooks decorator-based capability."""
+
+    async def test_decorator_registration(self):
+        from pydantic_ai.capabilities.hooks import Hooks
+
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.before_model_request
+        async def log_request(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            call_log.append('before_model_request')
+            return request_context
+
+        @hooks.after_model_request
+        async def log_response(
+            ctx: RunContext[Any], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            call_log.append('after_model_request')
+            return response
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert call_log == ['before_model_request', 'after_model_request']
+
+    async def test_constructor_form(self):
+        from pydantic_ai.capabilities.hooks import Hooks
+
+        call_log: list[str] = []
+
+        async def log_request(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            call_log.append('before_model_request')
+            return request_context
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[Hooks(before_model_request=log_request)])
+        await agent.run('hello')
+        assert call_log == ['before_model_request']
+
+    async def test_multiple_hooks_same_event(self):
+        from pydantic_ai.capabilities.hooks import Hooks
+
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.before_model_request
+        async def first(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            call_log.append('first')
+            return request_context
+
+        @hooks.before_model_request
+        async def second(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            call_log.append('second')
+            return request_context
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert call_log == ['first', 'second']
+
+    async def test_tool_names_filtering(self):
+        from pydantic_ai.capabilities.hooks import Hooks
+
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.before_tool_execute(tools=['target_tool'])
+        async def filtered(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+        ) -> dict[str, Any]:
+            call_log.append(f'filtered:{call.tool_name}')
+            return args
+
+        @hooks.after_tool_execute
+        async def unfiltered(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any], result: Any
+        ) -> Any:
+            call_log.append(f'unfiltered:{call.tool_name}')
+            return result
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def target_tool() -> str:
+            return 'result'
+
+        await agent.run('call tool')
+        assert 'filtered:target_tool' in call_log
+        assert 'unfiltered:target_tool' in call_log
+
+    async def test_wrap_model_request(self):
+        from pydantic_ai.capabilities.hooks import Hooks
+
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.wrap_model_request
+        async def wrap(ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any) -> ModelResponse:
+            call_log.append('wrap_start')
+            result = await handler(request_context)
+            call_log.append('wrap_end')
+            return result
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert call_log == ['wrap_start', 'wrap_end']
+
+    async def test_wrap_run(self):
+        from pydantic_ai.capabilities.hooks import Hooks
+
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.wrap_run
+        async def wrap(ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+            call_log.append('wrap_run_start')
+            result = await handler()
+            call_log.append('wrap_run_end')
+            return result
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert call_log == ['wrap_run_start', 'wrap_run_end']
+
+    async def test_on_error_recovery(self):
+        from pydantic_ai.capabilities.hooks import Hooks
+
+        hooks = Hooks()
+
+        @hooks.on_model_request_error
+        async def recover(
+            ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='recovered')])
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[hooks])
+        result = await agent.run('hello')
+        assert result.output == 'recovered'
+
+    async def test_sync_function_auto_wrapping(self):
+        from pydantic_ai.capabilities.hooks import Hooks
+
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.before_model_request
+        def sync_hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            call_log.append('sync_hook')
+            return request_context
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert call_log == ['sync_hook']
+
+    async def test_timeout(self):
+        from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
+
+        hooks = Hooks()
+
+        @hooks.before_model_request(timeout=0.01)
+        async def slow_hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            await asyncio.sleep(10)
+            return request_context
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        with pytest.raises(HookTimeoutError) as exc_info:
+            await agent.run('hello')
+        assert exc_info.value.hook_name == 'before_model_request'
+        assert exc_info.value.func_name == 'slow_hook'
+        assert exc_info.value.timeout == 0.01
+
+    async def test_has_wrap_node_run(self):
+        from pydantic_ai.capabilities.hooks import Hooks
+
+        hooks = Hooks()
+        assert hooks.has_wrap_node_run is False
+
+        @hooks.wrap_node_run
+        async def wrap(ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+            return await handler(node)
+
+        assert hooks.has_wrap_node_run is True
+
+    async def test_composition_with_other_capabilities(self):
+        from pydantic_ai.capabilities.hooks import Hooks
+
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.before_model_request
+        async def hooks_before(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            call_log.append('hooks_before')
+            return request_context
+
+        cap = LoggingCapability()
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks, cap])
+        await agent.run('hello')
+        assert 'hooks_before' in call_log
+        assert 'before_model_request' in cap.log
+
+    async def test_before_run(self):
+        from pydantic_ai.capabilities.hooks import Hooks
+
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.before_run
+        async def on_start(ctx: RunContext[Any]) -> None:
+            call_log.append('before_run')
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert call_log == ['before_run']
+
+    async def test_after_run(self):
+        from pydantic_ai.capabilities.hooks import Hooks
+
+        hooks = Hooks()
+        outputs: list[str] = []
+
+        @hooks.after_run
+        async def on_end(ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+            outputs.append(result.output)
+            return result
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        result = await agent.run('hello')
+        assert outputs == [result.output]
+
+    async def test_repr(self):
+        from pydantic_ai.capabilities.hooks import Hooks
+
+        hooks = Hooks()
+        assert repr(hooks) == 'Hooks({})'
+
+        @hooks.before_model_request
+        async def hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            return request_context
+
+        assert repr(hooks) == "Hooks({'before_model_request': 1})"
