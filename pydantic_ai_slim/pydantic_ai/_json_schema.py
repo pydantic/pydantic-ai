@@ -83,10 +83,8 @@ class JsonSchemaTransformer(ABC):
         return handled
 
     def _handle(self, schema: JsonSchema) -> JsonSchema:
-        # JSON Schema allows boolean values: true = accept anything, false = accept nothing
         if isinstance(schema, bool):
             return schema
-
         nested_refs = 0
         if self.prefer_inlined_defs:
             while ref := schema.get('$ref'):
@@ -103,13 +101,6 @@ class JsonSchemaTransformer(ABC):
                 if def_schema is None:  # pragma: no cover
                     raise UserError(f'Could not find $ref definition for {key}')
                 schema = def_schema
-                if isinstance(schema, bool):
-                    break  # resolved $ref points to a boolean schema, stop unpacking
-
-        if isinstance(schema, bool):
-            if nested_refs > 0:
-                self.refs_stack = self.refs_stack[:-nested_refs]
-            return schema
 
         # Handle the schema based on its type / structure
         type_ = schema.get('type')
@@ -172,6 +163,8 @@ class JsonSchemaTransformer(ABC):
             handled = self._simplify_nullable_union(handled)
         if len(handled) == 1:
             # In this case, no need to retain the union
+            if isinstance(handled[0], bool):
+                return handled[0]
             return handled[0] | schema
 
         # If we have keys besides the union kind (such as title or discriminator), keep them without modifications
