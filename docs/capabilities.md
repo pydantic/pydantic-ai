@@ -421,14 +421,16 @@ print(auditor.tool_names)
 
 [`AgentEventStream`][pydantic_ai.ui.AgentEventStream] also works inside a capability's [`wrap_run_event_stream`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream] via `transform_stream()`:
 
-```python {title="event_stream_capability_example.py" test="skip" lint="skip"}
+```python {title="event_stream_capability_example.py" requires="event_stream_handler_example.py"}
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import AgentEventStream, RunContext
+from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import AgentStreamEvent
+
+from event_stream_handler_example import ToolAuditor
 
 
 @dataclass
