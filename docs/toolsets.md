@@ -657,7 +657,11 @@ _(This example is complete, it can be run "as is")_
 
 To define a fully custom toolset with its own logic to list available tools and handle them being called, you can subclass [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] and implement the [`get_tools()`][pydantic_ai.toolsets.AbstractToolset.get_tools] and [`call_tool()`][pydantic_ai.toolsets.AbstractToolset.call_tool] methods.
 
-If you want to reuse a network connection or session across tool listings and calls during an agent run, you can implement [`__aenter__()`][pydantic_ai.toolsets.AbstractToolset.__aenter__] and [`__aexit__()`][pydantic_ai.toolsets.AbstractToolset.__aexit__].
+The toolset lifecycle provides hooks for managing state at different scopes:
+
+- [`for_run()`][pydantic_ai.toolsets.AbstractToolset.for_run]: Called once before each agent run. Return a fresh instance for per-run state isolation (e.g. resetting counters, creating a new session). The framework enters and exits the returned instance.
+- [`for_run_step()`][pydantic_ai.toolsets.AbstractToolset.for_run_step]: Called at the start of each run step. Return a modified instance for per-step state transitions. If managing inner toolset transitions (e.g. swapping one toolset for another), you are responsible for the inner lifecycle (exiting the old, entering the new).
+- [`__aenter__()`][pydantic_ai.toolsets.AbstractToolset.__aenter__] and [`__aexit__()`][pydantic_ai.toolsets.AbstractToolset.__aexit__]: Set up and tear down resources (e.g. network connections) that should live for the duration of the agent run.
 
 ### Per-run and per-step lifecycle
 
