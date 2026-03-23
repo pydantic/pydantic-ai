@@ -609,6 +609,7 @@ class OpenAIChatModel(Model):
         if (
             any(isinstance(tool, WebSearchTool) for tool in model_request_parameters.builtin_tools)
             and not OpenAIModelProfile.from_profile(self.profile).openai_chat_supports_web_search
+            and not any(t.prefer_builtin == 'web_search' for t in model_request_parameters.function_tools)
         ):
             raise UserError(
                 f'WebSearchTool is not supported with `OpenAIChatModel` and model {self.model_name!r}. '

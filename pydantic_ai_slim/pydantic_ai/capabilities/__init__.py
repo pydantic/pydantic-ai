@@ -1,10 +1,12 @@
 from typing import Any
 
 from .abstract import AbstractCapability, ModelRequestContext
-from .builtin_tool import BuiltinTool
+from .builtin_tool import BuiltinTool, BuiltinToolCapability
 from .combined import CombinedCapability
 from .history_processor import HistoryProcessor
+from .image_generation import ImageGeneration
 from .instructions import Instructions
+from .mcp import MCP
 
 # Short name is intentional — passing a dict is enough to get type checking,
 # and users rarely need both this and settings.ModelSettings in the same scope.
@@ -12,6 +14,7 @@ from .model_settings import ModelSettings
 from .prepare_tools import PrepareTools
 from .thinking import Thinking
 from .toolset import Toolset
+from .web_fetch import WebFetch
 from .web_search import WebSearch
 
 CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
@@ -19,11 +22,14 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     for cls in (
         BuiltinTool,
         HistoryProcessor,
+        ImageGeneration,
         Instructions,
+        MCP,
         ModelSettings,
         PrepareTools,
         Thinking,
         Toolset,
+        WebFetch,
         WebSearch,
     )
     if (name := cls.get_serialization_name()) is not None
@@ -33,14 +39,18 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
 __all__ = [
     'AbstractCapability',
     'ModelRequestContext',
-    'CAPABILITY_TYPES',
     'BuiltinTool',
+    'BuiltinToolCapability',
+    'CAPABILITY_TYPES',
+    'ImageGeneration',
     'Instructions',
     'HistoryProcessor',
+    'MCP',
     'ModelSettings',
     'PrepareTools',
     'Thinking',
     'Toolset',
+    'WebFetch',
     'WebSearch',
     'CombinedCapability',
 ]
