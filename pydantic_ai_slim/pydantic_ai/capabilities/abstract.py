@@ -10,7 +10,7 @@ from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse, 
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, RunContext, ToolDefinition
-from pydantic_ai.toolsets import AgentToolset
+from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
@@ -110,6 +110,20 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def get_builtin_tools(self) -> Sequence[AgentBuiltinTool[AgentDepsT]]:
         """Return builtin tools to register with the agent."""
         return []
+
+    def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
+        """Wrap the agent's assembled toolset, or return None to leave it unchanged.
+
+        Called with the combined non-output toolset (after agent-level
+        [`prepare_tools`][pydantic_ai.tools.ToolsPrepareFunc] wrapping).
+        Output tools are added separately and are not included.
+
+        Use this to apply cross-cutting toolset wrappers like
+        [`PreparedToolset`][pydantic_ai.toolsets.PreparedToolset],
+        [`FilteredToolset`][pydantic_ai.toolsets.FilteredToolset],
+        or custom [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] subclasses.
+        """
+        return None
 
     # --- Tool preparation hook ---
 

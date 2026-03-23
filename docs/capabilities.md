@@ -124,6 +124,7 @@ The full set of configuration methods:
 | [`get_model_settings()`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] | [`AgentModelSettings`][pydantic_ai.agent.abstract.AgentModelSettings] ` \| None` | Model settings dict, or a callable for [per-step settings](#dynamic-model-settings) |
 | [`get_toolset()`][pydantic_ai.capabilities.AbstractCapability.get_toolset] | [`AgentToolset`][pydantic_ai.toolsets.AgentToolset] ` \| None` | A [toolset](toolsets.md) to register with the agent |
 | [`get_builtin_tools()`][pydantic_ai.capabilities.AbstractCapability.get_builtin_tools] | `Sequence[AbstractBuiltinTool]` | [Builtin tools](builtin-tools.md) to register |
+| [`get_wrapper_toolset()`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] | [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] ` \| None` | [Wrap the agent's assembled toolset](#toolset-wrapping) |
 
 ### Dynamic model settings
 
@@ -332,6 +333,51 @@ result = agent.run_sync('hello')
 ```
 
 The list includes all tool kinds (function, output, unapproved) — use `tool_def.kind` to distinguish. This hook runs after the agent-level [`prepare_tools`][pydantic_ai.tools.ToolsPrepareFunc]. For simple cases, the built-in [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] capability wraps a callable without needing a custom subclass.
+
+### Toolset wrapping
+
+While `prepare_tools` modifies tool *definitions* per step, [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] lets a capability wrap the agent's entire assembled toolset with a [`WrapperToolset`](toolsets.md#changing-tool-execution). This is more powerful — it can intercept tool execution, replace tools entirely, or apply any cross-cutting behavior.
+
+The wrapper receives the combined non-output toolset (after the agent-level [`prepare_tools`][pydantic_ai.tools.ToolsPrepareFunc] wrapping). Output tools are added separately and are not affected.
+
+```python {title="wrapper_toolset_example.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets.prefixed import PrefixedToolset
+
+
+@dataclass
+class NamespaceTools(AbstractCapability[Any]):
+    """Prefixes all tool names with a namespace."""
+
+    namespace: str
+
+    def get_wrapper_toolset(
+        self, toolset: AbstractToolset[Any]
+    ) -> AbstractToolset[Any]:
+        return PrefixedToolset(toolset, prefix=self.namespace)
+
+
+agent = Agent(TestModel(), capabilities=[NamespaceTools(namespace='myapp')])
+
+
+@agent.tool_plain
+def greet(name: str) -> str:
+    """Greet someone."""
+    return f'Hello, {name}!'
+
+
+result = agent.run_sync('hello')
+# The model sees `myapp_greet` instead of `greet`
+```
+
+!!! note
+    `prepare_tools` can also be expressed as a wrapper: `get_wrapper_toolset(toolset) -> toolset.prepared(fn)`. The difference is that `prepare_tools` operates on all tool definitions (including output tools) per step, while `get_wrapper_toolset` wraps only non-output tools at the toolset level.
 
 ### Event stream hook
 
