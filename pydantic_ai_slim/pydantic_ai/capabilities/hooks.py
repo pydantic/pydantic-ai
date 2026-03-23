@@ -1,4 +1,3 @@
-# pyright: reportIncompatibleMethodOverride=false
 """Hooks capability for decorator-based hook registration.
 
 Provides the `Hooks` class as an ergonomic alternative to subclassing
@@ -12,18 +11,130 @@ attributes. The framework invokes these through AbstractCapability-typed refs
 from __future__ import annotations
 
 import inspect
-from collections.abc import AsyncIterable, Callable, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, TypeVar, overload
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, overload
 
 import anyio
 
-from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
-from .abstract import AbstractCapability
+from .abstract import (
+    AbstractCapability,
+    AgentNode,
+    NodeResult,
+    RawToolArgs,
+    ValidatedToolArgs,
+    WrapModelRequestHandler,
+    WrapNodeRunHandler,
+    WrapRunHandler,
+    WrapToolExecuteHandler,
+    WrapToolValidateHandler,
+)
 
 if TYPE_CHECKING:
-    from pydantic_ai.messages import ToolCallPart
+    from pydantic import ValidationError
+
+    from pydantic_ai.exceptions import ModelRetry
+    from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.run import AgentRunResult
+
+# fmt: off
+# --- Hook function protocols ---
+# These define the exact signatures users must implement for each hook type.
+# Both sync and async functions are accepted (sync auto-wrapped at runtime).
+# Uses RunContext[Any] since AgentDepsT is contravariant (Protocol requires invariant).
+
+
+class BeforeRunHookFunc(Protocol):
+    """Protocol for :meth:`~AbstractCapability.before_run` hook functions."""
+    def __call__(self, ctx: RunContext[Any], /) -> None | Awaitable[None]: ...
+
+class AfterRunHookFunc(Protocol):
+    """Protocol for :meth:`~AbstractCapability.after_run` hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, result: AgentRunResult[Any]) -> AgentRunResult[Any] | Awaitable[AgentRunResult[Any]]: ...
+
+class WrapRunHookFunc(Protocol):
+    """Protocol for :meth:`~AbstractCapability.wrap_run` hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, handler: WrapRunHandler) -> AgentRunResult[Any] | Awaitable[AgentRunResult[Any]]: ...
+
+class OnRunErrorHookFunc(Protocol):
+    """Protocol for :meth:`~AbstractCapability.on_run_error` hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, error: BaseException) -> AgentRunResult[Any] | Awaitable[AgentRunResult[Any]]: ...
+
+class BeforeNodeRunHookFunc(Protocol):
+    """Protocol for :meth:`~AbstractCapability.before_node_run` hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, node: AgentNode[Any]) -> AgentNode[Any] | Awaitable[AgentNode[Any]]: ...
+
+class AfterNodeRunHookFunc(Protocol):
+    """Protocol for :meth:`~AbstractCapability.after_node_run` hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, node: AgentNode[Any], result: NodeResult[Any]) -> NodeResult[Any] | Awaitable[NodeResult[Any]]: ...
+
+class WrapNodeRunHookFunc(Protocol):
+    """Protocol for :meth:`~AbstractCapability.wrap_node_run` hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, node: AgentNode[Any], handler: WrapNodeRunHandler[Any]) -> NodeResult[Any] | Awaitable[NodeResult[Any]]: ...
+
+class OnNodeRunErrorHookFunc(Protocol):
+    """Protocol for :meth:`~AbstractCapability.on_node_run_error` hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, node: AgentNode[Any], error: Exception) -> NodeResult[Any] | Awaitable[NodeResult[Any]]: ...
+
+class WrapRunEventStreamHookFunc(Protocol):
+    """Protocol for :meth:`~AbstractCapability.wrap_run_event_stream` hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, stream: AsyncIterable[AgentStreamEvent]) -> AsyncIterable[AgentStreamEvent]: ...
+
+class BeforeModelRequestHookFunc(Protocol):
+    """Protocol for :meth:`~AbstractCapability.before_model_request` hook functions."""
+    def __call__(self, ctx: RunContext[Any], request_context: ModelRequestContext, /) -> ModelRequestContext | Awaitable[ModelRequestContext]: ...
+
+class AfterModelRequestHookFunc(Protocol):
+    """Protocol for :meth:`~AbstractCapability.after_model_request` hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, request_context: ModelRequestContext, response: ModelResponse) -> ModelResponse | Awaitable[ModelResponse]: ...
+
+class WrapModelRequestHookFunc(Protocol):
+    """Protocol for :meth:`~AbstractCapability.wrap_model_request` hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, request_context: ModelRequestContext, handler: WrapModelRequestHandler) -> ModelResponse | Awaitable[ModelResponse]: ...
+
+class OnModelRequestErrorHookFunc(Protocol):
+    """Protocol for :meth:`~AbstractCapability.on_model_request_error` hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, request_context: ModelRequestContext, error: Exception) -> ModelResponse | Awaitable[ModelResponse]: ...
+
+class PrepareToolsHookFunc(Protocol):
+    """Protocol for :meth:`~AbstractCapability.prepare_tools` hook functions."""
+    def __call__(self, ctx: RunContext[Any], tool_defs: list[ToolDefinition], /) -> list[ToolDefinition] | Awaitable[list[ToolDefinition]]: ...
+
+class BeforeToolValidateHookFunc(Protocol):
+    """Protocol for :meth:`~AbstractCapability.before_tool_validate` hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs) -> RawToolArgs | Awaitable[RawToolArgs]: ...
+
+class AfterToolValidateHookFunc(Protocol):
+    """Protocol for :meth:`~AbstractCapability.after_tool_validate` hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs) -> ValidatedToolArgs | Awaitable[ValidatedToolArgs]: ...
+
+class WrapToolValidateHookFunc(Protocol):
+    """Protocol for :meth:`~AbstractCapability.wrap_tool_validate` hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs, handler: WrapToolValidateHandler) -> ValidatedToolArgs | Awaitable[ValidatedToolArgs]: ...
+
+class OnToolValidateErrorHookFunc(Protocol):
+    """Protocol for :meth:`~AbstractCapability.on_tool_validate_error` hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs, error: ValidationError | ModelRetry) -> ValidatedToolArgs | Awaitable[ValidatedToolArgs]: ...
+
+class BeforeToolExecuteHookFunc(Protocol):
+    """Protocol for :meth:`~AbstractCapability.before_tool_execute` hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs) -> ValidatedToolArgs | Awaitable[ValidatedToolArgs]: ...
+
+class AfterToolExecuteHookFunc(Protocol):
+    """Protocol for :meth:`~AbstractCapability.after_tool_execute` hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs, result: Any) -> Any | Awaitable[Any]: ...
+
+class WrapToolExecuteHookFunc(Protocol):
+    """Protocol for :meth:`~AbstractCapability.wrap_tool_execute` hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs, handler: WrapToolExecuteHandler) -> Any | Awaitable[Any]: ...
+
+class OnToolExecuteErrorHookFunc(Protocol):
+    """Protocol for :meth:`~AbstractCapability.on_tool_execute_error` hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs, error: Exception) -> Any | Awaitable[Any]: ...
+    # fmt: on
 
 _FuncT = TypeVar('_FuncT', bound=Callable[..., Any])
 
@@ -377,137 +488,137 @@ class Hooks(AbstractCapability[AgentDepsT]):
     # AbstractCapability methods through the base class type.
 
     # Run lifecycle
-    before_run: _HookSlot[Callable[..., Any]]
-    after_run: _HookSlot[Callable[..., Any]]
-    wrap_run: _HookSlot[Callable[..., Any]]
-    on_run_error: _HookSlot[Callable[..., Any]]
+    before_run: _HookSlot[BeforeRunHookFunc]
+    after_run: _HookSlot[AfterRunHookFunc]
+    wrap_run: _HookSlot[WrapRunHookFunc]
+    on_run_error: _HookSlot[OnRunErrorHookFunc]
 
     # Node lifecycle
-    before_node_run: _HookSlot[Callable[..., Any]]
-    after_node_run: _HookSlot[Callable[..., Any]]
-    wrap_node_run: _HookSlot[Callable[..., Any]]
-    on_node_run_error: _HookSlot[Callable[..., Any]]
+    before_node_run: _HookSlot[BeforeNodeRunHookFunc]
+    after_node_run: _HookSlot[AfterNodeRunHookFunc]
+    wrap_node_run: _HookSlot[WrapNodeRunHookFunc]
+    on_node_run_error: _HookSlot[OnNodeRunErrorHookFunc]
 
     # Event stream
-    wrap_run_event_stream: _HookSlot[Callable[..., Any]]
+    wrap_run_event_stream: _HookSlot[WrapRunEventStreamHookFunc]
 
     # Model request
-    before_model_request: _HookSlot[Callable[..., Any]]
-    after_model_request: _HookSlot[Callable[..., Any]]
-    wrap_model_request: _HookSlot[Callable[..., Any]]
-    on_model_request_error: _HookSlot[Callable[..., Any]]
+    before_model_request: _HookSlot[BeforeModelRequestHookFunc]
+    after_model_request: _HookSlot[AfterModelRequestHookFunc]
+    wrap_model_request: _HookSlot[WrapModelRequestHookFunc]
+    on_model_request_error: _HookSlot[OnModelRequestErrorHookFunc]
 
     # Tool preparation
-    prepare_tools: _HookSlot[Callable[..., Any]]
+    prepare_tools: _HookSlot[PrepareToolsHookFunc]
 
     # Tool validation
-    before_tool_validate: _ToolHookSlot[Callable[..., Any]]
-    after_tool_validate: _ToolHookSlot[Callable[..., Any]]
-    wrap_tool_validate: _ToolHookSlot[Callable[..., Any]]
-    on_tool_validate_error: _ToolHookSlot[Callable[..., Any]]
+    before_tool_validate: _ToolHookSlot[BeforeToolValidateHookFunc]
+    after_tool_validate: _ToolHookSlot[AfterToolValidateHookFunc]
+    wrap_tool_validate: _ToolHookSlot[WrapToolValidateHookFunc]
+    on_tool_validate_error: _ToolHookSlot[OnToolValidateErrorHookFunc]
 
     # Tool execution
-    before_tool_execute: _ToolHookSlot[Callable[..., Any]]
-    after_tool_execute: _ToolHookSlot[Callable[..., Any]]
-    wrap_tool_execute: _ToolHookSlot[Callable[..., Any]]
-    on_tool_execute_error: _ToolHookSlot[Callable[..., Any]]
+    before_tool_execute: _ToolHookSlot[BeforeToolExecuteHookFunc]
+    after_tool_execute: _ToolHookSlot[AfterToolExecuteHookFunc]
+    wrap_tool_execute: _ToolHookSlot[WrapToolExecuteHookFunc]
+    on_tool_execute_error: _ToolHookSlot[OnToolExecuteErrorHookFunc]
 
     def __init__(
         self,
         *,
         # Run lifecycle
-        before_run: Callable[..., Any] | None = None,
-        after_run: Callable[..., Any] | None = None,
-        wrap_run: Callable[..., Any] | None = None,
-        on_run_error: Callable[..., Any] | None = None,
+        before_run: BeforeRunHookFunc | None = None,
+        after_run: AfterRunHookFunc | None = None,
+        wrap_run: WrapRunHookFunc | None = None,
+        on_run_error: OnRunErrorHookFunc | None = None,
         # Node lifecycle
-        before_node_run: Callable[..., Any] | None = None,
-        after_node_run: Callable[..., Any] | None = None,
-        wrap_node_run: Callable[..., Any] | None = None,
-        on_node_run_error: Callable[..., Any] | None = None,
+        before_node_run: BeforeNodeRunHookFunc | None = None,
+        after_node_run: AfterNodeRunHookFunc | None = None,
+        wrap_node_run: WrapNodeRunHookFunc | None = None,
+        on_node_run_error: OnNodeRunErrorHookFunc | None = None,
         # Event stream
-        wrap_run_event_stream: Callable[..., Any] | None = None,
+        wrap_run_event_stream: WrapRunEventStreamHookFunc | None = None,
         # Model request
-        before_model_request: Callable[..., Any] | None = None,
-        after_model_request: Callable[..., Any] | None = None,
-        wrap_model_request: Callable[..., Any] | None = None,
-        on_model_request_error: Callable[..., Any] | None = None,
+        before_model_request: BeforeModelRequestHookFunc | None = None,
+        after_model_request: AfterModelRequestHookFunc | None = None,
+        wrap_model_request: WrapModelRequestHookFunc | None = None,
+        on_model_request_error: OnModelRequestErrorHookFunc | None = None,
         # Tool preparation
-        prepare_tools: Callable[..., Any] | None = None,
+        prepare_tools: PrepareToolsHookFunc | None = None,
         # Tool validation
-        before_tool_validate: Callable[..., Any] | None = None,
-        after_tool_validate: Callable[..., Any] | None = None,
-        wrap_tool_validate: Callable[..., Any] | None = None,
-        on_tool_validate_error: Callable[..., Any] | None = None,
+        before_tool_validate: BeforeToolValidateHookFunc | None = None,
+        after_tool_validate: AfterToolValidateHookFunc | None = None,
+        wrap_tool_validate: WrapToolValidateHookFunc | None = None,
+        on_tool_validate_error: OnToolValidateErrorHookFunc | None = None,
         # Tool execution
-        before_tool_execute: Callable[..., Any] | None = None,
-        after_tool_execute: Callable[..., Any] | None = None,
-        wrap_tool_execute: Callable[..., Any] | None = None,
-        on_tool_execute_error: Callable[..., Any] | None = None,
+        before_tool_execute: BeforeToolExecuteHookFunc | None = None,
+        after_tool_execute: AfterToolExecuteHookFunc | None = None,
+        wrap_tool_execute: WrapToolExecuteHookFunc | None = None,
+        on_tool_execute_error: OnToolExecuteErrorHookFunc | None = None,
     ):
         # --- Initialize hook slots ---
 
         # Run lifecycle
-        self.before_run = _HookSlot(_dispatch_observe, _noop_observe, 'before_run')
-        self.after_run = _HookSlot(
+        self.before_run = _HookSlot(_dispatch_observe, _noop_observe, 'before_run')  # pyright: ignore[reportIncompatibleMethodOverride]
+        self.after_run = _HookSlot(  # pyright: ignore[reportIncompatibleMethodOverride]
             _make_dispatch_forward_keyword('result'), _make_noop_forward_keyword('result'), 'after_run'
         )
-        self.wrap_run = _HookSlot(_make_dispatch_wrap(None), _make_noop_wrap(None), 'wrap_run')
-        self.on_run_error = _HookSlot(_dispatch_run_error, _noop_run_error, 'on_run_error')
+        self.wrap_run = _HookSlot(_make_dispatch_wrap(None), _make_noop_wrap(None), 'wrap_run')  # pyright: ignore[reportIncompatibleMethodOverride]
+        self.on_run_error = _HookSlot(_dispatch_run_error, _noop_run_error, 'on_run_error')  # pyright: ignore[reportIncompatibleMethodOverride]
 
         # Node lifecycle
-        self.before_node_run = _HookSlot(
+        self.before_node_run = _HookSlot(  # pyright: ignore[reportIncompatibleMethodOverride]
             _make_dispatch_forward_keyword('node'), _make_noop_forward_keyword('node'), 'before_node_run'
         )
-        self.after_node_run = _HookSlot(
+        self.after_node_run = _HookSlot(  # pyright: ignore[reportIncompatibleMethodOverride]
             _make_dispatch_forward_keyword('result'), _make_noop_forward_keyword('result'), 'after_node_run'
         )
-        self.wrap_node_run = _HookSlot(_make_dispatch_wrap('node'), _make_noop_wrap('node'), 'wrap_node_run')
-        self.on_node_run_error = _HookSlot(_dispatch_error, _noop_error, 'on_node_run_error')
+        self.wrap_node_run = _HookSlot(_make_dispatch_wrap('node'), _make_noop_wrap('node'), 'wrap_node_run')  # pyright: ignore[reportIncompatibleMethodOverride]
+        self.on_node_run_error = _HookSlot(_dispatch_error, _noop_error, 'on_node_run_error')  # pyright: ignore[reportIncompatibleMethodOverride]
 
         # Event stream
-        self.wrap_run_event_stream = _HookSlot(_dispatch_wrap_stream, _noop_wrap_stream, 'wrap_run_event_stream')
+        self.wrap_run_event_stream = _HookSlot(_dispatch_wrap_stream, _noop_wrap_stream, 'wrap_run_event_stream')  # pyright: ignore[reportIncompatibleMethodOverride]
 
         # Model request
-        self.before_model_request = _HookSlot(
+        self.before_model_request = _HookSlot(  # pyright: ignore[reportIncompatibleMethodOverride]
             _dispatch_forward_positional, _noop_forward_positional, 'before_model_request'
         )
-        self.after_model_request = _HookSlot(
+        self.after_model_request = _HookSlot(  # pyright: ignore[reportIncompatibleMethodOverride]
             _make_dispatch_forward_keyword('response'),
             _make_noop_forward_keyword('response'),
             'after_model_request',
         )
-        self.wrap_model_request = _HookSlot(
+        self.wrap_model_request = _HookSlot(  # pyright: ignore[reportIncompatibleMethodOverride]
             _make_dispatch_wrap('request_context'), _make_noop_wrap('request_context'), 'wrap_model_request'
         )
-        self.on_model_request_error = _HookSlot(_dispatch_error, _noop_error, 'on_model_request_error')
+        self.on_model_request_error = _HookSlot(_dispatch_error, _noop_error, 'on_model_request_error')  # pyright: ignore[reportIncompatibleMethodOverride]
 
         # Tool preparation
-        self.prepare_tools = _HookSlot(_dispatch_forward_positional, _noop_forward_positional, 'prepare_tools')
+        self.prepare_tools = _HookSlot(_dispatch_forward_positional, _noop_forward_positional, 'prepare_tools')  # pyright: ignore[reportIncompatibleMethodOverride]
 
         # Tool validation
-        self.before_tool_validate = _ToolHookSlot(
+        self.before_tool_validate = _ToolHookSlot(  # pyright: ignore[reportIncompatibleMethodOverride]
             _make_dispatch_forward_keyword('args'), _make_noop_forward_keyword('args'), 'before_tool_validate'
         )
-        self.after_tool_validate = _ToolHookSlot(
+        self.after_tool_validate = _ToolHookSlot(  # pyright: ignore[reportIncompatibleMethodOverride]
             _make_dispatch_forward_keyword('args'), _make_noop_forward_keyword('args'), 'after_tool_validate'
         )
-        self.wrap_tool_validate = _ToolHookSlot(
+        self.wrap_tool_validate = _ToolHookSlot(  # pyright: ignore[reportIncompatibleMethodOverride]
             _make_dispatch_wrap('args'), _make_noop_wrap('args'), 'wrap_tool_validate'
         )
-        self.on_tool_validate_error = _ToolHookSlot(_dispatch_error, _noop_error, 'on_tool_validate_error')
+        self.on_tool_validate_error = _ToolHookSlot(_dispatch_error, _noop_error, 'on_tool_validate_error')  # pyright: ignore[reportIncompatibleMethodOverride]
 
         # Tool execution
-        self.before_tool_execute = _ToolHookSlot(
+        self.before_tool_execute = _ToolHookSlot(  # pyright: ignore[reportIncompatibleMethodOverride]
             _make_dispatch_forward_keyword('args'), _make_noop_forward_keyword('args'), 'before_tool_execute'
         )
-        self.after_tool_execute = _ToolHookSlot(
+        self.after_tool_execute = _ToolHookSlot(  # pyright: ignore[reportIncompatibleMethodOverride]
             _make_dispatch_forward_keyword('result'), _make_noop_forward_keyword('result'), 'after_tool_execute'
         )
-        self.wrap_tool_execute = _ToolHookSlot(
+        self.wrap_tool_execute = _ToolHookSlot(  # pyright: ignore[reportIncompatibleMethodOverride]
             _make_dispatch_wrap('args'), _make_noop_wrap('args'), 'wrap_tool_execute'
         )
-        self.on_tool_execute_error = _ToolHookSlot(_dispatch_error, _noop_error, 'on_tool_execute_error')
+        self.on_tool_execute_error = _ToolHookSlot(_dispatch_error, _noop_error, 'on_tool_execute_error')  # pyright: ignore[reportIncompatibleMethodOverride]
 
         # --- Register constructor-provided functions ---
         _register_if_provided(self.before_run, before_run)

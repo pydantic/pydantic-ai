@@ -89,6 +89,78 @@ Constraint fields like `allowed_domains` or `blocked_domains` require the builti
 WebSearch(allowed_domains=['example.com'])
 ```
 
+## Quick hooks with `Hooks`
+
+For simple use cases — logging, metrics, lightweight validation — you can register hook functions directly using the [`Hooks`][pydantic_ai.capabilities.Hooks] capability, without subclassing anything:
+
+```python {title="hooks_decorator.py"}
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities.hooks import Hooks
+from pydantic_ai.models import ModelRequestContext
+
+hooks = Hooks()
+
+
+@hooks.before_model_request
+async def log_request(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
+    print(f'Sending {len(request_context.messages)} messages to the model')
+    return request_context
+
+
+agent = Agent('test', capabilities=[hooks])
+result = agent.run_sync('Hello!')
+print(result.output)
+#> Sending 2 messages to the model
+#> success (no tool calls)
+```
+
+You can also pass hook functions directly to the constructor:
+
+```python {title="hooks_constructor.py"}
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities.hooks import Hooks
+from pydantic_ai.models import ModelRequestContext
+
+
+async def log_request(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
+    print(f'Sending {len(request_context.messages)} messages to the model')
+    return request_context
+
+
+agent = Agent('test', capabilities=[Hooks(before_model_request=log_request)])
+result = agent.run_sync('Hello!')
+print(result.output)
+#> Sending 2 messages to the model
+#> success (no tool calls)
+```
+
+### Tool hook filtering
+
+Tool hooks (validation and execution) support a `tools` parameter to target specific tools:
+
+```python {title="hooks_tool_filter.py" test="skip" lint="skip"}
+@hooks.before_tool_execute(tools=['send_email', 'delete_record'])
+async def audit_dangerous_tools(ctx, *, call, tool_def, args):
+    print(f'Dangerous tool called: {call.tool_name}')
+    return args
+```
+
+### Timeouts
+
+Each hook supports an optional `timeout` in seconds. If the hook exceeds the timeout, a [`HookTimeoutError`][pydantic_ai.capabilities.HookTimeoutError] is raised:
+
+```python {title="hooks_timeout.py" test="skip" lint="skip"}
+@hooks.before_model_request(timeout=5.0)
+async def maybe_slow_hook(ctx, request_context):
+    # If this takes more than 5 seconds, HookTimeoutError is raised
+    ...
+    return request_context
+```
+
+### When to use `Hooks` vs `AbstractCapability`
+
+[`Hooks`][pydantic_ai.capabilities.Hooks] is best for quick, application-level hooks — one-off logging, metrics, lightweight checks. For reusable capabilities with configuration, tools, instructions, or complex state management, subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] directly. See [Lifecycle hooks](#lifecycle-hooks) for the full list of available hooks.
+
 ## Building a custom capability
 
 To build your own capability, subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] and override the methods you need. There are two categories: **configuration methods** that are called once at agent construction, and **lifecycle hooks** that fire during each run.
