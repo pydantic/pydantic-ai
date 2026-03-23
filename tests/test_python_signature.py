@@ -451,6 +451,31 @@ def test_function_tool_definition_fallback_without_original_func():
     assert sig.params['q'].type == 'str'
 
 
+def test_tool_from_schema_python_signature_uses_schema():
+    async def handler(**kwargs: typing.Any) -> typing.Any:  # pragma: no cover
+        return kwargs
+
+    tool = Tool.from_schema(
+        handler,
+        name='search',
+        description='Search documents',
+        json_schema={
+            'type': 'object',
+            'properties': {
+                'query': {'type': 'string'},
+                'limit': {'type': 'integer'},
+            },
+            'required': ['query'],
+        },
+    )
+    assert isinstance(tool.tool_def, FunctionToolDefinition)
+    assert str(tool.tool_def.python_signature) == snapshot("""\
+async def search(*, query: str, limit: int | None = None) -> Any:
+    \"\"\"Search documents\"\"\"
+    ...\
+""")
+
+
 # =============================================================================
 # Function signature edge cases
 # =============================================================================

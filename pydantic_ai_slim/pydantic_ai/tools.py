@@ -282,6 +282,7 @@ class Tool(Generic[ToolAgentDepsT]):
     requires_approval: bool
     metadata: dict[str, Any] | None
     timeout: float | None
+    _signature_source: Literal['function', 'schema']
     function_schema: _function_schema.FunctionSchema
     """
     The base JSON schema for the tool's parameters.
@@ -293,6 +294,7 @@ class Tool(Generic[ToolAgentDepsT]):
         self,
         function: ToolFuncEither[ToolAgentDepsT, ToolParams],
         *,
+        _signature_source: Literal['function', 'schema'] = 'function',
         takes_ctx: bool | None = None,
         max_retries: int | None = None,
         name: str | None = None,
@@ -394,6 +396,7 @@ class Tool(Generic[ToolAgentDepsT]):
         self.requires_approval = requires_approval
         self.metadata = metadata
         self.timeout = timeout
+        self._signature_source = _signature_source
 
     @classmethod
     def from_schema(
@@ -441,6 +444,7 @@ class Tool(Generic[ToolAgentDepsT]):
 
         return cls(
             function,
+            _signature_source='schema',
             takes_ctx=takes_ctx,
             name=name,
             description=description,
@@ -460,7 +464,7 @@ class Tool(Generic[ToolAgentDepsT]):
             metadata=self.metadata,
             timeout=self.timeout,
             kind='unapproved' if self.requires_approval else 'function',
-            original_func=self.function_schema.function,
+            original_func=self.function_schema.function if self._signature_source == 'function' else None,
         )
 
     async def prepare_tool_def(self, ctx: RunContext[ToolAgentDepsT]) -> ToolDefinition | None:
