@@ -71,6 +71,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     sensible defaults and typically don't need to be overridden.
     """
 
+    @property
+    def has_wrap_node_run(self) -> bool:
+        """Whether this capability (or any sub-capability) overrides wrap_node_run."""
+        return type(self).wrap_node_run is not AbstractCapability.wrap_node_run
+
     @classmethod
     def get_serialization_name(cls) -> str | None:
         """Return the name used for spec serialization (CamelCase class name by default).
