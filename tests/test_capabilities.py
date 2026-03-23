@@ -3690,7 +3690,7 @@ class TestRunErrorHooks:
         agent = Agent(FunctionModel(failing_model), capabilities=[cap])
         async with agent.iter('hello') as agent_run:
             node = agent_run.next_node
-            while not isinstance(node, End):
+            while not isinstance(node, End):  # pragma: no branch
                 node = await agent_run.next(node)
         assert cap.called
         assert agent_run.result is not None
@@ -3802,7 +3802,7 @@ class TestModelRequestErrorHooks:
                 return 'Be helpful.'
 
             async def wrap_model_request(self, ctx: RunContext[Any], *, request_context: Any, handler: Any) -> Any:
-                result = await handler(request_context)
+                await handler(request_context)
                 raise RuntimeError('post-processing exploded')
 
         agent = Agent(
