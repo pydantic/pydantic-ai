@@ -72,7 +72,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     """
 
     @property
-    def _has_wrap_node_run(self) -> bool:
+    def has_wrap_node_run(self) -> bool:
         """Whether this capability (or any sub-capability) overrides wrap_node_run."""
         return type(self).wrap_node_run is not AbstractCapability.wrap_node_run
 

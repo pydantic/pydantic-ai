@@ -1,23 +1,25 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic_ai import messages as _messages
-from pydantic_ai._history_processor import (
-    HistoryProcessor as HistoryProcessorFunc,
-    _HistoryProcessorAsync,
-    _HistoryProcessorAsyncWithCtx,
-    _HistoryProcessorSync,
-    _HistoryProcessorSyncWithCtx,
-)
+from pydantic_ai._history_processor import HistoryProcessor as HistoryProcessorFunc
 from pydantic_ai._utils import is_async_callable, run_in_executor, takes_run_context
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from .abstract import AbstractCapability
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from pydantic_ai.models import ModelRequestContext
+
+    _MsgList = list[_messages.ModelMessage]
+    _AsyncWithCtx = Callable[[RunContext[Any], _MsgList], Awaitable[_MsgList]]
+    _AsyncNoCtx = Callable[[_MsgList], Awaitable[_MsgList]]
+    _SyncWithCtx = Callable[[RunContext[Any], _MsgList], _MsgList]
+    _SyncNoCtx = Callable[[_MsgList], _MsgList]
 
 
 @dataclass
@@ -52,15 +54,11 @@ async def _run_history_processor(
 
     if is_async_callable(processor):
         if takes_ctx:
-            async_with_ctx = cast(_HistoryProcessorAsyncWithCtx[AgentDepsT], processor)
-            return await async_with_ctx(ctx, messages)
+            return await cast('_AsyncWithCtx', processor)(ctx, messages)
         else:
-            async_processor = cast(_HistoryProcessorAsync, processor)
-            return await async_processor(messages)
+            return await cast('_AsyncNoCtx', processor)(messages)
     else:
         if takes_ctx:
-            sync_with_ctx = cast(_HistoryProcessorSyncWithCtx[AgentDepsT], processor)
-            return await run_in_executor(sync_with_ctx, ctx, messages)
+            return await run_in_executor(cast('_SyncWithCtx', processor), ctx, messages)
         else:
-            sync_processor = cast(_HistoryProcessorSync, processor)
-            return await run_in_executor(sync_processor, messages)
+            return await run_in_executor(cast('_SyncNoCtx', processor), messages)

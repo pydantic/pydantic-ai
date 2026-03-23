@@ -30,8 +30,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     capabilities: Sequence[AbstractCapability[AgentDepsT]]
 
     @property
-    def _has_wrap_node_run(self) -> bool:
-        return any(c._has_wrap_node_run for c in self.capabilities)
+    def has_wrap_node_run(self) -> bool:
+        return any(c.has_wrap_node_run for c in self.capabilities)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         new_caps = await asyncio.gather(*(c.for_run(ctx) for c in self.capabilities))
