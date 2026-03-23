@@ -226,7 +226,8 @@ class AgentEventStream(Generic[EventT]):
                 async for e in self.handle_function_tool_result(event):
                     yield e
             case _:
-                pass
+                async for e in self._default_yield(event):
+                    yield e
 
     # --- Part dispatch ---
 
@@ -766,14 +767,14 @@ class UIEventStream(AgentEventStream[EventT], ABC, Generic[RunInputT, EventT, Ag
                 elif isinstance(event, FinalResultEvent):
                     self._final_result_event = event
 
-                if isinstance(event, BuiltinToolCallEvent | BuiltinToolResultEvent):  # pyright: ignore[reportDeprecated]
+                if isinstance(event, (BuiltinToolCallEvent, BuiltinToolResultEvent)):  # pyright: ignore[reportDeprecated]
                     # These events were deprecated before this feature was introduced
                     continue
 
                 async for e in self.handle_event(event):
                     yield e
-        except Exception as e:
-            async for e in self.on_error(e):
+        except Exception as exc:
+            async for e in self.on_error(exc):
                 yield e
         finally:
             async for e in self._turn_to(None):
