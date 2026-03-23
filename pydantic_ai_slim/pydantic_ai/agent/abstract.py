@@ -303,7 +303,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 ):
                     async with node.stream(agent_run.ctx) as stream:
                         run_ctx = _agent_graph.build_run_context(agent_run.ctx)
-                        wrapped = await agent_run.ctx.deps.root_capability.wrap_run_event_stream(run_ctx, stream=stream)
+                        wrapped = agent_run.ctx.deps.root_capability.wrap_run_event_stream(run_ctx, stream=stream)
                         await event_stream_handler(run_ctx, wrapped)
                 node = await agent_run.next(node)  # pyright: ignore[reportArgumentType]
 
@@ -610,7 +610,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                     break
 
                         run_ctx = _agent_graph.build_run_context(graph_ctx)
-                        wrapped = await graph_ctx.deps.root_capability.wrap_run_event_stream(
+                        wrapped = graph_ctx.deps.root_capability.wrap_run_event_stream(
                             run_ctx, stream=stream_to_final(stream)
                         )
                         if event_stream_handler is not None:
@@ -681,7 +681,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 elif self.is_call_tools_node(node):
                     async with node.stream(agent_run.ctx) as stream:
                         run_ctx = _agent_graph.build_run_context(agent_run.ctx)
-                        wrapped = await agent_run.ctx.deps.root_capability.wrap_run_event_stream(run_ctx, stream=stream)
+                        wrapped = agent_run.ctx.deps.root_capability.wrap_run_event_stream(run_ctx, stream=stream)
                         if event_stream_handler is not None:
                             await event_stream_handler(run_ctx, wrapped)
                         else:

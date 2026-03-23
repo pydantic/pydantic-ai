@@ -166,8 +166,9 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
         for cap in reversed(self.capabilities):
-            stream = await cap.wrap_run_event_stream(ctx, stream=stream)
-        return stream
+            stream = cap.wrap_run_event_stream(ctx, stream=stream)
+        async for event in stream:
+            yield event
 
     # --- Model request lifecycle hooks ---
 
