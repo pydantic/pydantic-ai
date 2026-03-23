@@ -70,16 +70,16 @@ agent = Agent(
 )
 ```
 
-To disable the local fallback (builtin-only, errors on unsupported models):
+To force builtin-only (errors on unsupported models instead of falling back to local):
 
 ```python {title="builtin_only.py" test="skip" lint="skip"}
-WebSearch(local=False)
+MCP(url='https://mcp.example.com/api', local=False)
 ```
 
-To disable the builtin (always use local):
+To force local-only (never use the builtin, even when the model supports it):
 
 ```python {title="local_only.py" test="skip" lint="skip"}
-WebSearch(builtin=False)
+MCP(url='https://mcp.example.com/api', builtin=False)
 ```
 
 Constraint fields like `allowed_domains` or `blocked_domains` require the builtin — the local fallback can't enforce them. When these are set and the model doesn't support the builtin, a [`UserError`][pydantic_ai.exceptions.UserError] is raised:
@@ -104,7 +104,6 @@ from typing import Any
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.models.test import TestModel
 
 
 @dataclass
@@ -115,10 +114,10 @@ class KnowsCurrentTime(AbstractCapability[Any]):
         return f'The current date and time is {datetime.now().isoformat()}.'
 
 
-agent = Agent(TestModel(), capabilities=[KnowsCurrentTime()])
+agent = Agent('openai:gpt-5.2', capabilities=[KnowsCurrentTime()])
 result = agent.run_sync('What time is it?')
 print(result.output)
-#> success (no tool calls)
+#> The current time is 3:45 PM.
 ```
 
 A capability that provides tools can return a pre-built [toolset](toolsets.md) from [`get_toolset`][pydantic_ai.capabilities.AbstractCapability.get_toolset]:
@@ -129,7 +128,6 @@ from typing import Any
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
 
 
@@ -154,10 +152,10 @@ class MathTools(AbstractCapability[Any]):
         return _math_toolset
 
 
-agent = Agent(TestModel(), capabilities=[MathTools()])
+agent = Agent('openai:gpt-5.2', capabilities=[MathTools()])
 result = agent.run_sync('What is 2 + 3?')
 print(result.output)
-#> {"_add":0.0,"_multiply":0.0}
+#> The answer is 5.0
 ```
 
 The full set of configuration methods:
@@ -179,7 +177,6 @@ from dataclasses import dataclass
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 
 
@@ -196,10 +193,10 @@ class ThinkingOnRetry(AbstractCapability[None]):
         return resolve
 
 
-agent = Agent(TestModel(), capabilities=[ThinkingOnRetry()])
+agent = Agent('openai:gpt-5.2', capabilities=[ThinkingOnRetry()])
 result = agent.run_sync('hello')
 print(result.output)
-#> success (no tool calls)
+#> Hello! How can I help you today?
 ```
 
 The callable receives a [`RunContext`][pydantic_ai.tools.RunContext] where `ctx.model_settings` contains the merged result of all layers resolved before this capability (model defaults and agent-level settings).
@@ -256,7 +253,6 @@ from pydantic_ai.capabilities import (
     NodeResult,
     WrapNodeRunHandler,
 )
-from pydantic_ai.models.test import TestModel
 
 
 @dataclass
@@ -273,7 +269,7 @@ class NodeLogger(AbstractCapability[Any]):
 
 
 logger = NodeLogger()
-agent = Agent(TestModel(), capabilities=[logger])
+agent = Agent('openai:gpt-5.2', capabilities=[logger])
 agent.run_sync('hello')
 print(logger.nodes)
 #> ['UserPromptNode', 'ModelRequestNode', 'CallToolsNode']
@@ -354,7 +350,6 @@ from typing import Any
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 
 
@@ -370,7 +365,7 @@ class HideDangerousTools(AbstractCapability[Any]):
         return [td for td in tool_defs if not any(td.name.startswith(p) for p in self.hidden_prefixes)]
 
 
-agent = Agent(TestModel(), capabilities=[HideDangerousTools()])
+agent = Agent('openai:gpt-5.2', capabilities=[HideDangerousTools()])
 
 
 @agent.tool_plain
@@ -403,7 +398,6 @@ from typing import Any
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets.prefixed import PrefixedToolset
 
@@ -420,7 +414,7 @@ class NamespaceTools(AbstractCapability[Any]):
         return PrefixedToolset(toolset, prefix=self.namespace)
 
 
-agent = Agent(TestModel(), capabilities=[NamespaceTools(namespace='myapp')])
+agent = Agent('openai:gpt-5.2', capabilities=[NamespaceTools(namespace='myapp')])
 
 
 @agent.tool_plain
@@ -495,7 +489,6 @@ from typing import Any
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models import ModelRequestContext
-from pydantic_ai.models.test import TestModel
 
 
 @dataclass
@@ -515,7 +508,7 @@ class RequestCounter(AbstractCapability[Any]):
 
 
 counter = RequestCounter()
-agent = Agent(TestModel(), capabilities=[counter])
+agent = Agent('openai:gpt-5.2', capabilities=[counter])
 
 # The shared counter stays at 0 because for_run returns a fresh instance
 agent.run_sync('first run')
@@ -537,7 +530,6 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelResponse, TextPart
 from pydantic_ai.models import ModelRequestContext
-from pydantic_ai.models.test import TestModel
 
 
 @dataclass
@@ -568,10 +560,10 @@ class PIIRedactionGuardrail(AbstractCapability[Any]):
         return response
 
 
-agent = Agent(TestModel(), capabilities=[PIIRedactionGuardrail()])
-result = agent.run_sync('hello')
+agent = Agent('openai:gpt-5.2', capabilities=[PIIRedactionGuardrail()])
+result = agent.run_sync("What's Jane's contact info?")
 print(result.output)
-#> success (no tool calls)
+#> You can reach Jane at [EMAIL REDACTED] or [PHONE REDACTED].
 ```
 
 ## Example: building a logging middleware
@@ -590,7 +582,6 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models import ModelRequestContext
-from pydantic_ai.models.test import TestModel
 
 
 @dataclass
@@ -625,10 +616,10 @@ class VerboseLogging(AbstractCapability[Any]):
         return result
 
 
-agent = Agent(TestModel(), capabilities=[VerboseLogging()])
+agent = Agent('openai:gpt-5.2', capabilities=[VerboseLogging()])
 result = agent.run_sync('hello')
 print(f'Output: {result.output}')
-#> Output: success (no tool calls)
+#> Output: Hello! How can I help you today?
 ```
 
 ## Composition
@@ -651,7 +642,6 @@ from dataclasses import dataclass
 
 from pydantic_ai import Agent, TemplateStr
 from pydantic_ai.capabilities import Instructions
-from pydantic_ai.models.test import TestModel
 
 
 @dataclass
@@ -661,7 +651,7 @@ class UserProfile:
 
 
 agent = Agent(
-    TestModel(),
+    'openai:gpt-5.2',
     deps_type=UserProfile,
     capabilities=[
         Instructions(TemplateStr('You are assisting {{name}}, who is a {{role}}.')),
@@ -669,7 +659,7 @@ agent = Agent(
 )
 result = agent.run_sync('hello', deps=UserProfile(name='Alice', role='engineer'))
 print(result.output)
-#> success (no tool calls)
+#> Hello! How can I help you today?
 ```
 
 Template variables are resolved from the fields of the `deps` object. When a `deps_type` is provided, template variable names are validated at construction time.
@@ -680,7 +670,6 @@ You can also pass template strings directly to the `Agent` constructor:
 from dataclasses import dataclass
 
 from pydantic_ai import Agent, TemplateStr
-from pydantic_ai.models.test import TestModel
 
 
 @dataclass
@@ -689,13 +678,13 @@ class Config:
 
 
 agent = Agent(
-    TestModel(),
+    'openai:gpt-5.2',
     deps_type=Config,
     instructions=TemplateStr('Always respond in {{language}}.'),
 )
-result = agent.run_sync('hello', deps=Config(language='French'))
+result = agent.run_sync('Say hi!', deps=Config(language='French'))
 print(result.output)
-#> success (no tool calls)
+#> Bonjour ! Comment puis-je vous aider aujourd'hui ?
 ```
 
 In [agent specs](#agent-specs), strings containing `{{` are automatically converted to template strings — no explicit `TemplateStr` wrapper is needed. This applies to the `instructions` and `description` fields.

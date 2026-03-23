@@ -353,6 +353,12 @@ class MockMCPServer(AbstractToolset[Any]):
 
 
 text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
+    'hello': 'Hello! How can I help you today?',
+    'What time is it?': 'The current time is 3:45 PM.',
+    "What's Jane's contact info?": 'You can reach Jane at jane@example.com or 555-123-4567.',
+    'Say hi!': "Bonjour ! Comment puis-je vous aider aujourd'hui ?",
+    'first run': 'Response to first run.',
+    'second run': 'Response to second run.',
     'Summarize https://ai.pydantic.dev': 'Pydantic AI is a Python agent framework for building production-grade LLM applications.',
     'Use the web to get the current time.': "In San Francisco, it's 8:21:41 pm PDT on Wednesday, August 6, 2025.",
     'Give me a sentence with the biggest news in AI this week.': 'Scientists have developed a universal AI detector that can identify deepfake videos.',
@@ -610,9 +616,15 @@ async def model_logic(  # noqa: C901
         and any(isinstance(f, DocumentUrl) for f in m.files)
     ):
         return ModelResponse(parts=[TextPart('The document contains just the text "Dummy PDF file."')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == '_add':
+        return ModelResponse(parts=[TextPart(f'The answer is {m.content}')])
     elif isinstance(m, UserPromptPart):
         assert isinstance(m.content, str)
-        if m.content == 'What is the latest news in AI?':
+        if m.content == 'What is 2 + 3?' and any(t.name == '_add' for t in info.function_tools):
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='_add', args={'a': 2, 'b': 3}, tool_call_id='pyd_ai_tool_call_id')]
+            )
+        elif m.content == 'What is the latest news in AI?':
             return ModelResponse(
                 parts=[
                     TextPart(
@@ -658,7 +670,7 @@ async def model_logic(  # noqa: C901
         elif m.content.startswith('Question '):
             # Handle concurrency example prompts like "Question 0", "Question 1", etc.
             return ModelResponse(parts=[TextPart(f'Answer to {m.content}')])
-        elif m.content == 'What time is it?':
+        elif m.content == 'What time is it?' and any(t.name == 'get_current_time' for t in info.function_tools):
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='get_current_time', args={}, tool_call_id='pyd_ai_tool_call_id')]
             )
