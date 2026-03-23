@@ -469,7 +469,16 @@ async def _dispatch_single_evaluator(
     span_reference: SpanReference | None,
     sinks: list[EvaluationSink],
 ) -> None:
-    """Run a single evaluator and submit results to sinks."""
+    """Run a single evaluator's gate check, evaluation, and sink submission."""
+    # Check gate in the background — never blocks the caller
+    if online_eval.gate is not None:
+        try:
+            if not await _check_gate(online_eval.gate, context):
+                return
+        except Exception:
+            logger.exception('Gate check failed for %r', online_eval.evaluator)
+            return
+
     try:
         online_eval.semaphore.acquire_nowait()
     except anyio.WouldBlock:
@@ -625,23 +634,11 @@ def _wrap_async(
         # Extract span reference from the logfire span
         span_reference = _extract_span_reference(span)
 
-        # Check gates for sampled evaluators
-        gated: list[OnlineEvaluator] = []
-        for oe in sampled:
-            if oe.gate is not None:
-                try:
-                    if not await _check_gate(oe.gate, context):
-                        continue
-                except Exception:
-                    logger.exception('Gate check failed for %r', oe.evaluator)
-                    continue
-            gated.append(oe)
-
-        if gated:
-            # Dispatch evaluators in the background
+        # Dispatch all sampled evaluators to the background — gate checks happen there
+        if sampled:
             try:
                 loop = asyncio.get_running_loop()
-                task = loop.create_task(_dispatch_evaluators(gated, context, span_reference, config))
+                task = loop.create_task(_dispatch_evaluators(sampled, context, span_reference, config))
                 _background_tasks.add(task)
                 task.add_done_callback(_background_tasks.discard)
             except RuntimeError:  # pragma: no cover
@@ -699,35 +696,18 @@ def _wrap_sync(
         # Extract span reference
         span_reference = _extract_span_reference(span)
 
-        # Check gates synchronously (async gates not supported for sync functions)
-        gated: list[OnlineEvaluator] = []
-        for oe in sampled:
-            if oe.gate is not None:
-                try:
-                    gate_result = oe.gate(context)
-                    if inspect.iscoroutine(gate_result):
-                        gate_result.close()  # prevent RuntimeWarning for unawaited coroutine
-                        logger.warning('Async gate on sync function %r — skipping evaluator %r', func, oe.evaluator)
-                        continue
-                    if not gate_result:
-                        continue
-                except Exception:
-                    logger.exception('Gate check failed for %r', oe.evaluator)
-                    continue
-            gated.append(oe)
-
-        if gated:
-            # Try to dispatch to an existing event loop, or start a background thread
+        # Dispatch all sampled evaluators to the background — gate checks happen there
+        if sampled:
             try:
                 loop = asyncio.get_running_loop()
-                task = loop.create_task(_dispatch_evaluators(gated, context, span_reference, config))
+                task = loop.create_task(_dispatch_evaluators(sampled, context, span_reference, config))
                 _background_tasks.add(task)
                 task.add_done_callback(_background_tasks.discard)
             except RuntimeError:
                 # No running loop — run in a background thread
                 def _thread_target() -> None:
                     try:
-                        asyncio.run(_dispatch_evaluators(gated, context, span_reference, config))
+                        asyncio.run(_dispatch_evaluators(sampled, context, span_reference, config))
                     finally:
                         _background_threads.discard(thread)
 

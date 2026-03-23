@@ -1124,23 +1124,25 @@ async def test_sync_gate():
     assert len(collector.calls) == 1
 
 
-async def test_sync_async_gate_skipped():
-    """Async gate on sync function is skipped with warning."""
+async def test_sync_async_gate_works():
+    """Async gate on sync function works — gates run in background async context."""
     collector = Collector()
     config = OnlineEvalConfig(default_sink=collector)
 
     async def async_gate(ctx: EvaluatorContext[Any, Any, Any]) -> bool:
-        return True  # pragma: no cover — gate is never awaited (that's the point of the test)
+        return ctx.output > 10
 
     @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), gate=async_gate))
     def my_func(x: int) -> int:
         return x
 
-    result = my_func(42)
-    assert result == 42
-
+    my_func(5)  # gate blocks (output=5 < 10)
     await wait_for_evaluations()
-    assert len(collector.calls) == 0  # skipped because gate is async
+    assert len(collector.calls) == 0
+
+    my_func(20)  # gate allows (output=20 > 10)
+    await wait_for_evaluations()
+    assert len(collector.calls) == 1
 
 
 async def test_sync_gate_exception():
