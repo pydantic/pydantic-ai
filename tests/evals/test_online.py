@@ -21,6 +21,7 @@ with try_import() as imports_successful:
         OnlineEvalConfig,
         OnlineEvaluator,
         SpanReference,
+        _extract_span_reference,  # pyright: ignore[reportPrivateUsage]
         configure,
         disable_evaluation,
         evaluate,
@@ -1125,3 +1126,60 @@ async def test_sync_gate_exception():
 
     await wait_for_evaluations()
     assert len(collector.calls) == 0
+
+
+# ============================================================================
+# Test _extract_span_reference
+# ============================================================================
+
+
+async def test_extract_span_reference_with_logfire_span():
+    """_extract_span_reference works with LogfireSpan (which is a ReadableSpan)."""
+    from pydantic_evals._utils import logfire_span
+
+    with logfire_span('test') as span:
+        ref = _extract_span_reference(span)
+
+    # LogfireSpan always has get_span_context(); when logfire is not configured,
+    # trace_id and span_id are 0, so ref should be None.
+    # When logfire IS configured, ref should be a SpanReference.
+    # Either way, the method should not error.
+    if ref is not None:
+        assert isinstance(ref, SpanReference)
+        assert len(ref.trace_id) == 32
+        assert len(ref.span_id) == 16
+
+
+async def test_extract_span_reference_with_otel_span():
+    """_extract_span_reference works with a standard OTel SDK span."""
+    from opentelemetry.sdk.trace import TracerProvider
+
+    provider = TracerProvider()
+    tracer = provider.get_tracer('test')
+
+    with tracer.start_as_current_span('test') as span:
+        ref = _extract_span_reference(span)
+
+    assert ref is not None
+    assert isinstance(ref, SpanReference)
+    assert len(ref.trace_id) == 32
+    assert len(ref.span_id) == 16
+
+
+async def test_extract_span_reference_with_no_context():
+    """_extract_span_reference returns None for objects without get_span_context."""
+    assert _extract_span_reference(None) is None
+    assert _extract_span_reference('not a span') is None
+    assert _extract_span_reference(42) is None
+
+
+async def test_extract_span_reference_with_zero_ids():
+    """_extract_span_reference returns None when trace_id and span_id are zero."""
+
+    class FakeSpan:
+        def get_span_context(self):
+            from opentelemetry.trace import SpanContext
+
+            return SpanContext(trace_id=0, span_id=0, is_remote=False)
+
+    assert _extract_span_reference(FakeSpan()) is None

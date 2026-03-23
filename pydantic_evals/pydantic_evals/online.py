@@ -723,20 +723,28 @@ def _wrap_sync(
 
 
 def _extract_span_reference(span: Any) -> SpanReference | None:
-    """Extract a SpanReference from a logfire span, if available."""
+    """Extract a SpanReference from an OTel-compatible span, if available.
+
+    Works with any span that implements `get_span_context()` (the standard
+    OpenTelemetry Span interface), including LogfireSpan, OTel SDK spans,
+    and any other ReadableSpan implementation.
+
+    Returns None if the span doesn't have a valid context (e.g., when
+    instrumentation is not configured and trace/span IDs are zero).
+    """
+    get_span_context = getattr(span, 'get_span_context', None)
+    if get_span_context is None:
+        return None
     try:
-        # logfire spans expose the underlying OTel span context
-        otel_span = getattr(span, '_span', None) or getattr(span, 'span', None)
-        if otel_span is not None:
-            ctx = otel_span.get_span_context()
-            if ctx is not None and ctx.trace_id and ctx.span_id:
-                return SpanReference(
-                    trace_id=format(ctx.trace_id, '032x'),
-                    span_id=format(ctx.span_id, '016x'),
-                )
+        ctx = get_span_context()
     except Exception:  # pragma: no cover
-        pass
-    return None  # pragma: lax no cover
+        return None
+    if ctx is not None and ctx.trace_id and ctx.span_id:
+        return SpanReference(
+            trace_id=format(ctx.trace_id, '032x'),
+            span_id=format(ctx.span_id, '016x'),
+        )
+    return None
 
 
 # ============================================================================
