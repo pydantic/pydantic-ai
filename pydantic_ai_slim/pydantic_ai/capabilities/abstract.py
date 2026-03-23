@@ -6,9 +6,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic
 
 from pydantic_ai._instructions import AgentInstructions
-from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse, ToolCallPart
-from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 
@@ -18,19 +17,6 @@ if TYPE_CHECKING:
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
     from pydantic_graph import End
-
-
-@dataclass
-class ModelRequestContext:
-    """Context for model request hooks.
-
-    Wrapping these parameters in a dataclass instead of a tuple makes the signature
-    future-proof: new fields can be added without breaking existing implementations.
-    """
-
-    messages: list[ModelMessage]
-    model_settings: ModelSettings | None
-    model_request_parameters: ModelRequestParameters
 
 
 @dataclass

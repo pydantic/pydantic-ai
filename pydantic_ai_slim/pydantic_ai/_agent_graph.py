@@ -21,7 +21,8 @@ from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._tool_manager import ToolManager, ValidatedToolCall
 from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, now_utc
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
-from pydantic_ai.capabilities.abstract import AbstractCapability, ModelRequestContext
+from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.models import ModelRequestContext
 from pydantic_graph import BaseNode, GraphRunContext
 from pydantic_graph.beta import Graph, GraphBuilder
 from pydantic_graph.nodes import End, NodeRunEndT
@@ -655,13 +656,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         model_settings = ctx.deps.get_model_settings(run_context) or ModelSettings()
         run_context.model_settings = model_settings
 
+        request_context = ModelRequestContext(
+            messages=ctx.state.message_history[:],
+            model_settings=model_settings,
+            model_request_parameters=model_request_parameters,
+        )
+        self.last_request_context = request_context
         request_context = await ctx.deps.root_capability.before_model_request(
             run_context,
-            ModelRequestContext(
-                messages=ctx.state.message_history[:],
-                model_settings=model_settings,
-                model_request_parameters=model_request_parameters,
-            ),
+            request_context,
         )
         self.last_request_context = request_context
         messages = request_context.messages
@@ -716,18 +719,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         response.run_id = response.run_id or ctx.state.run_id
 
         run_context = build_run_context(ctx)
-        request_context = self.last_request_context or ModelRequestContext(
-            messages=ctx.state.message_history[:],
-            model_settings=ctx.deps.get_model_settings(run_context),
-            model_request_parameters=models.ModelRequestParameters(
-                function_tools=[],
-                builtin_tools=[],
-                output_mode='text',
-                output_tools=[],
-                output_object=None,
-                allow_text_output=True,
-            ),
-        )
+        assert self.last_request_context is not None, 'last_request_context must be set before _finish_handling'
+        request_context = self.last_request_context
         run_context.model_settings = request_context.model_settings
         response = await ctx.deps.root_capability.after_model_request(
             run_context, request_context=request_context, response=response
