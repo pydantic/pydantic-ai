@@ -1070,7 +1070,7 @@ def _extract_usage(
 
     # Add cached prompt tokens if available (optional attribute)
     if usage_obj.cached_prompt_text_tokens:
-        usage_data['cache_read_tokens'] = usage_obj.cached_prompt_text_tokens
+        usage_data['cached_prompt_text_tokens'] = usage_obj.cached_prompt_text_tokens
 
     # Aggregate server-side tools used by PydanticAI builtin tool name
     if usage_obj.server_side_tools_used:
