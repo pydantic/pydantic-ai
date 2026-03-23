@@ -1126,6 +1126,7 @@ async def test_google_model_web_search_tool(allow_model_requests: None, google_p
     agent = Agent(m, instructions='You are a helpful chatbot.', builtin_tools=[WebSearchTool()])
 
     result = await agent.run('What is the weather in San Francisco today?')
+    tool_call_id = IsStr()
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -1144,7 +1145,7 @@ async def test_google_model_web_search_tool(allow_model_requests: None, google_p
                     BuiltinToolCallPart(
                         tool_name='web_search',
                         args={'queries': ['weather in San Francisco today']},
-                        tool_call_id=IsStr(),
+                        tool_call_id=tool_call_id,
                         provider_name='google-gla',
                     ),
                     BuiltinToolReturnPart(
@@ -1166,7 +1167,7 @@ async def test_google_model_web_search_tool(allow_model_requests: None, google_p
                                 'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFywixFZicmDjijfhfLNw8ya7XdqWR31aJp8CHyULLelG8bujH1TuqeP9RAhK6Pcm1qz11ujm2yM7gM5bJXDFsZwbsubub4cnUp5ixRaloJcjVrHkyd5RHblhkDDxHGiREV9BcuqeJovdr8qhtrCKMcvJk=',
                             },
                         ],
-                        tool_call_id=IsStr(),
+                        tool_call_id=tool_call_id,
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
                     ),
@@ -1248,7 +1249,7 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                                 'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEDXOJgWay-hTPi0eqxph51YPv_mX15kug_vYdV3Ybx19gm4XsIFdbDN3OhP8tHbKJDheVySvDaxmXZK2lsEJlHITYidz_uKAiY38_peXIPv0Kw4LvBYLWUh4SPwHBLgHAR3CsLQo3293ZbIXZ_3A==',
                             },
                         ],
-                        tool_call_id=IsStr(),
+                        tool_call_id=tool_call_id,
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
                     ),
@@ -1293,23 +1294,227 @@ async def test_google_model_maps_tool(allow_model_requests: None, google_provide
     agent = Agent(m, instructions='You are a helpful assistant.', builtin_tools=[GoogleMapsTool()])
 
     result = await agent.run('What are some highly rated coffee shops near Union Square in San Francisco?')
-    messages = result.all_messages()
-
-    # With VCR cassette, the response is deterministic - assert maps grounding parts are always present
-    model_response = next(msg for msg in messages if isinstance(msg, ModelResponse))
-    maps_call = next(
-        (p for p in model_response.parts if isinstance(p, BuiltinToolCallPart) and p.tool_name == 'google_maps'),
-        None,
-    )
-    maps_return = next(
-        (p for p in model_response.parts if isinstance(p, BuiltinToolReturnPart) and p.tool_name == 'google_maps'),
-        None,
-    )
-    # VCR cassette guarantees deterministic response — maps grounding parts must be present
-    assert maps_call is not None, 'Expected BuiltinToolCallPart for google_maps in VCR response'
-    assert maps_return is not None, 'Expected BuiltinToolReturnPart for google_maps in VCR response'
-    assert maps_call.tool_call_id == maps_return.tool_call_id
     assert isinstance(result.output, str)
+    web_search_tool_call_id = IsStr()
+    tool_call_id = IsStr()
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What are some highly rated coffee shops near Union Square in San Francisco?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions='You are a helpful assistant.',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={'queries': ['coffee shops near Union Square San Francisco']},
+                        tool_call_id=web_search_tool_call_id,
+                        provider_name='google-gla',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content=[],
+                        tool_call_id=web_search_tool_call_id,
+                        timestamp=IsDatetime(),
+                        provider_name='google-gla',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='google_maps',
+                        args={},
+                        tool_call_id=tool_call_id,
+                        provider_name='google-gla',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='google_maps',
+                        content=[
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJh10OvJGAhYAR3PXa3UKPE5A',
+                                'text': None,
+                                'title': 'Scullery',
+                                'uri': 'https://maps.google.com/?cid=10381799083371853276',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJoTMb3PKAhYARsXkQt469sBw',
+                                'text': None,
+                                'title': 'The Coffee Movement',
+                                'uri': 'https://maps.google.com/?cid=2067360649617373617',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJP4XqxHaBhYARyv4l-nqkDIo',
+                                'text': None,
+                                'title': 'Mellis Cafe',
+                                'uri': 'https://maps.google.com/?cid=9947506525044342474',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJd9gqk42AhYARDYc6gRcfCms',
+                                'text': None,
+                                'title': 'Fresh Brew Coffee',
+                                'uri': 'https://maps.google.com/?cid=7713011497638201101',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJL73LQQCBhYARQEwD-1oshk4',
+                                'text': None,
+                                'title': 'Bella Cafe',
+                                'uri': 'https://maps.google.com/?cid=5658258751107583040',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJ74kEx4-AhYAR4fCWv7CI6h4',
+                                'text': None,
+                                'title': 'Taylor Street Coffee Shop',
+                                'uri': 'https://maps.google.com/?cid=2227743258398093537',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJO4z2So-AhYARIJ9Y5RRTcQ0',
+                                'text': None,
+                                'title': 'Caffe Central',
+                                'uri': 'https://maps.google.com/?cid=968646744073608992',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJkXXugh2BhYAR2nQNOhnYDmA',
+                                'text': None,
+                                'title': 'Home Coffee Roasters',
+                                'uri': 'https://maps.google.com/?cid=6921707280174773466',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJTebs7YWAhYARum8zCZd1gao',
+                                'text': None,
+                                'title': 'Cable Car CoffeeSF',
+                                'uri': 'https://maps.google.com/?cid=12286230549998301114',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJmRBAGYh_j4ARuOFprBGKIxI',
+                                'text': None,
+                                'title': 'Telescope Coffee',
+                                'uri': 'https://maps.google.com/?cid=1307040125379273144',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJf-V9OIKAhYARu8bBG2S6RME',
+                                'text': None,
+                                'title': 'Sightglass Coffee',
+                                'uri': 'https://maps.google.com/?cid=13926460886861596347',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJz3x2x8mBhYARLWezcHMmSYI',
+                                'text': None,
+                                'title': 'Metropolitan Coffee',
+                                'uri': 'https://maps.google.com/?cid=9388077175484409645',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJJeHer46AhYAR9LikMlCe1ug',
+                                'text': None,
+                                'title': 'Sutter Street Cafe',
+                                'uri': 'https://maps.google.com/?cid=16777771529099589876',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJ3da1WXCBhYAR7ye5adJwtqk',
+                                'text': None,
+                                'title': 'Bluestone Lane Theatre District Coffee Shop',
+                                'uri': 'https://maps.google.com/?cid=12229085887190345711',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJ3UFdD2KAhYARYOHf4j7DshM',
+                                'text': None,
+                                'title': 'Blue Bottle Coffee',
+                                'uri': 'https://maps.google.com/?cid=1419411507436839264',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJC2jb8DWBhYARo4AAX78U50c',
+                                'text': None,
+                                'title': 'The Coffee Berry SF',
+                                'uri': 'https://maps.google.com/?cid=5181132708478222499',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJL86gDJmBhYARjQPJ6NsYQZQ',
+                                'text': None,
+                                'title': 'Delah Coffee',
+                                'uri': 'https://maps.google.com/?cid=10682847123881919373',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJj59sltB_j4ARhSZ6rQ4tKKU',
+                                'text': None,
+                                'title': 'Cento Coffee',
+                                'uri': 'https://maps.google.com/?cid=11900811556389791365',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJTTq11ZmBhYARmN1Y-YkucFs',
+                                'text': None,
+                                'title': 'Juniper',
+                                'uri': 'https://maps.google.com/?cid=6588817424971783576',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJ20Ta-TmBhYAR0sHU-G-fzs8',
+                                'text': None,
+                                'title': 'Golden Goat Coffee',
+                                'uri': 'https://maps.google.com/?cid=14974081114318356946',
+                            },
+                        ],
+                        tool_call_id=tool_call_id,
+                        timestamp=IsDatetime(),
+                        provider_name='google-gla',
+                    ),
+                    TextPart(
+                        content="""\
+Here are some highly rated coffee shops near Union Square in San Francisco:
+
+*   **Scullery** is a petite neighborhood coffee shop offering coffee, tea, toast, and pastries, with a rating of 4.7 stars from 552 reviews.
+*   **The Coffee Movement** is a tiny coffee shop with outdoor benches, known for high-quality espresso, lattes, and seasonal drinks, holding a 4.7-star rating from 1290 reviews.
+*   **Mellis Cafe** is a relaxed breakfast eatery serving bagels, coffee, sandwiches, and more, with a 4.8-star rating from 527 reviews.
+*   **Fresh Brew Coffee** is a snug cafe offering American and Vietnamese sandwiches, coffee drinks, and breakfast bites, boasting a 4.8-star rating from 793 reviews.
+*   **Bella Cafe** has a 4.7-star rating from 107 reviews and offers coffee, desserts, and even cocktails.
+*   **Taylor Street Coffee Shop**, a small and bustling spot, serves traditional American breakfast and lunch, including coffee, and has a rating of 4.6 stars from 1725 reviews.
+*   **Caffe Central** is a fashionable coffee house that uses organic, micro-roasted beans in its brews, with a rating of 4.5 stars from 1464 reviews.
+*   **Home Coffee Roasters** is a stylish coffee shop known for espresso, creative latte art, and avocado toast, with a 4.5-star rating from 718 reviews.\
+"""
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=22,
+                    output_tokens=716,
+                    details={
+                        'thoughts_tokens': 235,
+                        'tool_use_prompt_tokens': 121,
+                        'text_prompt_tokens': 22,
+                        'text_tool_use_prompt_tokens': 121,
+                    },
+                ),
+                model_name='gemini-2.5-flash',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 @pytest.mark.vcr
@@ -1321,23 +1526,220 @@ async def test_google_model_maps_tool_with_location(allow_model_requests: None, 
     )
 
     result = await agent.run('Find me a good pizza place near here.')
-    messages = result.all_messages()
-
-    # With VCR cassette, the response is deterministic — assert maps grounding is present
-    model_response = next(msg for msg in messages if isinstance(msg, ModelResponse))
-    maps_call = next(
-        (p for p in model_response.parts if isinstance(p, BuiltinToolCallPart) and p.tool_name == 'google_maps'),
-        None,
-    )
-    maps_return = next(
-        (p for p in model_response.parts if isinstance(p, BuiltinToolReturnPart) and p.tool_name == 'google_maps'),
-        None,
-    )
-    # VCR cassette guarantees deterministic response — maps grounding parts must be present
-    assert maps_call is not None, 'Expected BuiltinToolCallPart for google_maps in VCR response'
-    assert maps_return is not None, 'Expected BuiltinToolReturnPart for google_maps in VCR response'
-    assert maps_call.tool_call_id == maps_return.tool_call_id
     assert isinstance(result.output, str)
+    web_search_tool_call_id = IsStr()
+    tool_call_id = IsStr()
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Find me a good pizza place near here.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={'queries': ['pizza place near me']},
+                        tool_call_id=web_search_tool_call_id,
+                        provider_name='google-gla',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content=[],
+                        tool_call_id=web_search_tool_call_id,
+                        timestamp=IsDatetime(),
+                        provider_name='google-gla',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='google_maps',
+                        args={},
+                        tool_call_id=tool_call_id,
+                        provider_name='google-gla',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='google_maps',
+                        content=[
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJKUfC29-BhYARU9YtRGpZZ5s',
+                                'text': None,
+                                'title': 'Yummy Pizza (Ofarrell)',
+                                'uri': 'https://maps.google.com/?cid=11198017311425287763',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJ7ymBV4SAhYARgSD86TcaTyQ',
+                                'text': None,
+                                'title': 'Halal Modena pizza',
+                                'uri': 'https://maps.google.com/?cid=2616338735976685697',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJlaytwp2BhYARgbDHNIYbPd8',
+                                'text': None,
+                                'title': 'Big Apple Pizza N Grill',
+                                'uri': 'https://maps.google.com/?cid=16086043707262349441',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJBdX8aYSAhYARCZaRBA5eGlA',
+                                'text': None,
+                                'title': 'Supremo Pizza',
+                                'uri': 'https://maps.google.com/?cid=5772029286727915017',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJE3fY7pSAhYAR_YgdwW0FPK8',
+                                'text': None,
+                                'title': 'Fresco Pizza Shawarma',
+                                'uri': 'https://maps.google.com/?cid=12626973424189540605',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJkV25rZaAhYARoj4Odxd8A5I',
+                                'text': None,
+                                'title': 'Irving Pizza',
+                                'uri': 'https://maps.google.com/?cid=10521389594691124898',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJme7OPZSAhYARGr0Gfccu2Oo',
+                                'text': None,
+                                'title': "Mustafio's Pizza",
+                                'uri': 'https://maps.google.com/?cid=16922327034175601946',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJkVLoONZ_j4ARx2vJ4umERnI',
+                                'text': None,
+                                'title': "Uncle Vito's Pizza",
+                                'uri': 'https://maps.google.com/?cid=8234415108760628167',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJRSaWbCB-j4ARjBp8ul5ONuM',
+                                'text': None,
+                                'title': 'Pizza Zone N Grill',
+                                'uri': 'https://maps.google.com/?cid=16372359664114604684',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJWzpoEFqBhYAR-aJMm4sGrMc',
+                                'text': None,
+                                'title': 'Union Square Pizza & Kitchen',
+                                'uri': 'https://maps.google.com/?cid=14387882106217603833',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJa0-vxJGAhYARWDlVhVwnmok',
+                                'text': None,
+                                'title': 'Milan Pizza',
+                                'uri': 'https://maps.google.com/?cid=9915280807936997720',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJAyOgwo2AhYARCCxZE4yahWU',
+                                'text': None,
+                                'title': 'Del Popolo',
+                                'uri': 'https://maps.google.com/?cid=7315423096143948808',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJW2MjXCSBhYARjytrcSshpuI',
+                                'text': None,
+                                'title': 'King of Gluten Free Pizza',
+                                'uri': 'https://maps.google.com/?cid=16331777569175841679',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJhxhwkomAhYAReZ8jCsmHd5U',
+                                'text': None,
+                                'title': 'Escape From New York Pizza',
+                                'uri': 'https://maps.google.com/?cid=10770226331408113529',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJdSi1MZGAhYARjEThAVgfyCE',
+                                'text': None,
+                                'title': 'Piccolo Italia',
+                                'uri': 'https://maps.google.com/?cid=2434230061442876556',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJo3JcWI-AhYAR-i7B7QujS_Q',
+                                'text': None,
+                                'title': "Abe's Pizza",
+                                'uri': 'https://maps.google.com/?cid=17603342840136543994',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJsX-W442AhYARIPlNz5rFS44',
+                                'text': None,
+                                'title': 'Parrot Pizzeria & Rotisserie',
+                                'uri': 'https://maps.google.com/?cid=10253506245332695328',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJmx3iW_GAhYARrlV9H2vyE-E',
+                                'text': None,
+                                'title': 'Golden Boy Pizza',
+                                'uri': 'https://maps.google.com/?cid=16218573224995018158',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJm_AHaZKAhYARwFzqP49IC4o',
+                                'text': None,
+                                'title': 'Gusto Pinsa Romana',
+                                'uri': 'https://maps.google.com/?cid=9947123982067719360',
+                            },
+                            {
+                                'place_answer_sources': None,
+                                'place_id': 'places/ChIJ8beMEuOBhYAR_82lwoNSvQ0',
+                                'text': None,
+                                'title': 'Pie Punks',
+                                'uri': 'https://maps.google.com/?cid=990038218951216639',
+                            },
+                        ],
+                        tool_call_id=tool_call_id,
+                        timestamp=IsDatetime(),
+                        provider_name='google-gla',
+                    ),
+                    TextPart(
+                        content="""\
+Here are a couple of good pizza places open near you right now:
+
+*   **Yummy Pizza (Ofarrell)** is rated 4.5 stars and is located 1.7 kilometers away (about an 8.3-minute drive). It's open until 4:00 AM today, so it will be closing soon.
+*   **Halal Modena pizza** is open 24 hours and has a rating of 4.2 stars. It is 1.3 kilometers away, which is about a 6.3-minute drive.\
+"""
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=10,
+                    output_tokens=2988,
+                    details={
+                        'thoughts_tokens': 2754,
+                        'tool_use_prompt_tokens': 101,
+                        'text_prompt_tokens': 10,
+                        'text_tool_use_prompt_tokens': 101,
+                    },
+                ),
+                model_name='gemini-2.5-flash',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 def test_google_maps_tool_partial_location_raises(google_provider: GoogleProvider) -> None:
