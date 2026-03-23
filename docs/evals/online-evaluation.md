@@ -11,7 +11,7 @@ Online evaluation is useful when you want to:
 - **Collect evaluation data** — build datasets from real traffic for offline analysis
 - **Control costs** — sample expensive LLM judges on a fraction of traffic while running cheap checks on everything
 
-For testing against curated datasets before deployment, use [offline evaluation](quick-start.md) with `Dataset.evaluate()` instead.
+For testing against curated datasets before deployment, use [offline evaluation](quick-start.md) with [`Dataset.evaluate()`][pydantic_evals.dataset.Dataset.evaluate] instead.
 
 ## Quick Start
 
@@ -81,7 +81,7 @@ The decorated function runs normally and returns immediately — evaluators exec
 
 ### OnlineEvaluator
 
-Different evaluators need different settings. A cheap heuristic should run on 100% of traffic; an expensive LLM judge might run on 1%. [`OnlineEvaluator`][pydantic_evals.online.OnlineEvaluator] wraps an `Evaluator` with per-evaluator configuration:
+Different evaluators need different settings. A cheap heuristic should run on 100% of traffic; an expensive LLM judge might run on 1%. [`OnlineEvaluator`][pydantic_evals.online.OnlineEvaluator] wraps an [`Evaluator`][pydantic_evals.evaluators.Evaluator] with per-evaluator configuration:
 
 ```python
 from dataclasses import dataclass
@@ -107,7 +107,7 @@ always_check = OnlineEvaluator(evaluator=IsHelpful(), sample_rate=1.0)
 # )
 ```
 
-When you pass a bare `Evaluator` to the `evaluate()` decorator, it's automatically wrapped in an `OnlineEvaluator` with the config's default sample rate.
+When you pass a bare [`Evaluator`][pydantic_evals.evaluators.Evaluator] to the [`evaluate()`][pydantic_evals.online.evaluate] decorator, it's automatically wrapped in an [`OnlineEvaluator`][pydantic_evals.online.OnlineEvaluator] with the config's default sample rate.
 
 ### OnlineEvalConfig
 
@@ -175,7 +175,7 @@ asyncio.run(main())
 
 The built-in [`CallbackSink`][pydantic_evals.online.CallbackSink] wraps any callable (sync or async) that accepts results, failures, and context. You can also pass a bare callable wherever a sink is expected — it's auto-wrapped in a `CallbackSink`.
 
-For custom sinks, implement the `EvaluationSink` protocol:
+For custom sinks, implement the [`EvaluationSink`][pydantic_evals.online.EvaluationSink] protocol:
 
 ```python
 from collections.abc import Sequence
@@ -397,7 +397,7 @@ The gate is checked **after** sampling, so it's only called for requests that we
 
 ## Sync Function Support
 
-The `evaluate()` decorator works with both async and sync functions:
+The [`evaluate()`][pydantic_evals.online.evaluate] decorator works with both async and sync functions:
 
 ```python
 import asyncio

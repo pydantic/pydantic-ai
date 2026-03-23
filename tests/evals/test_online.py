@@ -330,6 +330,7 @@ async def test_evaluate_decorator_async_preserves_signature():
 
     assert my_func.__name__ == 'my_func'
     assert my_func.__doc__ == 'My docstring.'
+    assert await my_func(42) == 42
 
 
 async def test_evaluate_decorator_multiple_evaluators():
@@ -1093,7 +1094,7 @@ async def test_sync_async_gate_skipped():
     config = OnlineEvalConfig(default_sink=collector)
 
     async def async_gate(ctx: EvaluatorContext[Any, Any, Any]) -> bool:
-        return True
+        return True  # pragma: no cover — gate is never awaited (that's the point of the test)
 
     @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), gate=async_gate))
     def my_func(x: int) -> int:

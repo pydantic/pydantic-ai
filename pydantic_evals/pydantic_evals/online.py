@@ -31,6 +31,7 @@ import functools
 import inspect
 import logging
 import random
+import threading
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import contextmanager
@@ -703,8 +704,6 @@ def _wrap_sync(
                 task.add_done_callback(_background_tasks.discard)
             except RuntimeError:
                 # No running loop — run in a background thread
-                import threading
-
                 thread = threading.Thread(
                     target=lambda: asyncio.run(_dispatch_evaluators(gated, context, span_reference, config)),
                     daemon=True,
@@ -730,7 +729,7 @@ def _extract_span_reference(span: Any) -> SpanReference | None:
                 )
     except Exception:  # pragma: no cover
         pass
-    return None
+    return None  # pragma: lax no cover
 
 
 # ============================================================================
