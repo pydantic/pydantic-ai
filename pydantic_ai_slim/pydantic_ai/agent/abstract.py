@@ -295,6 +295,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             # Drive via next() so wrap_node_run hooks fire for each node.
             node = agent_run.next_node
             while not isinstance(node, End):
+                # Handle wrap_run short-circuit: result is already available, skip the graph.
+                if agent_run.result is not None:
+                    break
                 if event_stream_handler is not None and (
                     self.is_model_request_node(node) or self.is_call_tools_node(node)
                 ):

@@ -1380,7 +1380,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                                 except BaseException as _wrap_exc:
                                     # Attach wrap_run's own errors as context so they're
                                     # visible in tracebacks (but don't mask the original).
-                                    if _wrap_exc is not _run_error:
+                                    # Skip CancelledError: it's expected cancellation propagation,
+                                    # and setting __context__ on it causes hangs on Python 3.10.
+                                    if (
+                                        not isinstance(_wrap_exc, asyncio.CancelledError)
+                                        and _wrap_exc is not _run_error
+                                    ):
                                         _run_error.__context__ = _wrap_exc
                             elif (
                                 not _wrap_task.done()

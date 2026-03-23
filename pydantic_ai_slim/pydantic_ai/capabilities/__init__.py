@@ -1,7 +1,5 @@
 from typing import Any
 
-from typing_extensions import deprecated
-
 from .abstract import (
     AbstractCapability,
     AgentNode,
@@ -29,10 +27,6 @@ from .prepare_tools import PrepareTools
 from .toolset import Toolset
 from .web_fetch import WebFetch
 from .web_search import WebSearch
-
-BuiltinToolCapability = deprecated('BuiltinToolCapability is deprecated, use BuiltinOrLocalTool instead')(
-    BuiltinOrLocalTool
-)
 
 CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
@@ -66,7 +60,6 @@ __all__ = [
     'WrapToolValidateHandler',
     'BuiltinTool',
     'BuiltinOrLocalTool',
-    'BuiltinToolCapability',
     'CAPABILITY_TYPES',
     'FastMCP',
     'ImageGeneration',

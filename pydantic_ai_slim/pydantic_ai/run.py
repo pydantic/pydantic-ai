@@ -177,6 +177,16 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         self,
     ) -> AsyncIterator[_agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]]:
         """Provide async-iteration over the nodes in the agent run."""
+        import warnings
+
+        if self.ctx.deps.root_capability.has_wrap_node_run:
+            warnings.warn(
+                'A capability has `wrap_node_run` hooks, but bare `async for node in agent_run` '
+                'does not fire them. Use `agent_run.next(node)` to advance the run, or use '
+                '`agent.run()` which drives via `next()` automatically.',
+                UserWarning,
+                stacklevel=2,
+            )
         return self
 
     async def __anext__(
