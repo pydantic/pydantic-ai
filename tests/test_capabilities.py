@@ -4161,7 +4161,7 @@ class TestHooksCapability:
         @hooks.before_model_request(timeout=0.01)
         async def slow_hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
             await asyncio.sleep(10)
-            return request_context
+            return request_context  # pragma: no cover
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
         with pytest.raises(HookTimeoutError) as exc_info:
@@ -4176,11 +4176,18 @@ class TestHooksCapability:
         hooks = Hooks()
         assert hooks.has_wrap_node_run is False
 
+        nodes_seen: list[str] = []
+
         @hooks.wrap_node_run
         async def wrap(ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+            nodes_seen.append(type(node).__name__)
             return await handler(node)
 
         assert hooks.has_wrap_node_run is True
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert len(nodes_seen) > 0
 
     async def test_composition_with_other_capabilities(self):
         from pydantic_ai.capabilities.hooks import Hooks
@@ -4239,6 +4246,46 @@ class TestHooksCapability:
             return request_context
 
         assert repr(hooks) == "Hooks({'before_model_request': 1})"
+
+        # Verify the registered hook actually works
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+
+    async def test_on_model_request_error_reraise(self):
+        """Error hooks that re-raise propagate the error to the caller."""
+        from pydantic_ai.capabilities.hooks import Hooks
+
+        hooks = Hooks()
+
+        @hooks.on_model_request_error
+        async def log_and_reraise(
+            ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            raise error
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[hooks])
+        with pytest.raises(RuntimeError, match='model exploded'):
+            await agent.run('hello')
+
+    async def test_on_run_error_reraise(self):
+        """on_run_error hooks that re-raise propagate the error."""
+        from pydantic_ai.capabilities.hooks import Hooks
+
+        hooks = Hooks()
+
+        @hooks.on_run_error
+        async def log_and_reraise(ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            raise error
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[hooks])
+        with pytest.raises(RuntimeError, match='model exploded'):
+            await agent.run('hello')
 
     async def test_on_run_error_recovery(self):
         from pydantic_ai.capabilities.hooks import Hooks
