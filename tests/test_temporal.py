@@ -420,10 +420,6 @@ async def test_complex_agent_run_in_workflow(
                 obj[k] = None
             elif isinstance(v, dict):
                 _strip_volatile_fields(cast(dict[str, Any], v))
-            elif isinstance(v, list):
-                for item in cast(list[Any], v):
-                    if isinstance(item, dict):
-                        _strip_volatile_fields(cast(dict[str, Any], item))
 
     assert root_span is not None
     _normalize_json_spans(root_span)

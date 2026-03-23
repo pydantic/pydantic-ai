@@ -1733,6 +1733,28 @@ class TestStreamingHooks:
             output = await stream.get_output()
         assert output == 'skipped in stream'
 
+    async def test_skip_model_request_from_wrap_model_request_streaming(self):
+        """SkipModelRequest raised inside wrap_model_request during streaming is handled."""
+
+        @dataclass
+        class WrapSkipCap(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: Any,
+            ) -> ModelResponse:
+                raise SkipModelRequest(ModelResponse(parts=[TextPart(content='wrap-skipped in stream')]))
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[WrapSkipCap()],
+        )
+        async with agent.run_stream('hello') as stream:
+            output = await stream.get_output()
+        assert output == 'wrap-skipped in stream'
+
     async def test_wrap_model_request_streaming(self):
         cap = LoggingCapability()
         agent = Agent(
@@ -2212,6 +2234,25 @@ class TestWrapNodeRunHook:
                 node = await agent_run.next(node)
 
         assert cap.nodes == ['UserPromptNode', 'ModelRequestNode', 'CallToolsNode']
+
+    async def test_bare_async_for_warns_with_wrap_node_run(self):
+        """Using bare async for on iter() warns when a capability has wrap_node_run."""
+        import warnings
+
+        @dataclass
+        class NodeObserverCap(AbstractCapability[Any]):
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                return await handler(node)
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[NodeObserverCap()])
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always')
+            async with agent.iter('hello') as agent_run:
+                async for _node in agent_run:
+                    pass
+        assert len(w) == 1
+        assert 'wrap_node_run' in str(w[0].message)
 
     async def test_works_with_manual_next(self):
         """wrap_node_run fires when using manual next() driving."""
