@@ -1386,7 +1386,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                                         not isinstance(_wrap_exc, asyncio.CancelledError)
                                         and _wrap_exc is not _run_error
                                     ):
-                                        _run_error.__context__ = _wrap_exc
+                                        _run_error.__context__ = _wrap_exc  # pragma: no cover — only fires for bugs in wrap_run implementations
                             elif (
                                 not _wrap_task.done()
                             ):  # pragma: no branch — _run_done.set() can't complete _wrap_task synchronously

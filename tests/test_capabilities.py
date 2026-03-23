@@ -2291,7 +2291,7 @@ class TestWrapNodeRunHook:
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
             async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
-                return await handler(node)
+                return await handler(node)  # pragma: no cover — bare async for doesn't call this
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[NodeObserverCap()])
 
@@ -3638,7 +3638,9 @@ class TestRunErrorHooks:
                     self.log.append('wrap_run:caught')
                     return AgentRunResult(output='wrap_recovered')
 
-            async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            async def on_run_error(  # pragma: no cover — verifying this is NOT called
+                self, ctx: RunContext[Any], *, error: BaseException
+            ) -> AgentRunResult[Any]:
                 self.log.append('on_run_error')
                 raise error
 
@@ -3756,6 +3758,45 @@ class TestModelRequestErrorHooks:
         await agent.run('hello')
         assert 'on_model_request_error' not in cap.log
 
+    async def test_default_on_model_request_error_reraises(self):
+        """Default on_model_request_error re-raises, exercised with a minimal capability."""
+
+        @dataclass
+        class MinimalCap(AbstractCapability[Any]):
+            def get_instructions(self):
+                return 'Be helpful.'
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[MinimalCap()])
+        with pytest.raises(RuntimeError, match='model exploded'):
+            await agent.run('hello')
+
+    async def test_default_on_model_request_error_reraises_streaming(self):
+        """Default on_model_request_error re-raises in streaming path."""
+
+        @dataclass
+        class MinimalCap(AbstractCapability[Any]):
+            def get_instructions(self):
+                return 'Be helpful.'
+
+        async def failing_stream(
+            messages: list[ModelMessage], info: AgentInfo
+        ) -> AsyncIterator[str]:
+            raise RuntimeError('stream exploded')
+            yield ''  # pragma: no cover
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')  # pragma: no cover
+
+        agent = Agent(
+            FunctionModel(failing_model, stream_function=failing_stream), capabilities=[MinimalCap()]
+        )
+        with pytest.raises(RuntimeError, match='stream exploded'):
+            async with agent.run_stream('hello'):
+                pass
+
 
 # --- Tool validate error hook tests ---
 
@@ -3838,6 +3879,43 @@ class TestToolValidateErrorHooks:
         assert received_name == 'recovered-name'
         assert 'hello recovered-name' in result.output
 
+    async def test_default_on_tool_validate_error_reraises(self):
+        """The default on_tool_validate_error re-raises, exercised with a minimal capability."""
+
+        @dataclass
+        class MinimalCap(AbstractCapability[Any]):
+            def get_instructions(self):
+                return 'Be helpful.'
+
+        call_count = 0
+
+        def bad_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return make_text_response(f'got: {part.content}')
+            if info.function_tools:
+                tool = info.function_tools[0]
+                if call_count <= 1:
+                    return ModelResponse(
+                        parts=[ToolCallPart(tool_name=tool.name, args='{"wrong": 1}', tool_call_id='call-1')]
+                    )
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=tool.name, args='{"name": "correct"}', tool_call_id='call-2')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        agent = Agent(FunctionModel(bad_args_model), capabilities=[MinimalCap()])
+
+        @agent.tool_plain
+        def greet(name: str) -> str:
+            return f'hello {name}'
+
+        result = await agent.run('greet someone')
+        assert 'hello correct' in result.output
+
 
 # --- Tool execute error hook tests ---
 
@@ -3899,3 +3977,22 @@ class TestToolExecuteErrorHooks:
 
         result = await agent.run('call tool')
         assert 'fallback result' in result.output
+
+    async def test_default_on_tool_execute_error_reraises(self):
+        """The default on_tool_execute_error just re-raises, exercised with a minimal capability."""
+
+        @dataclass
+        class MinimalCap(AbstractCapability[Any]):
+            """Capability that doesn't override error hooks."""
+
+            def get_instructions(self):
+                return 'Be helpful.'
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[MinimalCap()])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            raise ValueError('tool failed')
+
+        with pytest.raises(ValueError, match='tool failed'):
+            await agent.run('call the tool')
