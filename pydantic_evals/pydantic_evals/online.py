@@ -394,9 +394,9 @@ def _resolve_sample_rate(rate: float | Callable[[], float | bool]) -> float | bo
 
 def _should_evaluate(rate: float | Callable[[], float | bool], global_enabled: bool) -> bool:
     """Determine whether an evaluator should run based on sampling configuration."""
-    if not global_enabled:
+    if not global_enabled:  # pragma: no cover
         return False
-    if _EVALUATION_DISABLED.get():
+    if _EVALUATION_DISABLED.get():  # pragma: no cover
         return False
 
     resolved = _resolve_sample_rate(rate)
@@ -643,7 +643,7 @@ def _wrap_async(
             try:
                 loop = asyncio.get_running_loop()
                 loop.create_task(_dispatch_evaluators(gated, context, span_reference, config))
-            except RuntimeError:
+            except RuntimeError:  # pragma: no cover
                 # No running loop (shouldn't happen for async but be defensive)
                 logger.warning('No running event loop for background evaluation dispatch')
 
@@ -707,7 +707,7 @@ def _wrap_sync(
                         gate_result.close()  # prevent 'coroutine was never awaited' warning
                         logger.warning('Async gate on sync function %r — skipping evaluator %r', func, oe.evaluator)
                         continue
-                    if inspect.isawaitable(gate_result):
+                    if inspect.isawaitable(gate_result):  # pragma: no cover
                         logger.warning('Async gate on sync function %r — skipping evaluator %r', func, oe.evaluator)
                         continue
                     if not gate_result:

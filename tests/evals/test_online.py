@@ -1035,3 +1035,44 @@ async def test_sync_gate_exception(caplog: pytest.LogCaptureFixture):
     await asyncio.sleep(0.5)
     assert 'Gate check failed' in caplog.text
     assert len(collector.calls) == 0
+
+
+async def test_sync_disabled_evaluation():
+    """disable_evaluation() works with sync decorated functions."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(AlwaysTrue())
+    def my_func(x: int) -> int:
+        return x
+
+    with disable_evaluation():
+        result = my_func(42)
+        assert result == 42
+
+    await asyncio.sleep(0.1)
+    assert len(collector.calls) == 0
+
+
+async def test_sync_sample_rate_zero():
+    """sample_rate=0.0 skips evaluation for sync functions."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), sample_rate=0.0))
+    def my_func(x: int) -> int:
+        return x
+
+    my_func(42)
+    await asyncio.sleep(0.1)
+    assert len(collector.calls) == 0
+
+
+async def test_configure_metadata():
+    """configure() updates metadata on the global DEFAULT_CONFIG."""
+    original = DEFAULT_CONFIG.metadata
+    try:
+        configure(metadata={'env': 'test'})
+        assert DEFAULT_CONFIG.metadata == {'env': 'test'}
+    finally:
+        DEFAULT_CONFIG.metadata = original
