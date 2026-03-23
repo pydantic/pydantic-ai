@@ -502,8 +502,10 @@ Each lifecycle point has an `on_*_error` hook — the error counterpart to `afte
 
 ```
 before_X → wrap_X(handler)
-  ├─ success → after_X (modify result)
-  └─ failure → on_X_error (observe/transform/recover)
+  ├─ success ─────────→ after_X (modify result)
+  └─ failure → on_X_error
+        ├─ re-raise ──→ (error propagates, after_X not called)
+        └─ recover ───→ after_X (modify recovered result)
 ```
 
 Error hooks use **raise-to-propagate, return-to-recover** semantics:

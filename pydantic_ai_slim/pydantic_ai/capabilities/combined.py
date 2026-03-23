@@ -197,12 +197,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         node: _agent_graph.AgentNode[AgentDepsT, Any],
-        error: BaseException,
+        error: Exception,
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
         for capability in reversed(self.capabilities):
             try:
                 return await capability.on_node_run_error(ctx, node=node, error=error)
-            except BaseException as new_error:
+            except Exception as new_error:
                 error = new_error
         raise error
 

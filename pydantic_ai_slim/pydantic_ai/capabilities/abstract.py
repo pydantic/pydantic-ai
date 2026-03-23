@@ -279,7 +279,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         node: AgentNode[AgentDepsT],
-        error: BaseException,
+        error: Exception,
     ) -> NodeResult[AgentDepsT]:
         """Called when a graph node fails with an exception.
 

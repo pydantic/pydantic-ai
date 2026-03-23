@@ -1145,7 +1145,7 @@ class LoggingCapability(AbstractCapability[Any]):
         self.log.append(f'after_node_run:{type(node).__name__}')
         return result
 
-    async def on_node_run_error(self, ctx: RunContext[Any], *, node: Any, error: BaseException) -> Any:
+    async def on_node_run_error(self, ctx: RunContext[Any], *, node: Any, error: Exception) -> Any:
         self.log.append(f'on_node_run_error:{type(node).__name__}')
         raise error
 

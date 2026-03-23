@@ -299,6 +299,8 @@ class ToolManager(Generic[AgentDepsT]):
                 raise  # Control flow, not errors
             except Exception as e:
                 tool_result = await cap.on_tool_execute_error(ctx, call=call, args=args, error=e)
+                # Recovery succeeded — undo failed_tools marking from _raw_execute
+                self.failed_tools.discard(call.tool_name)
 
             # after_tool_execute
             tool_result = await cap.after_tool_execute(ctx, call=call, args=args, result=tool_result)
