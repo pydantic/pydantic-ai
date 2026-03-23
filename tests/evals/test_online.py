@@ -1043,6 +1043,32 @@ async def test_sink_exception_does_not_propagate():
 
 
 # ============================================================================
+# Test sync function called from async context
+# ============================================================================
+
+
+async def test_sync_function_from_async_context():
+    """Sync decorated function called from async context dispatches via create_task."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(AlwaysTrue())
+    def my_func(x: int) -> int:
+        return x * 2
+
+    result = my_func(21)
+    assert result == 42
+
+    await wait_for_evaluations()
+
+    assert len(collector.calls) == 1
+    results, _, ctx = collector.calls[0]
+    assert len(results) == 1
+    assert results[0].value is True
+    assert ctx.output == 42
+
+
+# ============================================================================
 # Test span reference extraction (through public API)
 # ============================================================================
 

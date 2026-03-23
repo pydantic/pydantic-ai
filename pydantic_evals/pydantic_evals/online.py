@@ -635,15 +635,14 @@ def _wrap_async(
         span_reference = _extract_span_reference(span)
 
         # Dispatch all sampled evaluators to the background — gate checks happen there
-        if sampled:
-            try:
-                loop = asyncio.get_running_loop()
-                task = loop.create_task(_dispatch_evaluators(sampled, context, span_reference, config))
-                _background_tasks.add(task)
-                task.add_done_callback(_background_tasks.discard)
-            except RuntimeError:  # pragma: no cover
-                # No running loop (shouldn't happen for async but be defensive)
-                logger.warning('No running event loop for background evaluation dispatch')
+        try:
+            loop = asyncio.get_running_loop()
+            task = loop.create_task(_dispatch_evaluators(sampled, context, span_reference, config))
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
+        except RuntimeError:  # pragma: no cover
+            # No running loop (shouldn't happen for async but be defensive)
+            logger.warning('No running event loop for background evaluation dispatch')
 
         return result
 
@@ -696,23 +695,22 @@ def _wrap_sync(
         span_reference = _extract_span_reference(span)
 
         # Dispatch all sampled evaluators to the background — gate checks happen there
-        if sampled:
-            try:
-                loop = asyncio.get_running_loop()
-                task = loop.create_task(_dispatch_evaluators(sampled, context, span_reference, config))
-                _background_tasks.add(task)
-                task.add_done_callback(_background_tasks.discard)
-            except RuntimeError:
-                # No running loop — run in a background thread
-                def _thread_target() -> None:
-                    try:
-                        asyncio.run(_dispatch_evaluators(sampled, context, span_reference, config))
-                    finally:
-                        _background_threads.discard(thread)
+        try:
+            loop = asyncio.get_running_loop()
+            task = loop.create_task(_dispatch_evaluators(sampled, context, span_reference, config))
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
+        except RuntimeError:
+            # No running loop — run in a background thread
+            def _thread_target() -> None:
+                try:
+                    asyncio.run(_dispatch_evaluators(sampled, context, span_reference, config))
+                finally:
+                    _background_threads.discard(thread)
 
-                thread = threading.Thread(target=_thread_target, daemon=True)
-                _background_threads.add(thread)
-                thread.start()
+            thread = threading.Thread(target=_thread_target, daemon=True)
+            _background_threads.add(thread)
+            thread.start()
 
         return result
 
