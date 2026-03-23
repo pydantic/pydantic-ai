@@ -99,12 +99,16 @@ class _HookSlot(Generic[_FuncT]):
             return self._dispatch(self.funcs, self._name, *args, **kwargs)
 
         # Bare decorator: @hooks.before_model_request
-        self.funcs.append(_HookEntry(first))
+        self.funcs.append(self._make_entry(first))
         return first
+
+    def _make_entry(self, func: _FuncT, *, timeout: float | None = None) -> _HookEntry[_FuncT]:
+        """Create a hook entry. Override in subclasses to change the entry type."""
+        return _HookEntry(func, timeout=timeout)
 
     def _make_decorator(self, *, timeout: float | None = None) -> Callable[[_FuncT], _FuncT]:
         def decorator(func: _FuncT) -> _FuncT:
-            self.funcs.append(_HookEntry(func, timeout=timeout))
+            self.funcs.append(self._make_entry(func, timeout=timeout))
             return func
 
         return decorator
@@ -123,24 +127,21 @@ class _ToolHookSlot(_HookSlot[_FuncT]):
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         if not args:
+            # Parameterized decorator: @hooks.before_tool_execute(tools=['x'], timeout=5)
             timeout = kwargs.get('timeout')
             tools = kwargs.get('tools')
             return self._make_tool_decorator(timeout=timeout, tools=tools)
+        # Delegate RunContext dispatch and bare-decorator to parent
+        return super().__call__(*args, **kwargs)
 
-        first = args[0]
-        if isinstance(first, RunContext):
-            if not self.funcs:
-                return self._default(*args, **kwargs)
-            return self._dispatch(self.funcs, self._name, *args, **kwargs)
-
-        # Bare decorator: @hooks.before_tool_execute
-        self.funcs.append(_ToolHookEntry(first))
-        return first
+    def _make_entry(self, func: _FuncT, *, timeout: float | None = None) -> _HookEntry[_FuncT]:
+        """Override to create _ToolHookEntry for bare decorators."""
+        return _ToolHookEntry(func, timeout=timeout)
 
     def _make_tool_decorator(
         self, *, timeout: float | None = None, tools: Sequence[str] | None = None
     ) -> Callable[[_FuncT], _FuncT]:
-        frozen_tools = frozenset(tools) if tools else None
+        frozen_tools = frozenset(tools) if tools is not None else None
 
         def decorator(func: _FuncT) -> _FuncT:
             self.funcs.append(_ToolHookEntry(func, timeout=timeout, tools=frozen_tools))
@@ -267,7 +268,11 @@ def _dispatch_wrap_stream(
     *,
     stream: AsyncIterable[Any],
 ) -> AsyncIterable[Any]:
-    """wrap_run_event_stream: chain async generators (sync return, not a coroutine)."""
+    """wrap_run_event_stream: chain async generators (sync return, not a coroutine).
+
+    Timeout is not supported for stream wrapper hooks because they are async
+    generators, not single coroutines.  Calls entry.func directly.
+    """
     for entry in reversed(entries):
         stream = entry.func(ctx, stream=stream)
     return stream
@@ -385,7 +390,6 @@ class Hooks(AbstractCapability[AgentDepsT]):
 
     # Event stream
     wrap_run_event_stream: _HookSlot[Callable[..., Any]]
-    on_event: _HookSlot[Callable[..., Any]]
 
     # Model request
     before_model_request: _HookSlot[Callable[..., Any]]
@@ -423,7 +427,6 @@ class Hooks(AbstractCapability[AgentDepsT]):
         on_node_run_error: Callable[..., Any] | None = None,
         # Event stream
         wrap_run_event_stream: Callable[..., Any] | None = None,
-        on_event: Callable[..., Any] | None = None,
         # Model request
         before_model_request: Callable[..., Any] | None = None,
         after_model_request: Callable[..., Any] | None = None,
@@ -464,7 +467,6 @@ class Hooks(AbstractCapability[AgentDepsT]):
 
         # Event stream
         self.wrap_run_event_stream = _HookSlot(_dispatch_wrap_stream, _noop_wrap_stream, 'wrap_run_event_stream')
-        self.on_event = _HookSlot(_dispatch_observe, _noop_observe, 'on_event')  # placeholder dispatch
 
         # Model request
         self.before_model_request = _HookSlot(
@@ -517,7 +519,6 @@ class Hooks(AbstractCapability[AgentDepsT]):
         _register_if_provided(self.wrap_node_run, wrap_node_run)
         _register_if_provided(self.on_node_run_error, on_node_run_error)
         _register_if_provided(self.wrap_run_event_stream, wrap_run_event_stream)
-        _register_if_provided(self.on_event, on_event)
         _register_if_provided(self.before_model_request, before_model_request)
         _register_if_provided(self.after_model_request, after_model_request)
         _register_if_provided(self.wrap_model_request, wrap_model_request)
@@ -565,7 +566,6 @@ _ALL_HOOK_NAMES: tuple[str, ...] = (
     'wrap_node_run',
     'on_node_run_error',
     'wrap_run_event_stream',
-    'on_event',
     'before_model_request',
     'after_model_request',
     'wrap_model_request',
