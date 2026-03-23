@@ -120,6 +120,18 @@ S = TypeVar('S')
 NoneType = type(None)
 
 
+@dataclasses.dataclass
+class _ResolvedSpec:
+    """Result of resolving an AgentSpec for use at run/override time."""
+
+    capability: CombinedCapability[Any] | None
+    instructions: list[str | _system_prompt.SystemPromptFunc[Any]]
+    model: str | None
+    model_settings: ModelSettings | None
+    metadata: dict[str, Any] | None
+    name: str | None
+
+
 @dataclasses.dataclass(init=False)
 class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     """Class for defining "agents" - a way to have a specific type of "conversation" with an LLM.
@@ -473,7 +485,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_model_settings: ContextVar[_utils.Option[AgentModelSettings[AgentDepsT]]] = ContextVar(
             '_override_model_settings', default=None
         )
-
+        self._override_root_capability: ContextVar[_utils.Option[CombinedCapability[AgentDepsT]]] = ContextVar(
+            '_override_root_capability', default=None
+        )
         self._enter_lock = Lock()
         self._entered_count = 0
         self._exit_stack = None
@@ -619,14 +633,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Returns:
             A new Agent instance.
         """
-        template_context: dict[str, Any] = {
-            'deps_type': deps_type if deps_type is not type(None) else None,
-        }
-        if isinstance(spec, dict):
-            validated_spec = AgentSpec.model_validate(spec, context=template_context)
-        else:
-            validated_spec = spec
-        template_context['deps_schema'] = validated_spec.deps_schema
+        validated_spec, template_context = _validate_spec(spec, deps_type)
 
         effective_output_type: OutputSpec[Any]
         if output_type is not str:
@@ -636,35 +643,22 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             effective_output_type = str
 
-        registry = get_capability_registry(custom_capability_types)
-
         # Merge instructions from spec and arg
         merged_instructions = _instructions.normalize_instructions(validated_spec.instructions)
         merged_instructions.extend(_instructions.normalize_instructions(instructions))
 
-        def _instantiate_cap(
-            cap_cls: type[AbstractCapability[Any]],
-            args: tuple[Any, ...],
-            kwargs: dict[str, Any],
-        ) -> AbstractCapability[Any]:
-            args, kwargs = validate_from_spec_args(cap_cls, args, kwargs, template_context)
-            return cap_cls.from_spec(*args, **kwargs)
-
-        all_capabilities: list[AbstractCapability[Any]] = []
-        for cap_spec in validated_spec.capabilities:
-            capability = load_from_registry(
-                registry,
-                cap_spec,
-                label='capability',
-                custom_types_param='custom_capability_types',
-                instantiate=_instantiate_cap,
-            )
-            all_capabilities.append(capability)
+        all_capabilities = _capabilities_from_spec(validated_spec, custom_capability_types, template_context)
         if capabilities:
             all_capabilities.extend(capabilities)
 
+        effective_model = model or validated_spec.model
+        if effective_model is None:
+            raise exceptions.UserError(
+                '`model` must be provided either in the spec or as a keyword argument to `from_spec()`.'
+            )
+
         return Agent(
-            model=model or validated_spec.model,
+            model=effective_model,
             output_type=effective_output_type,
             instructions=merged_instructions or None,
             system_prompt=system_prompt,
@@ -874,6 +868,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
     @overload
@@ -894,6 +889,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
@@ -914,6 +910,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
 
@@ -995,12 +992,49 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
             The result of the run.
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
+
+        # Resolve spec contributions (additive at run time)
+        resolved = self._resolve_spec(spec)
+        if resolved is not None:
+            # Model: spec as fallback (run param > spec > agent)
+            if model is None and resolved.model is not None:
+                model = resolved.model
+            # Instructions: spec instructions are additional
+            if resolved.instructions:
+                extra = resolved.instructions
+                if instructions is not None:
+                    existing = _instructions.normalize_instructions(instructions)
+                    existing.extend(extra)
+                    instructions = existing
+                else:
+                    instructions = extra
+            # Model settings: merge spec settings under run settings (only static dicts)
+            if resolved.model_settings is not None:
+                if model_settings is None or not callable(model_settings):
+                    model_settings = merge_model_settings(resolved.model_settings, model_settings)
+                # If model_settings is a callable, spec model_settings are handled via the capability layer
+            # Metadata: merge spec metadata under run metadata
+            if resolved.metadata is not None:
+                if metadata is not None:
+                    if callable(metadata):
+                        _spec_meta = resolved.metadata
+                        _orig_metadata = metadata
+
+                        def _merged_meta(ctx: RunContext[AgentDepsT]) -> dict[str, Any]:
+                            return {**(_spec_meta or {}), **_orig_metadata(ctx)}
+
+                        metadata = _merged_meta
+                    else:
+                        metadata = {**resolved.metadata, **metadata}
+                else:
+                    metadata = resolved.metadata
 
         model_used = self._get_model(model)
         del model
@@ -1061,14 +1095,32 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             run_step=0,
         )
 
+        # Determine root capability: override > agent default
+        override_cap = self._override_root_capability.get()
+        base_capability = override_cap.value if override_cap is not None else self._root_capability
+
+        # Merge spec capability additively with base capability
+        if resolved is not None and resolved.capability is not None:
+            effective_capability = CombinedCapability([base_capability, resolved.capability])
+        else:
+            effective_capability = base_capability
+
         # Per-run capability: re-extract get_*() if for_run returns a different instance
-        run_capability = await self._root_capability.for_run(initial_ctx)
+        run_capability = await effective_capability.for_run(initial_ctx)
         cap_toolsets: list[AgentToolset[AgentDepsT]] | None
-        if run_capability is not self._root_capability:
-            cap_instructions = _instructions.normalize_instructions(run_capability.get_instructions())
-            cap_builtin_tools = list(run_capability.get_builtin_tools())
-            cap_model_settings = run_capability.get_model_settings()
-            cap_ts = run_capability.get_toolset()
+
+        if run_capability is not effective_capability:
+            source_cap = run_capability
+        elif override_cap is not None or (resolved is not None and resolved.capability is not None):
+            source_cap = effective_capability
+        else:
+            source_cap = None
+
+        if source_cap is not None:
+            cap_instructions = _instructions.normalize_instructions(source_cap.get_instructions())
+            cap_builtin_tools = list(source_cap.get_builtin_tools())
+            cap_model_settings = source_cap.get_model_settings()
+            cap_ts = source_cap.get_toolset()
             cap_toolsets = [cap_ts] if cap_ts is not None else []
         else:
             cap_instructions = None  # use init-time defaults
@@ -1424,6 +1476,46 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             ),
         }
 
+    def _resolve_spec(
+        self,
+        spec: dict[str, Any] | AgentSpec | None,
+        custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+    ) -> _ResolvedSpec | None:
+        """Validate and instantiate capabilities from a spec, returning contributions.
+
+        Returns None if spec is None.
+        """
+        if spec is None:
+            return None
+
+        validated_spec, template_context = _validate_spec(spec, self._deps_type)
+
+        capabilities = _capabilities_from_spec(validated_spec, custom_capability_types, template_context)
+        combined = CombinedCapability(capabilities) if capabilities else None
+
+        # Warn for unsupported fields with non-default values
+        for field_name in _UNSUPPORTED_SPEC_FIELDS:
+            field_info = type(validated_spec).model_fields[field_name]
+            if getattr(validated_spec, field_name) != field_info.default:
+                warnings.warn(
+                    f'AgentSpec field {field_name!r} is not supported at run/override time and will be ignored',
+                    UserWarning,
+                    stacklevel=3,
+                )
+
+        return _ResolvedSpec(
+            capability=combined,
+            instructions=_instructions.normalize_instructions(validated_spec.instructions)
+            if validated_spec.instructions
+            else [],
+            model=validated_spec.model,
+            model_settings=cast(ModelSettings, validated_spec.model_settings)
+            if validated_spec.model_settings
+            else None,
+            metadata=validated_spec.metadata,
+            name=validated_spec.name,
+        )
+
     @contextmanager
     def override(  # noqa: C901
         self,
@@ -1436,6 +1528,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instructions: AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
         metadata: AgentMetadata[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        spec: dict[str, Any] | AgentSpec | None = None,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent name, dependencies, model, toolsets, tools, or instructions.
 
@@ -1453,7 +1546,26 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 per-run `metadata` argument is ignored.
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
                 When set, any per-run `model_settings` argument is ignored.
+            spec: Optional agent spec providing defaults for override. Explicit params take precedence
+                over spec values. When the spec includes `capabilities`, they replace (not merge with)
+                the agent's existing capabilities. To add capabilities without replacing, pass `spec`
+                to `run()` or `iter()` instead.
         """
+        resolved = self._resolve_spec(spec)
+
+        # Apply spec values as defaults where explicit params are not set
+        if resolved is not None:
+            if not _utils.is_set(name) and resolved.name is not None:
+                name = resolved.name
+            if not _utils.is_set(model) and resolved.model is not None:
+                model = resolved.model
+            if not _utils.is_set(instructions) and resolved.instructions:
+                instructions = resolved.instructions
+            if not _utils.is_set(model_settings) and resolved.model_settings is not None:
+                model_settings = resolved.model_settings
+            if not _utils.is_set(metadata) and resolved.metadata is not None:
+                metadata = resolved.metadata
+
         if _utils.is_set(name):
             name_token = self._override_name.set(_utils.Some(name))
         else:
@@ -1495,6 +1607,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             model_settings_token = None
 
+        # Set capability from spec, combining with agent's existing root capability
+        if resolved is not None and resolved.capability is not None:
+            cap_token = self._override_root_capability.set(_utils.Some(resolved.capability))
+        else:
+            cap_token = None
+
         try:
             yield
         finally:
@@ -1514,6 +1632,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 self._override_metadata.reset(metadata_token)
             if model_settings_token is not None:
                 self._override_model_settings.reset(model_settings_token)
+            if cap_token is not None:
+                self._override_root_capability.reset(cap_token)
 
     @overload
     def instructions(
@@ -2323,6 +2443,73 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         async with self:
             yield
+
+
+_UNSUPPORTED_SPEC_FIELDS: tuple[str, ...] = (
+    'description',
+    'end_strategy',
+    'retries',
+    'output_retries',
+    'tool_timeout',
+    'instrument',
+    'output_schema',
+    'deps_schema',
+)
+"""AgentSpec fields that are not supported at run/override time."""
+
+
+def _validate_spec(
+    spec: dict[str, Any] | AgentSpec,
+    deps_type: type[Any],
+) -> tuple[AgentSpec, dict[str, Any]]:
+    """Validate a spec dict/object and build the template context.
+
+    Shared by `Agent.from_spec()` and `Agent._resolve_spec()`.
+
+    Returns:
+        A tuple of (validated_spec, template_context).
+    """
+    template_context: dict[str, Any] = {
+        'deps_type': deps_type if deps_type is not type(None) else None,
+    }
+    if isinstance(spec, dict):
+        validated_spec = AgentSpec.model_validate(spec, context=template_context)
+    else:
+        validated_spec = spec
+    template_context['deps_schema'] = validated_spec.deps_schema
+    return validated_spec, template_context
+
+
+def _capabilities_from_spec(
+    spec: AgentSpec,
+    custom_capability_types: Sequence[type[AbstractCapability[Any]]],
+    template_context: dict[str, Any],
+) -> list[AbstractCapability[Any]]:
+    """Instantiate capabilities from an AgentSpec using the capability registry.
+
+    Shared by `Agent.from_spec()` and `Agent._resolve_spec()`.
+    """
+    registry = get_capability_registry(custom_capability_types)
+
+    def _instantiate_cap(
+        cap_cls: type[AbstractCapability[Any]],
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+    ) -> AbstractCapability[Any]:
+        args, kwargs = validate_from_spec_args(cap_cls, args, kwargs, template_context)
+        return cap_cls.from_spec(*args, **kwargs)
+
+    capabilities: list[AbstractCapability[Any]] = []
+    for cap_spec in spec.capabilities:
+        capability = load_from_registry(
+            registry,
+            cap_spec,
+            label='capability',
+            custom_types_param='custom_capability_types',
+            instantiate=_instantiate_cap,
+        )
+        capabilities.append(capability)
+    return capabilities
 
 
 @dataclasses.dataclass(init=False)

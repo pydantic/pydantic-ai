@@ -2681,6 +2681,333 @@ class TestPrepareToolsCapability:
         assert PrepareTools.get_serialization_name() is None
 
 
+class TestOverrideWithSpec:
+    async def test_override_with_spec_instructions_and_model(self):
+        """Spec instructions and model replace the agent's when used via override."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions = next(
+                (m.instructions for m in messages if isinstance(m, ModelRequest) and m.instructions), None
+            )
+            return make_text_response(f'instructions: {instructions}')
+
+        agent = Agent(FunctionModel(model_fn), instructions='original')
+
+        with agent.override(spec={'instructions': 'from spec'}):
+            result = await agent.run('hello')
+
+        assert 'from spec' in result.output
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    instructions='from spec',
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='instructions: from spec')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=3),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_override_with_spec_explicit_param_wins(self):
+        """Explicit override param beats spec value."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions = next(
+                (m.instructions for m in messages if isinstance(m, ModelRequest) and m.instructions), None
+            )
+            return make_text_response(f'instructions: {instructions}')
+
+        agent = Agent(FunctionModel(model_fn), instructions='original')
+
+        with agent.override(spec={'instructions': 'from spec'}, instructions='explicit'):
+            result = await agent.run('hello')
+
+        assert 'explicit' in result.output
+        assert 'from spec' not in result.output
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    instructions='explicit',
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='instructions: explicit')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_override_with_spec_capabilities(self):
+        """Override with spec capabilities replaces agent's existing capabilities."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions = next(
+                (m.instructions for m in messages if isinstance(m, ModelRequest) and m.instructions), None
+            )
+            return make_text_response(f'instructions: {instructions}')
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[Instructions('agent-cap')])
+
+        with agent.override(spec={'capabilities': [{'Instructions': 'from-spec-cap'}]}):
+            result = await agent.run('hello')
+            # Override replaces: only spec capability instructions, not agent's
+            assert 'from-spec-cap' in result.output
+            assert 'agent-cap' not in result.output
+            assert result.all_messages() == snapshot(
+                [
+                    ModelRequest(
+                        parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                        timestamp=IsDatetime(),
+                        instructions='from-spec-cap',
+                        run_id=IsStr(),
+                    ),
+                    ModelResponse(
+                        parts=[TextPart(content='instructions: from-spec-cap')],
+                        usage=RequestUsage(input_tokens=51, output_tokens=2),
+                        model_name='function:model_fn:',
+                        timestamp=IsDatetime(),
+                        run_id=IsStr(),
+                    ),
+                ]
+            )
+
+
+class TestRunWithSpec:
+    async def test_run_with_spec_instructions_added(self):
+        """Spec instructions are added additively at run time."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions = next(
+                (m.instructions for m in messages if isinstance(m, ModelRequest) and m.instructions), None
+            )
+            return make_text_response(f'instructions: {instructions}')
+
+        agent = Agent(FunctionModel(model_fn), instructions='original')
+
+        result = await agent.run('hello', spec={'instructions': 'also from spec'})
+        # Both original and spec instructions should be present
+        assert 'original' in result.output
+        assert 'also from spec' in result.output
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    instructions="""\
+original
+also from spec\
+""",
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        TextPart(
+                            content="""\
+instructions: original
+also from spec\
+"""
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=51, output_tokens=5),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_run_with_spec_model_as_fallback(self):
+        """Spec model is used as fallback when no run-time model is provided."""
+        agent = Agent(None)  # No model set
+
+        result = await agent.run('hello', spec={'model': 'test'})
+        assert result.output == 'success (no tool calls)'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='success (no tool calls)')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=4),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_run_with_spec_model_settings_merged(self):
+        """Spec model_settings are merged with run model_settings."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            max_tokens = info.model_settings.get('max_tokens') if info.model_settings else None
+            temperature = info.model_settings.get('temperature') if info.model_settings else None
+            return make_text_response(f'max_tokens={max_tokens} temperature={temperature}')
+
+        agent = Agent(FunctionModel(model_fn))
+
+        result = await agent.run(
+            'hello',
+            spec={'model_settings': {'max_tokens': 100}},
+            model_settings={'temperature': 0.5},
+        )
+        assert 'max_tokens=100' in result.output
+        assert 'temperature=0.5' in result.output
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='max_tokens=100 temperature=0.5')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=3),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_run_with_spec_partial_no_model(self):
+        """Partial spec without model works if agent has a model."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions = next(
+                (m.instructions for m in messages if isinstance(m, ModelRequest) and m.instructions), None
+            )
+            return make_text_response(f'instructions: {instructions}')
+
+        agent = Agent(FunctionModel(model_fn))
+
+        result = await agent.run('hello', spec={'instructions': 'be helpful'})
+        assert 'be helpful' in result.output
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    instructions='be helpful',
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='instructions: be helpful')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=3),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_run_with_spec_capabilities(self):
+        """Run with spec capabilities merges with agent's root capability."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions = next(
+                (m.instructions for m in messages if isinstance(m, ModelRequest) and m.instructions), None
+            )
+            return make_text_response(f'instructions: {instructions}')
+
+        agent = Agent(FunctionModel(model_fn), instructions='agent-level')
+
+        result = await agent.run(
+            'hello',
+            spec={
+                'capabilities': [
+                    {'Instructions': 'extra from spec cap'},
+                ],
+            },
+        )
+        # Both should be present (additive)
+        assert 'agent-level' in result.output
+        assert 'extra from spec cap' in result.output
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    instructions="""\
+agent-level
+extra from spec cap\
+""",
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        TextPart(
+                            content="""\
+instructions: agent-level
+extra from spec cap\
+"""
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=51, output_tokens=6),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_run_with_spec_metadata_merged(self):
+        """Spec metadata is merged with run metadata."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('ok')
+
+        agent = Agent(FunctionModel(model_fn), metadata={'agent_key': 'agent_val'})
+
+        result = await agent.run(
+            'hello',
+            spec={'metadata': {'spec_key': 'spec_val'}},
+            metadata={'run_key': 'run_val'},
+        )
+        assert result.output == 'ok'
+        # Run metadata should take precedence, spec metadata should be present
+        assert result.metadata is not None
+        assert result.metadata == snapshot({'agent_key': 'agent_val', 'spec_key': 'spec_val', 'run_key': 'run_val'})
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='ok')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=1),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_spec_unsupported_fields_warns(self):
+        """Non-default unsupported fields produce warnings."""
+        agent = Agent('test')
+
+        with pytest.warns(UserWarning, match='retries'):
+            await agent.run('hello', spec={'retries': 5})
+
+
 class TestGetWrapperToolsetHook:
     async def test_wrapper_prefixes_tools(self):
         """Capability can wrap the toolset to prefix tool names."""

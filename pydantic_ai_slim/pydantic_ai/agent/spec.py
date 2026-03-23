@@ -38,7 +38,7 @@ class AgentSpec(BaseModel):
 
     # $schema is included to avoid validation fails from the `$schema` key, see `_add_json_schema` below for context
     json_schema_path: str | None = Field(default=None, alias='$schema')
-    model: str
+    model: str | None = None
     name: str | None = None
     description: TemplateStr[Any] | str | None = None
     instructions: TemplateStr[Any] | str | list[TemplateStr[Any] | str] | None = None
@@ -194,7 +194,7 @@ class AgentSpec(BaseModel):
         # - extra='forbid' enables strict validation in the generated schema
         # When adding or removing fields on AgentSpec, update this class to match.
         class _AgentSpecSchema(BaseModel, extra='forbid'):
-            model: str
+            model: str | None = None
             name: str | None = None
             description: str | None = None
             instructions: str | list[str] | None = None
