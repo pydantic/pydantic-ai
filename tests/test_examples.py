@@ -60,7 +60,6 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='extras not installed'),
 ]
-
 code_examples: dict[str, CodeExample] = {}
 
 
@@ -578,13 +577,6 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         args={'name': 'test', 'value': 42},
         tool_call_id='pyd_ai_tool_call_id',
     ),
-    # Execution environment doc examples
-    'Create a Python script that prints the first 10 Fibonacci numbers, then run it.': 'Done! The first 10 Fibonacci numbers are: 0, 1, 1, 2, 3, 5, 8, 13, 21, 34',
-    'Fetch https://httpbin.org/get and print the response': 'Successfully fetched the URL. The response contains request metadata including headers and origin IP.',
-    'echo "running locally"': 'Command executed successfully.',
-    'echo "running in Docker"': 'Command executed successfully.',
-    'task A': 'Task A completed.',
-    'task B': 'Task B completed.',
     'Find recent papers about transformer architectures': (
         'Here are some recent papers about transformer architectures from arxiv.org:\n'
         '\n'

@@ -12,13 +12,9 @@ class Thinking(ModelSettings[AgentDepsT]):
     """Capability that enables model thinking/reasoning.
 
     This is a placeholder that hardcodes provider-specific thinking settings.
-    It will be replaced by unified thinking settings from #3894, which will
-    also allow configurable parameters (e.g. reasoning_effort, budget_tokens).
+    It will be replaced by unified thinking settings, which will also allow
+    configurable parameters (e.g. reasoning_effort, budget_tokens).
     """
-
-    @classmethod
-    def get_serialization_name(cls) -> str | None:
-        return 'Thinking'
 
     @classmethod
     def from_spec(cls, *args: Any, **kwargs: Any) -> Thinking[Any]:

@@ -2172,8 +2172,9 @@ class TestWrapNodeRunHook:
             'CallToolsNode',
         ]
 
-    async def test_works_with_iter(self):
-        """wrap_node_run fires when using async for iteration."""
+    async def test_works_with_iter_next(self):
+        """wrap_node_run fires when driving iter() with next()."""
+        from pydantic_graph import End
 
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
@@ -2187,8 +2188,9 @@ class TestWrapNodeRunHook:
         agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
 
         async with agent.iter('hello') as agent_run:
-            async for _node in agent_run:
-                pass
+            node = agent_run.next_node
+            while not isinstance(node, End):
+                node = await agent_run.next(node)
 
         assert cap.nodes == ['UserPromptNode', 'ModelRequestNode', 'CallToolsNode']
 

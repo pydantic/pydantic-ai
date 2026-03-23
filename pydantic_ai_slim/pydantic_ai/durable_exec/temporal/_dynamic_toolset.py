@@ -52,29 +52,13 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
         self.tool_activity_config = tool_activity_config
         self.run_context_type = run_context_type
 
-        async def _prepare_toolset(ctx: RunContext[AgentDepsT]) -> DynamicToolset[AgentDepsT]:
-            """Evaluate the dynamic toolset factory for use in an activity.
-
-            Each activity is a fresh execution. We create a per-run copy and
-            eagerly evaluate the factory so the inner toolset is ready.
-            The activity's `async with` handles __aenter__/__aexit__.
-            """
-            assert isinstance(self.wrapped, DynamicToolset)
-            wrapped: DynamicToolset[AgentDepsT] = self.wrapped
-            new: DynamicToolset[AgentDepsT] = DynamicToolset(
-                wrapped.toolset_func,
-                per_run_step=wrapped.per_run_step,
-                id=wrapped.id,
-            )
-            new._toolset = await new._evaluate_factory(ctx)  # pyright: ignore[reportPrivateUsage]
-            return new
-
         async def get_tools_activity(params: GetToolsParams, deps: AgentDepsT) -> dict[str, _ToolInfo]:
             """Activity that calls the dynamic function and returns tool definitions."""
             ctx = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
 
-            run_toolset = await _prepare_toolset(ctx)
+            run_toolset = await self.wrapped.for_run(ctx)
             async with run_toolset:
+                run_toolset = await run_toolset.for_run_step(ctx)
                 tools = await run_toolset.get_tools(ctx)
                 return {
                     name: _ToolInfo(tool_def=tool.tool_def, max_retries=tool.max_retries)
@@ -91,8 +75,9 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
             """Activity that instantiates the dynamic toolset and calls the tool."""
             ctx = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
 
-            run_toolset = await _prepare_toolset(ctx)
+            run_toolset = await self.wrapped.for_run(ctx)
             async with run_toolset:
+                run_toolset = await run_toolset.for_run_step(ctx)
                 tools = await run_toolset.get_tools(ctx)
                 tool = tools.get(params.name)
                 if tool is None:  # pragma: no cover
@@ -101,9 +86,7 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
                         'The dynamic toolset function may have returned a different toolset than expected.'
                     )
 
-                # Re-validate args and call on the per-activity run_toolset (not self.wrapped)
-                args_dict = tool.args_validator.validate_python(params.tool_args)
-                return await self._wrap_call_tool_result(run_toolset.call_tool(params.name, args_dict, ctx, tool))
+                return await self._call_tool_in_activity(params.name, params.tool_args, ctx, tool, toolset=run_toolset)
 
         call_tool_activity.__annotations__['deps'] = deps_type
 
