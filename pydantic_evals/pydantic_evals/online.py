@@ -65,6 +65,7 @@ __all__ = (
     'rebuild_context',
     'rebuild_contexts',
     'run_evaluators',
+    'wait_for_evaluations',
 )
 
 logger = logging.getLogger('pydantic_evals.online')
@@ -72,9 +73,11 @@ logger = logging.getLogger('pydantic_evals.online')
 _P = ParamSpec('_P')
 _R = TypeVar('_R')
 
-# Strong references to background tasks to prevent garbage collection.
+# Strong references to background tasks/threads to prevent garbage collection
+# and enable deterministic waiting via wait_for_evaluations().
 # See: https://docs.python.org/3/library/asyncio-task.html#creating-tasks
 _background_tasks: set[asyncio.Task[Any]] = set()
+_background_threads: set[threading.Thread] = set()
 
 # ============================================================================
 # Context variable for disabling evaluation
@@ -704,10 +707,14 @@ def _wrap_sync(
                 task.add_done_callback(_background_tasks.discard)
             except RuntimeError:
                 # No running loop — run in a background thread
-                thread = threading.Thread(
-                    target=lambda: asyncio.run(_dispatch_evaluators(gated, context, span_reference, config)),
-                    daemon=True,
-                )
+                def _thread_target() -> None:
+                    try:
+                        asyncio.run(_dispatch_evaluators(gated, context, span_reference, config))
+                    finally:
+                        _background_threads.discard(thread)
+
+                thread = threading.Thread(target=_thread_target, daemon=True)
+                _background_threads.add(thread)
                 thread.start()
 
         return result
@@ -802,3 +809,21 @@ def configure(
         DEFAULT_CONFIG.enabled = enabled
     if not isinstance(metadata, Unset):
         DEFAULT_CONFIG.metadata = metadata
+
+
+async def wait_for_evaluations() -> None:
+    """Wait for all pending background evaluation tasks and threads to complete.
+
+    This is useful in tests to deterministically wait for background evaluators
+    to finish instead of relying on timing-based sleeps.
+
+    For async tasks (dispatched from async decorated functions), this awaits them directly.
+    For background threads (dispatched from sync decorated functions called outside an
+    async context), this joins them.
+    """
+    # Await all pending async tasks
+    if _background_tasks:
+        await asyncio.gather(*_background_tasks, return_exceptions=True)
+    # Join all pending background threads (from sync function dispatch)
+    for thread in list(_background_threads):
+        thread.join(timeout=10.0)

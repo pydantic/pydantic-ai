@@ -27,6 +27,7 @@ with try_import() as imports_successful:
         rebuild_context,
         rebuild_contexts,
         run_evaluators,
+        wait_for_evaluations,
     )
     from pydantic_evals.otel.span_tree import SpanTree
 
@@ -310,7 +311,7 @@ async def test_evaluate_decorator_async_basic():
     assert result == 42
 
     # Wait for background task to complete
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
 
     assert len(collector.calls) == 1
     results, _, ctx = collector.calls[0]
@@ -345,7 +346,7 @@ async def test_evaluate_decorator_multiple_evaluators():
     result = await my_func(21)
     assert result == 42
 
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
 
     assert len(collector.calls) >= 1
     assert collector.result_count == 2
@@ -363,7 +364,7 @@ async def test_evaluate_decorator_with_failure():
     result = await my_func(42)
     assert result == 42
 
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
 
     assert len(collector.calls) == 1
     results, failures, _ = collector.calls[0]
@@ -390,7 +391,7 @@ async def test_evaluate_decorator_sync_basic():
     assert result == 42
 
     # Give background task time to complete
-    await asyncio.sleep(0.5)
+    await wait_for_evaluations()
 
     assert len(collector.calls) == 1
     results, _, ctx = collector.calls[0]
@@ -416,7 +417,7 @@ async def test_sample_rate_zero_skips_evaluation():
     result = await my_func(42)
     assert result == 42
 
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
     assert len(collector.calls) == 0
 
 
@@ -432,7 +433,7 @@ async def test_sample_rate_one_always_evaluates():
     for _ in range(5):
         await my_func(42)
 
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
     assert len(collector.calls) == 5
 
 
@@ -453,7 +454,7 @@ async def test_sample_rate_callable():
         return x
 
     await my_func(42)
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
 
     assert call_count >= 1
     assert len(collector.calls) == 1
@@ -469,7 +470,7 @@ async def test_sample_rate_callable_returning_bool():
         return x
 
     await my_func(42)
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
     assert len(collector.calls) == 0
 
 
@@ -491,7 +492,7 @@ async def test_disable_evaluation_context_manager():
         result = await my_func(42)
         assert result == 42
 
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
     assert len(collector.calls) == 0
 
 
@@ -509,7 +510,7 @@ async def test_disable_evaluation_restores():
 
     # After exiting, evaluations should resume
     await my_func(42)
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
     assert len(collector.calls) == 1
 
 
@@ -528,7 +529,7 @@ async def test_gate_prevents_evaluation():
         return x
 
     await my_func(42)
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
     assert len(collector.calls) == 0
 
 
@@ -542,7 +543,7 @@ async def test_gate_allows_evaluation():
         return x
 
     await my_func(42)
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
     assert len(collector.calls) == 1
 
 
@@ -560,11 +561,11 @@ async def test_gate_async():
         return x
 
     await my_func(5)  # output=5, gate should block
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
     assert len(collector.calls) == 0
 
     await my_func(20)  # output=20, gate should allow
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
     assert len(collector.calls) == 1
 
 
@@ -584,7 +585,7 @@ async def test_gate_exception_skips_evaluator():
     result = await my_func(42)
     assert result == 42
 
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
     assert len(collector.calls) == 0
 
 
@@ -605,7 +606,7 @@ async def test_config_enabled_false():
     result = await my_func(42)
     assert result == 42
 
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
     assert len(collector.calls) == 0
 
 
@@ -629,7 +630,7 @@ async def test_per_evaluator_sink_override():
         return x
 
     await my_func(42)
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
 
     assert len(default_collector.calls) == 1
     assert len(override_collector.calls) == 1
@@ -650,7 +651,7 @@ async def test_no_sink_runs_without_error():
 
     result = await my_func(42)
     assert result == 42
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
 
 
 # ============================================================================
@@ -714,7 +715,7 @@ async def test_module_level_evaluate():
         result = await my_func(42)
         assert result == 42
 
-        await asyncio.sleep(0.1)
+        await wait_for_evaluations()
         assert len(collector.calls) == 1
     finally:
         DEFAULT_CONFIG.default_sink = original_sink
@@ -832,7 +833,7 @@ async def test_config_metadata_passed_to_context():
         return x
 
     await my_func(42)
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
 
     assert len(collected_contexts) == 1
     assert collected_contexts[0].metadata == {'service': 'test-app', 'version': '1.0'}
@@ -872,7 +873,7 @@ async def test_max_concurrency_respected():
     await asyncio.gather(*tasks)
 
     # Wait for all background evaluations
-    await asyncio.sleep(0.5)
+    await wait_for_evaluations()
 
     # The semaphore should have limited concurrency to 2
     assert max_active <= 2
@@ -908,7 +909,7 @@ async def test_custom_sink_protocol():
         return x
 
     await my_func(42)
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
 
     assert len(sink.submissions) == 1
     results, _ = sink.submissions[0]
@@ -931,7 +932,7 @@ async def test_bare_evaluator_uses_config_defaults():
         return x
 
     await my_func(42)
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
     assert len(collector.calls) == 0
 
 
@@ -952,7 +953,7 @@ async def test_multiple_sinks():
         return x
 
     await my_func(42)
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
 
     assert len(collector1.calls) == 1
     assert len(collector2.calls) == 1
@@ -976,7 +977,7 @@ async def test_fractional_sample_rate():
     for _ in range(50):
         await my_func(42)
 
-    await asyncio.sleep(0.2)
+    await wait_for_evaluations()
     # Statistically, should get roughly 25 ± some variance, but definitely not 0 or 50
     assert 5 < len(collector.calls) < 45
 
@@ -1002,7 +1003,7 @@ async def test_sample_rate_callable_exception_skips_evaluator():
     result = await my_func(42)
     assert result == 42
 
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
     assert len(collector.calls) == 0
 
 
@@ -1028,7 +1029,7 @@ async def test_sink_exception_does_not_propagate():
     result = await my_func(42)
     assert result == 42
 
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
     # The second sink should still have received results despite the first failing
     assert len(collector.calls) == 1
 
@@ -1050,7 +1051,7 @@ async def test_sync_disabled_config():
     result = my_func(21)
     assert result == 42
 
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
     assert len(collector.calls) == 0
 
 
@@ -1066,7 +1067,7 @@ async def test_sync_sample_rate_zero():
     result = my_func(21)
     assert result == 42
 
-    await asyncio.sleep(0.1)
+    await wait_for_evaluations()
     assert len(collector.calls) == 0
 
 
@@ -1080,11 +1081,11 @@ async def test_sync_gate():
         return x
 
     my_func(5)  # gate blocks
-    await asyncio.sleep(0.3)
+    await wait_for_evaluations()
     assert len(collector.calls) == 0
 
     my_func(20)  # gate allows
-    await asyncio.sleep(0.3)
+    await wait_for_evaluations()
     assert len(collector.calls) == 1
 
 
@@ -1103,7 +1104,7 @@ async def test_sync_async_gate_skipped():
     result = my_func(42)
     assert result == 42
 
-    await asyncio.sleep(0.3)
+    await wait_for_evaluations()
     assert len(collector.calls) == 0  # skipped because gate is async
 
 
@@ -1122,5 +1123,5 @@ async def test_sync_gate_exception():
     result = my_func(42)
     assert result == 42
 
-    await asyncio.sleep(0.3)
+    await wait_for_evaluations()
     assert len(collector.calls) == 0
