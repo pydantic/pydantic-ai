@@ -1782,6 +1782,24 @@ class TestStreamingHooks:
             output = await stream.get_output()
         assert output == 'skipped in stream'
 
+    async def test_skip_model_request_from_wrap_model_request(self):
+        """SkipModelRequest raised inside wrap_model_request is handled in non-streaming."""
+
+        @dataclass
+        class WrapSkipCap(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: Any,
+            ) -> ModelResponse:
+                raise SkipModelRequest(ModelResponse(parts=[TextPart(content='wrap-skipped')]))
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[WrapSkipCap()])
+        result = await agent.run('hello')
+        assert result.output == 'wrap-skipped'
+
     async def test_skip_model_request_from_wrap_model_request_streaming(self):
         """SkipModelRequest raised inside wrap_model_request during streaming is handled."""
 
@@ -3774,24 +3792,26 @@ class TestModelRequestErrorHooks:
             await agent.run('hello')
 
     async def test_default_on_model_request_error_reraises_streaming(self):
-        """Default on_model_request_error re-raises in streaming path."""
+        """Default on_model_request_error re-raises in streaming path (wrap_task error after stream consumed)."""
 
         @dataclass
-        class MinimalCap(AbstractCapability[Any]):
+        class PostProcessFailCap(AbstractCapability[Any]):
+            """wrap_model_request that fails AFTER handler returns (post-processing error)."""
+
             def get_instructions(self):
                 return 'Be helpful.'
 
-        async def failing_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-            raise RuntimeError('stream exploded')
-            yield ''  # pragma: no cover
+            async def wrap_model_request(self, ctx: RunContext[Any], *, request_context: Any, handler: Any) -> Any:
+                result = await handler(request_context)
+                raise RuntimeError('post-processing exploded')
 
-        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            raise RuntimeError('model exploded')  # pragma: no cover
-
-        agent = Agent(FunctionModel(failing_model, stream_function=failing_stream), capabilities=[MinimalCap()])
-        with pytest.raises(RuntimeError, match='stream exploded'):
-            async with agent.run_stream('hello'):
-                pass
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[PostProcessFailCap()],
+        )
+        with pytest.raises(RuntimeError, match='post-processing exploded'):
+            async with agent.run_stream('hello') as stream:
+                await stream.get_output()
 
 
 # --- Tool validate error hook tests ---
