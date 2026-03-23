@@ -34,8 +34,10 @@ class WrapperToolset(AbstractToolset[AgentDepsT]):
         return replace(self, wrapped=new_wrapped)
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        await self.wrapped.for_run_step(ctx)
-        return self
+        new_wrapped = await self.wrapped.for_run_step(ctx)
+        if new_wrapped is self.wrapped:
+            return self
+        return replace(self, wrapped=new_wrapped)
 
     async def __aenter__(self) -> Self:
         await self.wrapped.__aenter__()

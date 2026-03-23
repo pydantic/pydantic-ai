@@ -12,6 +12,7 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
+    BuiltinTool,
     Instructions,
     ModelSettings,
     Thinking,
@@ -51,6 +52,7 @@ pytestmark = [
 def test_capability_types() -> None:
     assert CAPABILITY_TYPES == snapshot(
         {
+            'BuiltinTool': BuiltinTool,
             'Instructions': Instructions,
             'ModelSettings': ModelSettings,
             'Thinking': Thinking,
@@ -378,7 +380,7 @@ def test_model_json_schema_with_capabilities():
                 if ref_name.startswith(prefix):
                     capability_names.add(ref_name[len(prefix) :])
 
-    assert capability_names == {'Instructions', 'ModelSettings', 'Thinking', 'WebSearch'}
+    assert capability_names == {'BuiltinTool', 'Instructions', 'ModelSettings', 'Thinking', 'WebSearch'}
 
 
 def test_model_json_schema_with_custom_capabilities():
@@ -405,6 +407,80 @@ def test_model_json_schema_with_custom_capabilities():
     # Default capabilities should still be present
     assert 'Thinking' in capability_names
     assert 'WebSearch' in capability_names
+
+
+def test_builtin_tools_param_wrapped_as_capabilities():
+    """The builtin_tools parameter items are wrapped in BuiltinTool capabilities."""
+    from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
+    from pydantic_ai.capabilities.builtin_tool import BuiltinTool
+
+    agent = Agent('test', builtin_tools=[WebSearchTool(), CodeExecutionTool()])
+    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
+    builtin_caps = [c for c in children if isinstance(c, BuiltinTool)]
+    assert len(builtin_caps) == 2
+    assert isinstance(builtin_caps[0].tool, WebSearchTool)
+    assert isinstance(builtin_caps[1].tool, CodeExecutionTool)
+    # Also available via _cap_builtin_tools
+    assert len(agent._cap_builtin_tools) == 2  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_spec_builtin_tool():
+    """BuiltinTool capability can be constructed from spec."""
+    from pydantic_ai.builtin_tools import WebSearchTool
+    from pydantic_ai.capabilities.builtin_tool import BuiltinTool
+
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [
+                {'BuiltinTool': {'kind': 'web_search'}},
+            ],
+        }
+    )
+    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
+    builtin_caps = [c for c in children if isinstance(c, BuiltinTool)]
+    assert len(builtin_caps) == 1
+    assert isinstance(builtin_caps[0].tool, WebSearchTool)
+
+
+def test_agent_from_spec_builtin_tool_with_options():
+    """BuiltinTool spec supports builtin tool configuration options."""
+    from pydantic_ai.builtin_tools import WebSearchTool
+    from pydantic_ai.capabilities.builtin_tool import BuiltinTool
+
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [
+                {'BuiltinTool': {'kind': 'web_search', 'search_context_size': 'high'}},
+            ],
+        }
+    )
+    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
+    builtin_caps = [c for c in children if isinstance(c, BuiltinTool)]
+    assert len(builtin_caps) == 1
+    tool = builtin_caps[0].tool
+    assert isinstance(tool, WebSearchTool)
+    assert tool.search_context_size == 'high'
+
+
+def test_agent_from_spec_builtin_tool_explicit_form():
+    """BuiltinTool spec supports the explicit {tool: ...} form."""
+    from pydantic_ai.builtin_tools import CodeExecutionTool
+    from pydantic_ai.capabilities.builtin_tool import BuiltinTool
+
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [
+                {'BuiltinTool': {'tool': {'kind': 'code_execution'}}},
+            ],
+        }
+    )
+    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
+    builtin_caps = [c for c in children if isinstance(c, BuiltinTool)]
+    assert len(builtin_caps) == 1
+    assert isinstance(builtin_caps[0].tool, CodeExecutionTool)
 
 
 def test_save_schema(tmp_path: str):

@@ -73,9 +73,9 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
         return new
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        """If per_run_step, re-evaluate factory and manage internal transitions.
+        """If per_run_step, re-evaluate factory and manage transitions in-place.
 
-        Manages the inner toolset lifecycle in-place and returns self.
+        Handles the inner toolset lifecycle (exiting old, entering new) and returns self.
         """
         if not self.per_run_step:
             return self

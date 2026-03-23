@@ -45,7 +45,9 @@ from .._output import OutputToolset
 from .._template import TemplateStr, validate_from_spec_args
 from .._tool_manager import ParallelExecutionMode, ToolManager
 from ..builtin_tools import AbstractBuiltinTool
-from ..capabilities import AbstractCapability, CombinedCapability, HistoryProcessor as HistoryProcessorCap
+from ..capabilities import AbstractCapability, CombinedCapability
+from ..capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
+from ..capabilities.history_processor import HistoryProcessor as HistoryProcessorCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
@@ -394,6 +396,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         capabilities = list(capabilities or [])
         for history_processor in self.history_processors:
             capabilities.append(HistoryProcessorCap(history_processor))
+        for builtin_tool in builtin_tools:
+            capabilities.append(BuiltinToolCap(builtin_tool))
 
         self._root_capability = CombinedCapability(capabilities)
 
@@ -428,7 +432,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._validation_context = validation_context
 
-        self._builtin_tools = list(builtin_tools)
         self._cap_builtin_tools = list(self._root_capability.get_builtin_tools())
 
         self._cap_model_settings = self._root_capability.get_model_settings()
@@ -1193,11 +1196,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_validators=output_validators,
             validation_context=self._validation_context,
             root_capability=run_capability,
-            builtin_tools=[
-                *self._builtin_tools,
-                *cap_builtin_tools,
-                *(builtin_tools or []),
-            ],
+            builtin_tools=[*cap_builtin_tools, *(builtin_tools or [])],
             tool_manager=tool_manager,
             tracer=tracer,
             get_instructions=get_instructions,
