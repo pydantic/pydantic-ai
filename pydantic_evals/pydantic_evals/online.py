@@ -197,7 +197,8 @@ class OnlineEvaluator:
     Args:
         evaluator: The evaluator to run.
         sample_rate: Probability of running this evaluator (0.0–1.0), or a callable returning
-            a float or bool. Callables enable integration with dynamic configuration systems.
+            a float or bool. Defaults to `UNSET`, which uses the config's `default_sample_rate`
+            at each call. Set explicitly to override.
         sink: Override sink(s) for this evaluator. If None, the config's default_sink is used.
         max_concurrency: Maximum number of concurrent evaluations for this evaluator.
         gate: Optional predicate that receives the `EvaluatorContext` and returns whether the
@@ -205,7 +206,7 @@ class OnlineEvaluator:
     """
 
     evaluator: Evaluator
-    sample_rate: float | Callable[[], float | bool] = 1.0
+    sample_rate: float | Callable[[], float | bool] | Unset = UNSET
     sink: EvaluationSink | Sequence[EvaluationSink] | SinkCallback | None = None
     max_concurrency: int = 10
     gate: Callable[[EvaluatorContext], bool | Awaitable[bool]] | None = None
@@ -380,19 +381,14 @@ async def rebuild_contexts(
 # ============================================================================
 
 
-def _resolve_online_evaluators(
-    evaluators: tuple[Evaluator | OnlineEvaluator, ...],
+def _resolve_sample_rate_field(
+    online_eval: OnlineEvaluator,
     config: OnlineEvalConfig,
-) -> list[OnlineEvaluator]:
-    """Resolve a mixed list of Evaluators and OnlineEvaluators at call time.
-
-    Bare Evaluators are wrapped in OnlineEvaluator using the config's current defaults.
-    OnlineEvaluator instances are used as-is with their explicit settings.
-    """
-    return [
-        e if isinstance(e, OnlineEvaluator) else OnlineEvaluator(evaluator=e, sample_rate=config.default_sample_rate)
-        for e in evaluators
-    ]
+) -> float | Callable[[], float | bool]:
+    """Resolve an OnlineEvaluator's sample_rate, falling back to config default if UNSET."""
+    if isinstance(online_eval.sample_rate, Unset):
+        return config.default_sample_rate
+    return online_eval.sample_rate
 
 
 def _resolve_sample_rate(rate: float | Callable[[], float | bool]) -> float | bool:
@@ -568,9 +564,10 @@ class OnlineEvalConfig:
     ) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]:
         """Decorator to attach online evaluators to a function.
 
-        Bare `Evaluator` instances are auto-wrapped in `OnlineEvaluator` at call time using
-        this config's current defaults, so changes to the config after decoration take effect.
-        `OnlineEvaluator` instances use their own explicit settings.
+        Bare `Evaluator` instances are auto-wrapped in `OnlineEvaluator` at decoration time
+        (so concurrency semaphores are shared across calls). Their `sample_rate` defaults to
+        `UNSET`, which resolves to the config's `default_sample_rate` at each call — so
+        changes to the config after decoration take effect.
 
         Args:
             *evaluators: Evaluators to attach. Can be `Evaluator` or `OnlineEvaluator` instances.
@@ -578,19 +575,20 @@ class OnlineEvalConfig:
         Returns:
             A decorator that wraps the function with online evaluation.
         """
+        online_evals = [e if isinstance(e, OnlineEvaluator) else OnlineEvaluator(evaluator=e) for e in evaluators]
 
         def decorator(func: Callable[_P, _R]) -> Callable[_P, _R]:
             if inspect.iscoroutinefunction(func):
-                return _wrap_async(func, evaluators, self)  # pyright: ignore[reportReturnType]
+                return _wrap_async(func, online_evals, self)  # pyright: ignore[reportReturnType]
             else:
-                return _wrap_sync(func, evaluators, self)
+                return _wrap_sync(func, online_evals, self)
 
         return decorator
 
 
 def _wrap_async(
     func: Callable[_P, Awaitable[_R]],
-    evaluators: tuple[Evaluator | OnlineEvaluator, ...],
+    online_evals: list[OnlineEvaluator],
     config: OnlineEvalConfig,
 ) -> Callable[_P, Awaitable[_R]]:
     """Wrap an async function with online evaluation."""
@@ -601,11 +599,10 @@ def _wrap_async(
         if not config.enabled or _EVALUATION_DISABLED.get():
             return await func(*args, **kwargs)
 
-        # Resolve bare Evaluators to OnlineEvaluators using config's current defaults
-        online_evals = _resolve_online_evaluators(evaluators, config)
-
         # Determine which evaluators are sampled (before running the function)
-        sampled = [oe for oe in online_evals if _should_evaluate(oe.sample_rate, config.enabled)]
+        sampled = [
+            oe for oe in online_evals if _should_evaluate(_resolve_sample_rate_field(oe, config), config.enabled)
+        ]
         if not sampled:
             return await func(*args, **kwargs)
 
@@ -652,7 +649,7 @@ def _wrap_async(
 
 def _wrap_sync(
     func: Callable[_P, _R],
-    evaluators: tuple[Evaluator | OnlineEvaluator, ...],
+    online_evals: list[OnlineEvaluator],
     config: OnlineEvalConfig,
 ) -> Callable[_P, _R]:
     """Wrap a sync function with online evaluation."""
@@ -663,11 +660,10 @@ def _wrap_sync(
         if not config.enabled or _EVALUATION_DISABLED.get():
             return func(*args, **kwargs)
 
-        # Resolve bare Evaluators to OnlineEvaluators using config's current defaults
-        online_evals = _resolve_online_evaluators(evaluators, config)
-
         # Determine which evaluators are sampled
-        sampled = [oe for oe in online_evals if _should_evaluate(oe.sample_rate, config.enabled)]
+        sampled = [
+            oe for oe in online_evals if _should_evaluate(_resolve_sample_rate_field(oe, config), config.enabled)
+        ]
         if not sampled:
             return func(*args, **kwargs)
 

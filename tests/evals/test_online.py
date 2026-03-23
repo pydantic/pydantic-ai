@@ -12,6 +12,7 @@ import pytest
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from pydantic_evals._utils import Unset
     from pydantic_evals.evaluators import EvaluationResult, Evaluator, EvaluatorContext, EvaluatorFailure
     from pydantic_evals.evaluators.evaluator import EvaluatorOutput
     from pydantic_evals.online import (
@@ -216,7 +217,7 @@ async def test_online_evaluator_defaults():
     evaluator = AlwaysTrue()
     online = OnlineEvaluator(evaluator=evaluator)
     assert online.evaluator is evaluator
-    assert online.sample_rate == 1.0
+    assert isinstance(online.sample_rate, Unset)
     assert online.sink is None
     assert online.max_concurrency == 10
     assert online.gate is None
