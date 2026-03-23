@@ -17,18 +17,6 @@ from .toolset import Toolset
 from .web_fetch import WebFetch
 from .web_search import WebSearch
 
-DEFAULT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (
-    ImageGeneration,
-    Instructions,
-    MCP,
-    ModelSettings,
-    Thinking,
-    WebFetch,
-    WebSearch,
-)
-"""Default capability types that support spec-based construction."""
-
-# Backward-compatible computed registry
 CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
     for cls in (
@@ -37,6 +25,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         Instructions,
         MCP,
         ModelSettings,
+        PrepareTools,
         Thinking,
         Toolset,
         WebFetch,
@@ -44,13 +33,13 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     )
     if (name := cls.get_serialization_name()) is not None
 }
+"""Registry of all capability types that have a serialization name, mapping name to class."""
 
 __all__ = [
     'AbstractCapability',
     'ModelRequestContext',
     'BuiltinToolCapability',
     'CAPABILITY_TYPES',
-    'DEFAULT_CAPABILITY_TYPES',
     'ImageGeneration',
     'Instructions',
     'HistoryProcessor',

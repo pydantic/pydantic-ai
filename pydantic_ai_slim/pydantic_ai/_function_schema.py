@@ -22,7 +22,13 @@ from typing_extensions import ParamSpec, TypeIs, TypeVar, get_type_hints
 
 from ._griffe import doc_descriptions
 from ._run_context import RunContext
-from ._utils import check_object_json_schema, get_first_param_type, is_async_callable, is_model_like, run_in_executor
+from ._utils import (
+    check_object_json_schema,
+    is_async_callable,
+    is_model_like,
+    run_in_executor,
+    takes_run_context,
+)
 
 if TYPE_CHECKING:
     from .tools import DocstringFormat, ObjectJsonSchema
@@ -240,10 +246,7 @@ def _takes_ctx(callable_obj: TargetCallable[P, R]) -> TypeIs[WithCtx[P, R]]:  # 
     Returns:
         `True` if the callable takes a `RunContext` as first argument, `False` otherwise.
     """
-    first_param_type = get_first_param_type(callable_obj)
-    if first_param_type is None:
-        return False
-    return _is_call_ctx(first_param_type)
+    return takes_run_context(callable_obj)
 
 
 def _build_schema(
