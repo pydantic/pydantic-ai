@@ -29,6 +29,7 @@ from pydantic_ai.messages import (
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -37,9 +38,10 @@ from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.toolsets._dynamic import ToolsetFunc
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ._inline_snapshot import snapshot
+from .conftest import IsDatetime, IsStr
 
 pytestmark = [
     pytest.mark.anyio,
@@ -2396,6 +2398,45 @@ class TestGetWrapperToolsetHook:
 
         result = await agent.run('hello')
         assert result.output == "tools: ['cap_my_tool']"
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content="tools: ['cap_my_tool']")],
+                    usage=RequestUsage(input_tokens=51, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_wrapper_prefixes_tools_streaming(self):
+        """Wrapper toolset works correctly with streaming runs."""
+        from pydantic_ai.toolsets.prefixed import PrefixedToolset
+
+        @dataclass
+        class PrefixCap(AbstractCapability[Any]):
+            def get_wrapper_toolset(self, toolset: AbstractToolset[Any]) -> AbstractToolset[Any] | None:
+                return PrefixedToolset(toolset, prefix='cap')
+
+        async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            tool_names = sorted(t.name for t in info.function_tools)
+            yield f'tools: {tool_names}'
+
+        agent = Agent(FunctionModel(stream_function=stream_fn), capabilities=[PrefixCap()])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'result'
+
+        async with agent.run_stream('hello') as result:
+            output = await result.get_output()
+        assert output == "tools: ['cap_my_tool']"
 
     async def test_wrapper_does_not_affect_output_tools(self):
         """Wrapper toolset does not wrap output tools."""
@@ -2453,6 +2494,22 @@ class TestGetWrapperToolsetHook:
 
         result = await agent.run('hello')
         assert result.output == "tools: ['my_tool']"
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content="tools: ['my_tool']")],
+                    usage=RequestUsage(input_tokens=51, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_wrapper_chaining_order(self):
         """Multiple capabilities' wrappers compose by nesting: first wraps innermost."""
@@ -2481,6 +2538,22 @@ class TestGetWrapperToolsetHook:
         result = await agent.run('hello')
         # First cap wraps innermost (a_tool), then second wraps that (b_a_tool)
         assert result.output == "tools: ['b_a_tool']"
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content="tools: ['b_a_tool']")],
+                    usage=RequestUsage(input_tokens=51, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_wrapper_with_per_run_capability(self):
         """Wrapper works correctly with capabilities returning new instances from for_run."""
@@ -2509,6 +2582,22 @@ class TestGetWrapperToolsetHook:
         result = await agent.run('hello')
         # The per-run instance should use 'runtime' prefix, not 'default'
         assert result.output == "tools: ['runtime_my_tool']"
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content="tools: ['runtime_my_tool']")],
+                    usage=RequestUsage(input_tokens=51, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_wrapper_with_agent_prepare_tools(self):
         """Agent-level prepare_tools is applied before capability wrapper."""

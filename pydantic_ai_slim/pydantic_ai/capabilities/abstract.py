@@ -100,9 +100,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Wrap the agent's assembled toolset, or return None to leave it unchanged.
 
-        Called with the combined non-output toolset (after agent-level
+        Called per-run with the combined non-output toolset (after agent-level
         [`prepare_tools`][pydantic_ai.tools.ToolsPrepareFunc] wrapping).
         Output tools are added separately and are not included.
+
+        Unlike the other `get_*` methods which are called once at agent construction,
+        this is called each run (after [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]).
+        When multiple capabilities provide wrappers, each receives the already-wrapped
+        toolset from earlier capabilities (first capability wraps innermost).
 
         Use this to apply cross-cutting toolset wrappers like
         [`PreparedToolset`][pydantic_ai.toolsets.PreparedToolset],
