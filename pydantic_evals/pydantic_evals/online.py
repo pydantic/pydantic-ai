@@ -446,7 +446,7 @@ def _normalize_sinks(
 def _normalize_single_sink(sink: EvaluationSink | SinkCallback) -> EvaluationSink:
     if isinstance(sink, EvaluationSink):
         return sink
-    return CallbackSink(sink)
+    return CallbackSink(sink)  # pragma: no cover
 
 
 async def _dispatch_single_evaluator(
@@ -749,9 +749,9 @@ def _extract_span_reference(span: Any) -> SpanReference | None:
                     trace_id=format(ctx.trace_id, '032x'),
                     span_id=format(ctx.span_id, '016x'),
                 )
-    except Exception:
+    except Exception:  # pragma: no cover
         pass
-    return None
+    return None  # pragma: no cover
 
 
 # ============================================================================

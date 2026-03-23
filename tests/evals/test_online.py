@@ -311,7 +311,7 @@ async def test_evaluate_decorator_async_preserves_signature():
     @evaluate(AlwaysTrue())
     async def my_func(x: int) -> int:
         """My docstring."""
-        return x
+        return x  # pragma: no cover
 
     assert my_func.__name__ == 'my_func'
     assert my_func.__doc__ == 'My docstring.'
@@ -1003,7 +1003,7 @@ async def test_sync_async_gate_warning(caplog: pytest.LogCaptureFixture):
     """Async gate on sync function logs warning and skips."""
 
     async def async_gate(ctx: EvaluatorContext[Any, Any, Any]) -> bool:
-        return True
+        return True  # pragma: no cover
 
     collector = Collector()
     config = OnlineEvalConfig(default_sink=collector)
