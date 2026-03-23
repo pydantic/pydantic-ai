@@ -110,7 +110,7 @@ async def log_request(ctx: RunContext[None], request_context: ModelRequestContex
 agent = Agent('test', capabilities=[hooks])
 result = agent.run_sync('Hello!')
 print(result.output)
-#> Sending 2 messages to the model
+#> Sending 1 messages to the model
 #> success (no tool calls)
 ```
 
@@ -130,7 +130,7 @@ async def log_request(ctx: RunContext[None], request_context: ModelRequestContex
 agent = Agent('test', capabilities=[Hooks(before_model_request=log_request)])
 result = agent.run_sync('Hello!')
 print(result.output)
-#> Sending 2 messages to the model
+#> Sending 1 messages to the model
 #> success (no tool calls)
 ```
 
