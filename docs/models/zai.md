@@ -2,7 +2,7 @@
 
 ## Install
 
-To use `ZaiModel`, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `zai` optional group:
+To use [`ZaiModel`][pydantic_ai.models.zai.ZaiModel], you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `zai` optional group:
 
 ```bash
 pip/uv-add "pydantic-ai-slim[zai]"
@@ -22,7 +22,7 @@ Once you have the API key, you can set it as an environment variable:
 export ZAI_API_KEY='your-api-key'
 ```
 
-You can then use `ZaiModel` by name:
+You can then use [`ZaiModel`][pydantic_ai.models.zai.ZaiModel] by name:
 
 ```python
 from pydantic_ai import Agent
@@ -44,7 +44,7 @@ agent = Agent(model)
 
 ## Thinking mode
 
-Z.AI's `glm-5`, `glm-4.7`, `glm-4.6` (hybrid thinking), and `glm-4.5` (interleaved thinking) models support thinking/reasoning mode, where the model produces reasoning content before the final response. You can enable this via `ZaiModelSettings`:
+Z.AI's `glm-5`, `glm-4.7`, `glm-4.6` (hybrid thinking), and `glm-4.5` (interleaved thinking) models support thinking/reasoning mode, where the model produces reasoning content before the final response. You can enable this via [`ZaiModelSettings`][pydantic_ai.models.zai.ZaiModelSettings]:
 
 ```python
 from pydantic_ai import Agent
@@ -78,7 +78,7 @@ See the [Z.AI thinking mode documentation](https://docs.z.ai/guides/capabilities
 
 ## `provider` argument
 
-You can provide a custom `Provider` via the `provider` argument:
+You can provide a custom [`Provider`][pydantic_ai.providers.Provider] via the `provider` argument:
 
 ```python
 from pydantic_ai import Agent
@@ -92,7 +92,7 @@ agent = Agent(model)
 ...
 ```
 
-You can also customize the `ZaiProvider` with a custom `httpx.AsyncClient`:
+You can also customize the [`ZaiProvider`][pydantic_ai.providers.zai.ZaiProvider] with a custom `httpx.AsyncClient`:
 
 ```python
 from httpx import AsyncClient

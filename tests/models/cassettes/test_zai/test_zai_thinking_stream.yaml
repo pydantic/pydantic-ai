@@ -1,0 +1,843 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '173'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-4.7
+      stream: true
+      stream_options:
+        include_usage: true
+      thinking:
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    body:
+      string: '{"error":{"code":"1305","message":"The service may be temporarily overloaded, please try again later"}}'
+    headers:
+      connection:
+      - keep-alive
+      keep-alive:
+      - timeout=6
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    status:
+      code: 429
+      message: Too Many Requests
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '173'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-4.7
+      stream: true
+      stream_options:
+        include_usage: true
+      thinking:
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    body:
+      string: '{"error":{"code":"1305","message":"The service may be temporarily overloaded, please try again later"}}'
+    headers:
+      connection:
+      - keep-alive
+      keep-alive:
+      - timeout=6
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    status:
+      code: 429
+      message: Too Many Requests
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '173'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-4.7
+      stream: true
+      stream_options:
+        include_usage: true
+      thinking:
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    body:
+      string: |+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"The"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" user"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" is"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" asking"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" for"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" the"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" sum"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" of"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" "}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"2"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" and"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" "}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"2"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"."}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" This"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" is"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" a"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" basic"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" arithmetic"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" problem"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":".\n"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"2"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" +"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" "}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"2"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" ="}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" "}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"4"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":".\n"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"The"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" query"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" is"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" simple"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":","}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" direct"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":","}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" and"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" safe"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"."}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" There"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" is"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" no"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" complex"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" ph"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"rasing"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" or"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" hidden"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" intent"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"."}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","content":"2"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","content":" +"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","content":" "}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","content":"2"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","content":" equals"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","content":" "}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","content":"4"}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","content":"."}}]}
+
+        data: {"id":"20260323160404f91d4991ff6c48a3","created":1774253044,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"finish_reason":"stop","delta":{"role":"assistant","content":""}}],"usage":{"prompt_tokens":13,"completion_tokens":59,"total_tokens":72,"prompt_tokens_details":{"cached_tokens":1},"completion_tokens_details":{"reasoning_tokens":49}}}
+
+        data: [DONE]
+
+    headers:
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream;charset=UTF-8
+      keep-alive:
+      - timeout=6
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '173'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-4.7
+      stream: true
+      stream_options:
+        include_usage: true
+      thinking:
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    body:
+      string: '{"error":{"code":"1305","message":"The service may be temporarily overloaded, please try again later"}}'
+    headers:
+      connection:
+      - keep-alive
+      keep-alive:
+      - timeout=6
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    status:
+      code: 429
+      message: Too Many Requests
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '173'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-4.7
+      stream: true
+      stream_options:
+        include_usage: true
+      thinking:
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    body:
+      string: '{"error":{"code":"1305","message":"The service may be temporarily overloaded, please try again later"}}'
+    headers:
+      connection:
+      - keep-alive
+      keep-alive:
+      - timeout=6
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    status:
+      code: 429
+      message: Too Many Requests
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '173'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-4.7
+      stream: true
+      stream_options:
+        include_usage: true
+      thinking:
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    body:
+      string: '{"error":{"code":"1305","message":"The service may be temporarily overloaded, please try again later"}}'
+    headers:
+      connection:
+      - keep-alive
+      keep-alive:
+      - timeout=6
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    status:
+      code: 429
+      message: Too Many Requests
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '173'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-4.7
+      stream: true
+      stream_options:
+        include_usage: true
+      thinking:
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    body:
+      string: '{"error":{"code":"1305","message":"The service may be temporarily overloaded, please try again later"}}'
+    headers:
+      connection:
+      - keep-alive
+      keep-alive:
+      - timeout=6
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    status:
+      code: 429
+      message: Too Many Requests
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '173'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-4.7
+      stream: true
+      stream_options:
+        include_usage: true
+      thinking:
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    body:
+      string: '{"error":{"code":"1305","message":"The service may be temporarily overloaded, please try again later"}}'
+    headers:
+      connection:
+      - keep-alive
+      keep-alive:
+      - timeout=6
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    status:
+      code: 429
+      message: Too Many Requests
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '173'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-4.7
+      stream: true
+      stream_options:
+        include_usage: true
+      thinking:
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    body:
+      string: '{"error":{"code":"1305","message":"The service may be temporarily overloaded, please try again later"}}'
+    headers:
+      connection:
+      - keep-alive
+      keep-alive:
+      - timeout=6
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    status:
+      code: 429
+      message: Too Many Requests
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '173'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-4.7
+      stream: true
+      stream_options:
+        include_usage: true
+      thinking:
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    body:
+      string: '{"error":{"code":"1305","message":"The service may be temporarily overloaded, please try again later"}}'
+    headers:
+      connection:
+      - keep-alive
+      keep-alive:
+      - timeout=6
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    status:
+      code: 429
+      message: Too Many Requests
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '173'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-4.7
+      stream: true
+      stream_options:
+        include_usage: true
+      thinking:
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    body:
+      string: '{"error":{"code":"1305","message":"The service may be temporarily overloaded, please try again later"}}'
+    headers:
+      connection:
+      - keep-alive
+      keep-alive:
+      - timeout=6
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    status:
+      code: 429
+      message: Too Many Requests
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '173'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-4.7
+      stream: true
+      stream_options:
+        include_usage: true
+      thinking:
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    body:
+      string: '{"error":{"code":"1305","message":"The service may be temporarily overloaded, please try again later"}}'
+    headers:
+      connection:
+      - keep-alive
+      keep-alive:
+      - timeout=6
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    status:
+      code: 429
+      message: Too Many Requests
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '173'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-4.7
+      stream: true
+      stream_options:
+        include_usage: true
+      thinking:
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    body:
+      string: '{"error":{"code":"1305","message":"The service may be temporarily overloaded, please try again later"}}'
+    headers:
+      connection:
+      - keep-alive
+      keep-alive:
+      - timeout=6
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    status:
+      code: 429
+      message: Too Many Requests
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '173'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-4.7
+      stream: true
+      stream_options:
+        include_usage: true
+      thinking:
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    body:
+      string: '{"error":{"code":"1305","message":"The service may be temporarily overloaded, please try again later"}}'
+    headers:
+      connection:
+      - keep-alive
+      keep-alive:
+      - timeout=6
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    status:
+      code: 429
+      message: Too Many Requests
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '173'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-4.7
+      stream: true
+      stream_options:
+        include_usage: true
+      thinking:
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    body:
+      string: '{"error":{"code":"1305","message":"The service may be temporarily overloaded, please try again later"}}'
+    headers:
+      connection:
+      - keep-alive
+      keep-alive:
+      - timeout=6
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    status:
+      code: 429
+      message: Too Many Requests
+version: 1
+...
