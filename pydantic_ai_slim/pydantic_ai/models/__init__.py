@@ -643,6 +643,19 @@ class ModelRequestParameters:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass
+class ModelRequestContext:
+    """Context for model request hooks.
+
+    Wrapping these parameters in a dataclass instead of a tuple makes the signature
+    future-proof: new fields can be added without breaking existing implementations.
+    """
+
+    messages: list[ModelMessage]
+    model_settings: ModelSettings | None
+    model_request_parameters: ModelRequestParameters
+
+
 class Model(ABC):
     """Abstract class for a model."""
 

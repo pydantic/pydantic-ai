@@ -400,80 +400,23 @@ async def test_complex_agent_run_in_workflow(
             parent_span = basic_spans_by_id[parent_id]
             parent_span.children.append(basic_span)
 
-    # Normalize spans: sort children (concurrent span order is non-deterministic)
-    # and strip JSON event content (contains run-specific tool_call_ids)
-    def _normalize_spans(span: BasicSpan) -> None:
+    # Strip JSON event content spans (contain run-specific tool_call_ids)
+    def _strip_json_spans(span: BasicSpan) -> None:
         span.children = [c for c in span.children if not c.content.startswith('{')]
-        span.children.sort(key=lambda s: s.content)
         for child in span.children:
-            _normalize_spans(child)
+            _strip_json_spans(child)
 
     assert root_span is not None
-    _normalize_spans(root_span)
+    _strip_json_spans(root_span)
 
     assert root_span == snapshot(
         BasicSpan(
             content='StartWorkflow:ComplexAgentWorkflow',
             children=[
-                BasicSpan(content='CompleteWorkflow:ComplexAgentWorkflow'),
                 BasicSpan(content='RunWorkflow:ComplexAgentWorkflow'),
                 BasicSpan(
                     content='complex_agent run',
                     children=[
-                        BasicSpan(
-                            content='StartActivity:agent__complex_agent__event_stream_handler',
-                            children=[
-                                BasicSpan(
-                                    content='RunActivity:agent__complex_agent__event_stream_handler',
-                                    children=[BasicSpan(content='ctx.run_step=1')],
-                                )
-                            ],
-                        ),
-                        BasicSpan(
-                            content='StartActivity:agent__complex_agent__event_stream_handler',
-                            children=[
-                                BasicSpan(
-                                    content='RunActivity:agent__complex_agent__event_stream_handler',
-                                    children=[BasicSpan(content='ctx.run_step=1')],
-                                )
-                            ],
-                        ),
-                        BasicSpan(
-                            content='StartActivity:agent__complex_agent__event_stream_handler',
-                            children=[
-                                BasicSpan(
-                                    content='RunActivity:agent__complex_agent__event_stream_handler',
-                                    children=[BasicSpan(content='ctx.run_step=1')],
-                                )
-                            ],
-                        ),
-                        BasicSpan(
-                            content='StartActivity:agent__complex_agent__event_stream_handler',
-                            children=[
-                                BasicSpan(
-                                    content='RunActivity:agent__complex_agent__event_stream_handler',
-                                    children=[BasicSpan(content='ctx.run_step=1')],
-                                )
-                            ],
-                        ),
-                        BasicSpan(
-                            content='StartActivity:agent__complex_agent__event_stream_handler',
-                            children=[
-                                BasicSpan(
-                                    content='RunActivity:agent__complex_agent__event_stream_handler',
-                                    children=[BasicSpan(content='ctx.run_step=2')],
-                                )
-                            ],
-                        ),
-                        BasicSpan(
-                            content='StartActivity:agent__complex_agent__event_stream_handler',
-                            children=[
-                                BasicSpan(
-                                    content='RunActivity:agent__complex_agent__event_stream_handler',
-                                    children=[BasicSpan(content='ctx.run_step=2')],
-                                )
-                            ],
-                        ),
                         BasicSpan(
                             content='StartActivity:agent__complex_agent__mcp_server__mcp__get_tools',
                             children=[
@@ -495,6 +438,56 @@ async def test_complex_agent_run_in_workflow(
                             ],
                         ),
                         BasicSpan(
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
+                                    children=[BasicSpan(content='ctx.run_step=1')],
+                                )
+                            ],
+                        ),
+                        BasicSpan(
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
+                                    children=[BasicSpan(content='ctx.run_step=1')],
+                                )
+                            ],
+                        ),
+                        BasicSpan(content='running tool: get_country'),
+                        BasicSpan(
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
+                                    children=[BasicSpan(content='ctx.run_step=1')],
+                                )
+                            ],
+                        ),
+                        BasicSpan(
+                            content='running tool: get_product_name',
+                            children=[
+                                BasicSpan(
+                                    content='StartActivity:agent__complex_agent__mcp_server__mcp__call_tool',
+                                    children=[
+                                        BasicSpan(
+                                            content='RunActivity:agent__complex_agent__mcp_server__mcp__call_tool'
+                                        )
+                                    ],
+                                )
+                            ],
+                        ),
+                        BasicSpan(
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
+                                    children=[BasicSpan(content='ctx.run_step=1')],
+                                )
+                            ],
+                        ),
+                        BasicSpan(
                             content='chat gpt-4o',
                             children=[
                                 BasicSpan(
@@ -505,6 +498,37 @@ async def test_complex_agent_run_in_workflow(
                                             children=[BasicSpan(content='ctx.run_step=2')],
                                         )
                                     ],
+                                )
+                            ],
+                        ),
+                        BasicSpan(
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
+                                    children=[BasicSpan(content='ctx.run_step=2')],
+                                )
+                            ],
+                        ),
+                        BasicSpan(
+                            content='running tool: get_weather',
+                            children=[
+                                BasicSpan(
+                                    content='StartActivity:agent__complex_agent__toolset__<agent>__call_tool',
+                                    children=[
+                                        BasicSpan(
+                                            content='RunActivity:agent__complex_agent__toolset__<agent>__call_tool'
+                                        )
+                                    ],
+                                )
+                            ],
+                        ),
+                        BasicSpan(
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
+                                    children=[BasicSpan(content='ctx.run_step=2')],
                                 )
                             ],
                         ),
@@ -522,35 +546,9 @@ async def test_complex_agent_run_in_workflow(
                                 )
                             ],
                         ),
-                        BasicSpan(content='running tool: get_country'),
-                        BasicSpan(
-                            content='running tool: get_product_name',
-                            children=[
-                                BasicSpan(
-                                    content='StartActivity:agent__complex_agent__mcp_server__mcp__call_tool',
-                                    children=[
-                                        BasicSpan(
-                                            content='RunActivity:agent__complex_agent__mcp_server__mcp__call_tool'
-                                        )
-                                    ],
-                                )
-                            ],
-                        ),
-                        BasicSpan(
-                            content='running tool: get_weather',
-                            children=[
-                                BasicSpan(
-                                    content='StartActivity:agent__complex_agent__toolset__<agent>__call_tool',
-                                    children=[
-                                        BasicSpan(
-                                            content='RunActivity:agent__complex_agent__toolset__<agent>__call_tool'
-                                        )
-                                    ],
-                                )
-                            ],
-                        ),
                     ],
                 ),
+                BasicSpan(content='CompleteWorkflow:ComplexAgentWorkflow'),
             ],
         )
     )

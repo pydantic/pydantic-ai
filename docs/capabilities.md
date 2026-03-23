@@ -18,6 +18,7 @@ Pydantic AI ships with several capabilities that cover common needs:
 
 | Capability | What it provides | Spec |
 |---|---|:---:|
+| [`BuiltinTool`][pydantic_ai.capabilities.BuiltinTool] | Registers a [builtin tool](builtin-tools.md) with the agent | Yes |
 | [`Instructions`][pydantic_ai.capabilities.Instructions] | Static or template-based system prompt instructions | Yes |
 | [`ModelSettings`][pydantic_ai.capabilities.ModelSettings] | Static or dynamic model settings | Yes |
 | [`Thinking`][pydantic_ai.capabilities.Thinking] | Enables model thinking/reasoning mode | Yes |
