@@ -1416,6 +1416,31 @@ class TestToolValidateHooks:
         await agent.run('greet someone')
         assert received_name == 'skip-validated'
 
+    async def test_tool_def_matches_called_tool(self):
+        """Verify tool_def is the correct ToolDefinition for the tool being called."""
+        received_tool_defs: list[ToolDefinition] = []
+
+        @dataclass
+        class CaptureCap(AbstractCapability[Any]):
+            async def before_tool_validate(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: str | dict[str, Any]
+            ) -> str | dict[str, Any]:
+                received_tool_defs.append(tool_def)
+                return args
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[CaptureCap()])
+
+        @agent.tool_plain(description='Say hello')
+        def my_tool() -> str:
+            return 'tool result'
+
+        await agent.run('call the tool')
+        assert len(received_tool_defs) == 1
+        td = received_tool_defs[0]
+        assert td.name == 'my_tool'
+        assert td.description == 'Say hello'
+        assert td.kind == 'function'
+
 
 class TestToolExecuteHooks:
     async def test_tool_execute_hooks_fire(self):
