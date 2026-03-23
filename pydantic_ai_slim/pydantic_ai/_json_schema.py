@@ -103,6 +103,13 @@ class JsonSchemaTransformer(ABC):
                 if def_schema is None:  # pragma: no cover
                     raise UserError(f'Could not find $ref definition for {key}')
                 schema = def_schema
+                if isinstance(schema, bool):
+                    break  # resolved $ref points to a boolean schema, stop unpacking
+
+        if isinstance(schema, bool):
+            if nested_refs > 0:
+                self.refs_stack = self.refs_stack[:-nested_refs]
+            return schema
 
         # Handle the schema based on its type / structure
         type_ = schema.get('type')
