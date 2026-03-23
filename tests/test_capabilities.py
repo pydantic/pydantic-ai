@@ -2562,6 +2562,34 @@ class TestFastMCPCapability:
         assert cap.get_builtin_tools() == []
         assert cap.get_toolset() is not None
 
+    def test_fastmcp_non_url_resolved_id_fallback(self):
+        """FastMCP with non-URL server and no explicit id falls back to 'fastmcp'."""
+        pytest.importorskip('fastmcp', reason='fastmcp package not installed')
+        from fastmcp.server import FastMCP as FastMCPServer
+
+        cap = FastMCP(FastMCPServer('test'))
+        assert cap._resolved_id == 'fastmcp'  # pyright: ignore[reportPrivateUsage]
+
+    def test_fastmcp_default_builtin_returns_none_without_url(self):
+        """FastMCP._default_builtin() returns None when no URL is available."""
+        pytest.importorskip('fastmcp', reason='fastmcp package not installed')
+        from fastmcp.server import FastMCP as FastMCPServer
+
+        cap = FastMCP(FastMCPServer('test'))
+        assert cap._default_builtin() is None  # pyright: ignore[reportPrivateUsage]
+
+    def test_fastmcp_headers_only_local_transport(self):
+        """FastMCP with headers but no auth token constructs transport with headers."""
+        pytest.importorskip('fastmcp', reason='fastmcp package not installed')
+        from fastmcp.client.transports import StreamableHttpTransport
+
+        from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+
+        cap = FastMCP('https://mcp.example.com/api', headers={'X-Custom': 'value'})
+        assert isinstance(cap.local, FastMCPToolset)
+        assert isinstance(cap.local.client.transport, StreamableHttpTransport)
+        assert cap.local.client.transport.headers == {'X-Custom': 'value'}
+
 
 class TestNamedSpecDictRoundTrip:
     """Test that NamedSpec correctly round-trips a dict-as-first-arg without misinterpreting it as kwargs."""

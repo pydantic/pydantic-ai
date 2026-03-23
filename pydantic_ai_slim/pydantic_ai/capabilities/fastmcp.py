@@ -3,17 +3,37 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import cached_property
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
-from urllib.parse import urlparse
 
 from pydantic_ai.builtin_tools import MCPServerTool
 from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
 from .builtin_or_local import BuiltinOrLocalTool
+from .mcp import filter_allowed_tools, resolve_mcp_server_id
 
 if TYPE_CHECKING:
+    from fastmcp.client import Client as FastMCPClient
+    from fastmcp.client.transports import ClientTransport
+    from fastmcp.mcp_config import MCPConfig
+    from fastmcp.server import FastMCP as FastMCPServer
+    from mcp.server.fastmcp import FastMCP as FastMCP1Server
+    from pydantic import AnyUrl
+
     from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+
+    FastMCPServerInput = (
+        FastMCPClient[Any]
+        | ClientTransport
+        | FastMCPServer
+        | FastMCP1Server
+        | AnyUrl
+        | Path
+        | MCPConfig
+        | dict[str, Any]
+        | str
+    )
 
 
 @dataclass(init=False)
@@ -31,11 +51,11 @@ class FastMCP(BuiltinOrLocalTool[AgentDepsT]):
     When `server` is an HTTP(S) URL (or `url` is provided explicitly), the
     builtin [`MCPServerTool`][pydantic_ai.builtin_tools.MCPServerTool] is
     registered so that models with native MCP support can connect directly.
-    For non-URL servers (in-process, stdio, etc.) only the local
-    `FastMCPToolset` is used.
+    For non-URL servers (in-process, stdio, etc.) the builtin is automatically
+    disabled and only the local `FastMCPToolset` is used.
     """
 
-    server: Any
+    server: FastMCPServerInput
     """The MCP server to connect to via FastMCP.
 
     Accepts any input that [`FastMCPToolset`][pydantic_ai.toolsets.fastmcp.FastMCPToolset]
@@ -71,7 +91,7 @@ class FastMCP(BuiltinOrLocalTool[AgentDepsT]):
 
     def __init__(
         self,
-        server: Any,
+        server: FastMCPServerInput,
         *,
         builtin: MCPServerTool | AgentBuiltinTool[AgentDepsT] | bool = True,
         local: FastMCPToolset[Any]
@@ -106,16 +126,7 @@ class FastMCP(BuiltinOrLocalTool[AgentDepsT]):
 
     @cached_property
     def _resolved_id(self) -> str:
-        if self.id:
-            return self.id
-        if self.url:
-            # Include hostname to avoid collisions (e.g. two /sse URLs on different hosts)
-            parsed = urlparse(self.url)
-            path = parsed.path.rstrip('/')
-            slug = path.split('/')[-1] if path else ''
-            host = parsed.hostname or ''
-            return f'{host}-{slug}' if slug else host or self.url
-        return 'fastmcp'
+        return resolve_mcp_server_id(self.id, self.url) or 'fastmcp'
 
     def _default_builtin(self) -> MCPServerTool | None:
         if self.url is None:
@@ -135,7 +146,7 @@ class FastMCP(BuiltinOrLocalTool[AgentDepsT]):
     def _default_local(self) -> AbstractToolset[Any] | None:
         from pydantic_ai.toolsets.fastmcp import FastMCPToolset
 
-        server = self.server
+        server: Any = self.server
 
         # When server is a URL and we have auth/headers, construct transport with headers
         if (
@@ -150,17 +161,13 @@ class FastMCP(BuiltinOrLocalTool[AgentDepsT]):
             if server.endswith('/sse'):
                 from fastmcp.client import SSETransport
 
-                server = SSETransport(server, headers=local_headers)
+                server = SSETransport(server, headers=local_headers or None)
             else:
                 from fastmcp.client.transports import StreamableHttpTransport
 
-                server = StreamableHttpTransport(server, headers=local_headers)
+                server = StreamableHttpTransport(server, headers=local_headers or None)
 
         return FastMCPToolset(server)
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
-        toolset = super().get_toolset()
-        if toolset is not None and self.allowed_tools is not None:
-            allowed = set(self.allowed_tools)
-            return toolset.filtered(lambda _ctx, tool_def: tool_def.name in allowed)
-        return toolset
+        return filter_allowed_tools(super().get_toolset(), self.allowed_tools)
