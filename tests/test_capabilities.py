@@ -2525,8 +2525,8 @@ class TestFastMCPCapability:
 
         cap = FastMCP('https://mcp.example.com/api', authorization_token='Bearer xyz')
         assert isinstance(cap.local, FastMCPToolset)
-        assert isinstance(cap.local.client.transport, StreamableHttpTransport)
-        assert cap.local.client.transport.headers == {'Authorization': 'Bearer xyz'}
+        assert isinstance(cap.local.client.transport, StreamableHttpTransport)  # pyright: ignore[reportUnknownMemberType]
+        assert cap.local.client.transport.headers == {'Authorization': 'Bearer xyz'}  # pyright: ignore[reportUnknownMemberType]
 
     def test_fastmcp_sse_url_transport(self):
         """FastMCP with /sse URL uses SSETransport for local when headers are provided."""
@@ -2537,7 +2537,7 @@ class TestFastMCPCapability:
 
         cap = FastMCP('https://mcp.example.com/sse', authorization_token='Bearer xyz')
         assert isinstance(cap.local, FastMCPToolset)
-        assert isinstance(cap.local.client.transport, SSETransport)
+        assert isinstance(cap.local.client.transport, SSETransport)  # pyright: ignore[reportUnknownMemberType]
 
     def test_fastmcp_allowed_tools_filters_local(self):
         """FastMCP(allowed_tools=...) applies FilteredToolset to the local toolset."""
@@ -2587,8 +2587,8 @@ class TestFastMCPCapability:
 
         cap = FastMCP('https://mcp.example.com/api', headers={'X-Custom': 'value'})
         assert isinstance(cap.local, FastMCPToolset)
-        assert isinstance(cap.local.client.transport, StreamableHttpTransport)
-        assert cap.local.client.transport.headers == {'X-Custom': 'value'}
+        assert isinstance(cap.local.client.transport, StreamableHttpTransport)  # pyright: ignore[reportUnknownMemberType]
+        assert cap.local.client.transport.headers == {'X-Custom': 'value'}  # pyright: ignore[reportUnknownMemberType]
 
 
 class TestNamedSpecDictRoundTrip:
