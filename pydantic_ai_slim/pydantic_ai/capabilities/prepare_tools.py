@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolsPrepareFunc
+from pydantic_ai.tools import AgentDepsT, ToolsPrepareFunc
+from pydantic_ai.toolsets.abstract import AbstractToolset
+from pydantic_ai.toolsets.prepared import PreparedToolset
 
 from .abstract import AbstractCapability
 
@@ -35,6 +37,5 @@ class PrepareTools(AbstractCapability[AgentDepsT]):
     def get_serialization_name(cls) -> str | None:
         return None  # Not spec-serializable (takes a callable)
 
-    async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-        result: list[ToolDefinition] | None = await self.prepare_func(ctx, tool_defs)
-        return result if result is not None else tool_defs
+    def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        return PreparedToolset(toolset, self.prepare_func)
