@@ -9,7 +9,7 @@ from pydantic_ai._instructions import AgentInstructions
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, RunContext, ToolDefinition
-from pydantic_ai.toolsets import AgentToolset
+from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
@@ -96,6 +96,25 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def get_builtin_tools(self) -> Sequence[AgentBuiltinTool[AgentDepsT]]:
         """Return builtin tools to register with the agent."""
         return []
+
+    def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
+        """Wrap the agent's assembled toolset, or return None to leave it unchanged.
+
+        Called per-run with the combined non-output toolset (after agent-level
+        [`prepare_tools`][pydantic_ai.tools.ToolsPrepareFunc] wrapping).
+        Output tools are added separately and are not included.
+
+        Unlike the other `get_*` methods which are called once at agent construction,
+        this is called each run (after [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]).
+        When multiple capabilities provide wrappers, each receives the already-wrapped
+        toolset from earlier capabilities (first capability wraps innermost).
+
+        Use this to apply cross-cutting toolset wrappers like
+        [`PreparedToolset`][pydantic_ai.toolsets.PreparedToolset],
+        [`FilteredToolset`][pydantic_ai.toolsets.FilteredToolset],
+        or custom [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] subclasses.
+        """
+        return None
 
     # --- Tool preparation hook ---
 

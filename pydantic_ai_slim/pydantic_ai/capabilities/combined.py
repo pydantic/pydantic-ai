@@ -85,6 +85,16 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             builtin_tools.extend(capability.get_builtin_tools() or [])
         return builtin_tools
 
+    def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
+        wrapped = toolset
+        any_wrapped = False
+        for capability in self.capabilities:
+            result = capability.get_wrapper_toolset(wrapped)
+            if result is not None:
+                wrapped = result
+                any_wrapped = True
+        return wrapped if any_wrapped else None
+
     # --- Tool preparation hook ---
 
     async def prepare_tools(
