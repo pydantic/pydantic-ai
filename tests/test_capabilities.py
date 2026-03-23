@@ -3781,18 +3781,14 @@ class TestModelRequestErrorHooks:
             def get_instructions(self):
                 return 'Be helpful.'
 
-        async def failing_stream(
-            messages: list[ModelMessage], info: AgentInfo
-        ) -> AsyncIterator[str]:
+        async def failing_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
             raise RuntimeError('stream exploded')
             yield ''  # pragma: no cover
 
         def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             raise RuntimeError('model exploded')  # pragma: no cover
 
-        agent = Agent(
-            FunctionModel(failing_model, stream_function=failing_stream), capabilities=[MinimalCap()]
-        )
+        agent = Agent(FunctionModel(failing_model, stream_function=failing_stream), capabilities=[MinimalCap()])
         with pytest.raises(RuntimeError, match='stream exploded'):
             async with agent.run_stream('hello'):
                 pass
