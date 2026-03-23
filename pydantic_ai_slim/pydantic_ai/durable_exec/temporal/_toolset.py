@@ -77,11 +77,13 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
         raise NotImplementedError
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        # Temporal-wrapped toolsets manage their own lifecycle
+        # Temporal-wrapped toolsets manage their wrapped toolset's lifecycle
+        # per-activity (inside activities), not per-run.
         return self
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        # Temporal-wrapped toolsets manage their own lifecycle
+        # Temporal-wrapped toolsets manage their wrapped toolset's lifecycle
+        # per-activity (inside activities), not per-run-step.
         return self
 
     def visit_and_replace(
@@ -129,14 +131,24 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
         tool_args: dict[str, Any],
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
+        *,
+        toolset: AbstractToolset[AgentDepsT] | None = None,
     ) -> CallToolResult:
         """Call a tool inside an activity, re-validating args that were deserialized.
 
         The tool args will already have been validated into their proper types in the `ToolManager`,
         but `execute_activity` would have turned them into simple Python types again, so we need to re-validate them.
+
+        Args:
+            name: The name of the tool to call.
+            tool_args: The raw tool arguments to re-validate and pass.
+            ctx: The run context.
+            tool: The tool definition.
+            toolset: The toolset to call the tool on. Defaults to `self.wrapped`.
         """
+        toolset = toolset or self.wrapped
         args_dict = tool.args_validator.validate_python(tool_args)
-        return await self._wrap_call_tool_result(self.wrapped.call_tool(name, args_dict, ctx, tool))
+        return await self._wrap_call_tool_result(toolset.call_tool(name, args_dict, ctx, tool))
 
 
 def temporalize_toolset(
