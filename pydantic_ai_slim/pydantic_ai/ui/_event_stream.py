@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, TypeVar, cast
 from uuid import uuid4
@@ -43,6 +43,8 @@ from ..tools import AgentDepsT
 if TYPE_CHECKING:
     from starlette.responses import StreamingResponse
 
+    from .._run_context import RunContext
+
 
 SSE_CONTENT_TYPE = 'text/event-stream'
 """Content type header value for Server-Sent Events (SSE)."""
@@ -65,89 +67,66 @@ OnCompleteFunc: TypeAlias = (
 
 
 @dataclass
-class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
-    """Base class for UI event stream transformers.
+class AgentEventStream(Generic[EventT]):
+    """Base class for processing agent stream events with typed dispatch.
 
-    This class is responsible for transforming Pydantic AI events into protocol-specific events.
+    Subclass and override `handle_*` methods to observe or transform events. Use as:
+
+    - `Agent(event_stream_handler=handler)` — via `__call__`
+    - In `wrap_run_event_stream` — via `transform_stream()`
+
+    By default, all handlers pass through the input event unchanged (yielding it
+    as `EventT`). Override individual handlers to add custom behavior while
+    keeping passthrough for unhandled event types.
+
+    **Extension surface**: the dispatch methods (`handle_event`, `handle_part_start`, etc.)
+    and leaf handlers (`handle_text_start`, `handle_function_tool_call`, etc.) are the
+    primary override points. Lifecycle hooks (`before_stream`, `after_stream`, etc.) can
+    also be overridden.
     """
 
-    run_input: RunInputT
+    _turn: Literal['request', 'response'] | None = field(default=None, init=False, repr=False)
 
-    accept: str | None = None
-    """The `Accept` header value of the request, used to determine how to encode the protocol-specific events for the streaming response."""
+    async def __call__(
+        self,
+        ctx: RunContext[Any],
+        stream: AsyncIterable[AgentStreamEvent],
+    ) -> None:
+        """Consume the stream, processing events through dispatch handlers.
 
-    message_id: str = field(default_factory=lambda: str(uuid4()))
-    """The message ID to use for the next event."""
+        This makes `AgentEventStream` compatible with
+        [`EventStreamHandler`][pydantic_ai.agent.EventStreamHandler]:
 
-    _turn: Literal['request', 'response'] | None = None
-
-    _result: AgentRunResult[OutputDataT] | None = None
-    _final_result_event: FinalResultEvent | None = None
-
-    def new_message_id(self) -> str:
-        """Generate and store a new message ID."""
-        self.message_id = str(uuid4())
-        return self.message_id
-
-    @property
-    def response_headers(self) -> Mapping[str, str] | None:
-        """Response headers to return to the frontend."""
-        return None
-
-    @property
-    def content_type(self) -> str:
-        """Get the content type for the event stream, compatible with the `Accept` header value.
-
-        By default, this returns the Server-Sent Events content type (`text/event-stream`).
-        If a subclass supports other types as well, it should consider `self.accept` in [`encode_event()`][pydantic_ai.ui.UIEventStream.encode_event] and return the resulting content type.
-        """
-        return SSE_CONTENT_TYPE
-
-    @abstractmethod
-    def encode_event(self, event: EventT) -> str:
-        """Encode a protocol-specific event as a string."""
-        raise NotImplementedError
-
-    async def encode_stream(self, stream: AsyncIterator[EventT]) -> AsyncIterator[str]:
-        """Encode a stream of protocol-specific events as strings according to the `Accept` header value."""
-        async for event in stream:
-            yield self.encode_event(event)
-
-    def streaming_response(self, stream: AsyncIterator[EventT]) -> StreamingResponse:
-        """Generate a streaming response from a stream of protocol-specific events."""
-        try:
-            from starlette.responses import StreamingResponse
-        except ImportError as e:  # pragma: no cover
-            raise ImportError(
-                'Please install the `starlette` package to use the `streaming_response()` method, '
-                'you can use the `ui` optional group — `pip install "pydantic-ai-slim[ui]"`'
-            ) from e
-
-        return StreamingResponse(
-            self.encode_stream(stream),
-            headers=self.response_headers,
-            media_type=self.content_type,
-        )
-
-    async def transform_stream(  # noqa: C901
-        self, stream: AsyncIterator[NativeEvent], on_complete: OnCompleteFunc[EventT] | None = None
-    ) -> AsyncIterator[EventT]:
-        """Transform a stream of Pydantic AI events into protocol-specific events.
-
-        This method dispatches to specific hooks and `handle_*` methods that subclasses can override:
-        - [`before_stream()`][pydantic_ai.ui.UIEventStream.before_stream]
-        - [`after_stream()`][pydantic_ai.ui.UIEventStream.after_stream]
-        - [`on_error()`][pydantic_ai.ui.UIEventStream.on_error]
-        - [`before_request()`][pydantic_ai.ui.UIEventStream.before_request]
-        - [`after_request()`][pydantic_ai.ui.UIEventStream.after_request]
-        - [`before_response()`][pydantic_ai.ui.UIEventStream.before_response]
-        - [`after_response()`][pydantic_ai.ui.UIEventStream.after_response]
-        - [`handle_event()`][pydantic_ai.ui.UIEventStream.handle_event]
+        ```python {test="skip" lint="skip"}
+        handler = MyEventStream()
+        agent = Agent('model', event_stream_handler=handler)
+        ```
 
         Args:
-            stream: The stream of Pydantic AI events to transform.
-            on_complete: Optional callback function called when the agent run completes successfully.
-                The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
+            ctx: The run context (available but not used by default).
+            stream: The stream of agent events.
+        """
+        async for _ in self.transform_stream(stream):
+            pass
+
+    async def transform_stream(
+        self,
+        stream: AsyncIterable[AgentStreamEvent],
+    ) -> AsyncIterator[EventT]:
+        """Transform a stream of agent events through lifecycle hooks and dispatch.
+
+        This method wraps the stream with:
+
+        - [`before_stream()`][pydantic_ai.ui.AgentEventStream.before_stream] /
+          [`after_stream()`][pydantic_ai.ui.AgentEventStream.after_stream]
+        - [`on_error()`][pydantic_ai.ui.AgentEventStream.on_error]
+        - Turn tracking:
+          [`before_request()`][pydantic_ai.ui.AgentEventStream.before_request] /
+          [`before_response()`][pydantic_ai.ui.AgentEventStream.before_response]
+        - Event dispatch via [`handle_event()`][pydantic_ai.ui.AgentEventStream.handle_event]
+
+        Args:
+            stream: The stream of agent events to transform.
         """
         async for e in self.before_stream():
             yield e
@@ -160,52 +139,15 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 elif isinstance(event, FunctionToolCallEvent):
                     async for e in self._turn_to('request'):
                         yield e
-                elif isinstance(event, AgentRunResultEvent):
-                    if (
-                        self._final_result_event
-                        and (tool_call_id := self._final_result_event.tool_call_id)
-                        and (tool_name := self._final_result_event.tool_name)
-                    ):
-                        async for e in self._turn_to('request'):
-                            yield e
 
-                        self._final_result_event = None
-                        # Ensure the stream does not end on a dangling tool call without a result.
-                        output_tool_result_event = FunctionToolResultEvent(
-                            result=ToolReturnPart(
-                                tool_call_id=tool_call_id,
-                                tool_name=tool_name,
-                                content='Final result processed.',
-                            )
-                        )
-                        async for e in self.handle_function_tool_result(output_tool_result_event):
-                            yield e
-
-                    result = cast(AgentRunResult[OutputDataT], event.result)
-                    self._result = result
-
-                    async for e in self._turn_to(None):
-                        yield e
-
-                    if on_complete is not None:
-                        if inspect.isasyncgenfunction(on_complete):
-                            async for e in on_complete(result):
-                                yield e
-                        elif _utils.is_async_callable(on_complete):
-                            await on_complete(result)
-                        else:
-                            await _utils.run_in_executor(on_complete, result)
-                elif isinstance(event, FinalResultEvent):
-                    self._final_result_event = event
-
-                if isinstance(event, BuiltinToolCallEvent | BuiltinToolResultEvent):  # pyright: ignore[reportDeprecated]
+                if isinstance(event, (BuiltinToolCallEvent, BuiltinToolResultEvent)):  # pyright: ignore[reportDeprecated]
                     # These events were deprecated before this feature was introduced
                     continue
 
                 async for e in self.handle_event(event):
                     yield e
-        except Exception as e:
-            async for e in self.on_error(e):
+        except Exception as exc:
+            async for e in self.on_error(exc):
                 yield e
         finally:
             async for e in self._turn_to(None):
@@ -235,18 +177,31 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             async for e in self.before_response():
                 yield e
 
-    async def handle_event(self, event: NativeEvent) -> AsyncIterator[EventT]:
-        """Transform a Pydantic AI event into one or more protocol-specific events.
+    # --- Default yield (passthrough) ---
+
+    async def _default_yield(self, event: AgentStreamEvent) -> AsyncIterator[EventT]:
+        """Yield the event for passthrough. Overridden internally by UIEventStream to yield nothing."""
+        yield cast(EventT, event)
+
+    # --- Event dispatch ---
+
+    async def handle_event(self, event: AgentStreamEvent) -> AsyncIterator[EventT]:
+        """Dispatch an event to the appropriate handler method.
 
         This method dispatches to specific `handle_*` methods based on event type:
 
-        - [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] -> [`handle_part_start()`][pydantic_ai.ui.UIEventStream.handle_part_start]
-        - [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] -> `handle_part_delta`
-        - [`PartEndEvent`][pydantic_ai.messages.PartEndEvent] -> `handle_part_end`
-        - [`FinalResultEvent`][pydantic_ai.messages.FinalResultEvent] -> `handle_final_result`
-        - [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] -> `handle_function_tool_call`
-        - [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] -> `handle_function_tool_result`
-        - [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] -> `handle_run_result`
+        - [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] ->
+          [`handle_part_start()`][pydantic_ai.ui.AgentEventStream.handle_part_start]
+        - [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] ->
+          [`handle_part_delta()`][pydantic_ai.ui.AgentEventStream.handle_part_delta]
+        - [`PartEndEvent`][pydantic_ai.messages.PartEndEvent] ->
+          [`handle_part_end()`][pydantic_ai.ui.AgentEventStream.handle_part_end]
+        - [`FinalResultEvent`][pydantic_ai.messages.FinalResultEvent] ->
+          [`handle_final_result()`][pydantic_ai.ui.AgentEventStream.handle_final_result]
+        - [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] ->
+          [`handle_function_tool_call()`][pydantic_ai.ui.AgentEventStream.handle_function_tool_call]
+        - [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] ->
+          [`handle_function_tool_result()`][pydantic_ai.ui.AgentEventStream.handle_function_tool_result]
 
         Subclasses are encouraged to override the individual `handle_*` methods rather than this one.
         If you need specific behavior for all events, make sure you call the super method.
@@ -270,23 +225,29 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case FunctionToolResultEvent():
                 async for e in self.handle_function_tool_result(event):
                     yield e
-            case AgentRunResultEvent():
-                async for e in self.handle_run_result(event):
-                    yield e
             case _:
-                pass
+                async for e in self._default_yield(event):
+                    yield e
+
+    # --- Part dispatch ---
 
     async def handle_part_start(self, event: PartStartEvent) -> AsyncIterator[EventT]:
         """Handle a `PartStartEvent`.
 
         This method dispatches to specific `handle_*` methods based on part type:
 
-        - [`TextPart`][pydantic_ai.messages.TextPart] -> [`handle_text_start()`][pydantic_ai.ui.UIEventStream.handle_text_start]
-        - [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] -> [`handle_thinking_start()`][pydantic_ai.ui.UIEventStream.handle_thinking_start]
-        - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] -> [`handle_tool_call_start()`][pydantic_ai.ui.UIEventStream.handle_tool_call_start]
-        - [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] -> [`handle_builtin_tool_call_start()`][pydantic_ai.ui.UIEventStream.handle_builtin_tool_call_start]
-        - [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] -> [`handle_builtin_tool_return()`][pydantic_ai.ui.UIEventStream.handle_builtin_tool_return]
-        - [`FilePart`][pydantic_ai.messages.FilePart] -> [`handle_file()`][pydantic_ai.ui.UIEventStream.handle_file]
+        - [`TextPart`][pydantic_ai.messages.TextPart] ->
+          [`handle_text_start()`][pydantic_ai.ui.AgentEventStream.handle_text_start]
+        - [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] ->
+          [`handle_thinking_start()`][pydantic_ai.ui.AgentEventStream.handle_thinking_start]
+        - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] ->
+          [`handle_tool_call_start()`][pydantic_ai.ui.AgentEventStream.handle_tool_call_start]
+        - [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] ->
+          [`handle_builtin_tool_call_start()`][pydantic_ai.ui.AgentEventStream.handle_builtin_tool_call_start]
+        - [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] ->
+          [`handle_builtin_tool_return()`][pydantic_ai.ui.AgentEventStream.handle_builtin_tool_return]
+        - [`FilePart`][pydantic_ai.messages.FilePart] ->
+          [`handle_file()`][pydantic_ai.ui.AgentEventStream.handle_file]
 
         Subclasses are encouraged to override the individual `handle_*` methods rather than this one.
         If you need specific behavior for all part start events, make sure you call the super method.
@@ -296,34 +257,47 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         """
         part = event.part
         previous_part_kind = event.previous_part_kind
+        yielded = False
         match part:
             case TextPart():
                 async for e in self.handle_text_start(part, follows_text=previous_part_kind == 'text'):
+                    yielded = True
                     yield e
             case ThinkingPart():
                 async for e in self.handle_thinking_start(part, follows_thinking=previous_part_kind == 'thinking'):
+                    yielded = True
                     yield e
             case ToolCallPart():
                 async for e in self.handle_tool_call_start(part):
+                    yielded = True
                     yield e
             case BuiltinToolCallPart():
                 async for e in self.handle_builtin_tool_call_start(part):
+                    yielded = True
                     yield e
             case BuiltinToolReturnPart():
                 async for e in self.handle_builtin_tool_return(part):
+                    yielded = True
                     yield e
             case FilePart():  # pragma: no branch
                 async for e in self.handle_file(part):
+                    yielded = True
                     yield e
+        if not yielded:
+            async for e in self._default_yield(event):
+                yield e
 
     async def handle_part_delta(self, event: PartDeltaEvent) -> AsyncIterator[EventT]:
-        """Handle a PartDeltaEvent.
+        """Handle a `PartDeltaEvent`.
 
         This method dispatches to specific `handle_*_delta` methods based on part delta type:
 
-        - [`TextPartDelta`][pydantic_ai.messages.TextPartDelta] -> [`handle_text_delta()`][pydantic_ai.ui.UIEventStream.handle_text_delta]
-        - [`ThinkingPartDelta`][pydantic_ai.messages.ThinkingPartDelta] -> [`handle_thinking_delta()`][pydantic_ai.ui.UIEventStream.handle_thinking_delta]
-        - [`ToolCallPartDelta`][pydantic_ai.messages.ToolCallPartDelta] -> [`handle_tool_call_delta()`][pydantic_ai.ui.UIEventStream.handle_tool_call_delta]
+        - [`TextPartDelta`][pydantic_ai.messages.TextPartDelta] ->
+          [`handle_text_delta()`][pydantic_ai.ui.AgentEventStream.handle_text_delta]
+        - [`ThinkingPartDelta`][pydantic_ai.messages.ThinkingPartDelta] ->
+          [`handle_thinking_delta()`][pydantic_ai.ui.AgentEventStream.handle_thinking_delta]
+        - [`ToolCallPartDelta`][pydantic_ai.messages.ToolCallPartDelta] ->
+          [`handle_tool_call_delta()`][pydantic_ai.ui.AgentEventStream.handle_tool_call_delta]
 
         Subclasses are encouraged to override the individual `handle_*_delta` methods rather than this one.
         If you need specific behavior for all part delta events, make sure you call the super method.
@@ -332,26 +306,37 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             event: The PartDeltaEvent.
         """
         delta = event.delta
+        yielded = False
         match delta:
             case TextPartDelta():
                 async for e in self.handle_text_delta(delta):
+                    yielded = True
                     yield e
             case ThinkingPartDelta():
                 async for e in self.handle_thinking_delta(delta):
+                    yielded = True
                     yield e
             case ToolCallPartDelta():  # pragma: no branch
                 async for e in self.handle_tool_call_delta(delta):
+                    yielded = True
                     yield e
+        if not yielded:
+            async for e in self._default_yield(event):
+                yield e
 
     async def handle_part_end(self, event: PartEndEvent) -> AsyncIterator[EventT]:
         """Handle a `PartEndEvent`.
 
         This method dispatches to specific `handle_*_end` methods based on part type:
 
-        - [`TextPart`][pydantic_ai.messages.TextPart] -> [`handle_text_end()`][pydantic_ai.ui.UIEventStream.handle_text_end]
-        - [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] -> [`handle_thinking_end()`][pydantic_ai.ui.UIEventStream.handle_thinking_end]
-        - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] -> [`handle_tool_call_end()`][pydantic_ai.ui.UIEventStream.handle_tool_call_end]
-        - [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] -> [`handle_builtin_tool_call_end()`][pydantic_ai.ui.UIEventStream.handle_builtin_tool_call_end]
+        - [`TextPart`][pydantic_ai.messages.TextPart] ->
+          [`handle_text_end()`][pydantic_ai.ui.AgentEventStream.handle_text_end]
+        - [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] ->
+          [`handle_thinking_end()`][pydantic_ai.ui.AgentEventStream.handle_thinking_end]
+        - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] ->
+          [`handle_tool_call_end()`][pydantic_ai.ui.AgentEventStream.handle_tool_call_end]
+        - [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] ->
+          [`handle_builtin_tool_call_end()`][pydantic_ai.ui.AgentEventStream.handle_builtin_tool_call_end]
 
         Subclasses are encouraged to override the individual `handle_*_end` methods rather than this one.
         If you need specific behavior for all part end events, make sure you call the super method.
@@ -361,22 +346,32 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         """
         part = event.part
         next_part_kind = event.next_part_kind
+        yielded = False
         match part:
             case TextPart():
                 async for e in self.handle_text_end(part, followed_by_text=next_part_kind == 'text'):
+                    yielded = True
                     yield e
             case ThinkingPart():
                 async for e in self.handle_thinking_end(part, followed_by_thinking=next_part_kind == 'thinking'):
+                    yielded = True
                     yield e
             case ToolCallPart():
                 async for e in self.handle_tool_call_end(part):
+                    yielded = True
                     yield e
             case BuiltinToolCallPart():
                 async for e in self.handle_builtin_tool_call_end(part):
+                    yielded = True
                     yield e
             case BuiltinToolReturnPart() | FilePart():  # pragma: no cover
                 # These don't have deltas, so they don't need to be ended.
                 pass
+        if not yielded:
+            async for e in self._default_yield(event):
+                yield e
+
+    # --- Lifecycle hooks ---
 
     async def before_stream(self) -> AsyncIterator[EventT]:
         """Yield events before agent streaming starts.
@@ -398,6 +393,16 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
     async def on_error(self, error: Exception) -> AsyncIterator[EventT]:
         """Handle errors that occur during streaming.
+
+        Note: By default this yields nothing and does not re-raise. When using
+        `AgentEventStream` as an `event_stream_handler` via `__call__`, this means
+        stream errors are silently consumed. Override this to re-raise or handle errors:
+
+        ```python {test="skip"}
+        async def on_error(self, error):
+            raise error  # Re-raise to propagate to the caller
+            yield
+        ```
 
         Args:
             error: The error that occurred during streaming.
@@ -436,6 +441,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         """
         return  # pragma: lax no cover
         yield  # Make this an async generator
+
+    # --- Leaf handlers ---
 
     async def handle_text_start(self, part: TextPart, follows_text: bool = False) -> AsyncIterator[EventT]:
         """Handle the start of a `TextPart`.
@@ -566,8 +573,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         Args:
             event: The final result event.
         """
-        return
-        yield  # Make this an async generator
+        async for e in self._default_yield(event):
+            yield e
 
     async def handle_function_tool_call(self, event: FunctionToolCallEvent) -> AsyncIterator[EventT]:
         """Handle a `FunctionToolCallEvent`.
@@ -575,8 +582,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         Args:
             event: The function tool call event.
         """
-        return
-        yield  # Make this an async generator
+        async for e in self._default_yield(event):
+            yield e
 
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[EventT]:
         """Handle a `FunctionToolResultEvent`.
@@ -584,8 +591,101 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         Args:
             event: The function tool result event.
         """
-        return  # pragma: no cover
+        async for e in self._default_yield(event):
+            yield e
+
+
+@dataclass
+class UIEventStream(AgentEventStream[EventT], ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
+    """Base class for UI event stream transformers.
+
+    This class extends [`AgentEventStream`][pydantic_ai.ui.AgentEventStream] with UI-specific
+    encoding and protocol support for transforming Pydantic AI events into protocol-specific events
+    (e.g., Vercel AI Data Stream Protocol, AG-UI).
+    """
+
+    run_input: RunInputT
+
+    accept: str | None = None
+    """The `Accept` header value of the request, used to determine how to encode the protocol-specific events for the streaming response."""
+
+    message_id: str = field(default_factory=lambda: str(uuid4()))
+    """The message ID to use for the next event."""
+
+    _result: AgentRunResult[OutputDataT] | None = field(default=None, init=False, repr=False)
+    _final_result_event: FinalResultEvent | None = field(default=None, init=False, repr=False)
+
+    def new_message_id(self) -> str:
+        """Generate and store a new message ID."""
+        self.message_id = str(uuid4())
+        return self.message_id
+
+    @property
+    def response_headers(self) -> Mapping[str, str] | None:
+        """Response headers to return to the frontend."""
+        return None
+
+    @property
+    def content_type(self) -> str:
+        """Get the content type for the event stream, compatible with the `Accept` header value.
+
+        By default, this returns the Server-Sent Events content type (`text/event-stream`).
+        If a subclass supports other types as well, it should consider `self.accept` in [`encode_event()`][pydantic_ai.ui.UIEventStream.encode_event] and return the resulting content type.
+        """
+        return SSE_CONTENT_TYPE
+
+    @abstractmethod
+    def encode_event(self, event: EventT) -> str:
+        """Encode a protocol-specific event as a string."""
+        raise NotImplementedError
+
+    async def encode_stream(self, stream: AsyncIterator[EventT]) -> AsyncIterator[str]:
+        """Encode a stream of protocol-specific events as strings according to the `Accept` header value."""
+        async for event in stream:
+            yield self.encode_event(event)
+
+    def streaming_response(self, stream: AsyncIterator[EventT]) -> StreamingResponse:
+        """Generate a streaming response from a stream of protocol-specific events."""
+        try:
+            from starlette.responses import StreamingResponse
+        except ImportError as e:  # pragma: no cover
+            raise ImportError(
+                'Please install the `starlette` package to use the `streaming_response()` method, '
+                'you can use the `ui` optional group — `pip install "pydantic-ai-slim[ui]"`'
+            ) from e
+
+        return StreamingResponse(
+            self.encode_stream(stream),
+            headers=self.response_headers,
+            media_type=self.content_type,
+        )
+
+    # --- Override _default_yield to suppress passthrough ---
+
+    async def _default_yield(self, event: AgentStreamEvent) -> AsyncIterator[EventT]:
+        """Override to yield nothing — UI subclasses must explicitly produce protocol events."""
+        return
         yield  # Make this an async generator
+
+    # --- Override handle_event to add AgentRunResultEvent dispatch ---
+
+    async def handle_event(self, event: NativeEvent) -> AsyncIterator[EventT]:
+        """Dispatch an event, including `AgentRunResultEvent` for UI streams.
+
+        This method extends the base dispatch with:
+
+        - [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] ->
+          [`handle_run_result()`][pydantic_ai.ui.UIEventStream.handle_run_result]
+
+        Subclasses are encouraged to override the individual `handle_*` methods rather than this one.
+        If you need specific behavior for all events, make sure you call the super method.
+        """
+        if isinstance(event, AgentRunResultEvent):
+            async for e in self.handle_run_result(event):
+                yield e
+        else:
+            async for e in super().handle_event(event):
+                yield e
 
     async def handle_run_result(self, event: AgentRunResultEvent) -> AsyncIterator[EventT]:
         """Handle an `AgentRunResultEvent`.
@@ -595,6 +695,93 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         """
         return
         yield  # Make this an async generator
+
+    # --- Override transform_stream with NativeEvent + on_complete ---
+
+    async def transform_stream(  # noqa: C901  # pyright: ignore[reportIncompatibleMethodOverride]
+        self, stream: AsyncIterator[NativeEvent], on_complete: OnCompleteFunc[EventT] | None = None
+    ) -> AsyncIterator[EventT]:
+        """Transform a stream of Pydantic AI events into protocol-specific events.
+
+        This method extends [`AgentEventStream.transform_stream()`][pydantic_ai.ui.AgentEventStream.transform_stream]
+        with support for [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] handling
+        (including dangling output tool result injection) and an `on_complete` callback.
+
+        Note: This intentionally reimplements the base class loop rather than composing via
+        `super().transform_stream()`, because the `AgentRunResultEvent` handling (dangling tool
+        call injection, result tracking, `on_complete`) is deeply interleaved with the lifecycle
+        hooks and turn tracking — composing via a stream wrapper would not be feasible without
+        losing event ordering guarantees.
+
+        Args:
+            stream: The stream of Pydantic AI events to transform.
+            on_complete: Optional callback function called when the agent run completes successfully.
+                The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
+        """
+        async for e in self.before_stream():
+            yield e
+
+        try:
+            async for event in stream:
+                if isinstance(event, PartStartEvent):
+                    async for e in self._turn_to('response'):
+                        yield e
+                elif isinstance(event, FunctionToolCallEvent):
+                    async for e in self._turn_to('request'):
+                        yield e
+                elif isinstance(event, AgentRunResultEvent):
+                    if (
+                        self._final_result_event
+                        and (tool_call_id := self._final_result_event.tool_call_id)
+                        and (tool_name := self._final_result_event.tool_name)
+                    ):
+                        async for e in self._turn_to('request'):
+                            yield e
+
+                        self._final_result_event = None
+                        # Ensure the stream does not end on a dangling tool call without a result.
+                        output_tool_result_event = FunctionToolResultEvent(
+                            result=ToolReturnPart(
+                                tool_call_id=tool_call_id,
+                                tool_name=tool_name,
+                                content='Final result processed.',
+                            )
+                        )
+                        async for e in self.handle_function_tool_result(output_tool_result_event):
+                            yield e
+
+                    result = cast(AgentRunResult[OutputDataT], event.result)
+                    self._result = result
+
+                    async for e in self._turn_to(None):
+                        yield e
+
+                    if on_complete is not None:
+                        if inspect.isasyncgenfunction(on_complete):
+                            async for e in on_complete(result):
+                                yield e
+                        elif _utils.is_async_callable(on_complete):
+                            await on_complete(result)
+                        else:
+                            await _utils.run_in_executor(on_complete, result)
+                elif isinstance(event, FinalResultEvent):
+                    self._final_result_event = event
+
+                if isinstance(event, (BuiltinToolCallEvent, BuiltinToolResultEvent)):  # pyright: ignore[reportDeprecated]
+                    # These events were deprecated before this feature was introduced
+                    continue
+
+                async for e in self.handle_event(event):
+                    yield e
+        except Exception as exc:
+            async for e in self.on_error(exc):
+                yield e
+        finally:
+            async for e in self._turn_to(None):
+                yield e
+
+            async for e in self.after_stream():
+                yield e
 
 
 def describe_file(file: MultiModalContent) -> str:

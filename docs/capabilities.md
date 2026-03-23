@@ -427,10 +427,71 @@ class StreamAuditor(AbstractCapability[Any]):
         return _audit()
 ```
 
-!!! note
-    The inner async generator pattern shown above will become more ergonomic with the `AgentEventStream` base class ([PR #4775](https://github.com/pydantic/pydantic-ai/pull/4775)).
+For more structured event handling, you can use [`AgentEventStream`][pydantic_ai.ui.AgentEventStream] — a base class with typed dispatch that routes events to specific `handle_*` methods. Override only the handlers you care about; all other events pass through unchanged:
 
-For building web UIs that transform streamed events into protocol-specific formats (like SSE), see the [UI event streams](ui/overview.md) documentation and the [`UIEventStream`][pydantic_ai.ui.UIEventStream] base class.
+```python {title="event_stream_handler_example.py"}
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
+
+from pydantic_ai import Agent, AgentEventStream
+from pydantic_ai.messages import AgentStreamEvent, FunctionToolCallEvent
+from pydantic_ai.models.test import TestModel
+
+
+@dataclass
+class ToolAuditor(AgentEventStream[AgentStreamEvent]):
+    """Logs function tool calls while passing all events through."""
+
+    tool_names: list[str] = field(default_factory=list)
+
+    async def handle_function_tool_call(
+        self, event: FunctionToolCallEvent
+    ) -> AsyncIterator[AgentStreamEvent]:
+        self.tool_names.append(event.part.tool_name)
+        yield event  # passthrough
+
+
+auditor = ToolAuditor()
+agent = Agent(TestModel(), event_stream_handler=auditor)
+
+
+@agent.tool_plain
+def get_weather(city: str) -> str:
+    """Get the weather for a city."""
+    return f'Sunny in {city}'
+
+
+result = agent.run_sync('What is the weather in Paris?')
+print(auditor.tool_names)
+#> ['get_weather']
+```
+
+[`AgentEventStream`][pydantic_ai.ui.AgentEventStream] also works inside a capability's [`wrap_run_event_stream`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream] via `transform_stream()`:
+
+```python {title="event_stream_capability_example.py" requires="event_stream_handler_example.py"}
+from collections.abc import AsyncIterable
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.messages import AgentStreamEvent
+
+from event_stream_handler_example import ToolAuditor
+
+
+@dataclass
+class AuditCapability(AbstractCapability[Any]):
+    async def wrap_run_event_stream(
+        self,
+        ctx: RunContext[Any],
+        *,
+        stream: AsyncIterable[AgentStreamEvent],
+    ) -> AsyncIterable[AgentStreamEvent]:
+        return ToolAuditor().transform_stream(stream)
+```
+
+For building web UIs that transform streamed events into protocol-specific formats (like SSE), see the [UI event streams](ui/overview.md) documentation and the [`UIEventStream`][pydantic_ai.ui.UIEventStream] base class, which extends [`AgentEventStream`][pydantic_ai.ui.AgentEventStream] with encoding and response generation.
 
 ## Example: building a guardrail
 

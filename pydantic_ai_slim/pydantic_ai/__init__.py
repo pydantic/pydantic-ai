@@ -141,6 +141,7 @@ from .toolsets import (
     ToolsetTool,
     WrapperToolset,
 )
+from .ui import AgentEventStream
 from .usage import RequestUsage, RunUsage, UsageLimits
 
 __all__ = (
@@ -293,5 +294,7 @@ __all__ = (
     'AgentRun',
     'AgentRunResult',
     'AgentRunResultEvent',
+    # ui
+    'AgentEventStream',
 )
 __version__ = _metadata_version('pydantic_ai_slim')
