@@ -703,6 +703,10 @@ def _wrap_sync(
             if oe.gate is not None:
                 try:
                     gate_result = oe.gate(context)
+                    if inspect.iscoroutine(gate_result):
+                        gate_result.close()  # prevent 'coroutine was never awaited' warning
+                        logger.warning('Async gate on sync function %r — skipping evaluator %r', func, oe.evaluator)
+                        continue
                     if inspect.isawaitable(gate_result):
                         logger.warning('Async gate on sync function %r — skipping evaluator %r', func, oe.evaluator)
                         continue

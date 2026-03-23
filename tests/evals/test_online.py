@@ -933,3 +933,105 @@ async def test_multiple_sinks():
 
     assert len(collector1.calls) == 1
     assert len(collector2.calls) == 1
+
+
+# ============================================================================
+# Coverage: edge cases
+# ============================================================================
+
+
+async def test_sample_rate_fractional():
+    """Fractional sample_rate uses random to decide."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    # Use sample_rate=0.5 and call many times to exercise the random.random() branch
+    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), sample_rate=0.5))
+    async def my_func(x: int) -> int:
+        return x
+
+    for _ in range(50):
+        await my_func(42)
+
+    await asyncio.sleep(0.2)
+    # With 50 calls at 50%, we expect roughly 25 evaluations (but not exactly)
+    assert 0 < len(collector.calls) < 50
+
+
+async def test_sink_exception_logged(caplog: pytest.LogCaptureFixture):
+    """Sink exceptions are caught and logged, not propagated."""
+
+    async def bad_sink(
+        results: Sequence[EvaluationResult[Any]],
+        failures: Sequence[EvaluatorFailure],
+        context: EvaluatorContext[Any, Any, Any],
+    ) -> None:
+        raise RuntimeError('sink exploded')
+
+    config = OnlineEvalConfig(default_sink=bad_sink)
+
+    @config.evaluate(AlwaysTrue())
+    async def my_func(x: int) -> int:
+        return x
+
+    result = await my_func(42)
+    assert result == 42
+
+    await asyncio.sleep(0.1)
+    assert 'Error submitting evaluation results to sink' in caplog.text
+
+
+async def test_sync_gate_on_sync_function():
+    """Sync gates work on sync functions."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), gate=lambda ctx: ctx.output > 10))
+    def my_func(x: int) -> int:
+        return x
+
+    my_func(5)  # gate blocks
+    await asyncio.sleep(0.5)
+    assert len(collector.calls) == 0
+
+    my_func(20)  # gate allows
+    await asyncio.sleep(0.5)
+    assert len(collector.calls) == 1
+
+
+async def test_sync_async_gate_warning(caplog: pytest.LogCaptureFixture):
+    """Async gate on sync function logs warning and skips."""
+
+    async def async_gate(ctx: EvaluatorContext[Any, Any, Any]) -> bool:
+        return True
+
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), gate=async_gate))
+    def my_func(x: int) -> int:
+        return x
+
+    my_func(42)
+    await asyncio.sleep(0.5)
+    assert 'Async gate on sync function' in caplog.text
+    assert len(collector.calls) == 0
+
+
+async def test_sync_gate_exception(caplog: pytest.LogCaptureFixture):
+    """Gate exception on sync function skips evaluator and logs."""
+
+    def bad_gate(ctx: EvaluatorContext[Any, Any, Any]) -> bool:
+        raise ValueError('gate error')
+
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), gate=bad_gate))
+    def my_func(x: int) -> int:
+        return x
+
+    my_func(42)
+    await asyncio.sleep(0.5)
+    assert 'Gate check failed' in caplog.text
+    assert len(collector.calls) == 0
