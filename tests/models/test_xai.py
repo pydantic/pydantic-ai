@@ -3268,6 +3268,19 @@ async def test_xai_usage_without_details(allow_model_requests: None):
     assert result.usage() == snapshot(RunUsage(input_tokens=20, output_tokens=10, requests=1))
 
 
+def test_xai_usage_fallback_when_extract_fails():
+    """Test that token counts fall back to raw usage data when genai-prices extraction returns zeros."""
+    from pydantic_ai.models.xai import _extract_usage
+
+    response = create_response(
+        content='answer',
+        usage=create_usage(prompt_tokens=15, completion_tokens=8),
+    )
+    # Use unknown provider/URL so genai-prices can't extract pricing, triggering the fallback
+    result = _extract_usage(response, model='unknown-model', provider='unknown', provider_url='https://unknown.example.com')
+    assert result == snapshot(RequestUsage(input_tokens=15, output_tokens=8))
+
+
 async def test_xai_usage_with_server_side_tools(allow_model_requests: None):
     """Test that xAI model properly extracts server_side_tools_used from usage."""
     # Create a mock usage object with server_side_tools_used
