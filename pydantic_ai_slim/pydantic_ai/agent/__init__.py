@@ -1107,6 +1107,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_toolset=output_toolset,
             additional_toolsets=toolsets,
             cap_toolsets=cap_toolsets,
+            run_capability=run_capability,
         )
         toolset = await toolset.for_run(initial_ctx)
         tool_manager = ToolManager[AgentDepsT](
@@ -2095,6 +2096,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_toolset: AbstractToolset[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         additional_toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         cap_toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
+        run_capability: AbstractCapability[AgentDepsT] | None = None,
     ) -> AbstractToolset[AgentDepsT]:
         """Get the complete toolset.
 
@@ -2102,16 +2104,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_toolset: The output toolset to use instead of the one built at agent construction time.
             additional_toolsets: Additional toolsets to add, unless toolsets have been overridden.
             cap_toolsets: Per-run capability toolsets to use instead of the init-time capability toolsets.
+            run_capability: The per-run capability instance, used to apply wrapper toolsets.
         """
         toolsets = list(self._build_toolset_list(cap_toolsets=cap_toolsets))
         # Don't add additional toolsets if the toolsets have been overridden
         if additional_toolsets and self._override_toolsets.get() is None:
             toolsets = [*toolsets, *additional_toolsets]
 
-        toolset = CombinedToolset(toolsets)
+        toolset: AbstractToolset[AgentDepsT] = CombinedToolset(toolsets)
 
         if self._prepare_tools:
             toolset = PreparedToolset(toolset, self._prepare_tools)
+
+        # Let capabilities wrap the assembled non-output toolset
+        if run_capability is not None:
+            wrapper = run_capability.get_wrapper_toolset(toolset)
+            if wrapper is not None:
+                toolset = wrapper
 
         output_toolset = output_toolset if _utils.is_set(output_toolset) else self._output_toolset
         if output_toolset is not None:

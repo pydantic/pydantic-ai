@@ -30,6 +30,7 @@ from pydantic_ai.messages import (
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -38,9 +39,10 @@ from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.toolsets._dynamic import ToolsetFunc
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ._inline_snapshot import snapshot
+from .conftest import IsDatetime, IsStr
 
 pytestmark = [
     pytest.mark.anyio,
@@ -2448,3 +2450,273 @@ class TestPrepareToolsCapability:
         from pydantic_ai.capabilities import PrepareTools
 
         assert PrepareTools.get_serialization_name() is None
+
+
+class TestGetWrapperToolsetHook:
+    async def test_wrapper_prefixes_tools(self):
+        """Capability can wrap the toolset to prefix tool names."""
+        from pydantic_ai.toolsets.prefixed import PrefixedToolset
+
+        @dataclass
+        class PrefixCap(AbstractCapability[Any]):
+            def get_wrapper_toolset(self, toolset: AbstractToolset[Any]) -> AbstractToolset[Any] | None:
+                return PrefixedToolset(toolset, prefix='cap')
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            tool_names = sorted(t.name for t in info.function_tools)
+            return make_text_response(f'tools: {tool_names}')
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[PrefixCap()])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'result'
+
+        result = await agent.run('hello')
+        assert result.output == "tools: ['cap_my_tool']"
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content="tools: ['cap_my_tool']")],
+                    usage=RequestUsage(input_tokens=51, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_wrapper_prefixes_tools_streaming(self):
+        """Wrapper toolset works correctly with streaming runs."""
+        from pydantic_ai.toolsets.prefixed import PrefixedToolset
+
+        @dataclass
+        class PrefixCap(AbstractCapability[Any]):
+            def get_wrapper_toolset(self, toolset: AbstractToolset[Any]) -> AbstractToolset[Any] | None:
+                return PrefixedToolset(toolset, prefix='cap')
+
+        async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            tool_names = sorted(t.name for t in info.function_tools)
+            yield f'tools: {tool_names}'
+
+        agent = Agent(FunctionModel(stream_function=stream_fn), capabilities=[PrefixCap()])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'result'
+
+        async with agent.run_stream('hello') as result:
+            output = await result.get_output()
+        assert output == "tools: ['cap_my_tool']"
+
+    async def test_wrapper_does_not_affect_output_tools(self):
+        """Wrapper toolset does not wrap output tools."""
+        from pydantic_ai.toolsets.wrapper import WrapperToolset
+
+        seen_tool_names: list[list[str]] = []
+
+        @dataclass
+        class SpyWrapperToolset(WrapperToolset[Any]):
+            async def get_tools(self, ctx: RunContext[Any]) -> dict[str, Any]:
+                tools = await super().get_tools(ctx)
+                seen_tool_names.append(sorted(tools.keys()))
+                return tools
+
+        @dataclass
+        class SpyWrapperCap(AbstractCapability[Any]):
+            def get_wrapper_toolset(self, toolset: AbstractToolset[Any]) -> AbstractToolset[Any] | None:
+                return SpyWrapperToolset(toolset)
+
+        agent = Agent(
+            TestModel(),
+            output_type=int,
+            capabilities=[SpyWrapperCap()],
+        )
+
+        @agent.tool_plain
+        def add_one(x: int) -> int:
+            """Add one to x."""
+            return x + 1
+
+        await agent.run('hello')
+        # The wrapper should only see function tools, not output tools
+        for tool_names in seen_tool_names:
+            assert 'add_one' in tool_names
+            # Output tool names should not appear in the wrapped toolset
+            assert all(not name.startswith('final_result') for name in tool_names)
+
+    async def test_wrapper_none_is_noop(self):
+        """Returning None from get_wrapper_toolset leaves the toolset unchanged."""
+
+        @dataclass
+        class NoopCap(AbstractCapability[Any]):
+            def get_wrapper_toolset(self, toolset: AbstractToolset[Any]) -> AbstractToolset[Any] | None:
+                return None
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            tool_names = sorted(t.name for t in info.function_tools)
+            return make_text_response(f'tools: {tool_names}')
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[NoopCap()])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'result'
+
+        result = await agent.run('hello')
+        assert result.output == "tools: ['my_tool']"
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content="tools: ['my_tool']")],
+                    usage=RequestUsage(input_tokens=51, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_wrapper_chaining_order(self):
+        """Multiple capabilities' wrappers compose by nesting: first wraps innermost."""
+        from pydantic_ai.toolsets.prefixed import PrefixedToolset
+
+        @dataclass
+        class PrefixCap(AbstractCapability[Any]):
+            prefix: str
+
+            def get_wrapper_toolset(self, toolset: AbstractToolset[Any]) -> AbstractToolset[Any] | None:
+                return PrefixedToolset(toolset, prefix=self.prefix)
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            tool_names = sorted(t.name for t in info.function_tools)
+            return make_text_response(f'tools: {tool_names}')
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            capabilities=[PrefixCap(prefix='a'), PrefixCap(prefix='b')],
+        )
+
+        @agent.tool_plain
+        def tool() -> str:
+            return 'r'
+
+        result = await agent.run('hello')
+        # First cap wraps innermost (a_tool), then second wraps that (b_a_tool)
+        assert result.output == "tools: ['b_a_tool']"
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content="tools: ['b_a_tool']")],
+                    usage=RequestUsage(input_tokens=51, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_wrapper_with_per_run_capability(self):
+        """Wrapper works correctly with capabilities returning new instances from for_run."""
+        from pydantic_ai.toolsets.prefixed import PrefixedToolset
+
+        @dataclass
+        class PerRunPrefixCap(AbstractCapability[Any]):
+            prefix: str = 'default'
+
+            async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+                return PerRunPrefixCap(prefix='runtime')
+
+            def get_wrapper_toolset(self, toolset: AbstractToolset[Any]) -> AbstractToolset[Any] | None:
+                return PrefixedToolset(toolset, prefix=self.prefix)
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            tool_names = sorted(t.name for t in info.function_tools)
+            return make_text_response(f'tools: {tool_names}')
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[PerRunPrefixCap()])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'result'
+
+        result = await agent.run('hello')
+        # The per-run instance should use 'runtime' prefix, not 'default'
+        assert result.output == "tools: ['runtime_my_tool']"
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content="tools: ['runtime_my_tool']")],
+                    usage=RequestUsage(input_tokens=51, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_wrapper_with_agent_prepare_tools(self):
+        """Agent-level prepare_tools is applied before capability wrapper."""
+        from dataclasses import replace as dc_replace
+
+        from pydantic_ai.toolsets.prefixed import PrefixedToolset
+
+        @dataclass
+        class PrefixCap(AbstractCapability[Any]):
+            def get_wrapper_toolset(self, toolset: AbstractToolset[Any]) -> AbstractToolset[Any] | None:
+                return PrefixedToolset(toolset, prefix='cap')
+
+        async def agent_prepare(ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+            return [dc_replace(td, description=f'[prepared] {td.description}') for td in tool_defs]
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            tool_names = sorted(t.name for t in info.function_tools)
+            descs = [t.description for t in info.function_tools]
+            return make_text_response(f'tools: {tool_names}, descs: {descs}')
+
+        agent = Agent(FunctionModel(model_fn), prepare_tools=agent_prepare, capabilities=[PrefixCap()])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            """Original."""
+            return 'result'
+
+        result = await agent.run('hello')
+        # Both agent prepare_tools (description) and capability wrapper (prefix) should apply
+        assert result.output == "tools: ['cap_my_tool'], descs: ['[prepared] Original.']"
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content="tools: ['cap_my_tool'], descs: ['[prepared] Original.']")],
+                    usage=RequestUsage(input_tokens=51, output_tokens=6),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
