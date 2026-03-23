@@ -2627,5 +2627,20 @@ class TestGetWrapperToolsetHook:
 
         result = await agent.run('hello')
         # Both agent prepare_tools (description) and capability wrapper (prefix) should apply
-        assert 'cap_my_tool' in result.output
-        assert '[prepared] Original.' in result.output
+        assert result.output == "tools: ['cap_my_tool'], descs: ['[prepared] Original.']"
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content="tools: ['cap_my_tool'], descs: ['[prepared] Original.']")],
+                    usage=RequestUsage(input_tokens=51, output_tokens=6),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )

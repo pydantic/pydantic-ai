@@ -377,7 +377,7 @@ result = agent.run_sync('hello')
 ```
 
 !!! note
-    `prepare_tools` can also be expressed as a wrapper: `get_wrapper_toolset(toolset) -> toolset.prepared(fn)`. The difference is that `prepare_tools` (the capability hook) operates on tool *definitions* for all tool kinds per step, while `get_wrapper_toolset` wraps the non-output *toolset* at construction time, intercepting tool execution rather than just modifying definitions.
+    `prepare_tools` can also be expressed as a wrapper: `get_wrapper_toolset(toolset) -> toolset.prepared(fn)`. The difference is that `prepare_tools` (the capability hook) operates on tool *definitions* for all tool kinds per step, while `get_wrapper_toolset` wraps the non-output *toolset* once per run (during toolset assembly), intercepting tool execution rather than just modifying definitions.
 
 ### Event stream hook
 
