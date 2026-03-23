@@ -5,8 +5,11 @@ from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
+from pydantic import ValidationError
+
 from pydantic_ai import _system_prompt
 from pydantic_ai._instructions import AgentInstructions, normalize_instructions
+from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, RunContext, ToolDefinition
@@ -142,6 +145,42 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             chain = _make_run_wrap(cap, ctx, chain)
         return await chain()
 
+    async def on_run_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        error: BaseException,
+    ) -> AgentRunResult[Any]:
+        for capability in reversed(self.capabilities):
+            try:
+                return await capability.on_run_error(ctx, error=error)
+            except BaseException as new_error:
+                error = new_error
+        raise error
+
+    # --- Node run lifecycle hooks ---
+
+    async def before_node_run(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        node: _agent_graph.AgentNode[AgentDepsT, Any],
+    ) -> _agent_graph.AgentNode[AgentDepsT, Any]:
+        for capability in self.capabilities:
+            node = await capability.before_node_run(ctx, node=node)
+        return node
+
+    async def after_node_run(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        node: _agent_graph.AgentNode[AgentDepsT, Any],
+        result: _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]],
+    ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+        for capability in reversed(self.capabilities):
+            result = await capability.after_node_run(ctx, node=node, result=result)
+        return result
+
     async def wrap_node_run(
         self,
         ctx: RunContext[AgentDepsT],
@@ -156,6 +195,20 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         for cap in reversed(self.capabilities):
             chain = _make_node_run_wrap(cap, ctx, chain)
         return await chain(node)
+
+    async def on_node_run_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        node: _agent_graph.AgentNode[AgentDepsT, Any],
+        error: Exception,
+    ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+        for capability in reversed(self.capabilities):
+            try:
+                return await capability.on_node_run_error(ctx, node=node, error=error)
+            except Exception as new_error:
+                error = new_error
+        raise error
 
     # --- Event stream hook ---
 
@@ -204,6 +257,20 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             chain = _make_model_request_wrap(cap, ctx, chain)
         return await chain(request_context)
 
+    async def on_model_request_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        request_context: ModelRequestContext,
+        error: Exception,
+    ) -> ModelResponse:
+        for capability in reversed(self.capabilities):
+            try:
+                return await capability.on_model_request_error(ctx, request_context=request_context, error=error)
+            except Exception as new_error:
+                error = new_error
+        raise error
+
     # --- Tool validate lifecycle hooks ---
 
     async def before_tool_validate(
@@ -240,6 +307,23 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         for cap in reversed(self.capabilities):
             chain = _make_tool_validate_wrap(cap, ctx, call, chain)
         return await chain(args)
+
+    async def on_tool_validate_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        args: str | dict[str, Any],
+        error: ValidationError | ModelRetry,
+    ) -> dict[str, Any]:
+        for capability in reversed(self.capabilities):
+            try:
+                return await capability.on_tool_validate_error(ctx, call=call, args=args, error=error)
+            except (ValidationError, ModelRetry) as new_error:
+                error = new_error
+            except Exception:
+                raise
+        raise error
 
     # --- Tool execute lifecycle hooks ---
 
@@ -278,6 +362,21 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         for cap in reversed(self.capabilities):
             chain = _make_tool_execute_wrap(cap, ctx, call, chain)
         return await chain(args)
+
+    async def on_tool_execute_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        args: dict[str, Any],
+        error: Exception,
+    ) -> Any:
+        for capability in reversed(self.capabilities):
+            try:
+                return await capability.on_tool_execute_error(ctx, call=call, args=args, error=error)
+            except Exception as new_error:
+                error = new_error
+        raise error
 
 
 # --- Composition helpers ---

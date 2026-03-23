@@ -1396,7 +1396,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                                 except (asyncio.CancelledError, BaseException):
                                     pass
 
-                    # If wrap_run didn't recover from the error, re-raise.
+                    # If wrap_run didn't recover, give on_run_error a chance.
+                    if _run_error is not None:
+                        try:
+                            _result = await run_capability.on_run_error(run_ctx, error=_run_error)
+                        except BaseException as _on_error_exc:
+                            _run_error = _on_error_exc
+                        else:
+                            _result = await run_capability.after_run(run_ctx, result=_result)
+                            agent_run._result_override = _result  # pyright: ignore[reportPrivateUsage]
+                            _run_error = None  # Recovery succeeded
+
+                    # If on_run_error didn't recover either, re-raise.
                     # In an @asynccontextmanager, not re-raising suppresses the exception.
                     if _run_error is not None:
                         raise _run_error

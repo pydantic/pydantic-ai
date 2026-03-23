@@ -203,11 +203,12 @@ The callable receives a [`RunContext`][pydantic_ai.tools.RunContext] where `ctx.
 
 ## Lifecycle hooks
 
-Capabilities can hook into four lifecycle points, each with up to three variants:
+Capabilities can hook into five lifecycle points, each with up to four variants:
 
 * **`before_*`** — fires before the action, can modify inputs
-* **`after_*`** — fires after the action (in reverse capability order), can modify outputs
+* **`after_*`** — fires after the action succeeds (in reverse capability order), can modify outputs
 * **`wrap_*`** — full middleware control: receives a `handler` callable and decides whether/how to call it
+* **`on_*_error`** — fires when the action fails (after `wrap_*` has had its chance to recover), can observe, transform, or recover from errors
 
 ### Short-circuit exceptions
 
@@ -226,6 +227,7 @@ Three exceptions allow hooks to short-circuit the normal flow with a replacement
 | [`before_run`][pydantic_ai.capabilities.AbstractCapability.before_run] | `(ctx: RunContext) -> None` | Observe-only notification that a run is starting |
 | [`after_run`][pydantic_ai.capabilities.AbstractCapability.after_run] | `(ctx: RunContext, *, result: AgentRunResult) -> AgentRunResult` | Modify the final result |
 | [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run] | `(ctx: RunContext, *, handler: () -> AgentRunResult) -> AgentRunResult` | Wrap the entire run |
+| [`on_run_error`][pydantic_ai.capabilities.AbstractCapability.on_run_error] | `(ctx: RunContext, *, error: BaseException) -> AgentRunResult` | Handle run errors (see [error hooks](#error-hooks)) |
 
 `wrap_run` supports error recovery: if `handler()` raises and `wrap_run` catches the exception and returns a result instead, the error is suppressed and the recovery result is used. This works with both [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] and [`agent.iter()`][pydantic_ai.agent.Agent.iter].
 
@@ -233,7 +235,10 @@ Three exceptions allow hooks to short-circuit the normal flow with a replacement
 
 | Hook | Signature | Purpose |
 |---|---|---|
+| [`before_node_run`][pydantic_ai.capabilities.AbstractCapability.before_node_run] | `(ctx: RunContext, *, node: AgentNode) -> AgentNode` | Observe or replace the node before execution |
+| [`after_node_run`][pydantic_ai.capabilities.AbstractCapability.after_node_run] | `(ctx: RunContext, *, node: AgentNode, result: NodeResult) -> NodeResult` | Modify the result (next node or `End`) |
 | [`wrap_node_run`][pydantic_ai.capabilities.AbstractCapability.wrap_node_run] | `(ctx: RunContext, *, node: AgentNode, handler: (AgentNode) -> AgentNode \| End) -> AgentNode \| End` | Wrap each graph node execution |
+| [`on_node_run_error`][pydantic_ai.capabilities.AbstractCapability.on_node_run_error] | `(ctx: RunContext, *, node: AgentNode, error: BaseException) -> AgentNode \| End` | Handle node errors (see [error hooks](#error-hooks)) |
 
 The [`wrap_node_run`][pydantic_ai.capabilities.AbstractCapability.wrap_node_run] hook fires for every node in the [agent graph](agent.md#iterating-over-an-agents-graph) ([`UserPromptNode`][pydantic_ai.UserPromptNode], [`ModelRequestNode`][pydantic_ai.ModelRequestNode], [`CallToolsNode`][pydantic_ai.CallToolsNode]). The `handler` executes the node and returns the next node (or [`End`][pydantic_graph.nodes.End]). Override this to observe node transitions, add per-step logging, or modify graph progression:
 
@@ -317,6 +322,7 @@ See [Iterating Over an Agent's Graph](agent.md#iterating-over-an-agents-graph) f
 | [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] | `(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext` | Modify messages, settings, or parameters before the model call |
 | [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request] | `(ctx: RunContext, *, request_context: ModelRequestContext, response: ModelResponse) -> ModelResponse` | Modify the model's response |
 | [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request] | `(ctx: RunContext, *, request_context: ModelRequestContext, handler: (ModelRequestContext) -> ModelResponse) -> ModelResponse` | Wrap the model call |
+| [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error] | `(ctx: RunContext, *, request_context: ModelRequestContext, error: Exception) -> ModelResponse` | Handle model request errors (see [error hooks](#error-hooks)) |
 
 [`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] bundles `messages`, `model_settings`, and `model_request_parameters` into a single object, making the signature future-proof.
 
@@ -331,6 +337,7 @@ Tool processing has two phases: **validation** (parsing and validating the model
 | [`before_tool_validate`][pydantic_ai.capabilities.AbstractCapability.before_tool_validate] | `(ctx, *, call: ToolCallPart, args: str \| dict) -> str \| dict` | Modify raw args before validation (e.g. JSON repair) |
 | [`after_tool_validate`][pydantic_ai.capabilities.AbstractCapability.after_tool_validate] | `(ctx, *, call: ToolCallPart, args: dict) -> dict` | Modify validated args |
 | [`wrap_tool_validate`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_validate] | `(ctx, *, call: ToolCallPart, args: str \| dict, handler) -> dict` | Wrap the validation step |
+| [`on_tool_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_validate_error] | `(ctx, *, call: ToolCallPart, args: str \| dict, error) -> dict` | Handle validation errors (see [error hooks](#error-hooks)) |
 
 **Execution hooks** — `args` is always the validated `dict[str, Any]`:
 
@@ -339,6 +346,7 @@ Tool processing has two phases: **validation** (parsing and validating the model
 | [`before_tool_execute`][pydantic_ai.capabilities.AbstractCapability.before_tool_execute] | `(ctx, *, call: ToolCallPart, args: dict) -> dict` | Modify args before execution |
 | [`after_tool_execute`][pydantic_ai.capabilities.AbstractCapability.after_tool_execute] | `(ctx, *, call: ToolCallPart, args: dict, result: Any) -> Any` | Modify execution result |
 | [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute] | `(ctx, *, call: ToolCallPart, args: dict, handler) -> Any` | Wrap execution |
+| [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error] | `(ctx, *, call: ToolCallPart, args: dict, error: Exception) -> Any` | Handle execution errors (see [error hooks](#error-hooks)) |
 
 ### Tool preparation
 
@@ -477,6 +485,62 @@ class StreamAuditor(AbstractCapability[Any]):
 ```
 
 For building web UIs that transform streamed events into protocol-specific formats (like SSE), see the [UI event streams](ui/overview.md) documentation and the [`UIEventStream`][pydantic_ai.ui.UIEventStream] base class.
+
+### Error hooks
+
+Each lifecycle point has an `on_*_error` hook — the error counterpart to `after_*`. While `after_*` hooks fire on success, `on_*_error` hooks fire on failure (after `wrap_*` has had its chance to recover):
+
+```
+before_X → wrap_X(handler)
+  ├─ success ─────────→ after_X (modify result)
+  └─ failure → on_X_error
+        ├─ re-raise ──→ (error propagates, after_X not called)
+        └─ recover ───→ after_X (modify recovered result)
+```
+
+Error hooks use **raise-to-propagate, return-to-recover** semantics:
+
+- **Raise the original error** — propagates the error unchanged *(default)*
+- **Raise a different exception** — transforms the error
+- **Return a result** — suppresses the error and uses the returned value
+
+| Hook | Fires when | Recovery type |
+|---|---|---|
+| [`on_run_error`][pydantic_ai.capabilities.AbstractCapability.on_run_error] | Agent run fails | Return [`AgentRunResult`][pydantic_ai.run.AgentRunResult] |
+| [`on_node_run_error`][pydantic_ai.capabilities.AbstractCapability.on_node_run_error] | Graph node fails | Return next node or [`End`][pydantic_graph.nodes.End] |
+| [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error] | Model request fails | Return [`ModelResponse`][pydantic_ai.messages.ModelResponse] |
+| [`on_tool_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_validate_error] | Tool validation fails | Return validated args `dict` |
+| [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error] | Tool execution fails | Return any tool result |
+
+```python {title="error_hooks_example.py" test="skip" lint="skip"}
+from dataclasses import dataclass, field
+from typing import Any
+
+from pydantic_ai import RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.messages import ModelResponse, TextPart
+from pydantic_ai.models import ModelRequestContext
+
+
+@dataclass
+class ErrorLogger(AbstractCapability[Any]):
+    """Logs all errors that occur during agent runs."""
+
+    errors: list[str] = field(default_factory=list)
+
+    async def on_model_request_error(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
+        self.errors.append(f'Model error: {error}')
+        # Return a fallback response to recover
+        return ModelResponse(parts=[TextPart(content='Service temporarily unavailable.')])
+
+    async def on_tool_execute_error(
+        self, ctx: RunContext[Any], *, call: Any, args: dict[str, Any], error: Exception
+    ) -> Any:
+        self.errors.append(f'Tool {call.tool_name} failed: {error}')
+        raise error  # Re-raise to let the normal retry flow handle it
+```
 
 ### Per-run state isolation
 

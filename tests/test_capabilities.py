@@ -1133,6 +1133,40 @@ class LoggingCapability(AbstractCapability[Any]):
         self.log.append(f'wrap_tool_execute:{call.tool_name}:after')
         return result
 
+    async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+        self.log.append('on_run_error')
+        raise error
+
+    async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
+        self.log.append(f'before_node_run:{type(node).__name__}')
+        return node
+
+    async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+        self.log.append(f'after_node_run:{type(node).__name__}')
+        return result
+
+    async def on_node_run_error(self, ctx: RunContext[Any], *, node: Any, error: Exception) -> Any:
+        self.log.append(f'on_node_run_error:{type(node).__name__}')
+        raise error
+
+    async def on_model_request_error(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
+        self.log.append('on_model_request_error')
+        raise error
+
+    async def on_tool_validate_error(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, args: Any, error: Any
+    ) -> dict[str, Any]:
+        self.log.append(f'on_tool_validate_error:{call.tool_name}')
+        raise error
+
+    async def on_tool_execute_error(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, args: dict[str, Any], error: Exception
+    ) -> Any:
+        self.log.append(f'on_tool_execute_error:{call.tool_name}')
+        raise error
+
 
 # --- Tests ---
 
@@ -3422,3 +3456,350 @@ def test_validate_capability_not_dataclass():
 
     with pytest.raises(ValueError, match='must be decorated with `@dataclass`'):
         get_capability_registry(custom_types=(NotADataclass,))
+
+
+# --- Node run lifecycle hook tests ---
+
+
+class TestNodeRunHooks:
+    async def test_before_node_run_fires(self):
+        cap = LoggingCapability()
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
+        await agent.run('hello')
+        assert 'before_node_run:UserPromptNode' in cap.log
+        assert 'before_node_run:ModelRequestNode' in cap.log
+        assert 'before_node_run:CallToolsNode' in cap.log
+
+    async def test_after_node_run_fires(self):
+        cap = LoggingCapability()
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
+        await agent.run('hello')
+        assert 'after_node_run:UserPromptNode' in cap.log
+        assert 'after_node_run:ModelRequestNode' in cap.log
+        assert 'after_node_run:CallToolsNode' in cap.log
+
+    async def test_node_hook_order(self):
+        cap = LoggingCapability()
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
+        await agent.run('hello')
+        # For each node, before fires before after
+        for node_name in ('UserPromptNode', 'ModelRequestNode', 'CallToolsNode'):
+            before_idx = cap.log.index(f'before_node_run:{node_name}')
+            after_idx = cap.log.index(f'after_node_run:{node_name}')
+            assert before_idx < after_idx
+
+
+# --- Run error hook tests ---
+
+
+class TestRunErrorHooks:
+    async def test_on_run_error_fires_on_failure(self):
+        cap = LoggingCapability()
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[cap])
+        with pytest.raises(RuntimeError, match='model exploded'):
+            await agent.run('hello')
+        assert 'on_run_error' in cap.log
+
+    async def test_on_run_error_not_called_on_success(self):
+        cap = LoggingCapability()
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
+        await agent.run('hello')
+        assert 'on_run_error' not in cap.log
+
+    async def test_on_run_error_can_transform_error(self):
+        @dataclass
+        class TransformErrorCap(AbstractCapability[Any]):
+            async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+                raise ValueError('transformed error')
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[TransformErrorCap()])
+        with pytest.raises(ValueError, match='transformed error'):
+            await agent.run('hello')
+
+    async def test_on_run_error_can_recover(self):
+        @dataclass
+        class RecoverRunCap(AbstractCapability[Any]):
+            async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+                return AgentRunResult(output='recovered')
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[RecoverRunCap()])
+        result = await agent.run('hello')
+        assert result.output == 'recovered'
+
+    async def test_on_run_error_not_called_when_wrap_run_recovers(self):
+        @dataclass
+        class WrapRecoveryCap(AbstractCapability[Any]):
+            log: list[str] = field(default_factory=lambda: [])
+
+            async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+                try:
+                    return await handler()
+                except RuntimeError:
+                    self.log.append('wrap_run:caught')
+                    return AgentRunResult(output='wrap_recovered')
+
+            async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+                self.log.append('on_run_error')
+                raise error
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        cap = WrapRecoveryCap()
+        agent = Agent(FunctionModel(failing_model), capabilities=[cap])
+        result = await agent.run('hello')
+        assert result.output == 'wrap_recovered'
+        assert 'wrap_run:caught' in cap.log
+        assert 'on_run_error' not in cap.log
+
+    async def test_on_run_error_fires_via_iter(self):
+        from pydantic_graph import End
+
+        @dataclass
+        class RecoverRunCap(AbstractCapability[Any]):
+            called: bool = False
+
+            async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+                self.called = True
+                return AgentRunResult(output='recovered via iter')
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        cap = RecoverRunCap()
+        agent = Agent(FunctionModel(failing_model), capabilities=[cap])
+        async with agent.iter('hello') as agent_run:
+            node = agent_run.next_node
+            while not isinstance(node, End):
+                node = await agent_run.next(node)
+        assert cap.called
+        assert agent_run.result is not None
+        assert agent_run.result.output == 'recovered via iter'
+
+
+# --- Node run error hook tests ---
+
+
+class TestNodeRunErrorHooks:
+    async def test_on_node_run_error_fires(self):
+        cap = LoggingCapability()
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[cap])
+        with pytest.raises(RuntimeError, match='model exploded'):
+            await agent.run('hello')
+        assert 'on_node_run_error:ModelRequestNode' in cap.log
+
+    async def test_on_node_run_error_can_recover_with_end(self):
+        from pydantic_ai.result import FinalResult
+        from pydantic_graph import End
+
+        @dataclass
+        class RecoverNodeCap(AbstractCapability[Any]):
+            async def on_node_run_error(self, ctx: RunContext[Any], *, node: Any, error: BaseException) -> Any:
+                return End(FinalResult(output='recovered'))
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        cap = RecoverNodeCap()
+        agent = Agent(FunctionModel(failing_model), capabilities=[cap])
+        async with agent.iter('hello') as agent_run:
+            node = agent_run.next_node
+            while not isinstance(node, End):
+                node = await agent_run.next(node)
+        assert isinstance(node, End)
+        assert node.data.output == 'recovered'
+
+    async def test_on_node_run_error_not_called_on_success(self):
+        cap = LoggingCapability()
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
+        await agent.run('hello')
+        assert all('on_node_run_error' not in entry for entry in cap.log)
+
+
+# --- Model request error hook tests ---
+
+
+class TestModelRequestErrorHooks:
+    async def test_on_model_request_error_fires(self):
+        cap = LoggingCapability()
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[cap])
+        with pytest.raises(RuntimeError, match='model exploded'):
+            await agent.run('hello')
+        assert 'on_model_request_error' in cap.log
+
+    async def test_on_model_request_error_can_recover(self):
+        @dataclass
+        class RecoverModelCap(AbstractCapability[Any]):
+            async def on_model_request_error(
+                self, ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+            ) -> ModelResponse:
+                return ModelResponse(parts=[TextPart(content='recovered response')])
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[RecoverModelCap()])
+        result = await agent.run('hello')
+        assert result.output == 'recovered response'
+
+    async def test_on_model_request_error_not_called_on_success(self):
+        cap = LoggingCapability()
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
+        await agent.run('hello')
+        assert 'on_model_request_error' not in cap.log
+
+
+# --- Tool validate error hook tests ---
+
+
+class TestToolValidateErrorHooks:
+    async def test_on_tool_validate_error_fires_on_validation_failure(self):
+        cap = LoggingCapability()
+
+        call_count = 0
+
+        def bad_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return make_text_response(f'got: {part.content}')
+            if info.function_tools:
+                tool = info.function_tools[0]
+                if call_count <= 1:
+                    return ModelResponse(
+                        parts=[ToolCallPart(tool_name=tool.name, args='{"wrong": 1}', tool_call_id='call-1')]
+                    )
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=tool.name, args='{"name": "correct"}', tool_call_id='call-2')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        agent = Agent(FunctionModel(bad_args_model), capabilities=[cap])
+
+        @agent.tool_plain
+        def greet(name: str) -> str:
+            return f'hello {name}'
+
+        await agent.run('greet someone')
+        assert 'on_tool_validate_error:greet' in cap.log
+
+    async def test_on_tool_validate_error_not_called_on_success(self):
+        cap = LoggingCapability()
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[cap])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'
+
+        await agent.run('call the tool')
+        assert all('on_tool_validate_error' not in entry for entry in cap.log)
+
+    async def test_on_tool_validate_error_can_recover(self):
+        @dataclass
+        class RecoverValidateCap(AbstractCapability[Any]):
+            async def on_tool_validate_error(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, args: Any, error: Any
+            ) -> dict[str, Any]:
+                return {'name': 'recovered-name'}
+
+        def bad_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return make_text_response(f'got: {part.content}')
+            if info.function_tools:
+                tool = info.function_tools[0]
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=tool.name, args='{"wrong": 1}', tool_call_id='call-1')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        agent = Agent(FunctionModel(bad_args_model), capabilities=[RecoverValidateCap()])
+
+        received_name = None
+
+        @agent.tool_plain
+        def greet(name: str) -> str:
+            nonlocal received_name
+            received_name = name
+            return f'hello {name}'
+
+        result = await agent.run('greet someone')
+        assert received_name == 'recovered-name'
+        assert 'hello recovered-name' in result.output
+
+
+# --- Tool execute error hook tests ---
+
+
+class TestToolExecuteErrorHooks:
+    async def test_on_tool_execute_error_fires(self):
+        cap = LoggingCapability()
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[cap])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            raise ValueError('tool failed')
+
+        with pytest.raises(ValueError, match='tool failed'):
+            await agent.run('call the tool')
+        assert 'on_tool_execute_error:my_tool' in cap.log
+
+    async def test_on_tool_execute_error_not_called_on_success(self):
+        cap = LoggingCapability()
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[cap])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'
+
+        await agent.run('call the tool')
+        assert all('on_tool_execute_error' not in entry for entry in cap.log)
+
+    async def test_on_tool_execute_error_can_recover(self):
+        @dataclass
+        class RecoverExecCap(AbstractCapability[Any]):
+            async def on_tool_execute_error(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, args: dict[str, Any], error: Exception
+            ) -> Any:
+                return 'fallback result'
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return make_text_response(f'got: {part.content}')
+            if info.function_tools:
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[RecoverExecCap()])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            raise ValueError('tool failed')
+
+        result = await agent.run('call tool')
+        assert 'fallback result' in result.output
