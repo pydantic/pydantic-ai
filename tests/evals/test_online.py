@@ -5,7 +5,7 @@ from __future__ import annotations as _annotations
 import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -34,107 +34,96 @@ pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-eval
 
 
 # ============================================================================
-# Test evaluators
+# Test evaluators and helpers — guarded for when pydantic-evals is not installed
 # ============================================================================
 
+if TYPE_CHECKING or imports_successful():
 
-@dataclass
-class AlwaysTrue(Evaluator):
-    """Simple evaluator that always returns True."""
+    @dataclass
+    class AlwaysTrue(Evaluator):
+        """Simple evaluator that always returns True."""
 
-    def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
-        return True
+        def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
+            return True
 
+    @dataclass
+    class AlwaysFalse(Evaluator):
+        """Simple evaluator that always returns False."""
 
-@dataclass
-class AlwaysFalse(Evaluator):
-    """Simple evaluator that always returns False."""
+        def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
+            return False
 
-    def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
-        return False
+    @dataclass
+    class OutputEquals(Evaluator):
+        """Evaluator that checks if output equals a value."""
 
+        value: Any
 
-@dataclass
-class OutputEquals(Evaluator):
-    """Evaluator that checks if output equals a value."""
+        def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
+            return ctx.output == self.value
 
-    value: Any
+    @dataclass
+    class FailingEvaluator(Evaluator):
+        """Evaluator that always raises an exception."""
 
-    def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
-        return ctx.output == self.value
+        def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
+            raise ValueError('Simulated evaluator failure')
 
+    @dataclass
+    class AsyncEvaluator(Evaluator):
+        """Async evaluator for testing."""
 
-@dataclass
-class FailingEvaluator(Evaluator):
-    """Evaluator that always raises an exception."""
+        async def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
+            await asyncio.sleep(0)
+            return True
 
-    def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
-        raise ValueError('Simulated evaluator failure')
+    @dataclass
+    class MultiResultEvaluator(Evaluator):
+        """Evaluator that returns multiple results."""
 
+        def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
+            return {'accuracy': True, 'score': 0.95, 'label': 'good'}
 
-@dataclass
-class AsyncEvaluator(Evaluator):
-    """Async evaluator for testing."""
+    def _make_context(
+        *,
+        inputs: Any = None,
+        output: Any = None,
+        expected_output: Any = None,
+        metadata: Any = None,
+        duration: float = 0.0,
+    ) -> EvaluatorContext[Any, Any, Any]:
+        """Create an EvaluatorContext for testing."""
+        return EvaluatorContext(
+            name='test',
+            inputs=inputs,
+            output=output,
+            expected_output=expected_output,
+            metadata=metadata,
+            duration=duration,
+            _span_tree=SpanTree(),
+            attributes={},
+            metrics={},
+        )
 
-    async def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
-        await asyncio.sleep(0)
-        return True
+    class Collector:
+        """Collects sink submissions for test assertions."""
 
+        def __init__(self) -> None:
+            self.calls: list[
+                tuple[list[EvaluationResult[Any]], list[EvaluatorFailure], EvaluatorContext[Any, Any, Any]]
+            ] = []
 
-@dataclass
-class MultiResultEvaluator(Evaluator):
-    """Evaluator that returns multiple results."""
+        async def __call__(
+            self,
+            results: Sequence[EvaluationResult[Any]],
+            failures: Sequence[EvaluatorFailure],
+            context: EvaluatorContext[Any, Any, Any],
+        ) -> None:
+            self.calls.append((list(results), list(failures), context))
 
-    def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
-        return {'accuracy': True, 'score': 0.95, 'label': 'good'}
-
-
-# ============================================================================
-# Helpers
-# ============================================================================
-
-
-def _make_context(
-    *,
-    inputs: Any = None,
-    output: Any = None,
-    expected_output: Any = None,
-    metadata: Any = None,
-    duration: float = 0.0,
-) -> EvaluatorContext[Any, Any, Any]:
-    """Create an EvaluatorContext for testing."""
-    return EvaluatorContext(
-        name='test',
-        inputs=inputs,
-        output=output,
-        expected_output=expected_output,
-        metadata=metadata,
-        duration=duration,
-        _span_tree=SpanTree(),
-        attributes={},
-        metrics={},
-    )
-
-
-class Collector:
-    """Collects sink submissions for test assertions."""
-
-    def __init__(self) -> None:
-        self.calls: list[
-            tuple[list[EvaluationResult[Any]], list[EvaluatorFailure], EvaluatorContext[Any, Any, Any]]
-        ] = []
-
-    async def __call__(
-        self,
-        results: Sequence[EvaluationResult[Any]],
-        failures: Sequence[EvaluatorFailure],
-        context: EvaluatorContext[Any, Any, Any],
-    ) -> None:
-        self.calls.append((list(results), list(failures), context))
-
-    @property
-    def result_count(self) -> int:
-        return sum(len(c[0]) for c in self.calls)
+        @property
+        def result_count(self) -> int:
+            return sum(len(c[0]) for c in self.calls)
 
 
 # ============================================================================
