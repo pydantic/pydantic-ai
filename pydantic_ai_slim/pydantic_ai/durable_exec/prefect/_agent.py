@@ -39,6 +39,7 @@ from ._toolset import prefectify_toolset
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.spec import AgentSpec
+
 from ._types import TaskConfig, default_task_config
 
 
