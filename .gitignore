@@ -20,6 +20,7 @@ node_modules/
 .coverage*
 /test_tmp/
 .mcp.json
+# need to add because of local setup, + waiting on https://github.com/pydantic/pydantic-ai/pull/4211 to merge
 .agents/*
 .claude/*
 !.claude/skills/
