@@ -21,7 +21,10 @@ Pydantic AI ships with several capabilities that cover common needs:
 | [`Instructions`][pydantic_ai.capabilities.Instructions] | Static or template-based system prompt instructions | Yes |
 | [`ModelSettings`][pydantic_ai.capabilities.ModelSettings] | Static or dynamic model settings | Yes |
 | [`Thinking`][pydantic_ai.capabilities.Thinking] | Enables model thinking/reasoning mode | Yes |
-| [`WebSearch`][pydantic_ai.capabilities.WebSearch] | Registers the web search [builtin tool](builtin-tools.md) | Yes |
+| [`WebSearch`][pydantic_ai.capabilities.WebSearch] | Web search — builtin when supported, local fallback otherwise | Yes |
+| [`WebFetch`][pydantic_ai.capabilities.WebFetch] | URL fetching — builtin when supported, local fallback otherwise | Yes |
+| [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | Image generation — builtin when supported, custom local fallback | Yes |
+| [`MCP`][pydantic_ai.capabilities.MCP] | MCP server — builtin when supported, direct connection otherwise | Yes |
 | [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] | Filters or modifies tool definitions per step | — |
 | [`Toolset`][pydantic_ai.capabilities.Toolset] | Wraps an [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] | — |
 | [`HistoryProcessor`][pydantic_ai.capabilities.HistoryProcessor] | Wraps a [history processor](message-history.md) | — |
@@ -44,6 +47,48 @@ agent = Agent(
 ```
 
 These are equivalent to passing the same configuration through separate `Agent` parameters, but they compose better — especially when you want to reuse the same configuration across multiple agents, or load it from a [spec file](#agent-specs).
+
+### Builtin tool capabilities
+
+[`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], and [`MCP`][pydantic_ai.capabilities.MCP] wrap [builtin tools](builtin-tools.md) with automatic local fallbacks. When the model supports the builtin natively, it's used directly. When it doesn't, a local function tool handles it instead — so your agent works across models without code changes.
+
+Each accepts `builtin` and `local` keyword arguments to control which side is used:
+
+```python {title="builtin_tool_capabilities.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import WebSearch, WebFetch, MCP
+
+agent = Agent(
+    'openai:gpt-4o',
+    capabilities=[
+        # Auto-detects DuckDuckGo as local fallback
+        WebSearch(),
+        # Auto-detects httpx fetcher as local fallback
+        WebFetch(),
+        # Auto-detects transport from URL
+        MCP(url='https://mcp.example.com/api'),
+    ],
+)
+```
+
+To disable the local fallback (builtin-only, errors on unsupported models):
+
+```python {title="builtin_only.py" test="skip"}
+WebSearch(local=False)
+```
+
+To disable the builtin (always use local):
+
+```python {title="local_only.py" test="skip"}
+WebSearch(builtin=False)
+```
+
+Constraint fields like `allowed_domains` or `blocked_domains` require the builtin — the local fallback can't enforce them. When these are set and the model doesn't support the builtin, a [`UserError`][pydantic_ai.exceptions.UserError] is raised:
+
+```python {title="constraints.py" test="skip"}
+# Only search example.com — requires builtin support
+WebSearch(allowed_domains=['example.com'])
+```
 
 ## Building a custom capability
 
