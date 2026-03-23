@@ -3361,12 +3361,13 @@ def test_web_search_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
 def test_mcp_default_builtin():
     """MCP capability constructs the default builtin MCPServerTool."""
     pytest.importorskip('mcp', reason='mcp package not installed')
-    cap = MCP(url='http://example.com/mcp')
+    cap = MCP(url='http://example.com/mcp', id='my-mcp')
     builtin_tools = cap.get_builtin_tools()
     assert len(builtin_tools) == 1
     tool = builtin_tools[0]
     assert isinstance(tool, MCPServerTool)
     assert tool.url == 'http://example.com/mcp'
+    assert tool.id == 'my-mcp'
 
 
 @pytest.mark.filterwarnings('ignore::DeprecationWarning')
@@ -3384,6 +3385,24 @@ def test_builtin_tool_from_spec_no_args():
 
     with pytest.raises(TypeError, match='requires either a `tool` argument'):
         BuiltinToolCapDirect.from_spec()
+
+
+@pytest.mark.filterwarnings('ignore::DeprecationWarning')
+def test_builtin_or_local_with_explicit_builtin():
+    """BuiltinOrLocalTool used directly with an explicit builtin and local tool."""
+    from pydantic_ai.capabilities.builtin_or_local import BuiltinOrLocalTool
+
+    def my_local_tool() -> str:
+        """A local fallback tool."""
+        return 'local result'
+
+    cap = BuiltinOrLocalTool(builtin=WebSearchTool(), local=my_local_tool)
+    # get_builtin_tools returns the explicit builtin
+    assert len(cap.get_builtin_tools()) == 1
+    assert isinstance(cap.get_builtin_tools()[0], WebSearchTool)
+    # get_toolset wraps local with prefer_builtin from _builtin_unique_id()
+    toolset = cap.get_toolset()
+    assert toolset is not None
 
 
 @pytest.mark.filterwarnings('ignore::DeprecationWarning')
