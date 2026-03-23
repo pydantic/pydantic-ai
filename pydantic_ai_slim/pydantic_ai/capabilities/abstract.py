@@ -369,6 +369,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
+        tool_def: ToolDefinition,
         args: RawToolArgs,
     ) -> RawToolArgs:
         """Modify raw args before validation."""
@@ -379,6 +380,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
+        tool_def: ToolDefinition,
         args: ValidatedToolArgs,
     ) -> ValidatedToolArgs:
         """Modify validated args. Called only on successful validation."""
@@ -389,6 +391,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
+        tool_def: ToolDefinition,
         args: RawToolArgs,
         handler: WrapToolValidateHandler,
     ) -> ValidatedToolArgs:
@@ -400,6 +403,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
+        tool_def: ToolDefinition,
         args: RawToolArgs,
         error: ValidationError | ModelRetry,
     ) -> ValidatedToolArgs:
@@ -424,6 +428,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
+        tool_def: ToolDefinition,
         args: ValidatedToolArgs,
     ) -> ValidatedToolArgs:
         """Modify validated args before execution."""
@@ -434,6 +439,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
+        tool_def: ToolDefinition,
         args: ValidatedToolArgs,
         result: Any,
     ) -> Any:
@@ -445,6 +451,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
+        tool_def: ToolDefinition,
         args: ValidatedToolArgs,
         handler: WrapToolExecuteHandler,
     ) -> Any:
@@ -456,6 +463,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
+        tool_def: ToolDefinition,
         args: ValidatedToolArgs,
         error: Exception,
     ) -> Any:

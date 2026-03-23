@@ -252,18 +252,24 @@ class ToolManager(Generic[AgentDepsT]):
             return validated
 
         if cap is not None:
+            tool_def = tool.tool_def
+
             # before_tool_validate
             raw_args: str | dict[str, Any] = call.args if call.args is not None else {}
-            raw_args = await cap.before_tool_validate(ctx, call=call, args=raw_args)
+            raw_args = await cap.before_tool_validate(ctx, call=call, tool_def=tool_def, args=raw_args)
 
             # wrap_tool_validate wraps the validation; on_tool_validate_error on failure
             try:
-                validated_args = await cap.wrap_tool_validate(ctx, call=call, args=raw_args, handler=do_validate)
+                validated_args = await cap.wrap_tool_validate(
+                    ctx, call=call, tool_def=tool_def, args=raw_args, handler=do_validate
+                )
             except (ValidationError, ModelRetry) as e:
-                validated_args = await cap.on_tool_validate_error(ctx, call=call, args=raw_args, error=e)
+                validated_args = await cap.on_tool_validate_error(
+                    ctx, call=call, tool_def=tool_def, args=raw_args, error=e
+                )
 
             # after_tool_validate
-            validated_args = await cap.after_tool_validate(ctx, call=call, args=validated_args)
+            validated_args = await cap.after_tool_validate(ctx, call=call, tool_def=tool_def, args=validated_args)
         else:
             validated_args = await do_validate(call.args if call.args is not None else {})
 
@@ -289,19 +295,23 @@ class ToolManager(Generic[AgentDepsT]):
             return await self._raw_execute(modified_validated, usage=usage)
 
         if cap is not None:
+            tool_def = validated.tool.tool_def
+
             # before_tool_execute
-            args = await cap.before_tool_execute(ctx, call=call, args=validated.validated_args)
+            args = await cap.before_tool_execute(ctx, call=call, tool_def=tool_def, args=validated.validated_args)
 
             # wrap_tool_execute wraps the execution; on_tool_execute_error on failure
             try:
-                tool_result = await cap.wrap_tool_execute(ctx, call=call, args=args, handler=do_execute)
+                tool_result = await cap.wrap_tool_execute(
+                    ctx, call=call, tool_def=tool_def, args=args, handler=do_execute
+                )
             except (SkipToolExecution, CallDeferred, ApprovalRequired, ToolRetryError):
                 raise  # Control flow, not errors
             except Exception as e:
-                tool_result = await cap.on_tool_execute_error(ctx, call=call, args=args, error=e)
+                tool_result = await cap.on_tool_execute_error(ctx, call=call, tool_def=tool_def, args=args, error=e)
 
             # after_tool_execute
-            tool_result = await cap.after_tool_execute(ctx, call=call, args=args, result=tool_result)
+            tool_result = await cap.after_tool_execute(ctx, call=call, tool_def=tool_def, args=args, result=tool_result)
         else:
             tool_result = await do_execute(validated.validated_args)
 

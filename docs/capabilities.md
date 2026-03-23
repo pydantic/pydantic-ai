@@ -536,7 +536,7 @@ class ErrorLogger(AbstractCapability[Any]):
         return ModelResponse(parts=[TextPart(content='Service temporarily unavailable.')])
 
     async def on_tool_execute_error(
-        self, ctx: RunContext[Any], *, call: Any, args: dict[str, Any], error: Exception
+        self, ctx: RunContext[Any], *, call: Any, tool_def: Any, args: dict[str, Any], error: Exception
     ) -> Any:
         self.errors.append(f'Tool {call.tool_name} failed: {error}')
         raise error  # Re-raise to let the normal retry flow handle it
@@ -646,6 +646,7 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.tools import ToolDefinition
 
 
 @dataclass
@@ -671,6 +672,7 @@ class VerboseLogging(AbstractCapability[Any]):
         ctx: RunContext[Any],
         *,
         call: ToolCallPart,
+        tool_def: ToolDefinition,
         args: dict[str, Any],
         handler: WrapToolExecuteHandler,
     ) -> Any:

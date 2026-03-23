@@ -278,10 +278,11 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
+        tool_def: ToolDefinition,
         args: str | dict[str, Any],
     ) -> str | dict[str, Any]:
         for capability in self.capabilities:
-            args = await capability.before_tool_validate(ctx, call=call, args=args)
+            args = await capability.before_tool_validate(ctx, call=call, tool_def=tool_def, args=args)
         return args
 
     async def after_tool_validate(
@@ -289,10 +290,11 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
+        tool_def: ToolDefinition,
         args: dict[str, Any],
     ) -> dict[str, Any]:
         for capability in reversed(self.capabilities):
-            args = await capability.after_tool_validate(ctx, call=call, args=args)
+            args = await capability.after_tool_validate(ctx, call=call, tool_def=tool_def, args=args)
         return args
 
     async def wrap_tool_validate(
@@ -300,12 +302,13 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
+        tool_def: ToolDefinition,
         args: str | dict[str, Any],
         handler: Callable[[str | dict[str, Any]], Awaitable[dict[str, Any]]],
     ) -> dict[str, Any]:
         chain = handler
         for cap in reversed(self.capabilities):
-            chain = _make_tool_validate_wrap(cap, ctx, call, chain)
+            chain = _make_tool_validate_wrap(cap, ctx, call, tool_def, chain)
         return await chain(args)
 
     async def on_tool_validate_error(
@@ -313,12 +316,15 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
+        tool_def: ToolDefinition,
         args: str | dict[str, Any],
         error: ValidationError | ModelRetry,
     ) -> dict[str, Any]:
         for capability in reversed(self.capabilities):
             try:
-                return await capability.on_tool_validate_error(ctx, call=call, args=args, error=error)
+                return await capability.on_tool_validate_error(
+                    ctx, call=call, tool_def=tool_def, args=args, error=error
+                )
             except (ValidationError, ModelRetry) as new_error:
                 error = new_error
             except Exception:
@@ -332,10 +338,11 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
+        tool_def: ToolDefinition,
         args: dict[str, Any],
     ) -> dict[str, Any]:
         for capability in self.capabilities:
-            args = await capability.before_tool_execute(ctx, call=call, args=args)
+            args = await capability.before_tool_execute(ctx, call=call, tool_def=tool_def, args=args)
         return args
 
     async def after_tool_execute(
@@ -343,11 +350,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
+        tool_def: ToolDefinition,
         args: dict[str, Any],
         result: Any,
     ) -> Any:
         for capability in reversed(self.capabilities):
-            result = await capability.after_tool_execute(ctx, call=call, args=args, result=result)
+            result = await capability.after_tool_execute(ctx, call=call, tool_def=tool_def, args=args, result=result)
         return result
 
     async def wrap_tool_execute(
@@ -355,12 +363,13 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
+        tool_def: ToolDefinition,
         args: dict[str, Any],
         handler: Callable[[dict[str, Any]], Awaitable[Any]],
     ) -> Any:
         chain = handler
         for cap in reversed(self.capabilities):
-            chain = _make_tool_execute_wrap(cap, ctx, call, chain)
+            chain = _make_tool_execute_wrap(cap, ctx, call, tool_def, chain)
         return await chain(args)
 
     async def on_tool_execute_error(
@@ -368,12 +377,13 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
+        tool_def: ToolDefinition,
         args: dict[str, Any],
         error: Exception,
     ) -> Any:
         for capability in reversed(self.capabilities):
             try:
-                return await capability.on_tool_execute_error(ctx, call=call, args=args, error=error)
+                return await capability.on_tool_execute_error(ctx, call=call, tool_def=tool_def, args=args, error=error)
             except Exception as new_error:
                 error = new_error
         raise error
@@ -414,10 +424,11 @@ def _make_tool_validate_wrap(
     cap: AbstractCapability[AgentDepsT],
     ctx: RunContext[AgentDepsT],
     call: ToolCallPart,
+    tool_def: ToolDefinition,
     inner: Callable[[str | dict[str, Any]], Awaitable[dict[str, Any]]],
 ) -> Callable[[str | dict[str, Any]], Awaitable[dict[str, Any]]]:
     async def wrapped(args: str | dict[str, Any]) -> dict[str, Any]:
-        return await cap.wrap_tool_validate(ctx, call=call, args=args, handler=inner)
+        return await cap.wrap_tool_validate(ctx, call=call, tool_def=tool_def, args=args, handler=inner)
 
     return wrapped
 
@@ -445,9 +456,10 @@ def _make_tool_execute_wrap(
     cap: AbstractCapability[AgentDepsT],
     ctx: RunContext[AgentDepsT],
     call: ToolCallPart,
+    tool_def: ToolDefinition,
     inner: Callable[[dict[str, Any]], Awaitable[Any]],
 ) -> Callable[[dict[str, Any]], Awaitable[Any]]:
     async def wrapped(args: dict[str, Any]) -> Any:
-        return await cap.wrap_tool_execute(ctx, call=call, args=args, handler=inner)
+        return await cap.wrap_tool_execute(ctx, call=call, tool_def=tool_def, args=args, handler=inner)
 
     return wrapped
