@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
@@ -29,10 +30,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     capabilities: Sequence[AbstractCapability[AgentDepsT]]
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-        new_caps = [await c.for_run(ctx) for c in self.capabilities]
+        new_caps = await asyncio.gather(*(c.for_run(ctx) for c in self.capabilities))
         if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
-        return replace(self, capabilities=new_caps)
+        return replace(self, capabilities=list(new_caps))
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         instructions: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] = []

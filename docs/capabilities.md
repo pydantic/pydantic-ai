@@ -238,17 +238,24 @@ Three exceptions allow hooks to short-circuit the normal flow with a replacement
 |---|---|---|
 | [`wrap_node_run`][pydantic_ai.capabilities.AbstractCapability.wrap_node_run] | `(ctx: RunContext, *, node: AgentNode, handler: (AgentNode) -> AgentNode \| End) -> AgentNode \| End` | Wrap each graph node execution |
 
-The [`wrap_node_run`][pydantic_ai.capabilities.AbstractCapability.wrap_node_run] hook fires for every node in the [agent graph](agent.md#iterating-over-an-agents-graph) ([`UserPromptNode`][pydantic_ai._agent_graph.UserPromptNode], [`ModelRequestNode`][pydantic_ai._agent_graph.ModelRequestNode], [`CallToolsNode`][pydantic_ai._agent_graph.CallToolsNode]). The `handler` executes the node and returns the next node (or [`End`][pydantic_graph.nodes.End]). Override this to observe node transitions, add per-step logging, or modify graph progression:
+The [`wrap_node_run`][pydantic_ai.capabilities.AbstractCapability.wrap_node_run] hook fires for every node in the [agent graph](agent.md#iterating-over-an-agents-graph) ([`UserPromptNode`][pydantic_ai.UserPromptNode], [`ModelRequestNode`][pydantic_ai.ModelRequestNode], [`CallToolsNode`][pydantic_ai.CallToolsNode]). The `handler` executes the node and returns the next node (or [`End`][pydantic_graph.nodes.End]). Override this to observe node transitions, add per-step logging, or modify graph progression:
 
 !!! note
     `wrap_node_run` hooks are called automatically by [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and [`agent_run.next()`][pydantic_ai.run.AgentRun.next]. However, they are **not** called when iterating with bare `async for node in agent_run:` over [`agent.iter()`][pydantic_ai.agent.Agent.iter], since that uses the graph run's internal iteration. Always use `agent_run.next(node)` to advance the run if you need `wrap_node_run` hooks to fire.
 
 ```python {title="node_logging_example.py"}
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    AgentNode,
+    NodeResult,
+    WrapNodeRunHandler,
+)
 from pydantic_ai.models.test import TestModel
 
 
@@ -258,9 +265,9 @@ class NodeLogger(AbstractCapability[Any]):
 
     nodes: list[str] = field(default_factory=lambda: [])
 
-    async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
-        # Tip: use AgentNode, WrapNodeRunHandler, NodeResult from pydantic_ai.capabilities
-        # for full type safety when subclassing
+    async def wrap_node_run(
+        self, ctx: RunContext[Any], *, node: AgentNode[Any], handler: WrapNodeRunHandler[Any]
+    ) -> NodeResult[Any]:
         self.nodes.append(type(node).__name__)
         return await handler(node)
 
@@ -481,6 +488,46 @@ class StreamAuditor(AbstractCapability[Any]):
 
 For building web UIs that transform streamed events into protocol-specific formats (like SSE), see the [UI event streams](ui/overview.md) documentation and the [`UIEventStream`][pydantic_ai.ui.UIEventStream] base class.
 
+### Per-run state isolation
+
+By default, a capability instance is shared across all runs of an agent. If your capability accumulates mutable state that should not leak between runs, override [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] to return a fresh instance:
+
+```python {title="per_run_state.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.models.test import TestModel
+
+
+@dataclass
+class RequestCounter(AbstractCapability[Any]):
+    """Counts model requests per run."""
+
+    count: int = 0
+
+    async def for_run(self, ctx: RunContext[Any]) -> 'RequestCounter':
+        return RequestCounter()  # fresh instance for each run
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        self.count += 1
+        return request_context
+
+
+counter = RequestCounter()
+agent = Agent(TestModel(), capabilities=[counter])
+
+# The shared counter stays at 0 because for_run returns a fresh instance
+agent.run_sync('first run')
+agent.run_sync('second run')
+print(counter.count)
+#> 0
+```
+
 ## Example: building a guardrail
 
 A guardrail is a capability that intercepts model requests or responses to enforce safety rules. Here's one that scans model responses for potential PII and redacts it:
@@ -598,46 +645,6 @@ When multiple capabilities are passed to an agent, they are composed into a sing
 * **`wrap_*`** hooks nest as middleware: `cap1` wraps `cap2` wraps `cap3` wraps the actual operation. The first capability is the outermost layer.
 
 This means the first capability in the list has the first and last say on the operation — it sees the original input in its `wrap_*` before handler, and it sees the final output after handler returns.
-
-## Per-run state isolation
-
-By default, a capability instance is shared across all runs of an agent. If your capability accumulates mutable state that should not leak between runs, override [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] to return a fresh instance:
-
-```python {title="per_run_state.py"}
-from dataclasses import dataclass
-from typing import Any
-
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.models import ModelRequestContext
-from pydantic_ai.models.test import TestModel
-
-
-@dataclass
-class RequestCounter(AbstractCapability[Any]):
-    """Counts model requests per run."""
-
-    count: int = 0
-
-    async def for_run(self, ctx: RunContext[Any]) -> 'RequestCounter':
-        return RequestCounter()  # fresh instance for each run
-
-    async def before_model_request(
-        self, ctx: RunContext[Any], request_context: ModelRequestContext
-    ) -> ModelRequestContext:
-        self.count += 1
-        return request_context
-
-
-counter = RequestCounter()
-agent = Agent(TestModel(), capabilities=[counter])
-
-# The shared counter stays at 0 because for_run returns a fresh instance
-agent.run_sync('first run')
-agent.run_sync('second run')
-print(counter.count)
-#> 0
-```
 
 ## Template strings
 

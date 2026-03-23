@@ -414,6 +414,20 @@ def test_model_json_schema_with_custom_capabilities():
     assert 'WebSearch' in capability_names
 
 
+def test_agent_spec_schema_field_parity():
+    """Ensure the schema model's fields stay in sync with AgentSpec."""
+    schema = AgentSpec.model_json_schema_with_capabilities()
+    schema_fields = set(schema['properties'].keys())
+
+    # Map AgentSpec field names to their JSON schema names (using aliases)
+    spec_fields: set[str] = set()
+    for name, field_info in AgentSpec.model_fields.items():
+        alias = field_info.alias
+        spec_fields.add(alias if isinstance(alias, str) else name)
+
+    assert schema_fields == spec_fields
+
+
 def test_builtin_tools_param_wrapped_as_capabilities():
     """The builtin_tools parameter items are wrapped in BuiltinTool capabilities."""
     agent = Agent('test', builtin_tools=[WebSearchTool(), CodeExecutionTool()])

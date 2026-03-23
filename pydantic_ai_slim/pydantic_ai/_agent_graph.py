@@ -558,8 +558,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ready_waiter.cancel()
 
         if wrap_task.done() and not stream_ready.is_set():
-            # wrap_model_request short-circuited (didn't call handler)
-            model_response = wrap_task.result()
+            # wrap_model_request completed without calling handler — short-circuited or raised SkipModelRequest
+            try:
+                model_response = wrap_task.result()
+            except exceptions.SkipModelRequest as e:
+                model_response = e.response
             self._did_stream = True
             ctx.state.usage.requests += 1
             skip_sr = _SkipStreamedResponse(model_request_parameters=model_request_parameters, _response=model_response)
@@ -629,15 +632,18 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     req_ctx.messages, req_ctx.model_settings, req_ctx.model_request_parameters
                 )
 
-        model_response = await ctx.deps.root_capability.wrap_model_request(
-            run_context,
-            request_context=ModelRequestContext(
-                messages=message_history,
-                model_settings=model_settings,
-                model_request_parameters=model_request_parameters,
-            ),
-            handler=model_handler,
-        )
+        try:
+            model_response = await ctx.deps.root_capability.wrap_model_request(
+                run_context,
+                request_context=ModelRequestContext(
+                    messages=message_history,
+                    model_settings=model_settings,
+                    model_request_parameters=model_request_parameters,
+                ),
+                handler=model_handler,
+            )
+        except exceptions.SkipModelRequest as e:
+            model_response = e.response
         ctx.state.usage.requests += 1
 
         return await self._finish_handling(ctx, model_response)

@@ -763,7 +763,32 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         path: Path | str,
         *,
         fmt: Literal['yaml', 'json'] | None = None,
-        **kwargs: Any,
+        deps_type: type[Any] = type(None),
+        custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        model: models.Model | models.KnownModelName | str | None = None,
+        output_type: OutputSpec[Any] = str,
+        instructions: AgentInstructions[Any] = None,
+        system_prompt: str | Sequence[str] = (),
+        name: str | None = None,
+        description: TemplateStr[Any] | str | None = None,
+        model_settings: ModelSettings | None = None,
+        retries: int | None = None,
+        validation_context: Any = None,
+        output_retries: int | None = None,
+        tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
+        builtin_tools: Sequence[AgentBuiltinTool[Any]] = (),
+        prepare_tools: ToolsPrepareFunc[Any] | None = None,
+        prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
+        toolsets: Sequence[AgentToolset[Any]] | None = None,
+        defer_model_check: bool = False,
+        end_strategy: EndStrategy | None = None,
+        instrument: InstrumentationSettings | bool | None = None,
+        metadata: AgentMetadata[Any] | None = None,
+        history_processors: Sequence[HistoryProcessor[Any]] | None = None,
+        event_stream_handler: EventStreamHandler[Any] | None = None,
+        tool_timeout: float | None = None,
+        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
+        capabilities: Sequence[AbstractCapability[Any]] | None = None,
     ) -> Agent[Any, Any]:
         """Construct an Agent from a YAML or JSON spec file.
 
@@ -773,16 +798,38 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         The file format is inferred from the extension (`.yaml`/`.yml` or `.json`)
         unless overridden with the `fmt` argument.
 
-        Args:
-            path: Path to the spec file.
-            fmt: Format of the file. If None, inferred from file extension.
-            **kwargs: All other arguments are forwarded to [`from_spec`][pydantic_ai.Agent.from_spec].
-
-        Returns:
-            A new Agent instance.
+        All other arguments are forwarded to [`from_spec`][pydantic_ai.Agent.from_spec].
         """
         spec = AgentSpec.from_file(path, fmt=fmt)
-        return cls.from_spec(spec, **kwargs)
+        return cls.from_spec(
+            spec,
+            deps_type=deps_type,
+            custom_capability_types=custom_capability_types,
+            model=model,
+            output_type=output_type,
+            instructions=instructions,
+            system_prompt=system_prompt,
+            name=name,
+            description=description,
+            model_settings=model_settings,
+            retries=retries,
+            validation_context=validation_context,
+            output_retries=output_retries,
+            tools=tools,
+            builtin_tools=builtin_tools,
+            prepare_tools=prepare_tools,
+            prepare_output_tools=prepare_output_tools,
+            toolsets=toolsets,
+            defer_model_check=defer_model_check,
+            end_strategy=end_strategy,
+            instrument=instrument,
+            metadata=metadata,
+            history_processors=history_processors,
+            event_stream_handler=event_stream_handler,
+            tool_timeout=tool_timeout,
+            max_concurrency=max_concurrency,
+            capabilities=capabilities,
+        )
 
     @staticmethod
     def instrument_all(instrument: InstrumentationSettings | bool = True) -> None:
@@ -1330,8 +1377,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                                     _result = await run_capability.after_run(run_ctx, result=_result)
                                     agent_run._result_override = _result  # pyright: ignore[reportPrivateUsage]
                                     _run_error = None  # Recovery succeeded
-                                except BaseException:
-                                    pass  # wrap_run didn't recover
+                                except BaseException as _wrap_exc:
+                                    # Attach wrap_run's own errors as context so they're
+                                    # visible in tracebacks (but don't mask the original).
+                                    if _wrap_exc is not _run_error:
+                                        _run_error.__context__ = _wrap_exc
                             elif (
                                 not _wrap_task.done()
                             ):  # pragma: no branch — _run_done.set() can't complete _wrap_task synchronously
@@ -1544,6 +1594,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
             instructions: The instructions to use instead of the instructions registered with the agent.
+                Note: this also replaces capability-contributed instructions (e.g. from
+                [`get_instructions`][pydantic_ai.capabilities.AbstractCapability.get_instructions]).
             metadata: The metadata to use instead of the metadata passed to the agent constructor. When set, any
                 per-run `metadata` argument is ignored.
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.

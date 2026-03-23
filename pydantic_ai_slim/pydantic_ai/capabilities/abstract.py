@@ -185,7 +185,22 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
-        """Wraps the entire agent run. handler() executes the run."""
+        """Wraps the entire agent run. ``handler()`` executes the run.
+
+        Works with both :meth:`agent.run() <pydantic_ai.Agent.run>` and
+        :meth:`agent.iter() <pydantic_ai.Agent.iter>`.
+
+        If ``handler()`` raises and this method catches the exception and
+        returns a result instead, the error is suppressed and the recovery
+        result is used.
+
+        If this method does not call ``handler()`` (short-circuit), the run
+        is skipped and the returned result is used directly.
+
+        Note: if the caller cancels the run (e.g. by breaking out of an
+        ``iter()`` loop), this method receives an :class:`asyncio.CancelledError`.
+        Implementations that hold resources should handle cleanup accordingly.
+        """
         return await handler()
 
     async def wrap_node_run(
