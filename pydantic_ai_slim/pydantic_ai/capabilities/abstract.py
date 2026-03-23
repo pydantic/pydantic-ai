@@ -237,7 +237,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
         """Wraps the event stream for a streamed node. Can observe or transform events."""
-        return stream
+        async for event in stream:
+            yield event
 
     # --- Model request lifecycle hooks ---
 

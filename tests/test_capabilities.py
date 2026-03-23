@@ -1759,12 +1759,9 @@ class TestWrapRunEventStream:
                 *,
                 stream: AsyncIterable[AgentStreamEvent],
             ) -> AsyncIterable[AgentStreamEvent]:
-                async def observe() -> AsyncIterator[AgentStreamEvent]:
-                    async for event in stream:
-                        observed_events.append(event)
-                        yield event
-
-                return observe()
+                async for event in stream:
+                    observed_events.append(event)
+                    yield event
 
         agent = Agent(
             FunctionModel(simple_model_function, stream_function=simple_stream_function),
@@ -1790,12 +1787,8 @@ class TestWrapRunEventStream:
                 *,
                 stream: AsyncIterable[AgentStreamEvent],
             ) -> AsyncIterable[AgentStreamEvent]:
-                async def transform() -> AsyncIterator[AgentStreamEvent]:
-                    async for event in stream:
-                        # Add a custom marker by yielding the event unchanged
-                        yield event
-
-                return transform()
+                async for event in stream:
+                    yield event
 
         agent = Agent(
             FunctionModel(simple_model_function, stream_function=simple_stream_function),
@@ -1821,13 +1814,10 @@ class TestWrapRunEventStream:
                 *,
                 stream: AsyncIterable[AgentStreamEvent],
             ) -> AsyncIterable[AgentStreamEvent]:
-                async def wrap() -> AsyncIterator[AgentStreamEvent]:
-                    log.append('cap1:enter')
-                    async for event in stream:
-                        yield event
-                    log.append('cap1:exit')
-
-                return wrap()
+                log.append('cap1:enter')
+                async for event in stream:
+                    yield event
+                log.append('cap1:exit')
 
         @dataclass
         class Cap2(AbstractCapability[Any]):
@@ -1837,13 +1827,10 @@ class TestWrapRunEventStream:
                 *,
                 stream: AsyncIterable[AgentStreamEvent],
             ) -> AsyncIterable[AgentStreamEvent]:
-                async def wrap() -> AsyncIterator[AgentStreamEvent]:
-                    log.append('cap2:enter')
-                    async for event in stream:
-                        yield event
-                    log.append('cap2:exit')
-
-                return wrap()
+                log.append('cap2:enter')
+                async for event in stream:
+                    yield event
+                log.append('cap2:exit')
 
         agent = Agent(
             FunctionModel(simple_model_function, stream_function=simple_stream_function),
@@ -1872,12 +1859,9 @@ class TestWrapRunEventStream:
                 *,
                 stream: AsyncIterable[AgentStreamEvent],
             ) -> AsyncIterable[AgentStreamEvent]:
-                async def observe() -> AsyncIterator[AgentStreamEvent]:
-                    async for event in stream:
-                        observed_events.append(event)
-                        yield event
-
-                return observe()
+                async for event in stream:
+                    observed_events.append(event)
+                    yield event
 
         agent = Agent(
             FunctionModel(tool_calling_model, stream_function=tool_calling_stream_function),
@@ -1908,12 +1892,9 @@ class TestWrapRunEventStream:
                 *,
                 stream: AsyncIterable[AgentStreamEvent],
             ) -> AsyncIterable[AgentStreamEvent]:
-                async def observe() -> AsyncIterator[AgentStreamEvent]:
-                    async for event in stream:
-                        observed_events.append(event)
-                        yield event
-
-                return observe()
+                async for event in stream:
+                    observed_events.append(event)
+                    yield event
 
         agent = Agent(
             FunctionModel(simple_model_function, stream_function=simple_stream_function),

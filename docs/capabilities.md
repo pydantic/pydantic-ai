@@ -442,7 +442,9 @@ For runs with event streaming ([`run_stream_events`][pydantic_ai.agent.AbstractA
 
 | Hook | Signature | Purpose |
 |---|---|---|
-| [`wrap_run_event_stream`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream] | `(ctx, *, stream: AsyncIterable[AgentStreamEvent]) -> AsyncIterable[AgentStreamEvent]` | Observe, filter, or transform streamed events |
+| [`wrap_run_event_stream`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream] | `async (ctx, *, stream) -> yields AgentStreamEvent` | Observe, filter, or transform streamed events |
+
+`wrap_run_event_stream` is an async generator — yield events directly without needing an inner function:
 
 ```python {title="event_stream_example.py" test="skip"}
 from collections.abc import AsyncIterable
@@ -470,21 +472,15 @@ class StreamAuditor(AbstractCapability[Any]):
         *,
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
-        async def _audit():
-            async for event in stream:
-                if isinstance(event, FunctionToolCallEvent):
-                    print(f'Tool called: {event.part.tool_name}')
-                elif isinstance(event, FunctionToolResultEvent):
-                    print(f'Tool result: {event.tool_return.content!r}')
-                elif isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
-                    print(f'Text: {event.part.content!r}')
-                yield event
-
-        return _audit()
+        async for event in stream:
+            if isinstance(event, FunctionToolCallEvent):
+                print(f'Tool called: {event.part.tool_name}')
+            elif isinstance(event, FunctionToolResultEvent):
+                print(f'Tool result: {event.tool_return.content!r}')
+            elif isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+                print(f'Text: {event.part.content!r}')
+            yield event
 ```
-
-!!! note
-    The inner async generator pattern shown above will become more ergonomic with the `AgentEventStream` base class ([PR #4775](https://github.com/pydantic/pydantic-ai/pull/4775)).
 
 For building web UIs that transform streamed events into protocol-specific formats (like SSE), see the [UI event streams](ui/overview.md) documentation and the [`UIEventStream`][pydantic_ai.ui.UIEventStream] base class.
 
