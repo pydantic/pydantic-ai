@@ -442,7 +442,7 @@ For runs with event streaming ([`run_stream_events`][pydantic_ai.agent.AbstractA
 
 | Hook | Signature | Purpose |
 |---|---|---|
-| [`wrap_run_event_stream`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream] | `async (ctx, *, stream) -> yields AgentStreamEvent` | Observe, filter, or transform streamed events |
+| [`wrap_run_event_stream`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream] | `(ctx, *, stream: AsyncIterable[AgentStreamEvent]) -> AsyncIterable[AgentStreamEvent]` | Observe, filter, or transform streamed events |
 
 `wrap_run_event_stream` is an async generator — yield events directly without needing an inner function:
 
