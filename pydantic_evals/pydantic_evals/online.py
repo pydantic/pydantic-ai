@@ -210,10 +210,15 @@ class OnlineEvaluator:
     sink: EvaluationSink | Sequence[EvaluationSink] | SinkCallback | None = None
     max_concurrency: int = 10
     gate: Callable[[EvaluatorContext], bool | Awaitable[bool]] | None = None
-    semaphore: anyio.Semaphore = field(init=False, repr=False)
+    semaphore: threading.Semaphore = field(init=False, repr=False)
+    """Thread-safe semaphore for per-evaluator concurrency limiting.
+
+    Uses `threading.Semaphore` (not `anyio.Semaphore`) because evaluators may be
+    dispatched from multiple background threads when decorating sync functions.
+    """
 
     def __post_init__(self) -> None:
-        self.semaphore = anyio.Semaphore(self.max_concurrency)
+        self.semaphore = threading.Semaphore(self.max_concurrency)
 
 
 # ============================================================================
@@ -475,9 +480,7 @@ async def _dispatch_single_evaluator(
             logger.exception('Gate check failed for %r', online_eval.evaluator)
             return
 
-    try:
-        online_eval.semaphore.acquire_nowait()
-    except anyio.WouldBlock:
+    if not online_eval.semaphore.acquire(blocking=False):
         logger.warning(
             'Evaluation dropped: max concurrency (%d) reached for %r',
             online_eval.max_concurrency,
