@@ -489,6 +489,15 @@ class TestGoogleThinkingTranslation:
         result = GoogleModel._get_thinking_config(gemini_3_model, settings, params)
         assert result == snapshot({'thinking_level': 'MINIMAL'})
 
+    def test_thinking_false_gemini_25(self, gemini_25_model: FunctionModel):
+        """thinking=False on Gemini 2.5 uses thinking_budget=0."""
+        from pydantic_ai.models.google import GoogleModel
+
+        params = ModelRequestParameters(thinking=False)
+        settings: ModelSettings = {}
+        result = GoogleModel._get_thinking_config(gemini_25_model, settings, params)
+        assert result == snapshot({'thinking_budget': 0})
+
     def test_thinking_none(self, gemini_3_model: FunctionModel):
         from pydantic_ai.models.google import GoogleModel
 
@@ -653,6 +662,24 @@ class TestBedrockThinkingTranslation:
         params = ModelRequestParameters(thinking=False)
         result = model._get_thinking_fields(settings, params)
         assert result == {'thinking': {'type': 'disabled'}}
+
+    def test_openai_variant_thinking_false(self):
+        """thinking=False on OpenAI Bedrock variant is a no-op (Bedrock rejects 'none')."""
+        pytest.importorskip('boto3')
+        from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
+        from pydantic_ai.providers.bedrock import BedrockModelProfile
+
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._profile = BedrockModelProfile(
+            bedrock_thinking_variant='openai',
+            supports_thinking=True,
+        )
+
+        settings = BedrockModelSettings()
+        params = ModelRequestParameters(thinking=False)
+        result = model._get_thinking_fields(settings, params)
+        # thinking=False: no reasoning_effort set, returns None
+        assert result is None
 
     def test_openai_variant_thinking_high(self):
         pytest.importorskip('boto3')

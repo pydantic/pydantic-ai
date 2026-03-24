@@ -1059,6 +1059,15 @@ async def test_xai_unified_thinking(allow_model_requests: None, xai_provider: Xa
     assert result.output
 
 
+async def test_xai_unified_thinking_false(allow_model_requests: None, xai_provider: XaiProvider):
+    """Test that unified thinking=False on a reasoning model is silently ignored (no reasoning_effort sent)."""
+    m = XaiModel('grok-3-mini', provider=xai_provider)
+    agent = Agent(m, model_settings={'thinking': False})
+
+    result = await agent.run('What is 2+2?')
+    assert '4' in result.output
+
+
 async def test_xai_instructions(allow_model_requests: None, xai_provider: XaiProvider):
     """Test that instructions are passed through to xAI SDK as a system message."""
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=xai_provider)
