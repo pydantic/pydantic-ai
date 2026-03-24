@@ -300,14 +300,14 @@ To build your own capability, subclass [`AbstractCapability`][pydantic_ai.capabi
 
 ### Providing configuration
 
-The simplest capabilities just provide static configuration. Here's a `KnowsCurrentTime` capability that injects the current time into the system prompt:
+The simplest capabilities just provide static configuration. Here's a `KnowsCurrentTime` capability that injects the current time into the system prompt. Since [`get_instructions`][pydantic_ai.capabilities.AbstractCapability.get_instructions] is called once at agent construction, we return a callable so `datetime.now()` is evaluated fresh each request:
 
 ```python {title="custom_capability_config.py"}
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 
 
@@ -316,7 +316,10 @@ class KnowsCurrentTime(AbstractCapability[Any]):
     """Tells the agent what time it is."""
 
     def get_instructions(self):
-        return f'The current date and time is {datetime.now().isoformat()}.'
+        def _get_time(ctx: RunContext[Any]) -> str:
+            return f'The current date and time is {datetime.now().isoformat()}.'
+
+        return _get_time
 
 
 agent = Agent('openai:gpt-5.2', capabilities=[KnowsCurrentTime()])
@@ -469,7 +472,7 @@ from pydantic_ai.capabilities import (
 class NodeLogger(AbstractCapability[Any]):
     """Logs each node that executes during a run."""
 
-    nodes: list[str] = field(default_factory=lambda: [])
+    nodes: list[str] = field(default_factory=list)
 
     async def wrap_node_run(
         self, ctx: RunContext[Any], *, node: AgentNode[Any], handler: WrapNodeRunHandler[Any]
@@ -987,7 +990,7 @@ Override [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec] wh
 
 ```python {title="from_spec_override_example.py" test="skip" lint="skip"}
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic_ai import RunContext
@@ -1000,10 +1003,10 @@ class ConditionalTools(AbstractCapability[Any]):
     """Hides tools unless a condition is met."""
 
     condition: Callable[[RunContext[Any]], bool]  # not serializable
-    hidden_tools: list[str] = ()
+    hidden_tools: list[str] = field(default_factory=list)
 
     @classmethod
-    def from_spec(cls, hidden_tools: list[str]) -> 'ConditionalTools':
+    def from_spec(cls, hidden_tools: list[str]) -> 'ConditionalTools[Any]':
         # In the spec, there's no condition callable — always hide
         return cls(condition=lambda ctx: True, hidden_tools=hidden_tools)
 

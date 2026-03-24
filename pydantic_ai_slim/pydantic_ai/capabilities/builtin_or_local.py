@@ -150,8 +150,9 @@ class BuiltinOrLocalTool(AbstractCapability[AgentDepsT]):
     def get_builtin_tools(self) -> Sequence[AgentBuiltinTool[AgentDepsT]]:
         if self.builtin is False:
             return []
-        # After __post_init__, builtin is AgentBuiltinTool (not bool True)
-        return [self.builtin]  # type: ignore[list-item]
+        # After __post_init__, builtin=True is resolved to an AbstractBuiltinTool instance
+        assert not isinstance(self.builtin, bool)
+        return [self.builtin]
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
         local = self.local

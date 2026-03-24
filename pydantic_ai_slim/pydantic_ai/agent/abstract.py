@@ -78,6 +78,7 @@ Instructions = AgentInstructions
 """Deprecated: use `AgentInstructions` instead."""
 
 AgentModelSettings = ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings]
+"""Type alias for agent model settings — a static `ModelSettings` dict, or a callable receiving `RunContext` that returns one dynamically per request."""
 
 
 class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):

@@ -108,19 +108,20 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         """Return instructions to include in the system prompt, or None.
 
-        The returned value can be a static string, a [`TemplateStr`][pydantic_ai.TemplateStr],
-        or a callable that receives [`RunContext`][pydantic_ai.tools.RunContext] and returns
-        instructions dynamically.
+        This method is called once at agent construction time. To get dynamic
+        per-request behavior, return a callable that receives
+        [`RunContext`][pydantic_ai.tools.RunContext] or a
+        [`TemplateStr`][pydantic_ai.TemplateStr] — not a dynamic string.
         """
         return None
 
     def get_model_settings(self) -> AgentModelSettings[AgentDepsT] | None:
         """Return model settings to merge into the agent's defaults, or None.
 
-        Return a static `ModelSettings` dict when the settings are known at agent
-        construction time and don't change between requests. Return a callable
-        that receives [`RunContext`][pydantic_ai.tools.RunContext] when settings
-        need to vary per step (e.g. based on `ctx.run_step` or `ctx.deps`).
+        This method is called once at agent construction time. Return a static
+        `ModelSettings` dict when the settings don't change between requests.
+        Return a callable that receives [`RunContext`][pydantic_ai.tools.RunContext]
+        when settings need to vary per step (e.g. based on `ctx.run_step` or `ctx.deps`).
 
         When the callable is invoked, `ctx.model_settings` contains the merged
         result of all layers resolved before this capability (model defaults and

@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import json as _json
 from collections.abc import Callable, Mapping, Sequence
 from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Union, cast
 
 from pydantic import BaseModel, Field, model_serializer
-from pydantic_core import to_json
+from pydantic_core import from_json, to_json
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
 
 from pydantic_ai._agent_graph import EndStrategy
@@ -90,7 +89,7 @@ class AgentSpec(BaseModel):
             A new AgentSpec instance.
         """
         if fmt == 'json':
-            data = _json.loads(text)
+            data = from_json(text)
         else:
             try:
                 import yaml
