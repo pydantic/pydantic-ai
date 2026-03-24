@@ -110,4 +110,4 @@ class SambaNovaProvider(Provider[AsyncOpenAI]):
 
             # Create http client and AsyncOpenAI client
             http_client = http_client or cached_async_http_client(provider='sambanova')
-            self._client = AsyncOpenAI(base_url=self._base_url, api_key=api_key, http_client=http_client, timeout=60.0)
+            self._client = AsyncOpenAI(base_url=self._base_url, api_key=api_key, http_client=http_client, timeout=60.0, max_retries=3)

@@ -91,7 +91,7 @@ class MoonshotAIProvider(Provider[AsyncOpenAI]):
         if openai_client is not None:
             self._client = openai_client
         elif http_client is not None:
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
+            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client, timeout=60.0, max_retries=3)
         else:
             http_client = cached_async_http_client(provider='moonshotai')
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
+            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client, timeout=60.0, max_retries=3)

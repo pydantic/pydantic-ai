@@ -80,7 +80,7 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
             assert api_key is None, 'Cannot provide both `openai_client` and `api_key`'
             self._client = openai_client
         elif http_client is not None:
-            self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client)
+            self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client, timeout=60.0, max_retries=3)
         else:
             http_client = cached_async_http_client(provider='openai')
-            self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client)
+            self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client, timeout=60.0, max_retries=3)

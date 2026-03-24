@@ -107,7 +107,7 @@ class OllamaProvider(Provider[AsyncOpenAI]):
             api_key = api_key or os.getenv('OLLAMA_API_KEY') or 'api-key-not-set'
 
             if http_client is not None:
-                self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client)
+                self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client, timeout=60.0, max_retries=3)
             else:
                 http_client = cached_async_http_client(provider='ollama')
-                self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client)
+                self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client, timeout=60.0, max_retries=3)

@@ -77,7 +77,7 @@ class HerokuProvider(Provider[AsyncOpenAI]):
             base_url = base_url.rstrip('/') + '/v1'
 
             if http_client is not None:
-                self._client = AsyncOpenAI(api_key=api_key, http_client=http_client, base_url=base_url)
+                self._client = AsyncOpenAI(api_key=api_key, http_client=http_client, base_url=base_url, timeout=60.0, max_retries=3)
             else:
                 http_client = cached_async_http_client(provider='heroku')
-                self._client = AsyncOpenAI(api_key=api_key, http_client=http_client, base_url=base_url)
+                self._client = AsyncOpenAI(api_key=api_key, http_client=http_client, base_url=base_url, timeout=60.0, max_retries=3)
