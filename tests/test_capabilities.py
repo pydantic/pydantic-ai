@@ -4351,6 +4351,253 @@ class TestHooksCapability:
             await stream.get_output()
         assert 'before_model_request' in call_log
 
+    async def test_node_run_hooks(self):
+        """Exercise before_node_run, after_node_run, and node_run (wrap) via .on namespace."""
+        hooks = Hooks()
+        nodes_seen: list[str] = []
+
+        @hooks.on.before_node_run
+        async def before(ctx: RunContext[Any], *, node: Any) -> Any:
+            nodes_seen.append(f'before:{type(node).__name__}')
+            return node
+
+        @hooks.on.after_node_run
+        async def after(ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+            nodes_seen.append(f'after:{type(node).__name__}')
+            return result
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert any('before:' in n for n in nodes_seen)
+        assert any('after:' in n for n in nodes_seen)
+
+    async def test_node_run_error_hook(self):
+        """on.node_run_error fires when a node fails."""
+        hooks = Hooks()
+        error_log: list[str] = []
+
+        @hooks.on.node_run_error
+        async def handle(ctx: RunContext[Any], *, node: Any, error: Exception) -> Any:
+            error_log.append(f'error:{type(error).__name__}')
+            raise error
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('node exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[hooks])
+        with pytest.raises(RuntimeError, match='node exploded'):
+            await agent.run('hello')
+        assert any('error:RuntimeError' in e for e in error_log)
+
+    async def test_on_event_hook(self):
+        """on.event fires for each stream event and can modify events."""
+        hooks = Hooks()
+        events_seen: list[str] = []
+
+        @hooks.on.event
+        async def observe(ctx: RunContext[Any], event: AgentStreamEvent) -> AgentStreamEvent:
+            events_seen.append(type(event).__name__)
+            return event
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[hooks],
+        )
+        async with agent.run_stream('hello') as stream:
+            await stream.get_output()
+        assert len(events_seen) > 0
+
+    async def test_on_event_with_run_event_stream(self):
+        """on.event and on.run_event_stream can be used together."""
+        hooks = Hooks()
+        event_log: list[str] = []
+        stream_log: list[str] = []
+
+        @hooks.on.event
+        async def per_event(ctx: RunContext[Any], event: AgentStreamEvent) -> AgentStreamEvent:
+            event_log.append(type(event).__name__)
+            return event
+
+        @hooks.on.run_event_stream
+        async def wrap_stream(
+            ctx: RunContext[Any], *, stream: AsyncIterable[AgentStreamEvent]
+        ) -> AsyncIterable[AgentStreamEvent]:
+            stream_log.append('started')
+            async for event in stream:
+                yield event
+            stream_log.append('finished')
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[hooks],
+        )
+        async with agent.run_stream('hello') as stream:
+            await stream.get_output()
+        assert len(event_log) > 0
+        assert stream_log == ['started', 'finished']
+
+    async def test_prepare_tools_hook(self):
+        """on.prepare_tools filters tool definitions."""
+        hooks = Hooks()
+
+        @hooks.on.prepare_tools
+        async def hide_tools(ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+            return [td for td in tool_defs if not td.name.startswith('hidden_')]
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+
+        @agent.tool_plain
+        def visible_tool() -> str:
+            return 'visible'
+
+        @agent.tool_plain
+        def hidden_tool() -> str:
+            return 'hidden'  # pragma: no cover
+
+        result = await agent.run('hello')
+        assert result.output == 'response from model'
+
+    async def test_tool_validate_hooks(self):
+        """Exercise before/after/wrap tool_validate and on_tool_validate_error."""
+        hooks = Hooks()
+        validate_log: list[str] = []
+
+        @hooks.on.before_tool_validate
+        async def before_validate(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any
+        ) -> Any:
+            validate_log.append('before_validate')
+            return args
+
+        @hooks.on.after_tool_validate
+        async def after_validate(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+        ) -> dict[str, Any]:
+            validate_log.append('after_validate')
+            return args
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'result'
+
+        await agent.run('call tool')
+        assert 'before_validate' in validate_log
+        assert 'after_validate' in validate_log
+
+    async def test_wrap_tool_validate_hook(self):
+        """Exercise on.tool_validate (wrap) via decorator."""
+        hooks = Hooks()
+        wrap_log: list[str] = []
+
+        @hooks.on.tool_validate
+        async def wrap_validate(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, handler: Any
+        ) -> dict[str, Any]:
+            wrap_log.append('wrap_start')
+            result = await handler(args)
+            wrap_log.append('wrap_end')
+            return result
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'result'
+
+        await agent.run('call tool')
+        assert wrap_log == ['wrap_start', 'wrap_end']
+
+    async def test_tool_validate_error_hook(self):
+        """on.tool_validate_error can recover from validation failures."""
+        hooks = Hooks()
+
+        @hooks.on.tool_validate_error
+        async def recover_validate(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Any
+        ) -> dict[str, Any]:
+            return {'name': 'recovered'}
+
+        def bad_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return make_text_response(f'got: {part.content}')
+            if info.function_tools:
+                tool = info.function_tools[0]
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=tool.name, args='{"wrong": 1}', tool_call_id='call-1')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        agent = Agent(FunctionModel(bad_args_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def greet(name: str) -> str:
+            return f'hello {name}'
+
+        result = await agent.run('greet someone')
+        assert 'hello recovered' in result.output
+
+    async def test_wrap_tool_execute_hook(self):
+        """Exercise on.tool_execute (wrap) via decorator."""
+        hooks = Hooks()
+        wrap_log: list[str] = []
+
+        @hooks.on.tool_execute
+        async def wrap_exec(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any], handler: Any
+        ) -> Any:
+            wrap_log.append('exec_start')
+            result = await handler(args)
+            wrap_log.append('exec_end')
+            return result
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'result'
+
+        await agent.run('call tool')
+        assert wrap_log == ['exec_start', 'exec_end']
+
+    async def test_tool_execute_error_hook(self):
+        """on.tool_execute_error can recover from tool execution failures."""
+        hooks = Hooks()
+
+        @hooks.on.tool_execute_error
+        async def recover_exec(
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: dict[str, Any],
+            error: Exception,
+        ) -> Any:
+            return 'fallback result'
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return make_text_response(f'got: {part.content}')
+            if info.function_tools:
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[hooks])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            raise ValueError('tool failed')
+
+        result = await agent.run('call tool')
+        assert 'fallback result' in result.output
+
     async def test_get_serialization_name(self):
         assert Hooks.get_serialization_name() is None
 
