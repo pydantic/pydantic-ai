@@ -4738,6 +4738,42 @@ async def test_adapter_dump_messages_retry_preserves_raw_error_text():
     assert tool_part['state'] == 'output-error'
 
 
+async def test_adapter_dump_messages_retry_validation_errors():
+    """Test that RetryPromptPart with structured validation errors uses model_response().
+
+    When content is a list of ErrorDetails (from Pydantic validation), model_response()
+    formats them nicely. Only string content should be used raw.
+    """
+    error_details = [
+        {'type': 'missing', 'loc': ('name',), 'msg': 'Field required', 'input': {}}
+    ]
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Do something')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='my_tool', args={}, tool_call_id='tc_val'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                RetryPromptPart(
+                    content=error_details,
+                    tool_name='my_tool',
+                    tool_call_id='tc_val',
+                )
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    dicts = [msg.model_dump() for msg in ui_messages]
+    tool_part = dicts[1]['parts'][0]
+    assert tool_part['state'] == 'output-error'
+    # Should use model_response() which includes the formatted error + suffix
+    assert 'Field required' in tool_part['error_text']
+    assert 'Fix the errors and try again.' in tool_part['error_text']
+
+
 async def test_adapter_dump_messages_assistant_starts_with_tool():
     """Test an assistant message that starts with a tool call instead of text."""
     messages = [
