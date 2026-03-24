@@ -33,6 +33,7 @@ import logging
 import random
 import threading
 import time
+import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -883,5 +884,8 @@ async def _wait_task(task: asyncio.Task[Any]) -> None:
         await task
     except asyncio.CancelledError:  # pragma: no cover
         pass  # Expected during shutdown
-    except BaseException:  # pragma: no cover
-        logger.warning('Unexpected exception in background evaluation task', exc_info=True)
+    except BaseException as exc:  # pragma: no cover
+        warnings.warn(
+            f'Unexpected exception in background evaluation task: {type(exc).__name__}: {exc}',
+            stacklevel=1,
+        )
