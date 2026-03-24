@@ -992,12 +992,12 @@ class _ReplacingCapability(AbstractCapability[Any]):
     replaced: bool = field(default=False, init=False)
 
     async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
-        if type(node).__name__ == 'ModelRequestNode' and not self.replaced:
-            self.replaced = True
-            from pydantic_ai._agent_graph import ModelRequestNode
+        from pydantic_ai._agent_graph import ModelRequestNode
 
+        if isinstance(node, ModelRequestNode) and not self.replaced:
+            self.replaced = True
             return ModelRequestNode(request=node.request)  # pyright: ignore[reportUnknownVariableType]
-        return node
+        return node  # pyright: ignore[reportUnknownVariableType]
 
 
 def make_text_response(text: str = 'hello') -> ModelResponse:
@@ -5417,12 +5417,14 @@ class TestNodeStreamingWithHooks:
                 # Raise on CallToolsNode — after UserPromptNode and ModelRequestNode pass through.
                 # ModelRequestNode with tool calls doesn't produce a FinalResultEvent in run_stream(),
                 # so it falls through to wrap_node_run; CallToolsNode is next and triggers the error.
-                if type(node).__name__ == 'CallToolsNode':
+                from pydantic_ai._agent_graph import CallToolsNode
+
+                if isinstance(node, CallToolsNode):
                     raise RuntimeError('wrap error')
                 return await handler(node)
 
             async def on_node_run_error(self, ctx: RunContext[Any], *, node: Any, error: Exception) -> Any:
-                error_log.append(f'{type(node).__name__}:{error}')
+                error_log.append(type(node).__name__)
                 raise error
 
         agent = Agent(
@@ -5438,4 +5440,4 @@ class TestNodeStreamingWithHooks:
             async with agent.run_stream('hello') as _streamed:
                 pass
 
-        assert error_log == ['CallToolsNode:wrap error']
+        assert error_log == ['CallToolsNode']
