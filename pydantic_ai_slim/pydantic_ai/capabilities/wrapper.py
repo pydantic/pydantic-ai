@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, Sequence
+from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
@@ -48,6 +48,14 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     @property
     def has_wrap_node_run(self) -> bool:
         return type(self).wrap_node_run is not WrapperCapability.wrap_node_run or self.wrapped.has_wrap_node_run
+
+    def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
+        self.wrapped.apply(visitor)
+
+    def visit_and_replace(
+        self, visitor: Callable[[AbstractCapability[AgentDepsT]], AbstractCapability[AgentDepsT]]
+    ) -> AbstractCapability[AgentDepsT]:
+        return replace(self, wrapped=self.wrapped.visit_and_replace(visitor))
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         new_wrapped = await self.wrapped.for_run(ctx)

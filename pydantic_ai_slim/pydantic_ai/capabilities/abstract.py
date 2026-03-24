@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias
 
 from pydantic import ValidationError
@@ -75,6 +75,16 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     sensible defaults and typically don't need to be overridden.
     """
 
+    id: str | None = field(default=None, kw_only=True)
+    """An optional ID for the capability, unique among capabilities registered with the same agent.
+
+    When set, the capability can be selectively replaced or removed via
+    [`Agent.override(capabilities={...})`][pydantic_ai.Agent.override].
+
+    Some capabilities (e.g. [`MCP`][pydantic_ai.capabilities.MCP]) also use this ID
+    for provider integration (e.g. as the MCP server identifier).
+    """
+
     @property
     def has_wrap_node_run(self) -> bool:
         """Whether this capability (or any sub-capability) overrides wrap_node_run."""
@@ -95,6 +105,24 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         Override when `__init__` takes non-serializable types.
         """
         return cls(*args, **kwargs)
+
+    def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
+        """Run a visitor function on all "leaf" capabilities.
+
+        Composite capabilities override this to recurse into their children.
+        Leaf capabilities (the default) call ``visitor(self)``.
+        """
+        visitor(self)
+
+    def visit_and_replace(
+        self, visitor: Callable[[AbstractCapability[AgentDepsT]], AbstractCapability[AgentDepsT]]
+    ) -> AbstractCapability[AgentDepsT]:
+        """Run a visitor function on all "leaf" capabilities and replace them with the result.
+
+        Composite capabilities override this to recurse into their children.
+        Leaf capabilities (the default) call ``visitor(self)`` and return the result.
+        """
+        return visitor(self)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Return the capability instance to use for this agent run.

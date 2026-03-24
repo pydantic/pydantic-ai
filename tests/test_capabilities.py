@@ -2547,6 +2547,11 @@ class TestMCPCapability:
         with pytest.raises(TypeError, match="missing 1 required keyword-only argument: 'url'"):
             MCP()  # type: ignore[call-arg]
 
+    def test_mcp_id(self):
+        """MCP capability accepts id kwarg."""
+        mcp = MCP(url='http://localhost', id='my-mcp')
+        assert mcp.id == 'my-mcp'
+
 
 class TestNamedSpecDictRoundTrip:
     """Test that NamedSpec correctly round-trips various argument forms."""
@@ -4676,6 +4681,265 @@ class TestHooksCapability:
 
         with pytest.raises(ValueError, match='tool failed'):
             await agent.run('call the tool')
+
+
+@dataclass
+class _InsCap(AbstractCapability[Any]):
+    """Simple capability that provides instructions, used in override-by-id tests."""
+
+    text: str
+
+    def get_instructions(self) -> str:
+        return self.text
+
+
+class TestCapabilityId:
+    def test_id_defaults_to_none(self):
+        """Capabilities have id=None by default."""
+        cap = _InsCap('hello')
+        assert cap.id is None
+
+    def test_id_can_be_set(self):
+        """Capabilities accept an id keyword argument."""
+        cap = _InsCap('hello', id='greet')
+        assert cap.id == 'greet'
+
+    def test_id_on_combined_capability(self):
+        """CombinedCapability inherits id=None."""
+        cap = CombinedCapability([_InsCap('a'), _InsCap('b')])
+        assert cap.id is None
+
+    def test_id_on_init_false_capabilities(self):
+        """init=False capabilities (WebFetch, WebSearch, ImageGeneration) accept id."""
+        wf = WebFetch(id='my-fetch')
+        assert wf.id == 'my-fetch'
+
+        ws = WebSearch(id='my-search')
+        assert ws.id == 'my-search'
+
+        ig = ImageGeneration(id='my-img')
+        assert ig.id == 'my-img'
+
+    def test_duplicate_capability_ids_rejected(self):
+        """Agent raises UserError when two capabilities share the same id."""
+        with pytest.raises(UserError, match="Duplicate capability id: 'dup'"):
+            Agent('test', capabilities=[_InsCap('a', id='dup'), _InsCap('b', id='dup')])
+
+    def test_duplicate_toolset_ids_rejected(self):
+        """Agent raises UserError when two toolsets share the same id."""
+        with pytest.raises(UserError, match="Duplicate toolset id: 'dup'"):
+            Agent('test', toolsets=[FunctionToolset(id='dup'), FunctionToolset(id='dup')])
+
+
+class TestVisitAndReplace:
+    def test_visit_and_replace_leaf(self):
+        """visit_and_replace on a leaf capability calls the visitor."""
+        original = _InsCap('hello', id='greet')
+        replacement = _InsCap('goodbye', id='greet')
+
+        result = original.visit_and_replace(lambda cap: replacement if cap.id == 'greet' else cap)
+        assert result is replacement
+
+    def test_visit_and_replace_no_match(self):
+        """visit_and_replace returns original when visitor doesn't replace."""
+        original = _InsCap('hello', id='greet')
+        result = original.visit_and_replace(lambda cap: cap)
+        assert result is original
+
+    def test_visit_and_replace_combined(self):
+        """visit_and_replace on CombinedCapability recurses into children."""
+        cap_a = _InsCap('hello', id='a')
+        cap_b = _InsCap('world', id='b')
+        combined = CombinedCapability([cap_a, cap_b])
+
+        replacement_b = _InsCap('replaced', id='b')
+        result = combined.visit_and_replace(lambda cap: replacement_b if cap.id == 'b' else cap)
+
+        assert isinstance(result, CombinedCapability)
+        caps = list(result.capabilities)
+        assert caps[0] is cap_a
+        assert caps[1] is replacement_b
+
+    def test_visit_and_replace_nested_combined(self):
+        """visit_and_replace recurses through nested CombinedCapability."""
+        inner_cap = _InsCap('inner', id='target')
+        inner_combined = CombinedCapability([inner_cap])
+        outer_combined = CombinedCapability([inner_combined, _InsCap('other')])
+
+        replacement = _InsCap('replaced', id='target')
+        result = outer_combined.visit_and_replace(lambda cap: replacement if cap.id == 'target' else cap)
+
+        assert isinstance(result, CombinedCapability)
+        inner_result = result.capabilities[0]
+        assert isinstance(inner_result, CombinedCapability)
+        assert inner_result.capabilities[0] is replacement
+
+    def test_visit_and_replace_wrapper(self):
+        """visit_and_replace on WrapperCapability recurses into wrapped."""
+        inner = _InsCap('hello', id='target')
+        wrapper = WrapperCapability(wrapped=inner)
+
+        replacement = _InsCap('replaced', id='target')
+        result = wrapper.visit_and_replace(lambda cap: replacement if cap.id == 'target' else cap)
+
+        assert isinstance(result, WrapperCapability)
+        assert result.wrapped is replacement
+
+    def test_apply_wrapper(self):
+        """apply on WrapperCapability visits the wrapped capability."""
+        inner = _InsCap('hello', id='inner')
+        wrapper = WrapperCapability(wrapped=inner)
+
+        visited_ids: list[str | None] = []
+        wrapper.apply(lambda cap: visited_ids.append(cap.id))
+        assert visited_ids == ['inner']
+
+
+class TestOverrideCapabilitiesById:
+    async def test_override_capabilities_sequence_replaces_all(self):
+        """override(capabilities=[...]) replaces all capabilities."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions = next(
+                (m.instructions for m in messages if isinstance(m, ModelRequest) and m.instructions), None
+            )
+            return make_text_response(f'instructions: {instructions}')
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[_InsCap('original', id='greet')])
+
+        with agent.override(capabilities=[_InsCap('replaced')]):
+            result = await agent.run('hello')
+
+        assert 'replaced' in result.output
+        assert 'original' not in result.output
+
+    async def test_override_capabilities_dict_replaces_by_id(self):
+        """override(capabilities={'id': new_cap}) replaces a specific capability."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions = next(
+                (m.instructions for m in messages if isinstance(m, ModelRequest) and m.instructions), None
+            )
+            return make_text_response(f'instructions: {instructions}')
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            capabilities=[_InsCap('first', id='a'), _InsCap('second', id='b')],
+        )
+
+        with agent.override(capabilities={'a': _InsCap('replaced-a', id='a')}):
+            result = await agent.run('hello')
+
+        # Both 'replaced-a' (from override) and 'second' (untouched) should be in instructions
+        assert 'replaced-a' in result.output
+        assert 'second' in result.output
+        assert 'first' not in result.output
+
+    async def test_override_capabilities_dict_removes_by_id(self):
+        """override(capabilities={'id': None}) removes a specific capability."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions = next(
+                (m.instructions for m in messages if isinstance(m, ModelRequest) and m.instructions), None
+            )
+            return make_text_response(f'instructions: {instructions}')
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            capabilities=[_InsCap('keep-me', id='a'), _InsCap('remove-me', id='b')],
+        )
+
+        with agent.override(capabilities={'b': None}):
+            result = await agent.run('hello')
+
+        assert 'keep-me' in result.output
+        assert 'remove-me' not in result.output
+
+    async def test_override_capabilities_dict_unmatched_ids_ignored(self):
+        """Unmatched IDs in override dict are silently ignored."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions = next(
+                (m.instructions for m in messages if isinstance(m, ModelRequest) and m.instructions), None
+            )
+            return make_text_response(f'instructions: {instructions}')
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[_InsCap('original', id='a')])
+
+        with agent.override(capabilities={'nonexistent': None}):
+            result = await agent.run('hello')
+
+        assert 'original' in result.output
+
+
+class TestOverrideToolsetsById:
+    async def test_override_toolsets_dict_replaces_by_id(self):
+        """override(toolsets={'id': new_ts}) replaces a specific toolset."""
+        ts_a = FunctionToolset(id='a')
+
+        @ts_a.tool_plain
+        def get_greeting() -> str:
+            return 'hello'
+
+        def tool_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for m in messages:
+                if isinstance(m, ModelRequest):
+                    for p in m.parts:
+                        if isinstance(p, ToolReturnPart):
+                            return make_text_response(f'result: {p.content}')
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='get_greeting', args='{}')],
+            )
+
+        agent = Agent(FunctionModel(tool_model), toolsets=[ts_a])
+
+        # Verify the original tool works without override
+        original_result = await agent.run('hello')
+        assert 'hello' in original_result.output
+
+        # Now override and verify the replacement is used
+        ts_replacement = FunctionToolset(id='a')
+
+        @ts_replacement.tool_plain(name='get_greeting')
+        def get_greeting_replacement() -> str:
+            return 'bonjour'
+
+        with agent.override(toolsets={'a': ts_replacement}):
+            result = await agent.run('hello')
+
+        assert 'bonjour' in result.output
+
+    async def test_override_toolsets_dict_removes_by_id(self):
+        """override(toolsets={'id': None}) removes a specific toolset's tools from the agent."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            # On first call with tools available, call the tool; on second call report result
+            for m in messages:
+                if isinstance(m, ModelRequest):
+                    for p in m.parts:
+                        if isinstance(p, ToolReturnPart):
+                            return make_text_response(f'tool returned: {p.content}')
+            if info.function_tools:
+                return ModelResponse(parts=[ToolCallPart(tool_name='my_tool', args='{}')])
+            return make_text_response('no tools available')
+
+        ts = FunctionToolset(id='removeme')
+
+        @ts.tool_plain
+        def my_tool() -> str:
+            return 'result'
+
+        agent = Agent(FunctionModel(model_fn), toolsets=[ts])
+
+        # Without override, tool is called and returns result
+        result_before = await agent.run('hello')
+        assert 'result' in result_before.output
+
+        # With override removing the toolset, no tools available
+        with agent.override(toolsets={'removeme': None}):
+            result = await agent.run('hello')
+
+        assert 'no tools available' in result.output
 
 
 # --- WrapperCapability and PrefixTools tests ---

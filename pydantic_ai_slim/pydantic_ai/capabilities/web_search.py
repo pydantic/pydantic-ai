@@ -39,6 +39,7 @@ class WebSearch(BuiltinOrLocalTool[AgentDepsT]):
         *,
         builtin: WebSearchTool | AgentBuiltinTool[AgentDepsT] | bool = True,
         local: Tool[Any] | Callable[..., Any] | Literal[False] | None = None,
+        id: str | None = None,
         search_context_size: Literal['low', 'medium', 'high'] | None = None,
         user_location: WebSearchUserLocation | None = None,
         blocked_domains: list[str] | None = None,
@@ -47,6 +48,7 @@ class WebSearch(BuiltinOrLocalTool[AgentDepsT]):
     ) -> None:
         self.builtin = builtin
         self.local = local
+        self.id = id
         self.search_context_size = search_context_size
         self.user_location = user_location
         self.blocked_domains = blocked_domains

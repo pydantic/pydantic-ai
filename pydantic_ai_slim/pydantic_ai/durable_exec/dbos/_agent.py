@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Iterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
@@ -25,6 +25,7 @@ from pydantic_ai.agent import (
     WrapperAgent,
 )
 from pydantic_ai.agent.abstract import AgentMetadata, AgentModelSettings, RunOutputDataT
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
@@ -976,9 +977,15 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         name: str | _utils.Unset = _utils.UNSET,
         deps: AgentDepsT | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]]
+        | Mapping[str, AbstractToolset[AgentDepsT] | None]
+        | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]]
+        | Mapping[str, AbstractCapability[AgentDepsT] | None]
+        | _utils.Unset = _utils.UNSET,
         instructions: _instructions.AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        metadata: AgentMetadata[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> Iterator[None]:
@@ -992,8 +999,13 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             deps: The dependencies to use instead of the dependencies passed to the agent run.
             model: The model to use instead of the model passed to the agent run.
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
+                Pass a sequence to replace all, or a dict mapping IDs to replacements (or `None` to remove).
             tools: The tools to use instead of the tools registered with the agent.
+            capabilities: The capabilities to use instead of the capabilities registered with the agent.
+                Pass a sequence to replace all, or a dict mapping IDs to replacements (or `None` to remove).
             instructions: The instructions to use instead of the instructions registered with the agent.
+            metadata: The metadata to use instead of the metadata passed to the agent constructor. When set, any
+                per-run `metadata` argument is ignored.
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
                 When set, any per-run `model_settings` argument is ignored.
             spec: Optional agent spec to apply as overrides.
@@ -1009,7 +1021,9 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             model=model,
             toolsets=toolsets,
             tools=tools,
+            capabilities=capabilities,
             instructions=instructions,
+            metadata=metadata,
             model_settings=model_settings,
             spec=spec,
         ):

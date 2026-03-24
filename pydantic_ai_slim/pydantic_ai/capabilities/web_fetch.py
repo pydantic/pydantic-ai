@@ -38,6 +38,7 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
         *,
         builtin: WebFetchTool | AgentBuiltinTool[AgentDepsT] | bool = True,
         local: Tool[Any] | Callable[..., Any] | Literal[False] | None = None,
+        id: str | None = None,
         allowed_domains: list[str] | None = None,
         blocked_domains: list[str] | None = None,
         max_uses: int | None = None,
@@ -46,6 +47,7 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
     ) -> None:
         self.builtin = builtin
         self.local = local
+        self.id = id
         self.allowed_domains = allowed_domains
         self.blocked_domains = blocked_domains
         self.max_uses = max_uses

@@ -6,11 +6,11 @@ import inspect
 import json
 import warnings
 from asyncio import Lock
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, cast, overload
 
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
@@ -463,6 +463,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         cap_toolset = self._root_capability.get_toolset()
         self._cap_toolsets: list[AgentToolset[AgentDepsT]] = [cap_toolset] if cap_toolset is not None else []
 
+        # Validate ID uniqueness for capabilities and toolsets
+        _validate_unique_ids(self._root_capability, self._user_toolsets, self._dynamic_toolsets)
+
         self._event_stream_handler = event_stream_handler
 
         self._concurrency_limiter = _concurrency.normalize_to_limiter(max_concurrency)
@@ -487,6 +490,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
         self._override_root_capability: ContextVar[_utils.Option[CombinedCapability[AgentDepsT]]] = ContextVar(
             '_override_root_capability', default=None
+        )
+        self._override_capabilities_by_id: ContextVar[
+            _utils.Option[Mapping[str, AbstractCapability[AgentDepsT] | None]]
+        ] = ContextVar('_override_capabilities_by_id', default=None)
+        self._override_toolsets_by_id: ContextVar[_utils.Option[Mapping[str, AbstractToolset[AgentDepsT] | None]]] = (
+            ContextVar('_override_toolsets_by_id', default=None)
         )
         self._enter_lock = Lock()
         self._entered_count = 0
@@ -1144,7 +1153,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Determine root capability: override > agent default
         override_cap = self._override_root_capability.get()
-        base_capability = override_cap.value if override_cap is not None else self._root_capability
+        base_capability: AbstractCapability[AgentDepsT] = (
+            override_cap.value if override_cap is not None else self._root_capability
+        )
+
+        # Apply capabilities-by-id override
+        if cap_by_id_override := self._override_capabilities_by_id.get():
+            noop_cap: AbstractCapability[AgentDepsT] = CombinedCapability([])
+            base_capability = base_capability.visit_and_replace(
+                _make_id_override_visitor(cap_by_id_override.value, noop_cap)
+            )
 
         # Merge spec capability additively with base capability
         if resolved is not None and resolved.capability is not None:
@@ -1158,7 +1176,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         if run_capability is not effective_capability:
             source_cap = run_capability
-        elif override_cap is not None or (resolved is not None and resolved.capability is not None):
+        elif (
+            override_cap is not None
+            or cap_by_id_override is not None
+            or (resolved is not None and resolved.capability is not None)
+        ):
             source_cap = effective_capability
         else:
             source_cap = None
@@ -1591,8 +1613,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | _utils.Unset = _utils.UNSET,
         deps: AgentDepsT | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]]
+        | Mapping[str, AbstractToolset[AgentDepsT] | None]
+        | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]]
+        | Mapping[str, AbstractCapability[AgentDepsT] | None]
+        | _utils.Unset = _utils.UNSET,
         instructions: AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
         metadata: AgentMetadata[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
@@ -1608,7 +1635,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps: The dependencies to use instead of the dependencies passed to the agent run.
             model: The model to use instead of the model passed to the agent run.
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
+                Pass a sequence to replace all toolsets, or a dict mapping toolset IDs to replacements
+                (or `None` to remove) for selective override.
             tools: The tools to use instead of the tools registered with the agent.
+            capabilities: The capabilities to use instead of the capabilities registered with the agent.
+                Pass a sequence to replace all capabilities, or a dict mapping capability IDs to replacements
+                (or `None` to remove) for selective override.
             instructions: The instructions to use instead of the instructions registered with the agent.
                 Note: this also replaces capability-contributed instructions (e.g. from
                 [`get_instructions`][pydantic_ai.capabilities.AbstractCapability.get_instructions]).
@@ -1652,14 +1684,36 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_token = None
 
         if _utils.is_set(toolsets):
-            toolsets_token = self._override_toolsets.set(_utils.Some(toolsets))
+            if isinstance(toolsets, Mapping):
+                toolsets_by_id_token = self._override_toolsets_by_id.set(_utils.Some(toolsets))
+                toolsets_token = None
+            else:
+                toolsets_token = self._override_toolsets.set(_utils.Some(toolsets))
+                toolsets_by_id_token = None
         else:
             toolsets_token = None
+            toolsets_by_id_token = None
 
         if _utils.is_set(tools):
             tools_token = self._override_tools.set(_utils.Some(tools))
         else:
             tools_token = None
+
+        # Handle capabilities override: sequence replaces all, mapping replaces by ID
+        if _utils.is_set(capabilities):
+            if isinstance(capabilities, Mapping):
+                cap_by_id_token = self._override_capabilities_by_id.set(_utils.Some(capabilities))
+                cap_token = None
+            else:
+                cap_token = self._override_root_capability.set(_utils.Some(CombinedCapability(list(capabilities))))
+                cap_by_id_token = None
+        elif resolved is not None and resolved.capability is not None:
+            # Set capability from spec
+            cap_token = self._override_root_capability.set(_utils.Some(resolved.capability))
+            cap_by_id_token = None
+        else:
+            cap_token = None
+            cap_by_id_token = None
 
         if _utils.is_set(instructions):
             normalized_instructions = _instructions.normalize_instructions(instructions)
@@ -1677,12 +1731,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             model_settings_token = None
 
-        # Set capability from spec, combining with agent's existing root capability
-        if resolved is not None and resolved.capability is not None:
-            cap_token = self._override_root_capability.set(_utils.Some(resolved.capability))
-        else:
-            cap_token = None
-
         try:
             yield
         finally:
@@ -1694,16 +1742,20 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 self._override_model.reset(model_token)
             if toolsets_token is not None:
                 self._override_toolsets.reset(toolsets_token)
+            if toolsets_by_id_token is not None:
+                self._override_toolsets_by_id.reset(toolsets_by_id_token)
             if tools_token is not None:
                 self._override_tools.reset(tools_token)
+            if cap_token is not None:
+                self._override_root_capability.reset(cap_token)
+            if cap_by_id_token is not None:
+                self._override_capabilities_by_id.reset(cap_by_id_token)
             if instructions_token is not None:
                 self._override_instructions.reset(instructions_token)
             if metadata_token is not None:
                 self._override_metadata.reset(metadata_token)
             if model_settings_token is not None:
                 self._override_model_settings.reset(model_settings_token)
-            if cap_token is not None:
-                self._override_root_capability.reset(cap_token)
 
     @overload
     def instructions(
@@ -2357,6 +2409,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 else:  # pragma: no cover — get_toolset() always returns AbstractToolset
                     toolsets.append(DynamicToolset(cap_ts))
 
+        # Apply toolsets-by-id override
+        if ts_by_id_override := self._override_toolsets_by_id.get():
+            noop_ts: AbstractToolset[AgentDepsT] = CombinedToolset([])
+            visitor = _make_id_override_visitor(ts_by_id_override.value, noop_ts)
+            toolsets = [ts.visit_and_replace(visitor) for ts in toolsets]
+
         return toolsets
 
     @overload
@@ -2620,3 +2678,58 @@ class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
                 'To use tools that require approval, add `DeferredToolRequests` to the list of output types for this agent.'
             )
         super().add_tool(tool)
+
+
+def _validate_unique_ids(
+    root_capability: CombinedCapability[Any],
+    user_toolsets: Sequence[AbstractToolset[Any]],
+    dynamic_toolsets: Sequence[AbstractToolset[Any]],
+) -> None:
+    """Validate that capability and toolset IDs are unique within the agent."""
+    # Check capability IDs
+    cap_ids: list[str] = []
+    root_capability.apply(lambda cap: cap_ids.append(cap.id) if cap.id is not None else None)
+    seen: set[str] = set()
+    for cap_id in cap_ids:
+        if cap_id in seen:
+            raise exceptions.UserError(
+                f'Duplicate capability id: {cap_id!r}. Capability IDs must be unique within an agent.'
+            )
+        seen.add(cap_id)
+
+    # Check toolset IDs
+    ts_ids: list[str] = []
+    for ts in [*user_toolsets, *dynamic_toolsets]:
+        ts.apply(lambda t: ts_ids.append(t.id) if t.id is not None else None)
+    seen = set()
+    for ts_id in ts_ids:
+        if ts_id in seen:
+            raise exceptions.UserError(f'Duplicate toolset id: {ts_id!r}. Toolset IDs must be unique within an agent.')
+        seen.add(ts_id)
+
+
+class _HasId(Protocol):
+    """Protocol for objects with an optional id attribute (capabilities and toolsets)."""
+
+    @property
+    def id(self) -> str | None: ...
+
+
+_HasIdT = TypeVar('_HasIdT', bound=_HasId)
+
+
+def _make_id_override_visitor(overrides: Mapping[str, _HasIdT | None], noop: _HasIdT) -> Callable[[_HasIdT], _HasIdT]:
+    """Create a visitor function for visit_and_replace that applies ID-based overrides.
+
+    Used by Agent.override() when capabilities or toolsets are passed as a dict.
+    Items whose ID maps to a replacement are swapped; items whose ID maps to None
+    are replaced with a no-op sentinel.
+    """
+
+    def visitor(item: _HasIdT) -> _HasIdT:
+        if item.id is not None and item.id in overrides:
+            replacement = overrides[item.id]
+            return replacement if replacement is not None else noop
+        return item
+
+    return visitor

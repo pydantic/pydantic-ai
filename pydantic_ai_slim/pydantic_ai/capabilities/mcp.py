@@ -28,9 +28,6 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
     url: str
     """The URL of the MCP server."""
 
-    id: str | None
-    """Unique identifier for the MCP server. Defaults to a slug derived from the URL."""
-
     authorization_token: str | None
     """Authorization header value for MCP server requests. Passed to both builtin and local."""
 

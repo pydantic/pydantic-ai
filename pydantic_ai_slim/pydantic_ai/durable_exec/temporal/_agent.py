@@ -26,6 +26,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, WrapperAgent
 from pydantic_ai.agent.abstract import AgentMetadata, AgentModelSettings, RunOutputDataT
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
@@ -1015,9 +1016,15 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         name: str | _utils.Unset = _utils.UNSET,
         deps: AgentDepsT | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]]
+        | Mapping[str, AbstractToolset[AgentDepsT] | None]
+        | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]]
+        | Mapping[str, AbstractCapability[AgentDepsT] | None]
+        | _utils.Unset = _utils.UNSET,
         instructions: _instructions.AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        metadata: AgentMetadata[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> Iterator[None]:
@@ -1031,8 +1038,13 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             deps: The dependencies to use instead of the dependencies passed to the agent run.
             model: The model to use instead of the model passed to the agent run.
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
+                Pass a sequence to replace all, or a dict mapping IDs to replacements (or `None` to remove).
             tools: The tools to use instead of the tools registered with the agent.
+            capabilities: The capabilities to use instead of the capabilities registered with the agent.
+                Pass a sequence to replace all, or a dict mapping IDs to replacements (or `None` to remove).
             instructions: The instructions to use instead of the instructions registered with the agent.
+            metadata: The metadata to use instead of the metadata passed to the agent constructor. When set, any
+                per-run `metadata` argument is ignored.
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
                 When set, any per-run `model_settings` argument is ignored.
             spec: Optional agent spec to apply as overrides.
@@ -1050,6 +1062,10 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 raise UserError(
                     'Tools cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
                 )
+            if _utils.is_set(capabilities):
+                raise UserError(
+                    'Capabilities cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
+                )
 
         with super().override(
             name=name,
@@ -1057,7 +1073,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             model=model,
             toolsets=toolsets,
             tools=tools,
+            capabilities=capabilities,
             instructions=instructions,
+            metadata=metadata,
             model_settings=model_settings,
             spec=spec,
         ):
