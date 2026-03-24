@@ -18,8 +18,6 @@ from pydantic_ai.capabilities import (
     MCP,
     BuiltinTool,
     ImageGeneration,
-    Instructions,
-    ModelSettings,
     Toolset,
     WebFetch,
     WebSearch,
@@ -39,7 +37,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
@@ -63,9 +61,7 @@ def test_capability_types() -> None:
         {
             'BuiltinTool': BuiltinTool,
             'ImageGeneration': ImageGeneration,
-            'Instructions': Instructions,
             'MCP': MCP,
-            'ModelSettings': ModelSettings,
             'WebFetch': WebFetch,
             'WebSearch': WebSearch,
         }
@@ -77,10 +73,10 @@ def test_agent_from_spec_basic():
     agent = Agent.from_spec(
         {
             'model': 'test',
+            'instructions': 'You are a helpful agent.',
+            'model_settings': {'max_tokens': 4096},
             'capabilities': [
-                {'Instructions': 'You are a helpful agent.'},
                 'WebSearch',
-                {'ModelSettings': {'max_tokens': 4096}},
             ],
         }
     )
@@ -106,12 +102,12 @@ def test_agent_from_spec_unknown_capability():
 
 def test_agent_from_spec_bad_args():
     """Test Agent.from_spec with bad arguments for a capability."""
-    with pytest.raises(ValueError, match="Failed to instantiate capability 'Instructions'"):
+    with pytest.raises(ValueError, match="Failed to instantiate capability 'WebSearch'"):
         Agent.from_spec(
             {
                 'model': 'test',
                 'capabilities': [
-                    {'Instructions': {'nonexistent_param': 'value'}},
+                    {'WebSearch': {'nonexistent_param': 'value'}},
                 ],
             }
         )
@@ -140,8 +136,8 @@ def test_agent_from_spec_with_agent_spec_object():
     """Test Agent.from_spec with an AgentSpec instance."""
     spec = AgentSpec(
         model='test',
+        instructions='You are helpful.',
         capabilities=[
-            NamedSpec(name='Instructions', arguments=('You are helpful.',)),
             NamedSpec(name='WebSearch', arguments=None),
         ],
     )
@@ -345,13 +341,13 @@ def test_agent_from_spec_capabilities_merged():
     agent = Agent.from_spec(
         {
             'model': 'test',
-            'capabilities': [{'Instructions': 'From spec.'}],
+            'capabilities': ['WebSearch'],
         },
         capabilities=[ExtraCap()],
     )
-    # Should have both the Instructions capability from spec and ExtraCap from arg
+    # Should have both the WebSearch capability from spec and ExtraCap from arg
     children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
-    assert any(isinstance(c, Instructions) for c in children)
+    assert any(isinstance(c, WebSearch) for c in children)
     assert any(isinstance(c, ExtraCap) for c in children)
 
 
@@ -384,9 +380,7 @@ def test_model_json_schema_with_capabilities():
     assert capability_names == {
         'BuiltinTool',
         'ImageGeneration',
-        'Instructions',
         'MCP',
-        'ModelSettings',
         'WebFetch',
         'WebSearch',
     }
@@ -682,8 +676,8 @@ async def test_capability_returning_toolset_func_combined():
     """Test that a ToolsetFunc capability works alongside other capabilities via CombinedCapability."""
     agent = Agent(
         TestModel(),
+        instructions='You are a helpful greeter.',
         capabilities=[
-            Instructions('You are a helpful greeter.'),
             ToolsetFuncCapability(),
         ],
     )
@@ -701,50 +695,6 @@ async def test_capability_returning_toolset_func_combined():
     assert tool_returns[0].content.startswith('Hello, ')
 
 
-def test_model_settings_from_spec_positional():
-    """ModelSettings.from_spec with a single positional dict arg."""
-    cap = ModelSettings.from_spec({'max_tokens': 4096, 'temperature': 0.5})
-    assert cap.settings == {'max_tokens': 4096, 'temperature': 0.5}
-
-
-def test_model_settings_from_spec_kwargs():
-    """ModelSettings.from_spec with keyword arguments."""
-    cap = ModelSettings.from_spec(max_tokens=100)
-    assert cap.settings == {'max_tokens': 100}
-
-
-def test_model_settings_callable_get_model_settings():
-    """Callable ModelSettings returns the callable from get_model_settings for resolution in the chain."""
-
-    def dynamic_settings(ctx: RunContext[None]) -> _ModelSettings:
-        return _ModelSettings(temperature=0.9)  # pragma: no cover
-
-    cap = ModelSettings(settings=dynamic_settings)
-
-    # get_model_settings returns the callable directly — resolution happens in the agent's settings chain
-    result = cap.get_model_settings()
-    assert callable(result)
-    assert result is dynamic_settings
-
-
-async def test_model_settings_static_before_model_request():
-    """Static ModelSettings passes through before_model_request without modification."""
-    cap = ModelSettings(settings=_ModelSettings(max_tokens=200))
-
-    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[])
-    input_settings = _ModelSettings(temperature=0.5)
-    result = await cap.before_model_request(
-        ctx,
-        ModelRequestContext(
-            messages=[],
-            model_settings=input_settings,
-            model_request_parameters=ModelRequestParameters(),
-        ),
-    )
-    # Static settings are handled by get_model_settings, not before_model_request
-    assert result.model_settings is input_settings
-
-
 def test_abstract_capability_get_model_settings_default():
     """AbstractCapability.get_model_settings() returns None by default."""
 
@@ -758,10 +708,21 @@ def test_abstract_capability_get_model_settings_default():
 
 def test_combined_capability_get_model_settings_merge():
     """CombinedCapability.get_model_settings() merges settings from all sub-capabilities."""
+
+    @dataclass
+    class MaxTokensCap(AbstractCapability[None]):
+        def get_model_settings(self) -> _ModelSettings | None:
+            return _ModelSettings(max_tokens=100)
+
+    @dataclass
+    class TemperatureCap(AbstractCapability[None]):
+        def get_model_settings(self) -> _ModelSettings | None:
+            return _ModelSettings(temperature=0.5)
+
     caps = CombinedCapability(
         capabilities=[
-            ModelSettings(settings=_ModelSettings(max_tokens=100)),
-            ModelSettings(settings=_ModelSettings(temperature=0.5)),
+            MaxTokensCap(),
+            TemperatureCap(),
         ]
     )
     merged = caps.get_model_settings()
@@ -773,7 +734,12 @@ def test_combined_capability_get_model_settings_merge():
 
 def test_combined_capability_get_model_settings_none():
     """CombinedCapability.get_model_settings() returns None when no capabilities provide settings."""
-    caps = CombinedCapability(capabilities=[Instructions('hello')])
+
+    @dataclass
+    class PlainCap(AbstractCapability[None]):
+        pass
+
+    caps = CombinedCapability(capabilities=[PlainCap()])
     assert caps.get_model_settings() is None
 
 
@@ -855,15 +821,25 @@ def _build_run_context(deps: Any = None) -> RunContext[Any]:
 
 async def test_capability_for_run_default_returns_self():
     """Default for_run returns self."""
-    cap = Instructions(instructions='hello')
+
+    @dataclass
+    class SimpleCap(AbstractCapability[None]):
+        pass
+
+    cap = SimpleCap()
     ctx = _build_run_context()
     assert await cap.for_run(ctx) is cap
 
 
 async def test_combined_capability_for_run_propagates():
     """CombinedCapability propagates for_run to children."""
-    cap1 = Instructions(instructions='a')
-    cap2 = Instructions(instructions='b')
+
+    @dataclass
+    class SimpleCap(AbstractCapability[None]):
+        label: str = ''
+
+    cap1 = SimpleCap(label='a')
+    cap2 = SimpleCap(label='b')
     combined = CombinedCapability([cap1, cap2])
     ctx = _build_run_context()
 
@@ -882,7 +858,11 @@ async def test_combined_capability_for_run_returns_new_when_child_changes():
         async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
             return PerRunCap(run_id=self.run_id + 1)
 
-    static_cap = Instructions(instructions='static')
+    @dataclass
+    class StaticCap(AbstractCapability[None]):
+        pass
+
+    static_cap = StaticCap()
     per_run_cap = PerRunCap()
     combined = CombinedCapability([static_cap, per_run_cap])
     ctx = _build_run_context()
@@ -2565,53 +2545,32 @@ class TestMCPCapability:
 
 
 class TestNamedSpecDictRoundTrip:
-    """Test that NamedSpec correctly round-trips a dict-as-first-arg without misinterpreting it as kwargs."""
+    """Test that NamedSpec correctly round-trips various argument forms."""
 
-    def test_model_settings_dict_round_trip(self):
-        """ModelSettings with a dict positional arg survives serialize -> deserialize."""
-        spec = NamedSpec(name='ModelSettings', arguments=({'max_tokens': 4096, 'temperature': 0.5},))
-
-        # Serialize with short form
+    def test_dict_positional_arg_uses_long_form(self):
+        """A dict positional arg falls back to long form to avoid kwargs misinterpretation on round-trip."""
+        spec = NamedSpec(name='CustomCap', arguments=({'key': 'value', 'other': 42},))
         serialized = spec.model_dump(context={'use_short_form': True})
-
-        # The short form would be ambiguous (dict with string keys), so it should use the long form
-        assert serialized['name'] == 'ModelSettings'
-        # arguments is a tuple with one dict element
+        # Dict with string keys would be ambiguous in short form, so long form is used
+        assert serialized['name'] == 'CustomCap'
         assert len(serialized['arguments']) == 1
-        assert serialized['arguments'][0] == {'max_tokens': 4096, 'temperature': 0.5}
-
-        # Deserialize and verify the round-trip
+        assert serialized['arguments'][0] == {'key': 'value', 'other': 42}
+        # Round-trip preserves the dict as a positional arg
         deserialized = NamedSpec.model_validate(serialized)
-        assert deserialized.name == 'ModelSettings'
-        assert deserialized.arguments == ({'max_tokens': 4096, 'temperature': 0.5},)
-        assert deserialized.args == ({'max_tokens': 4096, 'temperature': 0.5},)
+        assert deserialized.args == ({'key': 'value', 'other': 42},)
         assert deserialized.kwargs == {}
 
     def test_non_dict_positional_arg_uses_short_form(self):
         """A non-dict positional arg still uses the compact short form."""
-        spec = NamedSpec(name='Instructions', arguments=('Be helpful.',))
+        spec = NamedSpec(name='WebSearch', arguments=(True,))
         serialized = spec.model_dump(context={'use_short_form': True})
-        assert serialized == {'Instructions': 'Be helpful.'}
+        assert serialized == {'WebSearch': True}
 
-    def test_kwargs_still_use_short_form(self):
-        """Kwargs (dict arguments) still use the short form correctly."""
-        spec = NamedSpec(name='ModelSettings', arguments={'max_tokens': 4096})
+    def test_kwargs_use_short_form(self):
+        """Kwargs (dict arguments) use the short form correctly."""
+        spec = NamedSpec(name='WebSearch', arguments={'local': True})
         serialized = spec.model_dump(context={'use_short_form': True})
-        assert serialized == {'ModelSettings': {'max_tokens': 4096}}
-
-    def test_agent_from_spec_model_settings_round_trip(self):
-        """Agent.from_spec with ModelSettings dict works correctly both ways."""
-
-        # Construct via the dict short form (kwargs interpretation)
-        agent = Agent.from_spec(
-            {
-                'model': 'test',
-                'capabilities': [
-                    {'ModelSettings': {'max_tokens': 4096, 'temperature': 0.5}},
-                ],
-            }
-        )
-        assert agent.model is not None
+        assert serialized == {'WebSearch': {'local': True}}
 
 
 class TestPrepareToolsCapability:
@@ -2758,8 +2717,8 @@ class TestOverrideWithSpec:
             ]
         )
 
-    async def test_override_with_spec_capabilities(self):
-        """Override with spec capabilities replaces agent's existing capabilities."""
+    async def test_override_with_spec_instructions(self):
+        """Override with spec instructions replaces agent's existing instructions."""
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             instructions = next(
@@ -2767,23 +2726,23 @@ class TestOverrideWithSpec:
             )
             return make_text_response(f'instructions: {instructions}')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[Instructions('agent-cap')])
+        agent = Agent(FunctionModel(model_fn), instructions='agent-instructions')
 
-        with agent.override(spec={'capabilities': [{'Instructions': 'from-spec-cap'}]}):
+        with agent.override(spec={'instructions': 'from-spec-instructions'}):
             result = await agent.run('hello')
-            # Override replaces: only spec capability instructions, not agent's
-            assert 'from-spec-cap' in result.output
-            assert 'agent-cap' not in result.output
+            # Override replaces: only spec instructions, not agent's
+            assert 'from-spec-instructions' in result.output
+            assert 'agent-instructions' not in result.output
             assert result.all_messages() == snapshot(
                 [
                     ModelRequest(
                         parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                         timestamp=IsDatetime(),
-                        instructions='from-spec-cap',
+                        instructions='from-spec-instructions',
                         run_id=IsStr(),
                     ),
                     ModelResponse(
-                        parts=[TextPart(content='instructions: from-spec-cap')],
+                        parts=[TextPart(content='instructions: from-spec-instructions')],
                         usage=RequestUsage(input_tokens=51, output_tokens=2),
                         model_name='function:model_fn:',
                         timestamp=IsDatetime(),
@@ -2791,6 +2750,18 @@ class TestOverrideWithSpec:
                     ),
                 ]
             )
+
+    async def test_override_with_spec_capabilities(self):
+        """Override with spec providing capabilities uses them for the run."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('ok')
+
+        agent = Agent(FunctionModel(model_fn))
+
+        with agent.override(spec={'capabilities': [{'WebSearch': {'local': False}}]}):
+            result = await agent.run('hello')
+            assert result.output == 'ok'
 
 
 class TestRunWithSpec:
@@ -2926,7 +2897,25 @@ also from spec\
         )
 
     async def test_run_with_spec_capabilities(self):
-        """Run with spec capabilities merges with agent's root capability."""
+        """Run with spec capabilities merges them with agent's root capability."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions = next(
+                (m.instructions for m in messages if isinstance(m, ModelRequest) and m.instructions), None
+            )
+            return make_text_response(f'instructions: {instructions}')
+
+        agent = Agent(FunctionModel(model_fn), instructions='agent-level')
+
+        result = await agent.run(
+            'hello',
+            spec={'capabilities': [{'WebSearch': {'local': False}}]},
+        )
+        # Agent-level instructions should be present; spec capabilities are merged additively
+        assert 'agent-level' in result.output
+
+    async def test_run_with_spec_instructions(self):
+        """Run with spec instructions adds to agent's instructions."""
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             instructions = next(
@@ -2939,14 +2928,12 @@ also from spec\
         result = await agent.run(
             'hello',
             spec={
-                'capabilities': [
-                    {'Instructions': 'extra from spec cap'},
-                ],
+                'instructions': 'from-spec',
             },
         )
         # Both should be present (additive)
         assert 'agent-level' in result.output
-        assert 'extra from spec cap' in result.output
+        assert 'from-spec' in result.output
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
@@ -2954,7 +2941,7 @@ also from spec\
                     timestamp=IsDatetime(),
                     instructions="""\
 agent-level
-extra from spec cap\
+from-spec\
 """,
                     run_id=IsStr(),
                 ),
@@ -2963,11 +2950,11 @@ extra from spec cap\
                         TextPart(
                             content="""\
 instructions: agent-level
-extra from spec cap\
+from-spec\
 """
                         )
                     ],
-                    usage=RequestUsage(input_tokens=51, output_tokens=6),
+                    usage=RequestUsage(input_tokens=51, output_tokens=3),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -3293,7 +3280,7 @@ class TestGetWrapperToolsetHook:
 def test_from_spec_no_model_raises():
     """from_spec() without model raises UserError."""
     with pytest.raises(UserError, match='`model` must be provided'):
-        Agent.from_spec({'capabilities': [{'Instructions': 'hello'}]})
+        Agent.from_spec({'instructions': 'hello'})
 
 
 # --- run() with spec: additional merge scenarios ---

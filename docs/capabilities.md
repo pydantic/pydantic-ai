@@ -5,9 +5,9 @@ A capability is a reusable, composable unit of agent behavior. Instead of thread
 
 Capabilities can provide any combination of:
 
-* **Instructions** — static or dynamic system prompt additions
 * **Model settings** — static or per-step configuration
 * **Tools** — via toolsets or builtin tools
+* **Instructions** — static or dynamic system prompt additions
 * **Lifecycle hooks** — intercept and modify model requests, tool calls, and the overall run
 
 This makes them the primary extension point for Pydantic AI. Whether you're building a memory system, a guardrail, a cost tracker, or an approval workflow, a capability is the right abstraction.
@@ -19,8 +19,6 @@ Pydantic AI ships with several capabilities that cover common needs:
 | Capability | What it provides | Spec |
 |---|---|:---:|
 | [`BuiltinTool`][pydantic_ai.capabilities.BuiltinTool] | Registers a [builtin tool](builtin-tools.md) with the agent | Yes |
-| [`Instructions`][pydantic_ai.capabilities.Instructions] | Static or template-based system prompt instructions | Yes |
-| [`ModelSettings`][pydantic_ai.capabilities.ModelSettings] | Static or dynamic model settings | Yes |
 | [`WebSearch`][pydantic_ai.capabilities.WebSearch] | Web search — builtin when supported, local fallback otherwise | Yes |
 | [`WebFetch`][pydantic_ai.capabilities.WebFetch] | URL fetching — builtin when supported, custom local fallback | Yes |
 | [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | Image generation — builtin when supported, custom local fallback | Yes |
@@ -33,19 +31,19 @@ The **Spec** column indicates whether the capability can be used in [agent specs
 
 ```python {title="builtin_capabilities.py"}
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import Instructions, ModelSettings, WebSearch
+from pydantic_ai.capabilities import WebSearch
 
 agent = Agent(
     'anthropic:claude-opus-4-6',
+    instructions='You are a research assistant. Be thorough and cite sources.',
+    model_settings={'max_tokens': 8192},
     capabilities=[
-        Instructions('You are a research assistant. Be thorough and cite sources.'),
         WebSearch(),
-        ModelSettings({'max_tokens': 8192}),
     ],
 )
 ```
 
-These are equivalent to passing the same configuration through separate `Agent` parameters, but they compose better — especially when you want to reuse the same configuration across multiple agents, or load it from a [spec file](#agent-specs).
+Instructions and model settings are configured directly via the `instructions` and `model_settings` parameters on `Agent` (or `AgentSpec`). Capabilities are for behavior that goes beyond simple configuration — tools, lifecycle hooks, and custom extensions. They compose well, especially when you want to reuse the same configuration across multiple agents or load it from a [spec file](#agent-specs).
 
 ### Builtin tool capabilities
 
@@ -914,7 +912,6 @@ This means the first capability in the list has the first and last say on the op
 from dataclasses import dataclass
 
 from pydantic_ai import Agent, TemplateStr
-from pydantic_ai.capabilities import Instructions
 
 
 @dataclass
@@ -926,9 +923,7 @@ class UserProfile:
 agent = Agent(
     'openai:gpt-5.2',
     deps_type=UserProfile,
-    capabilities=[
-        Instructions(TemplateStr('You are assisting {{name}}, who is a {{role}}.')),
-    ],
+    instructions=TemplateStr('You are assisting {{name}}, who is a {{role}}.'),
 )
 result = agent.run_sync('hello', deps=UserProfile(name='Alice', role='engineer'))
 print(result.output)
@@ -936,29 +931,6 @@ print(result.output)
 ```
 
 Template variables are resolved from the fields of the `deps` object. When a `deps_type` is provided, template variable names are validated at construction time.
-
-You can also pass template strings directly to the `Agent` constructor:
-
-```python {title="template_agent_instructions.py"}
-from dataclasses import dataclass
-
-from pydantic_ai import Agent, TemplateStr
-
-
-@dataclass
-class Config:
-    language: str
-
-
-agent = Agent(
-    'openai:gpt-5.2',
-    deps_type=Config,
-    instructions=TemplateStr('Always respond in {{language}}.'),
-)
-result = agent.run_sync('Say hi!', deps=Config(language='French'))
-print(result.output)
-#> Bonjour ! Comment puis-je vous aider aujourd'hui ?
-```
 
 In [agent specs](#agent-specs), strings containing `{{` are automatically converted to template strings — no explicit `TemplateStr` wrapper is needed. This applies to the `instructions` and `description` fields.
 
@@ -969,10 +941,10 @@ Capabilities integrate with the YAML/JSON agent spec system, allowing you to def
 ```yaml {title="agent.yaml" test="skip"}
 model: anthropic:claude-opus-4-6
 instructions: You are a helpful research assistant.
+model_settings:
+  max_tokens: 8192
 capabilities:
   - WebSearch
-  - ModelSettings:
-      max_tokens: 8192
 ```
 
 ### Spec syntax
