@@ -918,8 +918,10 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             deps: The dependencies to use instead of the dependencies passed to the agent run.
             model: The model to use instead of the model passed to the agent run.
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
+                Pass a sequence to replace all, or a dict mapping IDs to replacements (or `None` to remove).
             tools: The tools to use instead of the tools registered with the agent.
             capabilities: The capabilities to use instead of the capabilities registered with the agent.
+                Pass a sequence to replace all, or a dict mapping IDs to replacements (or `None` to remove).
             instructions: The instructions to use instead of the instructions registered with the agent.
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
                 When set, any per-run `model_settings` argument is ignored.

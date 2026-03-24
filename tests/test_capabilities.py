@@ -4031,10 +4031,7 @@ class TestCapabilityId:
         assert cap.id is None
 
     def test_id_on_init_false_capabilities(self):
-        """init=False capabilities (MCP, WebFetch, WebSearch, ImageGeneration) accept id."""
-        mcp = MCP(url='http://localhost', id='my-mcp')
-        assert mcp.id == 'my-mcp'
-
+        """init=False capabilities (WebFetch, WebSearch, ImageGeneration) accept id."""
         wf = WebFetch(id='my-fetch')
         assert wf.id == 'my-fetch'
 
@@ -4043,6 +4040,12 @@ class TestCapabilityId:
 
         ig = ImageGeneration(id='my-img')
         assert ig.id == 'my-img'
+
+    def test_id_on_mcp_capability(self):
+        """MCP capability accepts id (requires mcp optional dependency)."""
+        pytest.importorskip('mcp')
+        mcp = MCP(url='http://localhost', id='my-mcp')
+        assert mcp.id == 'my-mcp'
 
 
 class TestVisitAndReplace:

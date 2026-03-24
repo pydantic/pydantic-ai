@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mappin
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, cast, overload
 
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
@@ -1156,8 +1156,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Apply capabilities-by-id override
         if cap_by_id_override := self._override_capabilities_by_id.get():
+            noop_cap: AbstractCapability[AgentDepsT] = CombinedCapability([])
             base_capability = base_capability.visit_and_replace(
-                _make_id_override_visitor(cap_by_id_override.value, CombinedCapability([]))
+                _make_id_override_visitor(cap_by_id_override.value, noop_cap)
             )
 
         # Merge spec capability additively with base capability
@@ -2408,7 +2409,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Apply toolsets-by-id override
         if ts_by_id_override := self._override_toolsets_by_id.get():
-            visitor = _make_id_override_visitor(ts_by_id_override.value, CombinedToolset([]))
+            noop_ts: AbstractToolset[AgentDepsT] = CombinedToolset([])
+            visitor = _make_id_override_visitor(ts_by_id_override.value, noop_ts)
             toolsets = [ts.visit_and_replace(visitor) for ts in toolsets]
 
         return toolsets
@@ -2668,7 +2670,17 @@ class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
         super().add_tool(tool)
 
 
-def _make_id_override_visitor(overrides: Mapping[str, Any], noop: Any) -> Callable[[Any], Any]:
+class _HasId(Protocol):
+    """Protocol for objects with an optional id attribute (capabilities and toolsets)."""
+
+    @property
+    def id(self) -> str | None: ...
+
+
+_HasIdT = TypeVar('_HasIdT', bound=_HasId)
+
+
+def _make_id_override_visitor(overrides: Mapping[str, _HasIdT | None], noop: _HasIdT) -> Callable[[_HasIdT], _HasIdT]:
     """Create a visitor function for visit_and_replace that applies ID-based overrides.
 
     Used by Agent.override() when capabilities or toolsets are passed as a dict.
@@ -2676,7 +2688,7 @@ def _make_id_override_visitor(overrides: Mapping[str, Any], noop: Any) -> Callab
     are replaced with a no-op sentinel.
     """
 
-    def visitor(item: Any) -> Any:
+    def visitor(item: _HasIdT) -> _HasIdT:
         if item.id is not None and item.id in overrides:
             replacement = overrides[item.id]
             return replacement if replacement is not None else noop
