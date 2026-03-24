@@ -36,6 +36,11 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     def has_wrap_node_run(self) -> bool:
         return any(c.has_wrap_node_run for c in self.capabilities)
 
+    def visit_and_replace(
+        self, visitor: Callable[[AbstractCapability[AgentDepsT]], AbstractCapability[AgentDepsT]]
+    ) -> AbstractCapability[AgentDepsT]:
+        return replace(self, capabilities=[cap.visit_and_replace(visitor) for cap in self.capabilities])
+
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         new_caps = await asyncio.gather(*(c.for_run(ctx) for c in self.capabilities))
         if all(new is old for new, old in zip(new_caps, self.capabilities)):

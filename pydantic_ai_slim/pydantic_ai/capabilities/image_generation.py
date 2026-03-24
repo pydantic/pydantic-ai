@@ -23,9 +23,11 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
         *,
         builtin: ImageGenerationTool | AgentBuiltinTool[AgentDepsT] | bool = True,
         local: Tool[Any] | Callable[..., Any] | Literal[False] | None = None,
+        id: str | None = None,
     ) -> None:
         self.builtin = builtin
         self.local = local
+        self.id = id
         self.__post_init__()
 
     def _default_builtin(self) -> ImageGenerationTool:
