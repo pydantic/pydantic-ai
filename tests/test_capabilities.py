@@ -4088,6 +4088,28 @@ async def test_prefix_tools_returns_none_when_no_toolset():
     assert cap.get_toolset() is None
 
 
+async def test_prefix_tools_with_callable_toolset():
+    """PrefixTools handles a wrapped capability that returns a callable toolset."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain
+    def dynamic_tool() -> str:
+        return 'dynamic'  # pragma: no cover
+
+    def toolset_func(ctx: RunContext[None]) -> FunctionToolset[None]:
+        return toolset
+
+    cap = PrefixTools(wrapped=Toolset(toolset_func), prefix='dyn')
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_names = sorted(t.name for t in info.function_tools)
+        return ModelResponse(parts=[TextPart(','.join(tool_names))])
+
+    agent = Agent(FunctionModel(respond), capabilities=[cap])
+    result = await agent.run('list tools')
+    assert result.output == 'dyn_dynamic_tool'
+
+
 async def test_prefix_tools_convenience_method():
     """AbstractCapability.prefix_tools() returns a PrefixTools wrapping self."""
     toolset = FunctionToolset()
