@@ -4879,9 +4879,15 @@ class TestOverrideToolsetsById:
         """override(toolsets={'id': None}) removes a specific toolset's tools from the agent."""
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            # Report available tool names so we can verify the toolset was removed
-            tool_names = ', '.join(t.name for t in info.function_tools) if info.function_tools else 'none'
-            return make_text_response(f'tools: {tool_names}')
+            # On first call with tools available, call the tool; on second call report result
+            for m in messages:
+                if isinstance(m, ModelRequest):
+                    for p in m.parts:
+                        if isinstance(p, ToolReturnPart):
+                            return make_text_response(f'tool returned: {p.content}')
+            if info.function_tools:
+                return ModelResponse(parts=[ToolCallPart(tool_name='my_tool', args='{}')])
+            return make_text_response('no tools available')
 
         ts = FunctionToolset(id='removeme')
 
@@ -4891,12 +4897,12 @@ class TestOverrideToolsetsById:
 
         agent = Agent(FunctionModel(model_fn), toolsets=[ts])
 
-        # Without override, tool is visible
+        # Without override, tool is called and returns result
         result_before = await agent.run('hello')
-        assert 'my_tool' in result_before.output
+        assert 'result' in result_before.output
 
-        # With override removing the toolset, tool is gone
+        # With override removing the toolset, no tools available
         with agent.override(toolsets={'removeme': None}):
             result = await agent.run('hello')
 
-        assert 'my_tool' not in result.output
+        assert 'no tools available' in result.output
