@@ -4039,7 +4039,7 @@ class TestContextVarPropagation:
 
         @dataclass
         class Reader(AbstractCapability):
-            seen: list[tuple[str, str | None]] = field(default_factory=list)
+            seen: list[tuple[str, str | None]] = field(default_factory=lambda: [])
 
             async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
                 self.seen.append(('before_node_run', _test_cv.get(None)))
@@ -4078,7 +4078,7 @@ class TestContextVarPropagation:
 
         @dataclass
         class Reader(AbstractCapability):
-            seen: list[tuple[str, str | None]] = field(default_factory=list)
+            seen: list[tuple[str, str | None]] = field(default_factory=lambda: [])
 
             async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
                 self.seen.append(('before_node_run', _test_cv.get(None)))
@@ -4094,8 +4094,6 @@ class TestContextVarPropagation:
         async with agent.iter('hello') as agent_run:
             node = agent_run.next_node
             while not isinstance(node, End):
-                if agent_run.result is not None:
-                    break
                 node = await agent_run.next(node)
 
         for hook_name, value in reader.seen:
