@@ -209,10 +209,8 @@ async def _call_func(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any
     return result
 
 
-def _filter_tool_entries(entries: list[_HookEntry[Any]], *, call: ToolCallPart | None = None) -> list[_HookEntry[Any]]:
-    """Filter entries by tool names if applicable."""
-    if call is None:
-        return entries
+def _filter_tool_entries(entries: list[_HookEntry[Any]], *, call: ToolCallPart) -> list[_HookEntry[Any]]:
+    """Filter entries by tool names."""
     return [
         entry
         for entry in entries
@@ -581,56 +579,63 @@ class Hooks(AbstractCapability[AgentDepsT]):
     def __init__(
         self,
         *,
+        # Run lifecycle
         before_run: BeforeRunHookFunc | None = None,
         after_run: AfterRunHookFunc | None = None,
-        wrap_run: WrapRunHookFunc | None = None,
-        on_run_error: OnRunErrorHookFunc | None = None,
+        run: WrapRunHookFunc | None = None,
+        run_error: OnRunErrorHookFunc | None = None,
+        # Node lifecycle
         before_node_run: BeforeNodeRunHookFunc | None = None,
         after_node_run: AfterNodeRunHookFunc | None = None,
-        wrap_node_run: WrapNodeRunHookFunc | None = None,
-        on_node_run_error: OnNodeRunErrorHookFunc | None = None,
-        wrap_run_event_stream: WrapRunEventStreamHookFunc | None = None,
-        on_event: OnEventHookFunc | None = None,
+        node_run: WrapNodeRunHookFunc | None = None,
+        node_run_error: OnNodeRunErrorHookFunc | None = None,
+        # Event stream
+        run_event_stream: WrapRunEventStreamHookFunc | None = None,
+        event: OnEventHookFunc | None = None,
+        # Model request
         before_model_request: BeforeModelRequestHookFunc | None = None,
         after_model_request: AfterModelRequestHookFunc | None = None,
-        wrap_model_request: WrapModelRequestHookFunc | None = None,
-        on_model_request_error: OnModelRequestErrorHookFunc | None = None,
+        model_request: WrapModelRequestHookFunc | None = None,
+        model_request_error: OnModelRequestErrorHookFunc | None = None,
+        # Tool preparation
         prepare_tools: PrepareToolsHookFunc | None = None,
+        # Tool validation
         before_tool_validate: BeforeToolValidateHookFunc | None = None,
         after_tool_validate: AfterToolValidateHookFunc | None = None,
-        wrap_tool_validate: WrapToolValidateHookFunc | None = None,
-        on_tool_validate_error: OnToolValidateErrorHookFunc | None = None,
+        tool_validate: WrapToolValidateHookFunc | None = None,
+        tool_validate_error: OnToolValidateErrorHookFunc | None = None,
+        # Tool execution
         before_tool_execute: BeforeToolExecuteHookFunc | None = None,
         after_tool_execute: AfterToolExecuteHookFunc | None = None,
-        wrap_tool_execute: WrapToolExecuteHookFunc | None = None,
-        on_tool_execute_error: OnToolExecuteErrorHookFunc | None = None,
+        tool_execute: WrapToolExecuteHookFunc | None = None,
+        tool_execute_error: OnToolExecuteErrorHookFunc | None = None,
     ):
         self._registry = {}
-        # Register constructor-provided functions via the .on namespace
+        # Map constructor kwarg names to internal registry keys (AbstractCapability method names)
         _kwargs: dict[str, Any] = {
             'before_run': before_run,
             'after_run': after_run,
-            'wrap_run': wrap_run,
-            'on_run_error': on_run_error,
+            'wrap_run': run,
+            'on_run_error': run_error,
             'before_node_run': before_node_run,
             'after_node_run': after_node_run,
-            'wrap_node_run': wrap_node_run,
-            'on_node_run_error': on_node_run_error,
-            'wrap_run_event_stream': wrap_run_event_stream,
-            '_on_event': on_event,
+            'wrap_node_run': node_run,
+            'on_node_run_error': node_run_error,
+            'wrap_run_event_stream': run_event_stream,
+            '_on_event': event,
             'before_model_request': before_model_request,
             'after_model_request': after_model_request,
-            'wrap_model_request': wrap_model_request,
-            'on_model_request_error': on_model_request_error,
+            'wrap_model_request': model_request,
+            'on_model_request_error': model_request_error,
             'prepare_tools': prepare_tools,
             'before_tool_validate': before_tool_validate,
             'after_tool_validate': after_tool_validate,
-            'wrap_tool_validate': wrap_tool_validate,
-            'on_tool_validate_error': on_tool_validate_error,
+            'wrap_tool_validate': tool_validate,
+            'on_tool_validate_error': tool_validate_error,
             'before_tool_execute': before_tool_execute,
             'after_tool_execute': after_tool_execute,
-            'wrap_tool_execute': wrap_tool_execute,
-            'on_tool_execute_error': on_tool_execute_error,
+            'wrap_tool_execute': tool_execute,
+            'on_tool_execute_error': tool_execute_error,
         }
         for key, func in _kwargs.items():
             if func is not None:

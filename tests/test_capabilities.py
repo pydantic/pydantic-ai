@@ -4598,6 +4598,68 @@ class TestHooksCapability:
         result = await agent.run('call tool')
         assert 'fallback result' in result.output
 
+    async def test_tool_validate_error_reraise(self):
+        """on.tool_validate_error that re-raises propagates the error."""
+        hooks = Hooks()
+
+        @hooks.on.tool_validate_error
+        async def reraise(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Any
+        ) -> dict[str, Any]:
+            raise error
+
+        call_count = 0
+
+        def bad_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return make_text_response(f'got: {part.content}')
+            if info.function_tools:
+                tool = info.function_tools[0]
+                if call_count <= 1:
+                    return ModelResponse(
+                        parts=[ToolCallPart(tool_name=tool.name, args='{"wrong": 1}', tool_call_id='call-1')]
+                    )
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=tool.name, args='{"name": "ok"}', tool_call_id='call-2')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        agent = Agent(FunctionModel(bad_args_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def greet(name: str) -> str:
+            return f'hello {name}'
+
+        await agent.run('greet someone')
+
+    async def test_tool_execute_error_reraise(self):
+        """on.tool_execute_error that re-raises propagates the error."""
+        hooks = Hooks()
+
+        @hooks.on.tool_execute_error
+        async def reraise(
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: dict[str, Any],
+            error: Exception,
+        ) -> Any:
+            raise error
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            raise ValueError('tool failed')
+
+        with pytest.raises(ValueError, match='tool failed'):
+            await agent.run('call tool')
+
     async def test_get_serialization_name(self):
         assert Hooks.get_serialization_name() is None
 
