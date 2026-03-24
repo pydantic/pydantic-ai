@@ -50,6 +50,7 @@ nav:
           - input.md
           - thinking.md
           - retries.md
+          - Extensibility: extensibility.md
       - MCP:
           - Overview: mcp/overview.md
           - mcp/client.md
