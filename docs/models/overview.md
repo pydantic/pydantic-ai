@@ -87,9 +87,6 @@ You can also use a [`Model`][pydantic_ai.models.Model] or [`Provider`][pydantic_
 
 If you provide your own `http_client`, you are responsible for closing it yourself.
 
-!!! note
-    When not using a context manager, providers will emit a `ResourceWarning` during garbage collection if their HTTP client was never closed. This is a reminder to use the context manager pattern for proper cleanup.
-
 ## Custom Models
 
 !!! note
