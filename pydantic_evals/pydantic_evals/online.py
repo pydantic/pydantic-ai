@@ -138,7 +138,7 @@ def _dispatch_in_background_thread(coro: Coroutine[Any, Any, None]) -> None:
     thread = threading.Thread(target=_thread_target, daemon=True)
     try:
         thread.start()
-    except Exception:
+    except Exception:  # pragma: no cover
         logger.exception('Failed to start background evaluation thread')
         return
     with _background_lock:
