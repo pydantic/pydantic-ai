@@ -1832,6 +1832,89 @@ def test_model_connection_error(allow_model_requests: None) -> None:
     assert 'Connection to https://api.anthropic.com timed out' in str(exc_info.value.message)
 
 
+async def test_stream_status_error(allow_model_requests: None) -> None:
+    """APIStatusError raised during stream iteration should be wrapped as ModelHTTPError."""
+    stream = [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id='msg_123',
+                model='claude-sonnet-4-5',
+                role='assistant',
+                type='message',
+                content=[],
+                stop_reason=None,
+                usage=BetaUsage(input_tokens=10, output_tokens=0),
+            ),
+        ),
+        APIStatusError(
+            'overloaded',
+            response=httpx.Response(status_code=529, request=httpx.Request('POST', 'https://api.anthropic.com/v1')),
+            body={'error': 'overloaded'},
+        ),
+    ]
+    mock_client = MockAnthropic.create_stream_mock(stream)
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+    with pytest.raises(ModelHTTPError) as exc_info:
+        async with agent.run_stream('hello') as result:
+            async for _text in result.stream_text():
+                pass
+    assert exc_info.value.status_code == 529
+    assert exc_info.value.model_name == 'claude-sonnet-4-5'
+
+
+async def test_stream_connection_error(allow_model_requests: None) -> None:
+    """APIConnectionError raised during stream iteration should be wrapped as ModelAPIError."""
+    stream = [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id='msg_123',
+                model='claude-sonnet-4-5',
+                role='assistant',
+                type='message',
+                content=[],
+                stop_reason=None,
+                usage=BetaUsage(input_tokens=10, output_tokens=0),
+            ),
+        ),
+        APIConnectionError(
+            message='Connection reset',
+            request=httpx.Request('POST', 'https://api.anthropic.com/v1/messages'),
+        ),
+    ]
+    mock_client = MockAnthropic.create_stream_mock(stream)
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+    with pytest.raises(ModelAPIError) as exc_info:
+        async with agent.run_stream('hello') as result:
+            async for _text in result.stream_text():
+                pass
+    assert exc_info.value.model_name == 'claude-sonnet-4-5'
+    assert 'Connection reset' in str(exc_info.value.message)
+
+
+async def test_stream_peek_status_error(allow_model_requests: None) -> None:
+    """APIStatusError raised during stream peek should be wrapped as ModelHTTPError."""
+    stream = [
+        APIStatusError(
+            'unauthorized',
+            response=httpx.Response(status_code=401, request=httpx.Request('POST', 'https://api.anthropic.com/v1')),
+            body={'error': 'invalid api key'},
+        ),
+    ]
+    mock_client = MockAnthropic.create_stream_mock(stream)
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+    with pytest.raises(ModelHTTPError) as exc_info:
+        async with agent.run_stream('hello') as result:
+            async for _text in result.stream_text():
+                pass
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.model_name == 'claude-sonnet-4-5'
+
+
 async def test_count_tokens_connection_error(allow_model_requests: None) -> None:
     mock_client = MockAnthropic.create_mock(
         APIConnectionError(
