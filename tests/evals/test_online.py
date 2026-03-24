@@ -1048,7 +1048,7 @@ async def test_sink_exception_does_not_propagate():
 
 
 async def test_sync_function_from_async_context():
-    """Sync decorated function called from async context dispatches via create_task."""
+    """Sync decorated function called from async context dispatches via background thread."""
     collector = Collector()
     config = OnlineEvalConfig(default_sink=collector)
 

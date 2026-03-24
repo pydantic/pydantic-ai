@@ -448,13 +448,13 @@ result = process('hello')
 print(result)
 #> HELLO
 
-# wait_for_evaluations() awaits async tasks and joins background threads
+# wait_for_evaluations() joins background evaluation threads
 asyncio.run(wait_for_evaluations())
 print(results_log)
 #> ['OutputCheck=True']
 ```
 
-For sync functions called outside an async context, evaluators are dispatched in a background thread. When called from within an async context (e.g., an event loop is running), evaluators are dispatched as async tasks on that loop.
+For sync functions, evaluators are always dispatched in a background thread with its own event loop, regardless of whether the caller is in an async context.
 
 ## Per-Evaluator Sink Overrides
 

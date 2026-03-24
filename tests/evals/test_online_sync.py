@@ -2,7 +2,7 @@
 
 These tests are plain (non-async) functions — no running event loop — so they
 exercise the background thread dispatch path in _wrap_sync that spawns a new
-thread with asyncio.run(). This is the path used when sync decorated functions
+thread with anyio.run(). This is the path used when sync decorated functions
 are called from non-async code (CLI scripts, synchronous web frameworks, etc.).
 """
 

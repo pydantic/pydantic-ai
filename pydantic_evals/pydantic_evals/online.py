@@ -97,9 +97,13 @@ def _dispatch_in_background_thread(coro: Coroutine[Any, Any, None]) -> None:
                 _background_threads.discard(thread)
 
     thread = threading.Thread(target=_thread_target, daemon=True)
+    try:
+        thread.start()
+    except Exception:
+        logger.exception('Failed to start background evaluation thread')
+        return
     with _background_lock:
         _background_threads.add(thread)
-    thread.start()
 
 
 # ============================================================================
@@ -830,7 +834,13 @@ async def wait_for_evaluations(*, timeout: float = 30.0) -> None:
     with _background_lock:
         threads_snapshot = list(_background_threads)
 
-    for thread in threads_snapshot:
-        thread.join(timeout=timeout)
-        if thread.is_alive():  # pragma: no cover
-            logger.warning('Background evaluation thread did not complete within %.1fs timeout', timeout)
+    def _join_threads() -> None:
+        for thread in threads_snapshot:
+            thread.join(timeout=timeout)
+            if thread.is_alive():  # pragma: no cover
+                logger.warning('Background evaluation thread did not complete within %.1fs timeout', timeout)
+
+    # Use anyio.to_thread.run_sync to avoid blocking the event loop
+    from anyio.to_thread import run_sync
+
+    await run_sync(_join_threads)
