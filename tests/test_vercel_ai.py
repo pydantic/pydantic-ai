@@ -4136,11 +4136,7 @@ async def test_adapter_dump_messages_with_retry():
                         'raw_input': None,
                         'input': {'arg': 'value'},
                         'provider_executed': False,
-                        'error_text': """\
-Tool failed with error
-
-Fix the errors and try again.\
-""",
+                        'error_text': 'Tool failed with error',
                         'call_provider_metadata': None,
                         'approval': None,
                     }
@@ -4157,7 +4153,7 @@ Fix the errors and try again.\
     assert tool_error_part == snapshot(
         ToolReturnPart(
             tool_name='my_tool',
-            content='Tool failed with error\n\nFix the errors and try again.',
+            content='Tool failed with error',
             tool_call_id='tool_789',
             timestamp=IsDatetime(),
             outcome='failed',
@@ -4608,6 +4604,138 @@ async def test_adapter_dump_messages_tool_call_without_return():
             }
         ]
     )
+
+
+async def test_adapter_dump_messages_deferred_tool_approval():
+    """Test that dump_messages emits approval-requested state for deferred tool calls."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Do something')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='dangerous_action',
+                    args={'target': 'production'},
+                    tool_call_id='deferred_tc1',
+                ),
+            ]
+        ),
+    ]
+
+    # Without deferred_tool_call_ids — should produce input-available (existing behavior)
+    ui_messages_default = VercelAIAdapter.dump_messages(messages)
+    default_dicts = [msg.model_dump() for msg in ui_messages_default]
+    tool_part_default = default_dicts[1]['parts'][0]
+    assert tool_part_default['state'] == 'input-available'
+    assert tool_part_default['approval'] is None
+
+    # With deferred_tool_call_ids — should produce approval-requested with approval field
+    ui_messages_deferred = VercelAIAdapter.dump_messages(messages, deferred_tool_call_ids=frozenset({'deferred_tc1'}))
+    deferred_dicts = [msg.model_dump() for msg in ui_messages_deferred]
+    tool_part_deferred = deferred_dicts[1]['parts'][0]
+    assert tool_part_deferred == snapshot(
+        {
+            'type': 'tool-dangerous_action',
+            'tool_call_id': 'deferred_tc1',
+            'state': 'approval-requested',
+            'input': {'target': 'production'},
+            'provider_executed': False,
+            'call_provider_metadata': None,
+            'approval': {'id': 'deferred_tc1'},
+        }
+    )
+
+    # Verify roundtrip — load_messages should reconstruct a ToolCallPart without a result
+    reloaded = VercelAIAdapter.load_messages(ui_messages_deferred)
+    assert len(reloaded) == 2
+    tool_call_part = reloaded[1].parts[0]
+    assert isinstance(tool_call_part, ToolCallPart)
+    assert tool_call_part.tool_name == 'dangerous_action'
+    assert tool_call_part.tool_call_id == 'deferred_tc1'
+
+
+async def test_adapter_dump_messages_deferred_tool_with_resolved_result():
+    """Test that deferred tools with results ignore deferred_tool_call_ids."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Do something')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='dangerous_action',
+                    args={'target': 'production'},
+                    tool_call_id='resolved_tc1',
+                ),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='dangerous_action',
+                    content='Action completed',
+                    tool_call_id='resolved_tc1',
+                ),
+            ]
+        ),
+    ]
+
+    # Even with deferred_tool_call_ids containing this ID, result takes priority
+    ui_messages = VercelAIAdapter.dump_messages(messages, deferred_tool_call_ids=frozenset({'resolved_tc1'}))
+    dicts = [msg.model_dump() for msg in ui_messages]
+    tool_part = dicts[1]['parts'][0]
+    assert tool_part['state'] == 'output-available'
+    assert tool_part['output'] == 'Action completed'
+
+
+async def test_adapter_dump_messages_deferred_builtin_tool():
+    """Test that builtin tool calls also get approval-requested when deferred."""
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args={'query': 'test'},
+                    tool_call_id='builtin_deferred_tc1',
+                ),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages, deferred_tool_call_ids=frozenset({'builtin_deferred_tc1'}))
+    dicts = [msg.model_dump() for msg in ui_messages]
+    tool_part = dicts[0]['parts'][0]
+    assert tool_part['state'] == 'approval-requested'
+    assert tool_part['approval'] == {'id': 'builtin_deferred_tc1'}
+
+
+async def test_adapter_dump_messages_retry_preserves_raw_error_text():
+    """Test that RetryPromptPart with string content preserves the raw error text.
+
+    Previously, model_response() would append 'Fix the errors and try again.'
+    to the error text, which is intended for the model, not for UI display.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Do something')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='my_tool', args={}, tool_call_id='tc_retry'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                RetryPromptPart(
+                    content='Cancelled',
+                    tool_name='my_tool',
+                    tool_call_id='tc_retry',
+                )
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    dicts = [msg.model_dump() for msg in ui_messages]
+    tool_part = dicts[1]['parts'][0]
+    # Should be the raw content without the "Fix the errors..." suffix
+    assert tool_part['error_text'] == 'Cancelled'
+    assert tool_part['state'] == 'output-error'
 
 
 async def test_adapter_dump_messages_assistant_starts_with_tool():
@@ -5691,11 +5819,7 @@ async def test_adapter_dump_messages_tool_error_with_provider_metadata():
                         'raw_input': None,
                         'input': {'x': 1},
                         'provider_executed': False,
-                        'error_text': """\
-Tool execution failed
-
-Fix the errors and try again.\
-""",
+                        'error_text': 'Tool execution failed',
                         'call_provider_metadata': {
                             'pydantic_ai': {
                                 'id': 'call_fail_id',
@@ -5715,7 +5839,7 @@ Fix the errors and try again.\
     tool_error_part = reloaded_messages[2].parts[0]
     assert isinstance(tool_error_part, ToolReturnPart)
     assert tool_error_part.outcome == 'failed'
-    assert tool_error_part.content == 'Tool execution failed\n\nFix the errors and try again.'
+    assert tool_error_part.content == 'Tool execution failed'
 
 
 async def test_event_stream_text_with_provider_metadata():
