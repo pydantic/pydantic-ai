@@ -533,9 +533,11 @@ class GoogleModel(Model):
         thinking = model_request_parameters.thinking
         if thinking is None:
             return None
-        if thinking is False:
-            return ThinkingConfigDict(thinking_budget=0)
         profile = GoogleModelProfile.from_profile(self.profile)
+        if thinking is False:
+            if profile.google_supports_thinking_level:
+                return ThinkingConfigDict(thinking_level=cast(Any, 'MINIMAL'))
+            return ThinkingConfigDict(thinking_budget=0)
         if profile.google_supports_thinking_level:
             if thinking is True:
                 return ThinkingConfigDict(include_thoughts=True)
