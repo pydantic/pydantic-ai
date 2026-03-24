@@ -113,67 +113,7 @@ Capabilities in specs support three forms:
 
 ## Custom capabilities in specs
 
-To make a custom capability work with specs, it needs a [`get_serialization_name`][pydantic_ai.capabilities.AbstractCapability.get_serialization_name] (defaults to the class name) and a constructor that accepts serializable arguments. The default [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec] implementation calls `cls(*args, **kwargs)`, so for simple dataclasses no override is needed:
-
-```python {title="custom_spec_capability.py"}
-from dataclasses import dataclass
-from typing import Any
-
-from pydantic_ai import Agent
-from pydantic_ai.agent.spec import AgentSpec
-from pydantic_ai.capabilities import AbstractCapability
-
-
-@dataclass
-class RateLimit(AbstractCapability[Any]):
-    """Limits requests per minute."""
-
-    rpm: int = 60
-
-
-# In YAML: `- RateLimit: {rpm: 30}`
-# In Python:
-agent = Agent.from_spec(
-    AgentSpec(model='test', capabilities=[{'RateLimit': {'rpm': 30}}]),
-    custom_capability_types=[RateLimit],
-)
-```
-
-Override [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec] when the constructor takes types that can't be represented in YAML/JSON. The spec fields should mirror the dataclass fields, but with serializable types:
-
-```python {title="from_spec_override_example.py" test="skip" lint="skip"}
-from collections.abc import Callable
-from dataclasses import dataclass, field
-from typing import Any
-
-from pydantic_ai import RunContext
-from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.tools import ToolDefinition
-
-
-@dataclass
-class ConditionalTools(AbstractCapability[Any]):
-    """Hides tools unless a condition is met."""
-
-    condition: Callable[[RunContext[Any]], bool]  # not serializable
-    hidden_tools: list[str] = field(default_factory=list)
-
-    @classmethod
-    def from_spec(cls, hidden_tools: list[str]) -> 'ConditionalTools[Any]':
-        # In the spec, there's no condition callable — always hide
-        return cls(condition=lambda ctx: True, hidden_tools=hidden_tools)
-
-    async def prepare_tools(
-        self, ctx: RunContext[Any], tool_defs: list[ToolDefinition]
-    ) -> list[ToolDefinition]:
-        if self.condition(ctx):
-            return [td for td in tool_defs if td.name not in self.hidden_tools]
-        return tool_defs
-```
-
-In YAML this would be `- ConditionalTools: {hidden_tools: [dangerous_tool]}`. In Python code, the full constructor is available: `ConditionalTools(condition=my_check, hidden_tools=['dangerous_tool'])`.
-
-Pass custom capability types via the `custom_capability_types` parameter so the spec resolver can find them.
+See [Publishing capabilities](capabilities.md#publishing-capabilities) for how to make custom capabilities work with agent specs.
 
 ## `AgentSpec` reference
 

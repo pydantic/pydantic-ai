@@ -848,16 +848,14 @@ To add your package to this page, open a pull request.
 
 ## Publishing capabilities
 
-To make a custom capability usable in [agent specs](agent-spec.md), it needs:
+To make a custom capability usable in [agent specs](agent-spec.md), it needs a [`get_serialization_name`][pydantic_ai.capabilities.AbstractCapability.get_serialization_name] (defaults to the class name) and a constructor that accepts serializable arguments. The default [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec] implementation calls `cls(*args, **kwargs)`, so for simple dataclasses no override is needed:
 
-1. A [`get_serialization_name()`][pydantic_ai.capabilities.AbstractCapability.get_serialization_name] — defaults to the class name, return `None` to opt out of spec support.
-2. A constructor (or [`from_spec()`][pydantic_ai.capabilities.AbstractCapability.from_spec] override) that accepts serializable arguments.
-
-```python {title="publishable_capability.py"}
+```python {title="custom_spec_capability.py"}
 from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai import Agent
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability
 
 
@@ -867,17 +865,49 @@ class RateLimit(AbstractCapability[Any]):
 
     rpm: int = 60
 
-    # get_serialization_name() defaults to 'RateLimit'
-    # from_spec() defaults to cls(*args, **kwargs)
-    # In YAML: `- RateLimit: {rpm: 30}`
 
-
-agent = Agent('test', capabilities=[RateLimit(rpm=30)])
-result = agent.run_sync('hello')
-print(result.output)
-#> success (no tool calls)
+# In YAML: `- RateLimit: {rpm: 30}`
+# In Python:
+agent = Agent.from_spec(
+    AgentSpec(model='test', capabilities=[{'RateLimit': {'rpm': 30}}]),
+    custom_capability_types=[RateLimit],
+)
 ```
 
 Users register custom capability types via the `custom_capability_types` parameter on [`Agent.from_spec`][pydantic_ai.Agent.from_spec] or [`Agent.from_file`][pydantic_ai.Agent.from_file].
+
+Override [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec] when the constructor takes types that can't be represented in YAML/JSON. The spec fields should mirror the dataclass fields, but with serializable types:
+
+```python {title="from_spec_override_example.py" test="skip" lint="skip"}
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any
+
+from pydantic_ai import RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.tools import ToolDefinition
+
+
+@dataclass
+class ConditionalTools(AbstractCapability[Any]):
+    """Hides tools unless a condition is met."""
+
+    condition: Callable[[RunContext[Any]], bool]  # not serializable
+    hidden_tools: list[str] = field(default_factory=list)
+
+    @classmethod
+    def from_spec(cls, hidden_tools: list[str]) -> 'ConditionalTools[Any]':
+        # In the spec, there's no condition callable — always hide
+        return cls(condition=lambda ctx: True, hidden_tools=hidden_tools)
+
+    async def prepare_tools(
+        self, ctx: RunContext[Any], tool_defs: list[ToolDefinition]
+    ) -> list[ToolDefinition]:
+        if self.condition(ctx):
+            return [td for td in tool_defs if td.name not in self.hidden_tools]
+        return tool_defs
+```
+
+In YAML this would be `- ConditionalTools: {hidden_tools: [dangerous_tool]}`. In Python code, the full constructor is available: `ConditionalTools(condition=my_check, hidden_tools=['dangerous_tool'])`.
 
 See [Extensibility](extensibility.md) for packaging conventions and the broader extension ecosystem.
