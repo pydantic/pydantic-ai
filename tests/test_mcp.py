@@ -2569,64 +2569,67 @@ async def test_map_prompt_content() -> None:
     """
     from pathlib import Path
 
-    from pydantic_ai.mcp import (
-        Annotations,
-        AudioContent as PydanticAIAudioContent,
-        EmbeddedResource as PydanticAIEmbeddedResource,
-        ImageContent as PydanticAIImageContent,
-        ResourceLink as PydanticAIResourceLink,
-        TextContent as PydanticAITextContent,
-    )
+    from pydantic_ai.mcp import Annotations, EmbeddedResource, ResourceLink
 
     assets_dir = Path(__file__).parent / 'assets'
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         # TextContent with annotations
         result = await server.get_prompt('annotated_text_prompt')
-        content = result.messages[0].content
-        assert isinstance(content, PydanticAITextContent)
-        assert content.text == 'annotated text'
-        assert isinstance(content.annotations, Annotations)
-        assert content.annotations.audience == ['user']
-        assert content.annotations.priority == 1.0
+        assert result.messages == snapshot(
+            [
+                PromptMessage(
+                    role='user',
+                    content=TextContent(
+                        text='annotated text', annotations=Annotations(audience=['user'], priority=1.0)
+                    ),
+                )
+            ]
+        )
 
-        # ImageContent with annotations
+        # ImageContent → BinaryImage
         result = await server.get_prompt('image_prompt')
         content = result.messages[0].content
-        assert isinstance(content, PydanticAIImageContent)
-        assert content.data == base64.b64encode(assets_dir.joinpath('kiwi.jpg').read_bytes()).decode('utf-8')
-        assert content.mime_type == 'image/jpeg'
-        assert isinstance(content.annotations, Annotations)
-        assert content.annotations.audience == ['user']
-        assert content.annotations.priority == 0.8
+        assert isinstance(content, BinaryImage)
+        assert content.media_type == 'image/jpeg'
+        assert content.data == assets_dir.joinpath('kiwi.jpg').read_bytes()
 
-        # AudioContent with annotations
+        # AudioContent → BinaryContent
         result = await server.get_prompt('audio_prompt')
         content = result.messages[0].content
-        assert isinstance(content, PydanticAIAudioContent)
-        assert content.data == base64.b64encode(assets_dir.joinpath('marcelo.mp3').read_bytes()).decode('utf-8')
-        assert content.mime_type == 'audio/mpeg'
-        assert isinstance(content.annotations, Annotations)
-        assert content.annotations.audience == ['assistant']
-        assert content.annotations.priority == 0.3
+        assert isinstance(content, BinaryContent)
+        assert content.media_type == 'audio/mpeg'
+        assert content.data == assets_dir.joinpath('marcelo.mp3').read_bytes()
 
         # EmbeddedResource with annotations
         result = await server.get_prompt('embedded_resource_prompt')
-        content = result.messages[0].content
-        assert isinstance(content, PydanticAIEmbeddedResource)
-        assert content.uri == 'resource://product_name.txt'
-        assert content.content == 'Pydantic AI'
-        assert content.mime_type == 'text/plain'
-        assert isinstance(content.annotations, Annotations)
-        assert content.annotations.audience == ['user']
-        assert content.annotations.priority == 0.5
+        assert result.messages == snapshot(
+            [
+                PromptMessage(
+                    role='user',
+                    content=EmbeddedResource(
+                        uri='resource://product_name.txt',
+                        content='Pydantic AI',
+                        mime_type='text/plain',
+                        annotations=Annotations(audience=['user'], priority=0.5),
+                    ),
+                )
+            ]
+        )
 
         # ResourceLink
         result = await server.get_prompt('resource_link_prompt')
-        content = result.messages[0].content
-        assert isinstance(content, PydanticAIResourceLink)
-        assert content.uri == 'resource://kiwi.jpg'
-        assert content.name == 'kiwi-image'
-        assert content.title == 'Kiwi Image'
-        assert content.description == 'A photo of a kiwi fruit'
-        assert content.mime_type == 'image/jpeg'
+        assert result.messages == snapshot(
+            [
+                PromptMessage(
+                    role='user',
+                    content=ResourceLink(
+                        uri='resource://kiwi.jpg',
+                        name='kiwi-image',
+                        title='Kiwi Image',
+                        description='A photo of a kiwi fruit',
+                        mime_type='image/jpeg',
+                    ),
+                )
+            ]
+        )

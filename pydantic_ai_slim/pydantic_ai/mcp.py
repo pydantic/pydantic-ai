@@ -66,8 +66,6 @@ __all__ = (
     'ResourceLink',
     'EmbeddedResource',
     'TextContent',
-    'ImageContent',
-    'AudioContent',
     'ContentBlock',
     'Role',
 )
@@ -309,7 +307,7 @@ class Prompt:
     icons: list[Icon] | None = None
     """An optional list of icons for this prompt."""
 
-    meta: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
     """
     See [MCP specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/47339c03c143bb4ec01a26e721a1b8fe66634ebe/docs/specification/draft/basic/index.mdx#general-fields)
     for notes on _meta usage.
@@ -348,7 +346,7 @@ class Prompt:
             ]
             if mcp_prompt.icons
             else None,
-            meta=mcp_prompt.meta,
+            metadata=mcp_prompt.meta,
         )
 
 
@@ -359,53 +357,11 @@ Role = Literal['user', 'assistant']
 class TextContent:
     """Text content for a message."""
 
-    type: Literal['text']
+    type: Literal['text'] = 'text'
     text: str
     """The text content of the message."""
     annotations: Annotations | None = None
-    meta: dict[str, Any] | None = None
-    """
-    See [MCP specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/47339c03c143bb4ec01a26e721a1b8fe66634ebe/docs/specification/draft/basic/index.mdx#general-fields)
-    for notes on _meta usage.
-    """
-    __repr__ = _utils.dataclasses_no_defaults_repr
-
-
-@dataclass(repr=False, kw_only=True)
-class ImageContent:
-    """Image content for a message."""
-
-    type: Literal['image']
-    data: str
-    """The base64-encoded image data."""
-    mime_type: str
-    """
-    The MIME type of the image. Different providers may support different
-    image types.
-    """
-    annotations: Annotations | None = None
-    meta: dict[str, Any] | None = None
-    """
-    See [MCP specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/47339c03c143bb4ec01a26e721a1b8fe66634ebe/docs/specification/draft/basic/index.mdx#general-fields)
-    for notes on _meta usage.
-    """
-    __repr__ = _utils.dataclasses_no_defaults_repr
-
-
-@dataclass(repr=False, kw_only=True)
-class AudioContent:
-    """Audio content for a message."""
-
-    type: Literal['audio']
-    data: str
-    """The base64-encoded audio data."""
-    mime_type: str
-    """
-    The MIME type of the audio. Different providers may support different
-    audio types.
-    """
-    annotations: Annotations | None = None
-    meta: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
     """
     See [MCP specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/47339c03c143bb4ec01a26e721a1b8fe66634ebe/docs/specification/draft/basic/index.mdx#general-fields)
     for notes on _meta usage.
@@ -423,7 +379,7 @@ class EmbeddedResource:
     See the [MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/server/resources).
     """
 
-    type: Literal['resource']
+    type: Literal['resource'] = 'resource'
     """Discriminator for embedded resource content."""
 
     uri: str
@@ -438,7 +394,7 @@ class EmbeddedResource:
     annotations: Annotations | None = None
     """Optional annotations for the resource."""
 
-    meta: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
     """
     See [MCP specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/47339c03c143bb4ec01a26e721a1b8fe66634ebe/docs/specification/draft/basic/index.mdx#general-fields)
     for notes on _meta usage.
@@ -450,16 +406,15 @@ class EmbeddedResource:
     def from_mcp_sdk(cls, part: mcp_types.EmbeddedResource, content: str | messages.BinaryContent) -> EmbeddedResource:
         """Convert from MCP SDK EmbeddedResource to PydanticAI EmbeddedResource."""
         return cls(
-            type='resource',
             uri=str(part.resource.uri),
             content=content,
             mime_type=part.resource.mimeType,
             annotations=Annotations.from_mcp_sdk(part.annotations) if part.annotations else None,
-            meta=part.meta,
+            metadata=part.meta,
         )
 
 
-ContentBlock = TextContent | ImageContent | AudioContent | ResourceLink | EmbeddedResource
+ContentBlock = TextContent | messages.BinaryContent | ResourceLink | EmbeddedResource
 """A content block that can be used in prompts and tool results."""
 
 
@@ -813,7 +768,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             return PromptResult(
                 description=result.description,
                 messages=[
-                    PromptMessage(role=msg.role, content=await self._map_prompt_content(msg.content))
+                    PromptMessage(role=msg.role, content=self._map_prompt_content(msg.content))
                     for msg in result.messages
                 ],
             )
@@ -1107,30 +1062,17 @@ class MCPServer(AbstractToolset[Any], ABC):
             elif isinstance(message.root, mcp_types.PromptListChangedNotification):
                 self._cached_prompts = None
 
-    async def _map_prompt_content(self, part: mcp_types.ContentBlock) -> ContentBlock:
+    def _map_prompt_content(self, part: mcp_types.ContentBlock) -> ContentBlock:
         if isinstance(part, mcp_types.TextContent):
             return TextContent(
-                type='text',
                 text=part.text,
                 annotations=Annotations.from_mcp_sdk(part.annotations) if part.annotations else None,
-                meta=part.meta,
+                metadata=part.meta,
             )
         elif isinstance(part, mcp_types.ImageContent):
-            return ImageContent(
-                type='image',
-                data=part.data,
-                mime_type=part.mimeType,
-                annotations=Annotations.from_mcp_sdk(part.annotations) if part.annotations else None,
-                meta=part.meta,
-            )
+            return messages.BinaryImage(data=base64.b64decode(part.data), media_type=part.mimeType)
         elif isinstance(part, mcp_types.AudioContent):
-            return AudioContent(
-                type='audio',
-                data=part.data,
-                mime_type=part.mimeType,
-                annotations=Annotations.from_mcp_sdk(part.annotations) if part.annotations else None,
-                meta=part.meta,
-            )
+            return messages.BinaryContent(data=base64.b64decode(part.data), media_type=part.mimeType)
         elif isinstance(part, mcp_types.EmbeddedResource):
             return EmbeddedResource.from_mcp_sdk(part, self._get_content(part.resource))
         elif isinstance(part, mcp_types.ResourceLink):
