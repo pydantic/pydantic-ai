@@ -15,48 +15,27 @@ For testing against curated datasets before deployment, use [offline evaluation]
 
 ## Quick Start
 
-The simplest way to start is with the [`evaluate()`][pydantic_evals.online.evaluate] decorator, which attaches evaluators to any function:
+The [`evaluate()`][pydantic_evals.online.evaluate] decorator attaches evaluators to any function. Evaluators run in the background without blocking the caller:
 
 ```python
 import asyncio
-from collections.abc import Sequence
 from dataclasses import dataclass
 
-from pydantic_evals.evaluators import (
-    EvaluationResult,
-    Evaluator,
-    EvaluatorContext,
-    EvaluatorFailure,
-)
-from pydantic_evals.online import OnlineEvalConfig, wait_for_evaluations
+from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+from pydantic_evals.online import configure, evaluate, wait_for_evaluations
+
+results_log: list[str] = []
+configure(default_sink=lambda results, failures, ctx: results_log.extend(f'{r.name}={r.value}' for r in results))
 
 
-# A custom evaluator — same class you'd use with Dataset.evaluate()
 @dataclass
 class OutputNotEmpty(Evaluator):
     def evaluate(self, ctx: EvaluatorContext) -> bool:
         return bool(ctx.output)
 
 
-# Collect results for demonstration
-results_log: list[str] = []
-
-
-async def log_results(
-    results: Sequence[EvaluationResult],
-    failures: Sequence[EvaluatorFailure],
-    context: EvaluatorContext,
-) -> None:
-    for r in results:
-        results_log.append(f'{r.name}={r.value}')
-
-
-config = OnlineEvalConfig(default_sink=log_results)
-
-
-@config.evaluate(OutputNotEmpty())
+@evaluate(OutputNotEmpty())
 async def summarize(text: str) -> str:
-    # In a real app, this would call an LLM
     return f'Summary of: {text}'
 
 
@@ -73,7 +52,7 @@ async def main():
 asyncio.run(main())
 ```
 
-The decorated function runs normally and returns immediately — evaluators execute in the background without blocking the caller.
+This uses the module-level [`configure()`][pydantic_evals.online.configure] and [`evaluate()`][pydantic_evals.online.evaluate] functions, which delegate to a global [`OnlineEvalConfig`][pydantic_evals.online.OnlineEvalConfig]. For multiple configurations or isolated setups, create your own config instances — see [OnlineEvalConfig](#onlineevalconfig) below.
 
 ## Core Concepts
 
@@ -85,6 +64,7 @@ Different evaluators need different settings. A cheap heuristic should run on 10
 from dataclasses import dataclass
 
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+from pydantic_evals.evaluators.common import LLMJudge
 from pydantic_evals.online import OnlineEvaluator
 
 
@@ -98,11 +78,11 @@ class IsHelpful(Evaluator):
 always_check = OnlineEvaluator(evaluator=IsHelpful(), sample_rate=1.0)
 
 # Expensive evaluator: run on 1% of requests, limit concurrency
-# rare_check = OnlineEvaluator(
-#     evaluator=LLMJudge(rubric="Is the response helpful?"),
-#     sample_rate=0.01,
-#     max_concurrency=5,
-# )
+rare_check = OnlineEvaluator(
+    evaluator=LLMJudge(rubric='Is the response helpful?'),
+    sample_rate=0.01,
+    max_concurrency=5,
+)
 ```
 
 When you pass a bare [`Evaluator`][pydantic_evals.evaluators.Evaluator] to the [`evaluate()`][pydantic_evals.online.evaluate] decorator, it's automatically wrapped in an [`OnlineEvaluator`][pydantic_evals.online.OnlineEvaluator] with the config's default sample rate.
@@ -406,7 +386,7 @@ async def main():
     print(f'after short output: {len(results_log)} evaluations')
     #> after short output: 0 evaluations
 
-    await generate('tell me a long story about dragons')  # output is 49 chars — gate allows
+    await generate('tell me a long story about dragons')  # output is 47 chars — gate allows
     await wait_for_evaluations()
     print(f'after long output: {len(results_log)} evaluations')
     #> after long output: 1 evaluations

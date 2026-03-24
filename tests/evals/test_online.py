@@ -1110,3 +1110,24 @@ def test_sync_background_thread_gate_exception():
 
     asyncio.run(wait_for_evaluations())
     assert len(collector.calls) == 0
+
+
+@pytest.mark.anyio
+async def test_mixed_list_sink():
+    """A list containing both a bare callable and a CallbackSink exercises _normalize_single_sink."""
+    collector1 = Collector()
+    collector2 = Collector()
+
+    # Passing a list with a bare callable alongside a CallbackSink triggers
+    # _normalize_single_sink for the callable element.
+    config = OnlineEvalConfig(default_sink=[collector1, CallbackSink(collector2)])  # type: ignore[arg-type]
+
+    @config.evaluate(AlwaysTrue())
+    async def my_func(x: int) -> int:
+        return x
+
+    await my_func(42)
+    await wait_for_evaluations()
+
+    assert len(collector1.calls) == 1
+    assert len(collector2.calls) == 1
