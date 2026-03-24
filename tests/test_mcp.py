@@ -2547,6 +2547,26 @@ async def test_prompts_cache_invalidation_on_notification() -> None:
         assert server._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
 
 
+async def test_list_prompts_error(mcp_server: MCPServerStdio) -> None:
+    """Test that list_prompts converts McpError to MCPError."""
+    mcp_error = McpError(
+        error=ErrorData(code=-32603, message='Failed to list prompts', data={'details': 'server overloaded'})
+    )
+
+    async with mcp_server:
+        with patch.object(
+            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
+            'list_prompts',
+            new=AsyncMock(side_effect=mcp_error),
+        ):
+            with pytest.raises(MCPError, match='Failed to list prompts') as exc_info:
+                await mcp_server.list_prompts()
+
+            assert exc_info.value.code == -32603
+            assert exc_info.value.message == 'Failed to list prompts'
+            assert exc_info.value.data == {'details': 'server overloaded'}
+
+
 async def test_map_prompt_content() -> None:
     """Test that get_prompt() correctly maps all MCP content types to Pydantic AI types.
 
