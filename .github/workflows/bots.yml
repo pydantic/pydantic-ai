@@ -217,6 +217,7 @@ jobs:
           anthropic_api_key: ${{ secrets.CLAUDE_CODE_API_KEY || secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           allowed_non_write_users: "*"
+          display_report: 'true'
           additional_permissions: |
             actions: read
           claude_args: |
