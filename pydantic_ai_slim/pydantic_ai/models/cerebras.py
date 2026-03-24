@@ -86,6 +86,21 @@ class CerebrasModel(OpenAIChatModel):
         super().__init__(model_name, provider=provider, profile=profile, settings=settings)
 
     @override
+    def _get_reasoning_effort(
+        self,
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> Any:
+        """Cerebras handles reasoning via extra_body['disable_reasoning'], not reasoning_effort."""
+        from openai import omit
+
+        # Only pass through explicit openai_reasoning_effort if set; unified thinking
+        # is handled in _cerebras_settings_to_openai_settings via disable_reasoning.
+        if effort := model_settings.get('openai_reasoning_effort'):
+            return effort
+        return omit
+
+    @override
     def prepare_request(
         self,
         model_settings: ModelSettings | None,
