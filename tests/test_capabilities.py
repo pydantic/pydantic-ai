@@ -5330,9 +5330,7 @@ class TestNodeStreamingWithHooks:
             yield 'streamed response'
 
         cap = _ReplacingCapability()
-        agent = Agent(
-            FunctionModel(simple_model_function, stream_function=counting_stream), capabilities=[cap]
-        )
+        agent = Agent(FunctionModel(simple_model_function, stream_function=counting_stream), capabilities=[cap])
 
         events_received: list[AgentStreamEvent] = []
 
@@ -5397,9 +5395,7 @@ class TestNodeStreamingWithHooks:
             yield 'streamed response'
 
         cap = _ReplacingCapability()
-        agent = Agent(
-            FunctionModel(simple_model_function, stream_function=counting_stream), capabilities=[cap]
-        )
+        agent = Agent(FunctionModel(simple_model_function, stream_function=counting_stream), capabilities=[cap])
 
         async with agent.run_stream('hello') as streamed:
             output = await streamed.get_output()
