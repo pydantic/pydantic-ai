@@ -289,14 +289,14 @@ def _drop_sampling_params_for_reasoning(
         return
 
     reasoning_effort = model_settings.get('openai_reasoning_effort')
-    # On GPT-5.1+ models, 'none' is the default
-    if profile.openai_supports_reasoning_effort_none and reasoning_effort in (None, 'none'):
-        # If unified thinking is set and not False, reasoning is still active
-        thinking = model_request_parameters.thinking
-        if reasoning_effort is None and thinking is not None and thinking is not False:
-            pass  # reasoning is active via unified thinking, fall through to drop params
-        else:
-            return
+    thinking = model_request_parameters.thinking
+    # Determine if reasoning is effectively active
+    reasoning_active = reasoning_effort not in (None, 'none') or (
+        reasoning_effort is None and thinking is not None and thinking is not False
+    )
+    # On GPT-5.1+ models, sampling params are allowed when reasoning is off
+    if profile.openai_supports_reasoning_effort_none and not reasoning_active:
+        return
 
     if dropped := [k for k in SAMPLING_PARAMS if k in model_settings]:
         warnings.warn(
@@ -659,14 +659,9 @@ class OpenAIChatModel(Model):
         thinking = model_request_parameters.thinking
         if thinking is None:
             return OMIT
-        effort_map: dict[bool | str, ReasoningEffort] = {
-            True: 'medium',
-            False: 'none',
-            'low': 'low',
-            'medium': 'medium',
-            'high': 'high',
-        }
-        return effort_map[thinking]
+        from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP
+
+        return OPENAI_REASONING_EFFORT_MAP[thinking]  # type: ignore[return-value]
 
     @asynccontextmanager
     async def request_stream(
@@ -1811,18 +1806,13 @@ class OpenAIResponsesModel(Model):
 
         # Fall back to unified thinking when openai_reasoning_effort is not set
         if reasoning_effort is None and (thinking := model_request_parameters.thinking) is not None:
-            effort_map: dict[bool | str, ReasoningEffort] = {
-                True: 'medium',
-                False: 'none',
-                'low': 'low',
-                'medium': 'medium',
-                'high': 'high',
-            }
-            reasoning_effort = effort_map[thinking]
+            from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP
+
+            reasoning_effort = OPENAI_REASONING_EFFORT_MAP[thinking]
 
         reasoning: Reasoning = {}
         if reasoning_effort:
-            reasoning['effort'] = reasoning_effort
+            reasoning['effort'] = reasoning_effort  # type: ignore[typeddict-item]
         if reasoning_summary:
             reasoning['summary'] = reasoning_summary
         return reasoning or OMIT

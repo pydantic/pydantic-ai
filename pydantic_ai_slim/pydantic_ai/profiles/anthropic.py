@@ -20,6 +20,10 @@ class AnthropicModelProfile(ModelProfile):
     """
 
 
+ANTHROPIC_THINKING_BUDGET_MAP: dict[bool | str, int] = {True: 10000, 'low': 2048, 'medium': 10000, 'high': 16384}
+"""Maps unified thinking values to Anthropic budget_tokens for non-adaptive models."""
+
+
 def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Anthropic model."""
     models_that_support_json_schema_output = (

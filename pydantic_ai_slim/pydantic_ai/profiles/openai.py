@@ -10,6 +10,15 @@ from .._json_schema import JsonSchema, JsonSchemaTransformer
 from ..exceptions import UserError
 from . import ModelProfile
 
+OPENAI_REASONING_EFFORT_MAP: dict[bool | str, str] = {
+    True: 'medium',
+    False: 'none',
+    'low': 'low',
+    'medium': 'medium',
+    'high': 'high',
+}
+"""Maps unified thinking values to OpenAI reasoning_effort strings."""
+
 SAMPLING_PARAMS = (
     'temperature',
     'top_p',

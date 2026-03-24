@@ -581,20 +581,17 @@ class BedrockConverseModel(Model):
             if thinking is False:
                 existing['thinking'] = {'type': 'disabled'}
             else:
-                budget_map: dict[bool | str, int] = {True: 10000, 'low': 2048, 'medium': 10000, 'high': 16384}
-                existing['thinking'] = {'type': 'enabled', 'budget_tokens': budget_map[thinking]}
+                from ..profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP
+
+                existing['thinking'] = {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
         elif variant == 'openai' and 'reasoning_effort' not in existing:
-            effort_map: dict[bool | str, str] = {
-                True: 'medium',
-                False: 'none',
-                'low': 'low',
-                'medium': 'medium',
-                'high': 'high',
-            }
-            existing['reasoning_effort'] = effort_map[thinking]
+            from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP
+
+            existing['reasoning_effort'] = OPENAI_REASONING_EFFORT_MAP[thinking]
         elif variant == 'qwen' and 'reasoning_config' not in existing:
-            level_map: dict[bool | str, str] = {True: 'high', 'low': 'low', 'medium': 'high', 'high': 'high'}
-            existing['reasoning_config'] = level_map[thinking]
+            if thinking is not False:
+                level_map: dict[bool | str, str] = {True: 'high', 'low': 'low', 'medium': 'high', 'high': 'high'}
+                existing['reasoning_config'] = level_map[thinking]
 
         return existing or None
 

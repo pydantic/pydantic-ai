@@ -420,8 +420,9 @@ class AnthropicModel(Model):
         profile = AnthropicModelProfile.from_profile(self.profile)
         if profile.anthropic_supports_adaptive_thinking:
             return {'type': 'adaptive'}
-        budget_map: dict[bool | str, int] = {True: 10000, 'low': 2048, 'medium': 10000, 'high': 16384}
-        return {'type': 'enabled', 'budget_tokens': budget_map[thinking]}
+        from ..profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP
+
+        return {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
 
     @overload
     async def _messages_create(

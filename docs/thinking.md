@@ -10,7 +10,7 @@ See the sections below for how to enable thinking for each provider.
 
 The simplest way to enable thinking across any supported provider is the `thinking` field in [`ModelSettings`][pydantic_ai.settings.ModelSettings]:
 
-```python {title="unified_thinking.py" test="skip"}
+```python {title="unified_thinking.py"}
 from pydantic_ai import Agent
 
 agent = Agent('anthropic:claude-opus-4-6', model_settings={'thinking': 'high'})
@@ -18,7 +18,7 @@ agent = Agent('anthropic:claude-opus-4-6', model_settings={'thinking': 'high'})
 
 Or using the [`Thinking`][pydantic_ai.capabilities.Thinking] capability:
 
-```python {title="thinking_capability.py" test="skip"}
+```python {title="thinking_capability.py"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Thinking
 
