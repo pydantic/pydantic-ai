@@ -3320,10 +3320,79 @@ async def test_google_combined_tools_gemini_3(allow_model_requests: None, google
 
     @agent.tool_plain
     async def get_user_country() -> str:
-        return 'Mexico'  # pragma: no cover
+        return 'Mexico'
 
     result = await agent.run('What is the largest city in the user country?')
-    assert isinstance(result.output, str)
+    assert result.output == snapshot(
+        'The largest city in Mexico is Mexico City (Ciudad de México). It is the capital and most populous city, with a metropolitan area population of over 21 million people.'
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the largest city in the user country?', timestamp=IsDatetime())],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_user_country',
+                        args={},
+                        tool_call_id=IsStr(),
+                        provider_name='google-gla',
+                        provider_details={
+                            'thought_signature': IsStr()
+                        },
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=45, output_tokens=107, details={'thoughts_tokens': 95, 'text_prompt_tokens': 45}
+                ),
+                model_name='gemini-3-pro-preview',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_user_country',
+                        content='Mexico',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='The largest city in Mexico is Mexico City (Ciudad de México). It is the capital and most populous city, with a metropolitan area population of over 21 million people.',
+                        provider_name='google-gla',
+                        provider_details={
+                            'thought_signature': IsStr()
+                        },
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=58, output_tokens=162, details={'thoughts_tokens': 120, 'text_prompt_tokens': 58}
+                ),
+                model_name='gemini-3-pro-preview',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_google_native_output_with_builtin_tools_gemini_3(
