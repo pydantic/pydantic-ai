@@ -69,7 +69,7 @@ class GitHubProvider(Provider[AsyncOpenAI]):
         # As GitHubProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly
         result = OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
-        return result._with_origin(provider, model_name)
+        return result.with_origin(provider, model_name)
 
     @overload
     def __init__(self) -> None: ...

@@ -156,7 +156,7 @@ class BedrockProvider(Provider[BaseClient]):
         if provider in provider_to_profile:
             profile = provider_to_profile[provider](model_name)
             if profile is not None:
-                return profile._with_origin(provider, model_name)
+                return profile.with_origin(provider, model_name)
             return None
 
         return None

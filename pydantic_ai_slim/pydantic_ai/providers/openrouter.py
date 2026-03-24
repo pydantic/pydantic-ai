@@ -140,7 +140,7 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
             openai_chat_supports_file_urls=True,
             openai_chat_supports_web_search=True,
         ).update(profile)
-        return result._with_origin(provider, model_name)
+        return result.with_origin(provider, model_name)
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...

@@ -85,7 +85,7 @@ class ModelProfile:
     _origin_provider: str | None = None
     """The origin provider identifier for models accessed through proxy providers.
 
-    Set by proxy providers (e.g. OpenRouter, Bedrock, LiteLLM) via `_with_origin()` to record
+    Set by proxy providers (e.g. OpenRouter, Bedrock, LiteLLM) via `with_origin()` to record
     the original provider of the model (e.g. 'anthropic', 'openai') so that context window
     lookups via genai-prices can find the correct entry.
     """
@@ -93,11 +93,11 @@ class ModelProfile:
     _origin_model_name: str | None = None
     """The origin model name for models accessed through proxy providers.
 
-    Set by proxy providers via `_with_origin()` to record the canonical model name stripped
+    Set by proxy providers via `with_origin()` to record the canonical model name stripped
     of provider-specific formatting.
     """
 
-    def _with_origin(self, provider: str, model_name: str) -> Self:
+    def with_origin(self, provider: str, model_name: str) -> Self:
         """Return a copy of this profile with origin provider identity set.
 
         Used by proxy providers to record the original provider and model name
