@@ -982,6 +982,24 @@ async def test_concurrent_runs_capability_isolation():
 # --- Hooks test helpers ---
 
 
+@dataclass
+class _ReplacingCapability(AbstractCapability[Any]):
+    """Capability that replaces ModelRequestNode with a fresh copy in before_node_run.
+
+    Used to test that streaming + node replacement doesn't cause double model execution.
+    """
+
+    replaced: bool = field(default=False, init=False)
+
+    async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
+        if type(node).__name__ == 'ModelRequestNode' and not self.replaced:
+            self.replaced = True
+            from pydantic_ai._agent_graph import ModelRequestNode
+
+            return ModelRequestNode(request=node.request)  # pyright: ignore[reportUnknownVariableType]
+        return node
+
+
 def make_text_response(text: str = 'hello') -> ModelResponse:
     return ModelResponse(parts=[TextPart(content=text)])
 
@@ -5306,33 +5324,15 @@ class TestNodeStreamingWithHooks:
         the model should be called exactly once (not twice)."""
         model_call_count = 0
 
-        def counting_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            nonlocal model_call_count
-            model_call_count += 1
-            return make_text_response('response from model')
-
         async def counting_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
             nonlocal model_call_count
             model_call_count += 1
             yield 'streamed response'
 
-        @dataclass
-        class ReplacingCapability(AbstractCapability[Any]):
-            """Replaces ModelRequestNode with a fresh copy in before_node_run."""
-
-            replaced: bool = field(default=False, init=False)
-
-            async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
-                from pydantic_ai._agent_graph import ModelRequestNode
-
-                if isinstance(node, ModelRequestNode) and not self.replaced:
-                    self.replaced = True
-                    # Return a fresh copy of the node (simulating replacement)
-                    return ModelRequestNode(request=node.request)
-                return node
-
-        cap = ReplacingCapability()
-        agent = Agent(FunctionModel(counting_model, stream_function=counting_stream), capabilities=[cap])
+        cap = _ReplacingCapability()
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=counting_stream), capabilities=[cap]
+        )
 
         events_received: list[AgentStreamEvent] = []
 
@@ -5391,33 +5391,44 @@ class TestNodeStreamingWithHooks:
         should not cause double model execution."""
         model_call_count = 0
 
-        def counting_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            nonlocal model_call_count
-            model_call_count += 1
-            return make_text_response('response from model')
-
         async def counting_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
             nonlocal model_call_count
             model_call_count += 1
             yield 'streamed response'
 
-        @dataclass
-        class ReplacingCapability(AbstractCapability[Any]):
-            replaced: bool = field(default=False, init=False)
-
-            async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
-                from pydantic_ai._agent_graph import ModelRequestNode
-
-                if isinstance(node, ModelRequestNode) and not self.replaced:
-                    self.replaced = True
-                    return ModelRequestNode(request=node.request)
-                return node
-
-        cap = ReplacingCapability()
-        agent = Agent(FunctionModel(counting_model, stream_function=counting_stream), capabilities=[cap])
+        cap = _ReplacingCapability()
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=counting_stream), capabilities=[cap]
+        )
 
         async with agent.run_stream('hello') as streamed:
             output = await streamed.get_output()
 
         assert output == 'streamed response'
         assert model_call_count == 1, f'Model was called {model_call_count} times, expected 1'
+
+    async def test_on_node_run_error_fires_in_run_stream(self):
+        """on_node_run_error in run_stream() fires when wrap_node_run raises."""
+        error_log: list[str] = []
+
+        @dataclass
+        class WrapErrorCap(AbstractCapability[Any]):
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                if type(node).__name__ == 'UserPromptNode':
+                    raise RuntimeError('wrap error')
+                return await handler(node)
+
+            async def on_node_run_error(self, ctx: RunContext[Any], *, node: Any, error: Exception) -> Any:
+                error_log.append(f'{type(node).__name__}:{error}')
+                raise error
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[WrapErrorCap()],
+        )
+
+        with pytest.raises(RuntimeError, match='wrap error'):
+            async with agent.run_stream('hello') as _streamed:
+                pass
+
+        assert error_log == ['UserPromptNode:wrap error']
