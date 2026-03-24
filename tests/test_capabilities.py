@@ -4118,3 +4118,48 @@ class TestContextVarPropagation:
 
         # After the run, the contextvar should be cleaned up
         assert _test_cv.get(None) is None
+
+    async def test_contextvar_cleaned_up_on_early_iter_exit(self):
+        """Context vars are restored even when the caller exits iter() early."""
+
+        @dataclass
+        class Setter(AbstractCapability):
+            async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+                token = _test_cv.set('early-exit')
+                try:
+                    return await handler()
+                finally:
+                    _test_cv.reset(token)
+
+        agent = Agent(TestModel(), capabilities=[Setter()])
+        assert _test_cv.get(None) is None
+
+        async with agent.iter('hello') as agent_run:
+            # Exit immediately without driving any nodes
+            _ = agent_run.next_node
+
+        # Context var must be cleaned up even though we abandoned the run
+        assert _test_cv.get(None) is None
+
+    async def test_before_run_contextvar_propagates(self):
+        """Context vars set in before_run (not wrap_run) also propagate."""
+
+        @dataclass
+        class Setter(AbstractCapability):
+            async def before_run(self, ctx: RunContext[Any]) -> None:
+                _test_cv.set('from-before-run')
+
+        @dataclass
+        class Reader(AbstractCapability):
+            seen: list[tuple[str, str | None]] = field(default_factory=lambda: [])
+
+            async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
+                self.seen.append(('before_node_run', _test_cv.get(None)))
+                return node
+
+        reader = Reader()
+        agent = Agent(TestModel(), capabilities=[Setter(), reader])
+        await agent.run('hello')
+
+        for hook_name, value in reader.seen:
+            assert value == 'from-before-run', f'{hook_name} did not see contextvar'
