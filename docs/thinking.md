@@ -45,8 +45,8 @@ The unified `thinking` setting maps to each provider's native format:
 | Google (Gemini 3+) | `include_thoughts=True` | `thinking_level='HIGH'` | |
 | Google (Gemini 2.5) | `include_thoughts=True` | `thinking_budget=24576` | |
 | Groq | `reasoning_format='parsed'` | `reasoning_format='parsed'` | Effort ignored |
-| OpenRouter | `reasoning.enable=True` | `reasoning.effort='high'` | |
-| Cerebras | *(no-op)* | *(no-op)* | Only `thinking=False` sets `disable_reasoning` |
+| OpenRouter | `reasoning.effort='medium'` | `reasoning.effort='high'` | Via `extra_body` |
+| Cerebras | *(default)* | *(default)* | Only `thinking=False` → `disable_reasoning` |
 | xAI | `reasoning_effort='high'` | `reasoning_effort='high'` | Only `'low'` and `'high'` supported |
 | Bedrock (Claude) | `thinking.type='enabled'` | `budget_tokens=16384` | No adaptive support |
 | Bedrock (OpenAI) | `reasoning_effort='medium'` | `reasoning_effort='high'` | |
