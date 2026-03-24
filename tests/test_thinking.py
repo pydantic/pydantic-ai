@@ -670,6 +670,24 @@ class TestBedrockThinkingTranslation:
         result = model._get_thinking_fields(settings, params)
         assert result == {'reasoning_config': 'high'}
 
+    def test_qwen_variant_thinking_false(self):
+        """thinking=False on Qwen variant is a no-op (Qwen has no disable mechanism)."""
+        pytest.importorskip('boto3')
+        from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
+        from pydantic_ai.providers.bedrock import BedrockModelProfile
+
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._profile = BedrockModelProfile(
+            bedrock_thinking_variant='qwen',
+            supports_thinking=True,
+        )
+
+        settings = BedrockModelSettings()
+        params = ModelRequestParameters(thinking=False)
+        result = model._get_thinking_fields(settings, params)
+        # thinking=False on Qwen: no reasoning_config set, returns None (empty dict is falsy)
+        assert result is None
+
     def test_thinking_none_returns_existing(self):
         pytest.importorskip('boto3')
         from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
