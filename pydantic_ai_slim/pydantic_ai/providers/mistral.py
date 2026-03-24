@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+from dataclasses import replace
 from typing import overload
 
 import httpx
@@ -8,7 +9,7 @@ import httpx
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
-from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles.mistral import MistralJsonSchemaTransformer, mistral_model_profile
 from pydantic_ai.providers import Provider
 
 try:
@@ -37,7 +38,14 @@ class MistralProvider(Provider[Mistral]):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        return mistral_model_profile(model_name)
+        profile = mistral_model_profile(model_name)
+        if profile is None:  # pragma: no cover
+            return None
+        return replace(
+            profile,
+            json_schema_transformer=MistralJsonSchemaTransformer,
+            default_structured_output_mode='native',
+        )
 
     @overload
     def __init__(self, *, mistral_client: Mistral | None = None) -> None: ...

@@ -11,6 +11,7 @@ from httpx import Timeout
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
+from .._output import DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc, number_to_datetime
 from ..exceptions import ModelAPIError
@@ -227,6 +228,8 @@ class MistralModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> MistralChatCompletionResponse:
         """Make a non-streaming request to the model."""
+        response_format_kwargs = self._get_response_format_kwargs(model_request_parameters)
+
         # TODO(Marcelo): We need to replace the current MistralAI client to use the beta client.
         # See https://docs.mistral.ai/agents/connectors/websearch/ to support web search.
         try:
@@ -236,6 +239,7 @@ class MistralModel(Model):
                 n=1,
                 tools=self._map_function_and_output_tools_definition(model_request_parameters) or UNSET,
                 tool_choice=self._get_tool_choice(model_request_parameters),
+                **response_format_kwargs,
                 stream=False,
                 max_tokens=model_settings.get('max_tokens', UNSET),
                 temperature=model_settings.get('temperature', UNSET),
@@ -263,16 +267,36 @@ class MistralModel(Model):
         response: MistralEventStreamAsync[MistralCompletionEvent] | None
         mistral_messages = await self._map_messages(messages, model_request_parameters)
 
+        response_format_kwargs = self._get_response_format_kwargs(model_request_parameters)
+
         # TODO(Marcelo): We need to replace the current MistralAI client to use the beta client.
         # See https://docs.mistral.ai/agents/connectors/websearch/ to support web search.
         if model_request_parameters.function_tools:
-            # Function Calling
+            # Function Calling (may coexist with native structured output)
             response = await self.client.chat.stream_async(
                 model=str(self._model_name),
                 messages=mistral_messages,
                 n=1,
                 tools=self._map_function_and_output_tools_definition(model_request_parameters) or UNSET,
                 tool_choice=self._get_tool_choice(model_request_parameters),
+                **response_format_kwargs,
+                temperature=model_settings.get('temperature', UNSET),
+                top_p=model_settings.get('top_p', 1),
+                max_tokens=model_settings.get('max_tokens', UNSET),
+                timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
+                presence_penalty=model_settings.get('presence_penalty'),
+                frequency_penalty=model_settings.get('frequency_penalty'),
+                stop=model_settings.get('stop_sequences', None),
+                http_headers={'User-Agent': get_user_agent()},
+            )
+
+        elif model_request_parameters.output_mode == 'native':
+            # Native JSON Schema structured output
+            response = await self.client.chat.stream_async(
+                model=str(self._model_name),
+                messages=mistral_messages,
+                **response_format_kwargs,
+                stream=True,
                 temperature=model_settings.get('temperature', UNSET),
                 top_p=model_settings.get('top_p', 1),
                 max_tokens=model_settings.get('max_tokens', UNSET),
@@ -284,8 +308,7 @@ class MistralModel(Model):
             )
 
         elif model_request_parameters.output_tools:
-            # TODO: Port to native "manual JSON" mode
-            # Json Mode
+            # Tool-based structured output with JSON object mode (fallback for explicit ToolOutput())
             parameters_json_schemas = [tool.parameters_json_schema for tool in model_request_parameters.output_tools]
             user_output_format_message = self._generate_user_output_format(parameters_json_schemas)
             mistral_messages.append(user_output_format_message)
@@ -293,9 +316,7 @@ class MistralModel(Model):
             response = await self.client.chat.stream_async(
                 model=str(self._model_name),
                 messages=mistral_messages,
-                response_format={
-                    'type': 'json_object'
-                },  # TODO: Should be able to use json_schema now: https://docs.mistral.ai/capabilities/structured-output/custom_structured_output/, https://github.com/mistralai/client-python/blob/bc4adf335968c8a272e1ab7da8461c9943d8e701/src/mistralai/extra/utils/response_format.py#L9
+                response_format={'type': 'json_object'},
                 stream=True,
                 temperature=model_settings.get('temperature', UNSET),
                 top_p=model_settings.get('top_p', 1),
@@ -349,6 +370,28 @@ class MistralModel(Model):
             for r in model_request_parameters.tool_defs.values()
         ]
         return tools or None
+
+    @staticmethod
+    def _get_response_format_kwargs(model_request_parameters: ModelRequestParameters) -> dict[str, Any]:
+        """Build kwargs containing ``response_format`` for native JSON schema output.
+
+        Returns an empty dict when native output is not active, so the result
+        can be unpacked with ``**`` without passing an invalid value to the SDK.
+        """
+        if model_request_parameters.output_mode != 'native':
+            return {}
+        output_object = model_request_parameters.output_object
+        assert output_object is not None
+        return {
+            'response_format': {
+                'type': 'json_schema',
+                'json_schema': {
+                    'name': output_object.name or DEFAULT_OUTPUT_TOOL_NAME,
+                    'schema': output_object.json_schema,
+                    'strict': output_object.strict,
+                },
+            }
+        }
 
     def _process_response(self, response: MistralChatCompletionResponse) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -675,7 +718,6 @@ class MistralStreamedResponse(StreamedResponse):
                 output_tools = {c.name: c for c in self.model_request_parameters.output_tools}
                 if output_tools:
                     self._delta_content += text
-                    # TODO: Port to native "manual JSON" mode
                     maybe_tool_call_part = self._try_get_output_tool_from_text(self._delta_content, output_tools)
                     if maybe_tool_call_part:
                         yield self._parts_manager.handle_tool_call_part(

@@ -32,6 +32,7 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.output import ToolOutput
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
@@ -654,6 +655,202 @@ async def test_request_output_type_with_arguments_str_response(allow_model_reque
 
 
 #####################
+## Native JSON Schema Output
+#####################
+
+
+async def test_native_json_schema_output(allow_model_requests: None):
+    """Non-streaming structured output using native json_schema response_format."""
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    completion = completion_message(
+        MistralAssistantMessage(content='{"city": "paris", "country": "france"}', role='assistant'),
+        usage=MistralUsageInfo(prompt_tokens=5, completion_tokens=10, total_tokens=15),
+    )
+    mock_client = MockMistralAI.create_mock(completion)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model, output_type=CityLocation)
+
+    result = await agent.run('Where is the Eiffel Tower?')
+
+    assert result.output == CityLocation(city='paris', country='france')
+    assert result.usage().input_tokens == 5
+    assert result.usage().output_tokens == 10
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Where is the Eiffel Tower?', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"city": "paris", "country": "france"}')],
+                usage=RequestUsage(input_tokens=5, output_tokens=10),
+                model_name='mistral-large-123',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='mistral',
+                provider_url='https://api.mistral.ai',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                },
+                provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_native_json_schema_stream_output(allow_model_requests: None):
+    """Streaming structured output using native json_schema response_format."""
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    stream = [
+        text_chunk('{"city": "par'),
+        text_chunk('is", "country": "fra'),
+        text_chunk('nce"}', finish_reason='stop'),
+        chunk([]),
+    ]
+
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model, output_type=CityLocation)
+
+    async with agent.run_stream('Where is the Eiffel Tower?') as result:
+        v = [c async for c in result.stream_output(debounce_by=None)]
+        assert v == snapshot(
+            [
+                CityLocation(city='paris', country='fra'),
+                CityLocation(city='paris', country='france'),
+                CityLocation(city='paris', country='france'),
+            ]
+        )
+        assert result.usage().input_tokens == 4
+        assert result.usage().output_tokens == 4
+
+
+async def test_native_json_schema_with_function_tools(allow_model_requests: None):
+    """Native structured output coexisting with function tools."""
+
+    class WeatherResult(BaseModel):
+        temperature: int
+        description: str
+
+    completions = [
+        # First response: model calls the function tool
+        completion_message(
+            MistralAssistantMessage(
+                content=None,
+                role='assistant',
+                tool_calls=[
+                    MistralToolCall(
+                        id='1',
+                        function=MistralFunctionCall(arguments='{"city": "London"}', name='get_weather'),
+                        type='function',
+                    )
+                ],
+            ),
+        ),
+        # Second response: model returns structured text output
+        completion_message(
+            MistralAssistantMessage(
+                content='{"temperature": 15, "description": "cloudy"}',
+                role='assistant',
+            ),
+        ),
+    ]
+
+    mock_client = MockMistralAI.create_mock(completions)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model, output_type=WeatherResult)
+
+    @agent.tool_plain
+    async def get_weather(city: str) -> str:
+        return json.dumps({'temperature': 15, 'description': 'cloudy'})
+
+    result = await agent.run('What is the weather in London?')
+
+    assert result.output == WeatherResult(temperature=15, description='cloudy')
+
+
+async def test_stream_tool_output_uses_json_object_mode(allow_model_requests: None):
+    """Streaming with explicit ToolOutput() uses the json_object fallback path.
+
+    Sends partial chunks to exercise _try_get_output_tool_from_text with
+    incomplete JSON (returns None) and _validate_required_json_schema (skips
+    incomplete objects).
+    """
+
+    class MyResult(TypedDict):
+        value: str
+        count: int
+
+    stream = [
+        text_chunk('{'),  # partial — required fields missing, tool_from_text returns None
+        text_chunk('"value": "hel'),  # partial — 'count' still missing, validation skips
+        text_chunk('lo", "count": 1}', finish_reason='stop'),  # complete
+        chunk([]),
+    ]
+
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model, output_type=ToolOutput(MyResult))
+
+    async with agent.run_stream('test') as result:
+        v = [c async for c in result.stream_output(debounce_by=None)]
+        assert v == snapshot([{'value': 'hello', 'count': 1}, {'value': 'hello', 'count': 1}])
+
+
+def test_mistral_json_schema_transformer_strict_true():
+    """MistralJsonSchemaTransformer adds additionalProperties: false when strict=True."""
+    from pydantic_ai.profiles.mistral import MistralJsonSchemaTransformer
+
+    schema = {'type': 'object', 'properties': {'name': {'type': 'string'}}}
+    transformer = MistralJsonSchemaTransformer(schema, strict=True)
+    result = transformer.walk()
+    assert result['additionalProperties'] is False
+
+
+def test_mistral_json_schema_transformer_incompatible():
+    """MistralJsonSchemaTransformer marks schemas with additionalProperties: true as non-strict."""
+    from pydantic_ai.profiles.mistral import MistralJsonSchemaTransformer
+
+    schema = {'type': 'object', 'properties': {'name': {'type': 'string'}}, 'additionalProperties': True}
+    transformer = MistralJsonSchemaTransformer(schema, strict=None)
+    transformer.walk()
+    assert transformer.is_strict_compatible is False
+
+
+def test_mistral_json_schema_transformer_strict_false():
+    """MistralJsonSchemaTransformer leaves schema untouched when strict=False."""
+    from pydantic_ai.profiles.mistral import MistralJsonSchemaTransformer
+
+    schema = {'type': 'object', 'properties': {'name': {'type': 'string'}}}
+    transformer = MistralJsonSchemaTransformer(schema, strict=False)
+    result = transformer.walk()
+    assert 'additionalProperties' not in result
+
+
+def test_mistral_provider_model_profile():
+    """MistralProvider sets MistralJsonSchemaTransformer on the profile."""
+    from pydantic_ai.profiles.mistral import MistralJsonSchemaTransformer
+
+    provider = MistralProvider(api_key='foobar')
+    profile = provider.model_profile('mistral-small-latest')
+    assert profile is not None
+    assert profile.supports_json_schema_output is True
+    assert profile.default_structured_output_mode == 'native'
+    assert profile.json_schema_transformer is MistralJsonSchemaTransformer
+
+
+#####################
 ## Completion Model Structured Stream (JSON Mode)
 #####################
 
@@ -703,6 +900,7 @@ async def test_stream_structured_with_all_type(allow_model_requests: None):
         v = [dict(c) async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot(
             [
+                {},
                 {'first': 'One'},
                 {'first': 'One', 'second': 2},
                 {'first': 'One', 'second': 2, 'bool_value': True},
@@ -812,6 +1010,16 @@ async def test_stream_result_type_primitif_dict(allow_model_requests: None):
         v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot(
             [
+                {},
+                {},
+                {},
+                {},
+                {},
+                {},
+                {},
+                {},
+                {},
+                {},
                 {'first': ''},
                 {'first': 'O'},
                 {'first': 'On'},
@@ -1019,6 +1227,16 @@ async def test_stream_result_type_basemodel_with_default_params(allow_model_requ
         v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot(
             [
+                MyTypedBaseModel(first='', second=''),
+                MyTypedBaseModel(first='', second=''),
+                MyTypedBaseModel(first='', second=''),
+                MyTypedBaseModel(first='', second=''),
+                MyTypedBaseModel(first='', second=''),
+                MyTypedBaseModel(first='', second=''),
+                MyTypedBaseModel(first='', second=''),
+                MyTypedBaseModel(first='', second=''),
+                MyTypedBaseModel(first='', second=''),
+                MyTypedBaseModel(first='', second=''),
                 MyTypedBaseModel(first='', second=''),
                 MyTypedBaseModel(first='O', second=''),
                 MyTypedBaseModel(first='On', second=''),
@@ -1516,7 +1734,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
 
     mock_client = MockMistralAI.create_stream_mock(completion)
     model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
-    agent = Agent(model, instructions='this is the system prompt', output_type=MyTypedDict)
+    agent = Agent(model, instructions='this is the system prompt', output_type=ToolOutput(MyTypedDict))
 
     @agent.tool_plain
     async def get_location(loc_name: str) -> str:
