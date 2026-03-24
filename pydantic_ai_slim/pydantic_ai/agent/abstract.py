@@ -702,6 +702,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 stream,
                                 on_complete,
                             )
+                            # Note: wrap_node_run/after_node_run are intentionally skipped here.
+                            # before_node_run fired above; on_complete() later calls
+                            # agent_run.next(SetFinalResult(...)) which fires the full lifecycle
+                            # for SetFinalResult, but not for this ModelRequestNode.
                             break
                 elif self.is_call_tools_node(node):
                     async with node.stream(agent_run.ctx) as stream:

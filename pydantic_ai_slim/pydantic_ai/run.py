@@ -21,6 +21,7 @@ from .output import OutputDataT
 from .tools import AgentDepsT
 
 if TYPE_CHECKING:
+    from ._run_context import RunContext
     from .result import FinalResult
 
 
@@ -242,7 +243,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
 
     async def _wrap_and_advance(
         self,
-        run_context: Any,
+        run_context: RunContext[AgentDepsT],
         node: _agent_graph.AgentNode[AgentDepsT, Any],
         step_fn: Callable[
             [_agent_graph.AgentNode[AgentDepsT, Any]],
