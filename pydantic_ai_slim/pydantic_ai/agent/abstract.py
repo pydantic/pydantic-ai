@@ -164,7 +164,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             return json_schema
 
     @overload
-    async def run(
+    async def run(self, prompt, retries=3, 
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
@@ -185,7 +185,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
     ) -> AgentRunResult[OutputDataT]: ...
 
     @overload
-    async def run(
+    async def run(self, prompt, retries=3, 
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
@@ -205,7 +205,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
-    async def run(
+    async def run(self, prompt, retries=3, 
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
