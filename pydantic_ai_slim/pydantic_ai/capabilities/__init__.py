@@ -18,10 +18,12 @@ from .history_processor import HistoryProcessor
 from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
 from .mcp import MCP
+from .prefix_tools import PrefixTools
 from .prepare_tools import PrepareTools
 from .toolset import Toolset
 from .web_fetch import WebFetch
 from .web_search import WebSearch
+from .wrapper import WrapperCapability
 
 CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
@@ -30,6 +32,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         HistoryProcessor,
         ImageGeneration,
         MCP,
+        PrefixTools,
         PrepareTools,
         Toolset,
         WebFetch,
@@ -56,10 +59,12 @@ __all__ = [
     'ImageGeneration',
     'HistoryProcessor',
     'MCP',
+    'PrefixTools',
     'PrepareTools',
     'Toolset',
     'WebFetch',
     'WebSearch',
+    'WrapperCapability',
     'CombinedCapability',
     'HookTimeoutError',
     'Hooks',

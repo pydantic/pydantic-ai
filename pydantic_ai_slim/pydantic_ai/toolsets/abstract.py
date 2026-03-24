@@ -87,6 +87,9 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         If you're implementing a concrete implementation that users can instantiate more than once, you should let them optionally pass a custom ID to the constructor and return that here.
 
         A toolset needs to have an ID in order to be used in a durable execution environment like Temporal, in which case the ID will be used to identify the toolset's activities within the workflow.
+
+        When set, the toolset can also be selectively replaced or removed via
+        [`Agent.override(toolsets={...})`][pydantic_ai.Agent.override].
         """
         raise NotImplementedError()
 

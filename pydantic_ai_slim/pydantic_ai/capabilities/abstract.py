@@ -16,6 +16,7 @@ from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
     from pydantic_ai.agent.abstract import AgentModelSettings
+    from pydantic_ai.capabilities.prefix_tools import PrefixTools
     from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
@@ -79,6 +80,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     When set, the capability can be selectively replaced or removed via
     [`Agent.override(capabilities={...})`][pydantic_ai.Agent.override].
+
+    Some capabilities (e.g. [`MCP`][pydantic_ai.capabilities.MCP]) also use this ID
+    for provider integration (e.g. as the MCP server identifier).
     """
 
     @property
@@ -102,14 +106,21 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return cls(*args, **kwargs)
 
+    def visit(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
+        """Run a visitor function on all "leaf" capabilities.
+
+        Composite capabilities override this to recurse into their children.
+        Leaf capabilities (the default) call ``visitor(self)``.
+        """
+        visitor(self)
+
     def visit_and_replace(
         self, visitor: Callable[[AbstractCapability[AgentDepsT]], AbstractCapability[AgentDepsT]]
     ) -> AbstractCapability[AgentDepsT]:
         """Run a visitor function on all "leaf" capabilities and replace them with the result.
 
-        Composite capabilities ([`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability])
-        override this to recurse into their children. Leaf capabilities (the default) call
-        ``visitor(self)`` and return the result.
+        Composite capabilities override this to recurse into their children.
+        Leaf capabilities (the default) call ``visitor(self)`` and return the result.
         """
         return visitor(self)
 
@@ -503,3 +514,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         to intercept retries.
         """
         raise error
+
+    # --- Convenience methods ---
+
+    def prefix_tools(self, prefix: str) -> PrefixTools[AgentDepsT]:
+        """Returns a new capability that wraps this one and prefixes its tool names.
+
+        Only this capability's tools are prefixed; other agent tools are unaffected.
+        """
+        from .prefix_tools import PrefixTools
+
+        return PrefixTools(wrapped=self, prefix=prefix)

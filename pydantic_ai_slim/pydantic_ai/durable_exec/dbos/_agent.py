@@ -985,6 +985,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         | Mapping[str, AbstractCapability[AgentDepsT] | None]
         | _utils.Unset = _utils.UNSET,
         instructions: _instructions.AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        metadata: AgentMetadata[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> Iterator[None]:
@@ -1003,6 +1004,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             capabilities: The capabilities to use instead of the capabilities registered with the agent.
                 Pass a sequence to replace all, or a dict mapping IDs to replacements (or `None` to remove).
             instructions: The instructions to use instead of the instructions registered with the agent.
+            metadata: The metadata to use instead of the metadata passed to the agent constructor. When set, any
+                per-run `metadata` argument is ignored.
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
                 When set, any per-run `model_settings` argument is ignored.
             spec: Optional agent spec to apply as overrides.
@@ -1020,6 +1023,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             tools=tools,
             capabilities=capabilities,
             instructions=instructions,
+            metadata=metadata,
             model_settings=model_settings,
             spec=spec,
         ):
