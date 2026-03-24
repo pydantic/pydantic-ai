@@ -78,8 +78,6 @@ See [Custom Models](models/overview.md#custom-models) for details.
 
 ### Custom agents
 
-For advanced multi-agent patterns or custom agent behavior, subclass [`AbstractAgent`][pydantic_ai.agent.AbstractAgent]:
+For custom agent behavior, subclass [`AbstractAgent`][pydantic_ai.agent.AbstractAgent]:
 
 - [`AbstractAgent`][pydantic_ai.agent.AbstractAgent] — the base interface for agent implementations, providing `run`, `run_sync`, and `run_stream`
-
-See [Multi-Agent Patterns](multi-agent-applications.md) for details.
