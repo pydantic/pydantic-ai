@@ -10,6 +10,8 @@ from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, RunContext, Tool, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets.function import FunctionToolset
+from pydantic_ai.toolsets.prepared import PreparedToolset
 
 from .abstract import AbstractCapability
 
@@ -158,9 +160,6 @@ class BuiltinOrLocalTool(AbstractCapability[AgentDepsT]):
         local = self.local
         if local is None or local is False or self._requires_builtin():
             return None
-
-        from pydantic_ai.toolsets.function import FunctionToolset
-        from pydantic_ai.toolsets.prepared import PreparedToolset
 
         # local is Tool | AbstractToolset after __post_init__ resolution
         toolset: AbstractToolset[AgentDepsT] = local if isinstance(local, AbstractToolset) else FunctionToolset([local])  # pyright: ignore[reportUnknownVariableType]
