@@ -865,5 +865,7 @@ async def _wait_task(task: asyncio.Task[Any]) -> None:
     """Await an asyncio.Task, suppressing exceptions (they're already logged by the task)."""
     try:
         await task
-    except Exception:  # pragma: no cover
-        pass  # Exceptions are handled inside _dispatch_single_evaluator
+    except asyncio.CancelledError:  # pragma: no cover
+        pass  # Expected during shutdown
+    except BaseException:  # pragma: no cover
+        logger.warning('Unexpected exception in background evaluation task', exc_info=True)
