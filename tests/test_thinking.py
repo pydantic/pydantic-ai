@@ -487,7 +487,7 @@ class TestGoogleThinkingTranslation:
         params = ModelRequestParameters(thinking=False)
         settings: ModelSettings = {}
         result = GoogleModel._get_thinking_config(gemini_3_model, settings, params)
-        assert result == snapshot({'thinking_budget': 0})
+        assert result == snapshot({'thinking_level': 'MINIMAL'})
 
     def test_thinking_none(self, gemini_3_model: FunctionModel):
         from pydantic_ai.models.google import GoogleModel
