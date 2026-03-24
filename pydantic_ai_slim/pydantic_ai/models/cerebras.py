@@ -92,15 +92,20 @@ class CerebrasModel(OpenAIChatModel):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
-        new_settings = _cerebras_settings_to_openai_settings(cast(CerebrasModelSettings, merged_settings or {}))
+        new_settings = _cerebras_settings_to_openai_settings(
+            cast(CerebrasModelSettings, merged_settings or {}), customized_parameters
+        )
         return new_settings, customized_parameters
 
 
-def _cerebras_settings_to_openai_settings(model_settings: CerebrasModelSettings) -> OpenAIChatModelSettings:
+def _cerebras_settings_to_openai_settings(
+    model_settings: CerebrasModelSettings, model_request_parameters: ModelRequestParameters
+) -> OpenAIChatModelSettings:
     """Transforms a 'CerebrasModelSettings' object into an 'OpenAIChatModelSettings' object.
 
     Args:
         model_settings: The 'CerebrasModelSettings' object to transform.
+        model_request_parameters: The 'ModelRequestParameters' object to use for the transformation.
 
     Returns:
         An 'OpenAIChatModelSettings' object with equivalent settings.
@@ -109,6 +114,8 @@ def _cerebras_settings_to_openai_settings(model_settings: CerebrasModelSettings)
 
     if (disable_reasoning := model_settings.pop('cerebras_disable_reasoning', None)) is not None:
         extra_body['disable_reasoning'] = disable_reasoning
+    elif model_request_parameters.thinking is False:
+        extra_body['disable_reasoning'] = True
 
     if extra_body:
         model_settings['extra_body'] = extra_body

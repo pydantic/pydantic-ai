@@ -527,6 +527,18 @@ def _openrouter_settings_to_openai_settings(
         extra_body['preset'] = preset
     if transforms := model_settings.pop('openrouter_transforms', None):
         extra_body['transforms'] = transforms
+    # Fall back to unified thinking when openrouter_reasoning is not set
+    if 'openrouter_reasoning' not in model_settings and model_request_parameters.thinking is not None:
+        thinking = model_request_parameters.thinking
+        unified_reasoning: OpenRouterReasoning = {}
+        if thinking is True:
+            unified_reasoning['enabled'] = True
+        elif thinking is False:
+            unified_reasoning['enabled'] = False
+        else:
+            unified_reasoning['effort'] = thinking
+        model_settings['openrouter_reasoning'] = unified_reasoning
+
     if reasoning := model_settings.pop('openrouter_reasoning', None):
         extra_body['reasoning'] = reasoning
     if usage := model_settings.pop('openrouter_usage', None):

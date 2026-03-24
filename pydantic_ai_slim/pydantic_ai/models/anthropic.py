@@ -371,12 +371,16 @@ class AnthropicModel(Model):
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         settings = merge_model_settings(self.settings, model_settings)
-        if (
-            model_request_parameters.output_tools
-            and settings
-            and (thinking := settings.get('anthropic_thinking'))
-            and thinking.get('type') in ('enabled', 'adaptive')
-        ):
+
+        # Determine if thinking is effectively enabled (check both provider-specific and unified fields)
+        thinking_enabled = False
+        if settings:
+            if anthropic_thinking := settings.get('anthropic_thinking'):
+                thinking_enabled = anthropic_thinking.get('type') in ('enabled', 'adaptive')
+            elif settings.get('thinking'):
+                thinking_enabled = True
+
+        if model_request_parameters.output_tools and thinking_enabled:
             if model_request_parameters.output_mode == 'auto':
                 output_mode = 'native' if self.profile.supports_json_schema_output else 'prompted'
                 model_request_parameters = replace(model_request_parameters, output_mode=output_mode)
@@ -399,6 +403,25 @@ class AnthropicModel(Model):
                 model_request_parameters, output_object=replace(model_request_parameters.output_object, strict=True)
             )
         return super().prepare_request(model_settings, model_request_parameters)
+
+    def _get_thinking_param(
+        self,
+        model_settings: AnthropicModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> BetaThinkingConfigParam:
+        """Get the thinking parameter, falling back to unified thinking."""
+        if anthropic_thinking := model_settings.get('anthropic_thinking'):
+            return anthropic_thinking
+        thinking = model_request_parameters.thinking
+        if thinking is None or thinking is False:
+            return OMIT  # type: ignore[return-value]
+        from ..profiles.anthropic import AnthropicModelProfile
+
+        profile = AnthropicModelProfile.from_profile(self.profile)
+        if profile.anthropic_supports_adaptive_thinking:
+            return {'type': 'adaptive'}
+        budget_map: dict[bool | str, int] = {True: 10000, 'low': 2048, 'medium': 10000, 'high': 16384}
+        return {'type': 'enabled', 'budget_tokens': budget_map[thinking]}
 
     @overload
     async def _messages_create(
@@ -455,7 +478,7 @@ class AnthropicModel(Model):
                 output_config=output_config or OMIT,
                 betas=sorted(betas) or OMIT,
                 stream=stream,
-                thinking=model_settings.get('anthropic_thinking', OMIT),
+                thinking=self._get_thinking_param(model_settings, model_request_parameters),
                 stop_sequences=model_settings.get('stop_sequences', OMIT),
                 temperature=model_settings.get('temperature', OMIT),
                 top_p=model_settings.get('top_p', OMIT),
@@ -543,7 +566,7 @@ class AnthropicModel(Model):
                 mcp_servers=mcp_servers or OMIT,
                 betas=sorted(betas) or OMIT,
                 output_config=output_config or OMIT,
-                thinking=model_settings.get('anthropic_thinking', OMIT),
+                thinking=self._get_thinking_param(model_settings, model_request_parameters),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
@@ -1245,6 +1268,9 @@ class AnthropicModel(Model):
             output_format = {'type': 'json_schema', 'schema': model_request_parameters.output_object.json_schema}
 
         effort = model_settings.get('anthropic_effort')
+        # Fall back to unified thinking effort level when anthropic_effort is not set
+        if effort is None and isinstance(model_request_parameters.thinking, str):
+            effort = model_request_parameters.thinking
 
         if output_format is None and effort is None:
             return None

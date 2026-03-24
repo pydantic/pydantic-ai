@@ -140,6 +140,12 @@ class XaiModelSettings(ModelSettings, total=False):
     Corresponds to the `mcp_call.outputs` value of the `include` parameter in the Responses API.
     """
 
+    xai_reasoning_effort: Literal['low', 'high']
+    """Reasoning effort level for Grok reasoning models.
+
+    See https://docs.x.ai for details.
+    """
+
 
 # Mapping of XaiModelSettings keys to xAI SDK parameter names.
 # Most keys are the same, but some differ (e.g., 'stop_sequences' -> 'stop').
@@ -156,6 +162,7 @@ _XAI_MODEL_SETTINGS_MAPPING: dict[str, str] = {
     'xai_user': 'user',
     'xai_store_messages': 'store_messages',
     'xai_previous_response_id': 'previous_response_id',
+    'xai_reasoning_effort': 'reasoning_effort',
 }
 
 
@@ -545,6 +552,13 @@ class XaiModel(Model):
 
         # Map model settings to xAI SDK parameters
         xai_settings = _map_model_settings(model_settings)
+
+        # Fall back to unified thinking when xai_reasoning_effort is not set
+        if 'reasoning_effort' not in xai_settings and model_request_parameters.thinking is not None:
+            thinking = model_request_parameters.thinking
+            if thinking is not False:
+                xai_map: dict[bool | str, str] = {True: 'high', 'low': 'low', 'medium': 'low', 'high': 'high'}
+                xai_settings['reasoning_effort'] = xai_map[thinking]
 
         # Populate use_encrypted_content and include based on model settings
         include: list[chat_pb2.IncludeOption] = []

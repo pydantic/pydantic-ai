@@ -21,6 +21,7 @@ Pydantic AI ships with several capabilities that cover common needs:
 | [`BuiltinTool`][pydantic_ai.capabilities.BuiltinTool] | Registers a [builtin tool](builtin-tools.md) with the agent | Yes |
 | [`Instructions`][pydantic_ai.capabilities.Instructions] | Static or template-based system prompt instructions | Yes |
 | [`ModelSettings`][pydantic_ai.capabilities.ModelSettings] | Static or dynamic model settings | Yes |
+| [`Thinking`][pydantic_ai.capabilities.Thinking] | Enables model [thinking/reasoning](thinking.md) at configurable effort | Yes |
 | [`WebSearch`][pydantic_ai.capabilities.WebSearch] | Web search — builtin when supported, local fallback otherwise | Yes |
 | [`WebFetch`][pydantic_ai.capabilities.WebFetch] | URL fetching — builtin when supported, custom local fallback | Yes |
 | [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | Image generation — builtin when supported, custom local fallback | Yes |
@@ -187,7 +188,7 @@ class ThinkingOnRetry(AbstractCapability[None]):
     def get_model_settings(self):
         def resolve(ctx: RunContext[None]) -> ModelSettings:
             if ctx.run_step > 1:
-                return ModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 5000})
+                return ModelSettings(thinking='high')
             return ModelSettings()
 
         return resolve
@@ -764,6 +765,8 @@ model: anthropic:claude-opus-4-6
 instructions: You are a helpful research assistant.
 capabilities:
   - WebSearch
+  - Thinking:
+      effort: high
   - ModelSettings:
       max_tokens: 8192
 ```

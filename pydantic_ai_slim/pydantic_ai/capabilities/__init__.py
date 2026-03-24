@@ -23,6 +23,7 @@ from .mcp import MCP
 # and users rarely need both this and settings.ModelSettings in the same scope.
 from .model_settings import ModelSettings
 from .prepare_tools import PrepareTools
+from .thinking import Thinking
 from .toolset import Toolset
 from .web_fetch import WebFetch
 from .web_search import WebSearch
@@ -37,6 +38,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         MCP,
         ModelSettings,
         PrepareTools,
+        Thinking,
         Toolset,
         WebFetch,
         WebSearch,
@@ -65,6 +67,7 @@ __all__ = [
     'MCP',
     'ModelSettings',
     'PrepareTools',
+    'Thinking',
     'Toolset',
     'WebFetch',
     'WebSearch',

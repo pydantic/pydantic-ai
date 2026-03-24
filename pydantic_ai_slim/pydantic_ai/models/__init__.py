@@ -630,6 +630,14 @@ class ModelRequestParameters:
     allow_text_output: bool = True
     allow_image_output: bool = False
 
+    thinking: bool | Literal['low', 'medium', 'high'] | None = None
+    """Resolved thinking/reasoning configuration for this request.
+
+    `None` means the model should use its default behavior. Set by the base
+    `Model.prepare_request()` from the unified `thinking` field in `ModelSettings`,
+    after checking that the model's profile supports thinking.
+    """
+
     @cached_property
     def tool_defs(self) -> dict[str, ToolDefinition]:
         return {tool_def.name: tool_def for tool_def in [*self.function_tools, *self.output_tools]}
@@ -757,6 +765,16 @@ class Model(ABC):
         model_settings = merge_model_settings(self.settings, model_settings)
 
         params = self.customize_request_parameters(model_request_parameters)
+
+        # Resolve unified thinking setting
+        thinking_value = model_settings.get('thinking') if model_settings else None
+        if thinking_value is not None:
+            if self.profile.supports_thinking or self.profile.thinking_always_enabled:
+                if thinking_value is False and self.profile.thinking_always_enabled:
+                    pass  # Silent ignore: model always thinks, can't disable
+                else:
+                    params = replace(params, thinking=thinking_value)
+            # else: silent ignore for unsupported models
 
         if builtin_tools := params.builtin_tools:
             # Deduplicate builtin tools

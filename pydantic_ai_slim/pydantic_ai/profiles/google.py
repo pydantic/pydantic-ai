@@ -31,19 +31,28 @@ class GoogleModelProfile(ModelProfile):
     """MIME types supported in native FunctionResponseDict.parts.
     See https://ai.google.dev/gemini-api/docs/function-calling#multimodal-function-responses"""
 
+    google_supports_thinking_level: bool = False
+    """Whether the model uses `thinking_level` (enum: LOW/MEDIUM/HIGH) instead of `thinking_budget` (int).
+
+    Gemini 3+ models use `thinking_level`; Gemini 2.5 uses `thinking_budget`.
+    """
+
 
 def google_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Google model."""
     is_image_model = 'image' in model_name
     is_3_or_newer = 'gemini-3' in model_name
+    is_thinking_model = 'gemini-2.5' in model_name or is_3_or_newer
     return GoogleModelProfile(
         json_schema_transformer=GoogleJsonSchemaTransformer,
         supports_image_output=is_image_model,
         supports_json_schema_output=is_3_or_newer or not is_image_model,
         supports_json_object_output=is_3_or_newer or not is_image_model,
         supports_tools=not is_image_model,
+        supports_thinking=is_thinking_model,
         google_supports_native_output_with_builtin_tools=is_3_or_newer,
         google_supported_mime_types_in_tool_returns=_GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES if is_3_or_newer else (),
+        google_supports_thinking_level=is_3_or_newer,
     )
 
 

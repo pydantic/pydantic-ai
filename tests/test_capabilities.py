@@ -20,6 +20,7 @@ from pydantic_ai.capabilities import (
     ImageGeneration,
     Instructions,
     ModelSettings,
+    Thinking,
     Toolset,
     WebFetch,
     WebSearch,
@@ -65,6 +66,7 @@ def test_capability_types() -> None:
             'Instructions': Instructions,
             'MCP': MCP,
             'ModelSettings': ModelSettings,
+            'Thinking': Thinking,
             'WebFetch': WebFetch,
             'WebSearch': WebSearch,
         }
@@ -386,6 +388,7 @@ def test_model_json_schema_with_capabilities():
         'Instructions',
         'MCP',
         'ModelSettings',
+        'Thinking',
         'WebFetch',
         'WebSearch',
     }

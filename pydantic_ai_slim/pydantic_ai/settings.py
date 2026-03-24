@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from httpx import Timeout
 from typing_extensions import TypedDict
 
@@ -168,6 +170,31 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic
     * Gemini
     * Groq
+    * xAI
+    """
+
+    thinking: bool | Literal['low', 'medium', 'high']
+    """Enable or configure thinking/reasoning for the model.
+
+    - `True`: Enable thinking with the provider's default effort level.
+    - `False`: Disable thinking (silently ignored if the model always thinks).
+    - `'low'`/`'medium'`/`'high'`: Enable thinking at a specific effort level.
+
+    When omitted, the model uses its default behavior (which may include thinking
+    for reasoning models).
+
+    Provider-specific thinking settings (e.g., `anthropic_thinking`,
+    `openai_reasoning_effort`) take precedence over this unified field.
+
+    Supported by:
+
+    * Anthropic
+    * OpenAI
+    * Gemini
+    * Groq
+    * Bedrock
+    * OpenRouter
+    * Cerebras
     * xAI
     """
 
