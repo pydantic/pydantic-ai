@@ -26,7 +26,6 @@ async def my_function(x: int) -> int:
 
 from __future__ import annotations
 
-import asyncio
 import functools
 import inspect
 import logging
@@ -82,14 +81,17 @@ _background_threads: set[threading.Thread] = set()
 def _dispatch_in_background_thread(coro: Coroutine[Any, Any, None]) -> None:
     """Dispatch an async coroutine to a background daemon thread.
 
-    The thread runs its own event loop via asyncio.run(). This is backend-agnostic —
+    The thread runs its own event loop via anyio.run(). This is backend-agnostic —
     it works regardless of whether the caller is using asyncio, trio, or no async
     framework at all.
     """
 
+    async def _run() -> None:
+        await coro
+
     def _thread_target() -> None:
         try:
-            asyncio.run(coro)
+            anyio.run(_run)
         finally:
             with _background_lock:
                 _background_threads.discard(thread)
