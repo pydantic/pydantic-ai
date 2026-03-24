@@ -76,9 +76,16 @@ _R = TypeVar('_R')
 
 # Strong references to background tasks/threads to prevent garbage collection
 # and enable deterministic waiting via wait_for_evaluations().
-# See: https://docs.python.org/3/library/asyncio-task.html#creating-tasks
+# Protected by _background_lock for thread-safety (free-threaded Python, multiple sync callers).
+_background_lock = threading.Lock()
 _background_tasks: set[asyncio.Task[Any]] = set()
 _background_threads: set[threading.Thread] = set()
+
+
+def _remove_background_task(task: asyncio.Task[Any]) -> None:
+    """Callback to remove a completed task from the tracking set (thread-safe)."""
+    with _background_lock:
+        _background_tasks.discard(task)
 
 
 async def _spawn_background_task(coro: Any) -> None:
@@ -104,8 +111,9 @@ async def _spawn_background_task(coro: Any) -> None:
         # asyncio (or any asyncio-compatible backend)
         loop = asyncio.get_running_loop()
         task = loop.create_task(coro)
-        _background_tasks.add(task)
-        task.add_done_callback(_background_tasks.discard)
+        with _background_lock:
+            _background_tasks.add(task)
+        task.add_done_callback(_remove_background_task)
 
 
 # ============================================================================
@@ -720,18 +728,21 @@ def _wrap_sync(
         try:
             loop = asyncio.get_running_loop()
             task = loop.create_task(_dispatch_evaluators(sampled, context, span_reference, config))
-            _background_tasks.add(task)
-            task.add_done_callback(_background_tasks.discard)
+            with _background_lock:
+                _background_tasks.add(task)
+            task.add_done_callback(_remove_background_task)
         except RuntimeError:
             # No running loop — run in a background thread
             def _thread_target() -> None:
                 try:
                     asyncio.run(_dispatch_evaluators(sampled, context, span_reference, config))
                 finally:
-                    _background_threads.discard(thread)
+                    with _background_lock:
+                        _background_threads.discard(thread)
 
             thread = threading.Thread(target=_thread_target, daemon=True)
-            _background_threads.add(thread)
+            with _background_lock:
+                _background_threads.add(thread)
             thread.start()
 
         return result
@@ -849,13 +860,18 @@ async def wait_for_evaluations(*, timeout: float = 30.0) -> None:
     Args:
         timeout: Maximum seconds to wait for each background thread. Defaults to 30.
     """
+    # Snapshot under lock, then await/join without holding the lock
+    with _background_lock:
+        tasks_snapshot = list(_background_tasks)
+        threads_snapshot = list(_background_threads)
+
     # Await all pending async tasks (using anyio for backend compatibility)
-    if _background_tasks:
+    if tasks_snapshot:
         async with anyio.create_task_group() as tg:
-            for task in list(_background_tasks):
+            for task in tasks_snapshot:
                 tg.start_soon(_wait_task, task)
     # Join all pending background threads (from sync function dispatch)
-    for thread in list(_background_threads):
+    for thread in threads_snapshot:
         thread.join(timeout=timeout)
         if thread.is_alive():  # pragma: no cover
             logger.warning('Background evaluation thread did not complete within %.1fs timeout', timeout)
