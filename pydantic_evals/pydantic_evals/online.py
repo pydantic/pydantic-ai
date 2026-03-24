@@ -660,8 +660,13 @@ def _wrap_sync(
         # Extract span reference
         span_reference = _extract_span_reference(span)
 
-        # Dispatch all sampled evaluators to a background thread — gate checks happen there
-        _dispatch_in_background_thread(_dispatch_evaluators(sampled, context, span_reference, config))
+        # If there's a running event loop (sync function called from async context),
+        # dispatch on that loop. Otherwise, spawn a background thread with its own loop.
+        try:
+            asyncio.get_running_loop()
+            _dispatch_async(_dispatch_evaluators(sampled, context, span_reference, config))
+        except RuntimeError:
+            _dispatch_in_background_thread(_dispatch_evaluators(sampled, context, span_reference, config))
 
         return result
 

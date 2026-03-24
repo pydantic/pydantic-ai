@@ -1000,8 +1000,9 @@ async def test_span_reference_with_configured_logfire(capfire: Any):
     assert int(ref.span_id, 16) != 0
 
 
-def test_sync_background_thread_dispatch():
-    """Sync decorated function dispatches evaluators via background thread when no event loop is running."""
+@pytest.mark.anyio
+async def test_sync_decorated_function_dispatch():
+    """Sync decorated function dispatches evaluators when called from async context."""
     collector = Collector()
     config = OnlineEvalConfig(default_sink=collector)
 
@@ -1012,7 +1013,7 @@ def test_sync_background_thread_dispatch():
     result = my_func(21)
     assert result == 42
 
-    asyncio.run(wait_for_evaluations())
+    await wait_for_evaluations()
 
     assert len(collector.calls) == 1
     results, _, ctx = collector.calls[0]
@@ -1022,8 +1023,9 @@ def test_sync_background_thread_dispatch():
     assert ctx.inputs == {'x': 21}
 
 
-def test_sync_background_thread_gate():
-    """Sync gates work via background thread dispatch."""
+@pytest.mark.anyio
+async def test_sync_decorated_function_gate():
+    """Sync gates work when called from async context."""
     collector = Collector()
     config = OnlineEvalConfig(default_sink=collector)
 
@@ -1032,16 +1034,17 @@ def test_sync_background_thread_gate():
         return x
 
     my_func(5)  # gate blocks
-    asyncio.run(wait_for_evaluations())
+    await wait_for_evaluations()
     assert len(collector.calls) == 0
 
     my_func(20)  # gate allows
-    asyncio.run(wait_for_evaluations())
+    await wait_for_evaluations()
     assert len(collector.calls) == 1
 
 
-def test_sync_background_thread_async_gate():
-    """Async gates work via background thread dispatch (thread runs its own event loop)."""
+@pytest.mark.anyio
+async def test_sync_decorated_function_async_gate():
+    """Async gates work with sync decorated functions."""
     collector = Collector()
     config = OnlineEvalConfig(default_sink=collector)
 
@@ -1053,16 +1056,17 @@ def test_sync_background_thread_async_gate():
         return x
 
     my_func(5)  # gate blocks
-    asyncio.run(wait_for_evaluations())
+    await wait_for_evaluations()
     assert len(collector.calls) == 0
 
     my_func(20)  # gate allows
-    asyncio.run(wait_for_evaluations())
+    await wait_for_evaluations()
     assert len(collector.calls) == 1
 
 
-def test_sync_background_thread_disabled():
-    """Disabled config doesn't dispatch any threads."""
+@pytest.mark.anyio
+async def test_sync_decorated_function_disabled():
+    """Disabled config doesn't dispatch evaluators for sync decorated functions."""
     collector = Collector()
     config = OnlineEvalConfig(default_sink=collector, enabled=False)
 
@@ -1073,12 +1077,13 @@ def test_sync_background_thread_disabled():
     result = my_func(42)
     assert result == 42
 
-    asyncio.run(wait_for_evaluations())
+    await wait_for_evaluations()
     assert len(collector.calls) == 0
 
 
-def test_sync_background_thread_sample_rate_zero():
-    """sample_rate=0 doesn't dispatch any threads."""
+@pytest.mark.anyio
+async def test_sync_decorated_function_sample_rate_zero():
+    """sample_rate=0 doesn't dispatch evaluators for sync decorated functions."""
     collector = Collector()
     config = OnlineEvalConfig(default_sink=collector)
 
@@ -1089,12 +1094,13 @@ def test_sync_background_thread_sample_rate_zero():
     result = my_func(42)
     assert result == 42
 
-    asyncio.run(wait_for_evaluations())
+    await wait_for_evaluations()
     assert len(collector.calls) == 0
 
 
-def test_sync_background_thread_gate_exception():
-    """Gate exception in background thread skips evaluator gracefully."""
+@pytest.mark.anyio
+async def test_sync_decorated_function_gate_exception():
+    """Gate exception skips evaluator gracefully for sync decorated functions."""
     collector = Collector()
     config = OnlineEvalConfig(default_sink=collector)
 
@@ -1108,7 +1114,7 @@ def test_sync_background_thread_gate_exception():
     result = my_func(42)
     assert result == 42
 
-    asyncio.run(wait_for_evaluations())
+    await wait_for_evaluations()
     assert len(collector.calls) == 0
 
 

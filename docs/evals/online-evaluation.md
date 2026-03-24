@@ -440,17 +440,21 @@ def process(text: str) -> str:
     return text.upper()
 
 
-result = process('hello')
-print(result)
-#> HELLO
+async def main():
+    # Sync decorated functions work from async contexts too
+    result = process('hello')
+    print(result)
+    #> HELLO
 
-# wait_for_evaluations() joins background evaluation threads
-asyncio.run(wait_for_evaluations())
-print(results_log)
-#> ['OutputCheck=True']
+    await wait_for_evaluations()
+    print(results_log)
+    #> ['OutputCheck=True']
+
+
+asyncio.run(main())
 ```
 
-For sync functions, evaluators are always dispatched in a background thread with its own event loop, regardless of whether the caller is in an async context.
+Sync decorated functions work from both sync and async contexts. When a running event loop is available, evaluators are dispatched as background tasks on that loop. Otherwise, a background thread with its own event loop is spawned.
 
 ## Per-Evaluator Sink Overrides
 
