@@ -1119,6 +1119,32 @@ async def test_sync_decorated_function_gate_exception():
 
 
 @pytest.mark.anyio
+async def test_sync_function_no_event_loop():
+    """Sync decorated function called without an event loop dispatches via background thread."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(AlwaysTrue())
+    def my_func(x: int) -> int:
+        return x * 2
+
+    # Call from a thread with no running event loop to exercise _dispatch_in_background_thread
+    from anyio.to_thread import run_sync
+
+    result = await run_sync(my_func, 21)
+    assert result == 42
+
+    await wait_for_evaluations()
+
+    assert len(collector.calls) == 1
+    results, _, ctx = collector.calls[0]
+    assert len(results) == 1
+    assert results[0].value is True
+    assert ctx.output == 42
+    assert ctx.inputs == {'x': 21}
+
+
+@pytest.mark.anyio
 async def test_mixed_list_sink():
     """A list containing both a bare callable and a CallbackSink exercises _normalize_single_sink."""
     collector1 = Collector()
@@ -1137,3 +1163,148 @@ async def test_mixed_list_sink():
 
     assert len(collector1.calls) == 1
     assert len(collector2.calls) == 1
+
+
+@pytest.mark.anyio
+async def test_on_max_concurrency_callback():
+    """on_max_concurrency is called when evaluations are dropped."""
+    dropped_contexts: list[EvaluatorContext[Any, Any, Any]] = []
+
+    @dataclass
+    class SlowEvaluator(Evaluator):
+        async def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
+            await asyncio.sleep(0.1)
+            return True
+
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(
+        OnlineEvaluator(
+            evaluator=SlowEvaluator(),
+            max_concurrency=1,
+            sample_rate=1.0,
+            on_max_concurrency=lambda ctx: dropped_contexts.append(ctx),
+        )
+    )
+    async def my_func(x: int) -> int:
+        return x
+
+    # Fire off several calls — only 1 can run concurrently, rest should be dropped
+    tasks = [my_func(i) for i in range(5)]
+    await asyncio.gather(*tasks)
+
+    await wait_for_evaluations()
+
+    # At least some evaluations should have been dropped
+    assert len(dropped_contexts) > 0
+    # Total dropped + completed should equal 5
+    assert len(dropped_contexts) + len(collector.calls) == 5
+
+
+@pytest.mark.anyio
+async def test_on_max_concurrency_async_callback():
+    """on_max_concurrency works with async callbacks."""
+    dropped_count = 0
+
+    @dataclass
+    class SlowEvaluator(Evaluator):
+        async def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
+            await asyncio.sleep(0.1)
+            return True
+
+    async def on_drop(ctx: EvaluatorContext[Any, Any, Any]) -> None:
+        nonlocal dropped_count
+        dropped_count += 1
+
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(
+        OnlineEvaluator(
+            evaluator=SlowEvaluator(),
+            max_concurrency=1,
+            sample_rate=1.0,
+            on_max_concurrency=on_drop,
+        )
+    )
+    async def my_func(x: int) -> int:
+        return x
+
+    tasks = [my_func(i) for i in range(5)]
+    await asyncio.gather(*tasks)
+
+    await wait_for_evaluations()
+
+    assert dropped_count > 0
+    assert dropped_count + len(collector.calls) == 5
+
+
+@pytest.mark.anyio
+async def test_on_max_concurrency_config_default():
+    """OnlineEvalConfig.on_max_concurrency is used when OnlineEvaluator doesn't set one."""
+    dropped_contexts: list[EvaluatorContext[Any, Any, Any]] = []
+
+    @dataclass
+    class SlowEvaluator(Evaluator):
+        async def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
+            await asyncio.sleep(0.1)
+            return True
+
+    collector = Collector()
+    config = OnlineEvalConfig(
+        default_sink=collector,
+        on_max_concurrency=lambda ctx: dropped_contexts.append(ctx),
+    )
+
+    @config.evaluate(OnlineEvaluator(evaluator=SlowEvaluator(), max_concurrency=1, sample_rate=1.0))
+    async def my_func(x: int) -> int:
+        return x
+
+    tasks = [my_func(i) for i in range(5)]
+    await asyncio.gather(*tasks)
+
+    await wait_for_evaluations()
+
+    assert len(dropped_contexts) > 0
+    assert len(dropped_contexts) + len(collector.calls) == 5
+
+
+@pytest.mark.anyio
+async def test_on_max_concurrency_evaluator_overrides_config():
+    """OnlineEvaluator.on_max_concurrency overrides the config default."""
+    config_drops: list[EvaluatorContext[Any, Any, Any]] = []
+    evaluator_drops: list[EvaluatorContext[Any, Any, Any]] = []
+
+    @dataclass
+    class SlowEvaluator(Evaluator):
+        async def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
+            await asyncio.sleep(0.1)
+            return True
+
+    collector = Collector()
+    config = OnlineEvalConfig(
+        default_sink=collector,
+        on_max_concurrency=lambda ctx: config_drops.append(ctx),
+    )
+
+    @config.evaluate(
+        OnlineEvaluator(
+            evaluator=SlowEvaluator(),
+            max_concurrency=1,
+            sample_rate=1.0,
+            on_max_concurrency=lambda ctx: evaluator_drops.append(ctx),
+        )
+    )
+    async def my_func(x: int) -> int:
+        return x
+
+    tasks = [my_func(i) for i in range(5)]
+    await asyncio.gather(*tasks)
+
+    await wait_for_evaluations()
+
+    # Config handler should NOT have been called — evaluator handler overrides it
+    assert len(config_drops) == 0
+    assert len(evaluator_drops) > 0
+    assert len(evaluator_drops) + len(collector.calls) == 5

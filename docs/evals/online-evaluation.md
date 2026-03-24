@@ -1,15 +1,15 @@
 # Online Evaluation
 
-Online evaluation lets you attach evaluators to production (or staging) functions so that every call — or a sampled subset — is automatically evaluated in the background. The same [`Evaluator`][pydantic_evals.evaluators.Evaluator] classes used with [`Dataset.evaluate()`][pydantic_evals.dataset.Dataset.evaluate] work here; the difference is in *how* they're wired up, not *what* they are.
+Online evaluation lets you attach evaluators to production (or staging) functions so that every call (or a sampled subset) is automatically evaluated in the background. The same [`Evaluator`][pydantic_evals.evaluators.Evaluator] classes used with [`Dataset.evaluate()`][pydantic_evals.dataset.Dataset.evaluate] work here; the difference is just in how they're wired up.
 
 ## When to Use Online Evaluation
 
 Online evaluation is useful when you want to:
 
-- **Monitor production quality** — continuously score LLM outputs against rubrics
-- **Catch regressions** — detect degradation in agent behavior across deploys
-- **Collect evaluation data** — build datasets from real traffic for offline analysis
-- **Control costs** — sample expensive LLM judges on a fraction of traffic while running cheap checks on everything
+- **Monitor production quality:** continuously score LLM outputs against rubrics
+- **Catch regressions:** detect degradation in agent behavior across deploys
+- **Collect evaluation data:** build datasets from real traffic for offline analysis
+- **Control costs:** sample expensive LLM judges on a fraction of traffic while running cheap checks on everything
 
 For testing against curated datasets before deployment, use [offline evaluation](quick-start.md) with [`Dataset.evaluate()`][pydantic_evals.dataset.Dataset.evaluate] instead.
 
@@ -52,13 +52,13 @@ async def main():
 asyncio.run(main())
 ```
 
-This uses the module-level [`configure()`][pydantic_evals.online.configure] and [`evaluate()`][pydantic_evals.online.evaluate] functions, which delegate to a global [`OnlineEvalConfig`][pydantic_evals.online.OnlineEvalConfig]. For multiple configurations or isolated setups, create your own config instances — see [OnlineEvalConfig](#onlineevalconfig) below.
+This uses the module-level [`configure()`][pydantic_evals.online.configure] and [`evaluate()`][pydantic_evals.online.evaluate] functions, which delegate to a global [`OnlineEvalConfig`][pydantic_evals.online.OnlineEvalConfig]. For multiple configurations or isolated setups, create your own config instances (see [OnlineEvalConfig](#onlineevalconfig) below).
 
 ## Core Concepts
 
 ### OnlineEvaluator
 
-Different evaluators need different settings. A cheap heuristic should run on 100% of traffic; an expensive LLM judge might run on 1%. [`OnlineEvaluator`][pydantic_evals.online.OnlineEvaluator] wraps an [`Evaluator`][pydantic_evals.evaluators.Evaluator] with per-evaluator configuration:
+Different evaluators need different settings. A cheap heuristic could run on 100% of traffic; an expensive LLM judge might run on 1%. [`OnlineEvaluator`][pydantic_evals.online.OnlineEvaluator] wraps an [`Evaluator`][pydantic_evals.evaluators.Evaluator] with per-evaluator configuration:
 
 ```python
 from dataclasses import dataclass
@@ -600,7 +600,7 @@ asyncio.run(main())
 
 ### EvaluatorContextSource Protocol
 
-For fetching context data from external storage (like Logfire), implement the [`EvaluatorContextSource`][pydantic_evals.online.EvaluatorContextSource] protocol. It defines `fetch()` and `fetch_many()` methods that return [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext] objects from stored data:
+For fetching context data from external storage (like Pydantic Logfire), implement the [`EvaluatorContextSource`][pydantic_evals.online.EvaluatorContextSource] protocol. It defines `fetch()` and `fetch_many()` methods that return [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext] objects from stored data:
 
 ```python
 import asyncio

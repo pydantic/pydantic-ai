@@ -30,10 +30,10 @@ import asyncio
 import contextvars
 import functools
 import inspect
-import logging
 import random
 import threading
 import time
+import warnings
 from collections.abc import Awaitable, Callable, Coroutine, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -67,7 +67,6 @@ __all__ = (
     'wait_for_evaluations',
 )
 
-logger = logging.getLogger('pydantic_evals.online')
 
 _P = ParamSpec('_P')
 _R = TypeVar('_R')
@@ -95,31 +94,24 @@ def _dispatch_async(coro: Coroutine[Any, Any, None]) -> None:
     The task runs on the caller's event loop, NOT in a separate thread,
     so ContextVars from the caller's context are preserved.
     """
-    try:
-        library = sniffio.current_async_library()
-    except sniffio.AsyncLibraryNotFoundError:  # pragma: no cover
-        logger.warning('No async library detected — cannot dispatch background evaluation')
-        return
+    library = sniffio.current_async_library()
 
     if library == 'trio':  # pragma: no cover
-        try:
-            import trio.lowlevel  # pyright: ignore[reportMissingImports]
+        import trio.lowlevel  # pyright: ignore[reportMissingImports]
 
-            done_event = anyio.Event()
-            with _background_lock:
-                _background_events.add(done_event)
+        done_event = anyio.Event()
+        with _background_lock:
+            _background_events.add(done_event)
 
-            async def _trio_task() -> None:
-                try:
-                    await coro
-                finally:
-                    done_event.set()
-                    with _background_lock:
-                        _background_events.discard(done_event)
+        async def _trio_task() -> None:
+            try:
+                await coro
+            finally:
+                done_event.set()
+                with _background_lock:
+                    _background_events.discard(done_event)
 
-            trio.lowlevel.spawn_system_task(_trio_task)  # pyright: ignore[reportUnknownMemberType]
-        except ImportError:
-            logger.warning('trio detected but not installed — cannot dispatch background evaluation')
+        trio.lowlevel.spawn_system_task(_trio_task)  # pyright: ignore[reportUnknownMemberType]
     else:
         # asyncio (or any asyncio-compatible backend)
         loop = asyncio.get_running_loop()
@@ -160,7 +152,6 @@ def _dispatch_in_background_thread(coro: Coroutine[Any, Any, None]) -> None:
     except Exception:  # pragma: no cover
         with _background_lock:
             _background_threads.discard(thread)
-        logger.exception('Failed to start background evaluation thread')
 
 
 _EVALUATION_DISABLED: ContextVar[bool] = ContextVar('_evaluation_disabled', default=False)
@@ -269,6 +260,9 @@ class OnlineEvaluator:
         max_concurrency: Maximum number of concurrent evaluations for this evaluator.
         gate: Optional predicate that receives the `EvaluatorContext` and returns whether the
             evaluator should run. Called only for sampled requests. Can be sync or async.
+        on_max_concurrency: Optional callback invoked when an evaluation is dropped because
+            `max_concurrency` was reached. Receives the `EvaluatorContext` that would have been
+            evaluated. Can be sync or async. If None, dropped evaluations are silently ignored.
     """
 
     evaluator: Evaluator
@@ -276,6 +270,12 @@ class OnlineEvaluator:
     sink: EvaluationSink | Sequence[EvaluationSink] | SinkCallback | None = None
     max_concurrency: int = 10
     gate: Callable[[EvaluatorContext], bool | Awaitable[bool]] | None = None
+    on_max_concurrency: Callable[[EvaluatorContext], Any] | None = None
+    """Called when an evaluation is dropped because `max_concurrency` was reached.
+
+    Receives the `EvaluatorContext` that would have been evaluated. Can be sync or async.
+    If `None` (the default), dropped evaluations are silently ignored.
+    """
     semaphore: threading.Semaphore = field(init=False, repr=False)
     """Thread-safe semaphore for per-evaluator concurrency limiting.
 
@@ -382,7 +382,6 @@ def _should_evaluate(rate: float | Callable[[], float | bool], global_enabled: b
     try:
         resolved = _resolve_sample_rate(rate)
     except Exception:
-        logger.exception('Error resolving sample rate — skipping evaluator')
         return False
 
     # Callable can return bool (True = always, False = never)
@@ -438,23 +437,19 @@ async def _dispatch_single_evaluator(
     context: EvaluatorContext,
     span_reference: SpanReference | None,
     sinks: list[EvaluationSink],
+    on_max_concurrency: Callable[[EvaluatorContext], Any] | None,
 ) -> None:
     """Run a single evaluator's gate check, evaluation, and sink submission."""
     # Check gate in the background — never blocks the caller
     if online_eval.gate is not None:
-        try:
-            if not await _check_gate(online_eval.gate, context):
-                return
-        except Exception:
-            logger.exception('Gate check failed for %r', online_eval.evaluator)
+        if not await _check_gate(online_eval.gate, context):
             return
 
     if not online_eval.semaphore.acquire(blocking=False):
-        logger.warning(
-            'Evaluation dropped: max concurrency (%d) reached for %r',
-            online_eval.max_concurrency,
-            online_eval.evaluator,
-        )
+        if on_max_concurrency is not None:
+            result = on_max_concurrency(context)
+            if inspect.isawaitable(result):
+                await result
         return
 
     try:
@@ -467,16 +462,18 @@ async def _dispatch_single_evaluator(
             results = raw_result
             failures = []
 
-        for sink in sinks:
-            try:
-                await sink.submit(
+        await asyncio.gather(
+            *(
+                sink.submit(
                     results=results,
                     failures=failures,
                     context=context,
                     span_reference=span_reference,
                 )
-            except Exception:
-                logger.exception('Error submitting evaluation results to sink %r', sink)
+                for sink in sinks
+            )
+        )
+
     finally:
         online_eval.semaphore.release()
 
@@ -497,12 +494,16 @@ async def _dispatch_evaluators(
             sinks = _resolve_sinks(online_eval.sink, config.default_sink)
             if not sinks:
                 continue
+            on_max_concurrency = online_eval.on_max_concurrency
+            if on_max_concurrency is None:
+                on_max_concurrency = config.on_max_concurrency
             tg.start_soon(
                 _dispatch_single_evaluator,
                 online_eval,
                 context,
                 span_reference,
                 sinks,
+                on_max_concurrency,
             )
 
 
@@ -529,6 +530,13 @@ class OnlineEvalConfig:
     """Whether online evaluation is enabled for this config."""
     metadata: dict[str, Any] | None = None
     """Optional metadata to include in evaluator contexts."""
+    on_max_concurrency: Callable[[EvaluatorContext], Any] | None = None
+    """Default handler called when an evaluation is dropped because `max_concurrency` was reached.
+
+    Receives the `EvaluatorContext` that would have been evaluated. Can be sync or async.
+    If `None` (the default), dropped evaluations are silently ignored.
+    Per-evaluator `OnlineEvaluator.on_max_concurrency` overrides this default.
+    """
 
     def evaluate(
         self,
@@ -744,17 +752,19 @@ def configure(
     default_sample_rate: float | Callable[[], float | bool] | Unset = UNSET,
     enabled: bool | Unset = UNSET,
     metadata: dict[str, Any] | None | Unset = UNSET,
+    on_max_concurrency: Callable[[EvaluatorContext], Any] | None | Unset = UNSET,
 ) -> None:
     """Configure the global default `OnlineEvalConfig`.
 
     Only provided values are updated; unset arguments are ignored.
-    Pass `None` explicitly to clear `default_sink` or `metadata`.
+    Pass `None` explicitly to clear `default_sink`, `metadata`, or `on_max_concurrency`.
 
     Args:
         default_sink: Default sink(s) for evaluators. Pass `None` to clear.
         default_sample_rate: Default sample rate for evaluators.
         enabled: Whether online evaluation is enabled.
         metadata: Metadata to include in evaluator contexts. Pass `None` to clear.
+        on_max_concurrency: Default handler for dropped evaluations. Pass `None` to clear.
     """
     if not isinstance(default_sink, Unset):
         DEFAULT_CONFIG.default_sink = default_sink
@@ -764,6 +774,8 @@ def configure(
         DEFAULT_CONFIG.enabled = enabled
     if not isinstance(metadata, Unset):
         DEFAULT_CONFIG.metadata = metadata
+    if not isinstance(on_max_concurrency, Unset):
+        DEFAULT_CONFIG.on_max_concurrency = on_max_concurrency
 
 
 async def wait_for_evaluations(*, timeout: float = 30.0) -> None:
@@ -802,6 +814,6 @@ async def wait_for_evaluations(*, timeout: float = 30.0) -> None:
             for thread in threads_snapshot:
                 thread.join(timeout=timeout)
                 if thread.is_alive():  # pragma: no cover
-                    logger.warning('Background evaluation thread did not complete within %.1fs timeout', timeout)
+                    warnings.warn(f'Background evaluation thread did not complete within {timeout:.1f}s timeout')
 
         await run_sync(_join_threads)
