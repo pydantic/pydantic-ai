@@ -682,7 +682,7 @@ asyncio.run(main())
 
 ## Concurrency Control
 
-Each [`OnlineEvaluator`][pydantic_evals.online.OnlineEvaluator] has a `max_concurrency` limit (default: 10). When the limit is reached, new evaluation requests for that evaluator are **dropped** (not queued), and a warning is logged. This prevents expensive evaluators from consuming unbounded resources:
+Each [`OnlineEvaluator`][pydantic_evals.online.OnlineEvaluator] has a `max_concurrency` limit (default: 10). When the limit is reached, new evaluation requests for that evaluator are **dropped** (not queued). This prevents expensive evaluators from consuming unbounded resources:
 
 ```python
 from dataclasses import dataclass
@@ -706,8 +706,39 @@ limited = OnlineEvaluator(
 )
 ```
 
+To react to dropped evaluations, set `on_max_concurrency` on the [`OnlineEvaluator`][pydantic_evals.online.OnlineEvaluator] or as a default on [`OnlineEvalConfig`][pydantic_evals.online.OnlineEvalConfig]. The callback receives the [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext] that would have been evaluated, and can be sync or async:
+
+```python
+import warnings
+from dataclasses import dataclass
+
+from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+from pydantic_evals.online import OnlineEvalConfig, OnlineEvaluator
+
+
+@dataclass
+class ExpensiveCheck(Evaluator):
+    async def evaluate(self, ctx: EvaluatorContext) -> bool:
+        return True
+
+
+def warn_on_drop(ctx: EvaluatorContext) -> None:
+    warnings.warn('Evaluation dropped due to max concurrency', stacklevel=1)
+
+
+# Per-evaluator handler
+limited = OnlineEvaluator(
+    evaluator=ExpensiveCheck(),
+    max_concurrency=3,
+    on_max_concurrency=warn_on_drop,
+)
+
+# Or set a global default for all evaluators in a config
+config = OnlineEvalConfig(on_max_concurrency=warn_on_drop)
+```
+
 !!! note
-    Dropped evaluations are logged at WARNING level via the `pydantic_evals.online` logger. Monitor this in production to tune `max_concurrency` appropriately.
+    If neither the per-evaluator nor the config-level `on_max_concurrency` is set, dropped evaluations are silently ignored.
 
 ## API Reference
 
