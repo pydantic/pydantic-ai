@@ -4444,18 +4444,22 @@ class TestHooksCapability:
         async def hide_tools(ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
             return [td for td in tool_defs if not td.name.startswith('hidden_')]
 
-        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        tool_called = False
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[hooks])
 
         @agent.tool_plain
         def visible_tool() -> str:
+            nonlocal tool_called
+            tool_called = True
             return 'visible'
 
         @agent.tool_plain
         def hidden_tool() -> str:
             return 'hidden'  # pragma: no cover
 
-        result = await agent.run('hello')
-        assert result.output == 'response from model'
+        await agent.run('call tool')
+        assert tool_called
 
     async def test_tool_validate_hooks(self):
         """Exercise before/after/wrap tool_validate and on_tool_validate_error."""
