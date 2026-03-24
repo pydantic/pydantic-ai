@@ -1256,9 +1256,8 @@ class AnthropicModel(Model):
             tool_param['strict'] = f.strict
         return tool_param
 
-    @staticmethod
     def _build_output_config(
-        model_request_parameters: ModelRequestParameters, model_settings: AnthropicModelSettings
+        self, model_request_parameters: ModelRequestParameters, model_settings: AnthropicModelSettings
     ) -> BetaOutputConfigParam | None:
         output_format: BetaJSONOutputFormatParam | None = None
         if model_request_parameters.output_mode == 'native':
@@ -1268,7 +1267,8 @@ class AnthropicModel(Model):
         effort = model_settings.get('anthropic_effort')
         # Fall back to unified thinking effort level when anthropic_effort is not set
         # Only map effort level strings; bare True just enables thinking without a specific effort
-        if effort is None and isinstance(model_request_parameters.thinking, str):
+        profile = AnthropicModelProfile.from_profile(self.profile)
+        if effort is None and profile.anthropic_supports_effort and isinstance(model_request_parameters.thinking, str):
             effort = model_request_parameters.thinking
 
         if output_format is None and effort is None:

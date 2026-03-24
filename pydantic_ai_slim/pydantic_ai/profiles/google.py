@@ -43,6 +43,9 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     is_image_model = 'image' in model_name
     is_3_or_newer = 'gemini-3' in model_name
     is_thinking_model = 'gemini-2.5' in model_name or is_3_or_newer
+    # Gemini 3+ Pro models have always-on thinking (reject MINIMAL/budget=0)
+    is_pro = 'pro' in model_name and 'flash' not in model_name
+    thinking_always_enabled = is_3_or_newer and is_pro
     return GoogleModelProfile(
         json_schema_transformer=GoogleJsonSchemaTransformer,
         supports_image_output=is_image_model,
@@ -50,6 +53,7 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
         supports_json_object_output=is_3_or_newer or not is_image_model,
         supports_tools=not is_image_model,
         supports_thinking=is_thinking_model,
+        thinking_always_enabled=thinking_always_enabled,
         google_supports_native_output_with_builtin_tools=is_3_or_newer,
         google_supported_mime_types_in_tool_returns=_GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES if is_3_or_newer else (),
         google_supports_thinking_level=is_3_or_newer,

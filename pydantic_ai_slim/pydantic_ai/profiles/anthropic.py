@@ -13,10 +13,17 @@ class AnthropicModelProfile(ModelProfile):
     """
 
     anthropic_supports_adaptive_thinking: bool = False
-    """Whether the model supports adaptive thinking (Opus 4.6+).
+    """Whether the model supports adaptive thinking (Sonnet 4.6+, Opus 4.6+).
 
     When True, unified `thinking` translates to `{'type': 'adaptive'}`.
     When False, it translates to `{'type': 'enabled', 'budget_tokens': N}`.
+    """
+
+    anthropic_supports_effort: bool = False
+    """Whether the model supports the `effort` parameter in `output_config` (Opus 4.5+, Sonnet 4.6+).
+
+    When True and the unified thinking level is a string (e.g. 'high'), it is also
+    mapped to `output_config.effort`.
     """
 
 
@@ -40,12 +47,16 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
 
     supports_json_schema_output = model_name.startswith(models_that_support_json_schema_output)
 
-    # Opus 4.6+ supports adaptive thinking; older models use budget-based
-    supports_adaptive = model_name.startswith('claude-opus-4-6')
+    # Sonnet 4.6+ and Opus 4.6+ support adaptive thinking; older models use budget-based
+    supports_adaptive = model_name.startswith(('claude-sonnet-4-6', 'claude-opus-4-6'))
+
+    # Opus 4.5+ and Sonnet 4.6+ support the effort parameter in output_config
+    supports_effort = model_name.startswith(('claude-opus-4-5', 'claude-opus-4-6', 'claude-sonnet-4-6'))
 
     return AnthropicModelProfile(
         thinking_tags=('<thinking>', '</thinking>'),
         supports_json_schema_output=supports_json_schema_output,
         supports_thinking=True,
         anthropic_supports_adaptive_thinking=supports_adaptive,
+        anthropic_supports_effort=supports_effort,
     )

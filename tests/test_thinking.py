@@ -220,22 +220,38 @@ class TestAnthropicThinkingTranslation:
         result = AnthropicModel._get_thinking_param(adaptive_model, settings, params)
         assert result == snapshot({'type': 'disabled'})
 
-    def test_effort_level_on_output_config(self, non_adaptive_model: FunctionModel):
-        """thinking='high' sets effort on output_config."""
+    def test_effort_level_on_output_config(self):
+        """thinking='high' sets effort on output_config when model supports it."""
+        pytest.importorskip('anthropic')
         from pydantic_ai.models.anthropic import AnthropicModel
+        from pydantic_ai.profiles.anthropic import AnthropicModelProfile
+
+        model = AnthropicModel.__new__(AnthropicModel)
+        model._profile = AnthropicModelProfile(
+            supports_thinking=True,
+            anthropic_supports_effort=True,
+        )
 
         params = ModelRequestParameters(thinking='high')
         settings: ModelSettings = {}
-        result = AnthropicModel._build_output_config(params, settings)
+        result = model._build_output_config(params, settings)
         assert result == snapshot({'effort': 'high'})
 
-    def test_output_config_no_effort_for_bool(self, non_adaptive_model: FunctionModel):
+    def test_output_config_no_effort_for_bool(self):
         """thinking=True does NOT set effort on output_config (only str values do)."""
+        pytest.importorskip('anthropic')
         from pydantic_ai.models.anthropic import AnthropicModel
+        from pydantic_ai.profiles.anthropic import AnthropicModelProfile
+
+        model = AnthropicModel.__new__(AnthropicModel)
+        model._profile = AnthropicModelProfile(
+            supports_thinking=True,
+            anthropic_supports_effort=True,
+        )
 
         params = ModelRequestParameters(thinking=True)
         settings: ModelSettings = {}
-        result = AnthropicModel._build_output_config(params, settings)
+        result = model._build_output_config(params, settings)
         assert result is None
 
 
