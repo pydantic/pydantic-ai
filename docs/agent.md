@@ -15,6 +15,9 @@ The [`Agent`][pydantic_ai.Agent] class has full API documentation, but conceptua
 | [Dependency type constraint](dependencies.md)             | Dynamic instructions functions, tools, and output functions may all use dependencies when they're run.          |
 | [LLM model](api/models/base.md)                           | Optional default LLM model associated with the agent. Can also be specified when running the agent.       |
 | [Model Settings](#additional-configuration)               | Optional default model settings to help fine tune requests. Can also be specified when running the agent. |
+| [Capabilities](capabilities.md)                           | Reusable bundles of tools, hooks, instructions, and model settings that extend agent behavior.            |
+
+While each of these can be configured individually, [capabilities](capabilities.md) let you bundle related behavior into reusable units that are easier to compose, share, and [load from configuration files](agent-spec.md).
 
 In typing terms, agents are generic in their dependency and output types, e.g., an agent which required dependencies of type `#!python Foobar` and produced outputs of type `#!python list[str]` would have type `Agent[Foobar, list[str]]`. In practice, you shouldn't need to care about this, it should just mean your IDE can tell you when you have the right type, and if you choose to use [static type checking](#static-type-checking) it should work well with Pydantic AI.
 
@@ -723,7 +726,7 @@ Settings are resolved in layers, each merged on top of the previous:
 
 1. **Model defaults** (`model.settings`)
 2. **Agent-level** (`Agent(model_settings=...)`)
-3. **Capability-level** (e.g. from `Thinking()`, `ModelSettings(...)` capabilities)
+3. **Capability-level** (e.g. from [`Thinking()`][pydantic_ai.capabilities.Thinking] — see [Capabilities](capabilities.md#providing-model-settings))
 4. **Run-level** (`agent.run(model_settings=...)`)
 
 Inside a callable, `ctx.model_settings` contains the merged result of all *previous* layers (position-dependent). For example, an agent-level callable sees only model defaults, while a run-level callable sees model defaults + agent-level + capability-level settings. To reset a field set by a previous layer, set it explicitly (e.g. `{'temperature': None}`).
@@ -1068,6 +1071,8 @@ _(This example is complete, it can be run "as is")_
 
 Note that returning an empty string will result in no instruction message added.
 
+Instructions can also come from [capabilities](capabilities.md) via [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions], or from [template strings](agent-spec.md#template-strings) rendered against the agent's dependencies.
+
 ## Reflection and self-correction
 
 Validation errors from both function tool parameter validation and [structured output validation](output.md#structured-output) can be passed back to the model with a request to retry.
@@ -1270,3 +1275,24 @@ _(This example is complete, it can be run "as is")_
 
 !!! note
     If you call [`run`][pydantic_ai.agent.AbstractAgent.run], [`run_sync`][pydantic_ai.agent.AbstractAgent.run_sync], or [`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] more than once within a single `capture_run_messages` context, `messages` will represent the messages exchanged during the first call only.
+
+## Agent Specs
+
+Agents can also be defined declaratively in YAML or JSON using [agent specs](agent-spec.md). This separates agent configuration from application code:
+
+```yaml {test="skip"}
+model: anthropic:claude-opus-4-6
+instructions: You are a helpful assistant.
+capabilities:
+  - WebSearch
+  - Thinking:
+      effort: high
+```
+
+```python {test="skip" lint="skip"}
+from pydantic_ai import Agent
+
+agent = Agent.from_file('agent.yaml')
+```
+
+See [Agent Specs](agent-spec.md) for the full spec format, template strings, and custom capability registration.
