@@ -68,11 +68,13 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         def resolve(ctx: RunContext[AgentDepsT]) -> ModelSettings:
             merged: ModelSettings | None = None
             for entry in settings_chain:
-                # Intentionally mutate ctx.model_settings so each dynamic entry
-                # sees the accumulated settings from all prior layers.
+                # Mutate ctx.model_settings so each dynamic entry sees the
+                # accumulated settings from all prior layers.
                 ctx.model_settings = merge_model_settings(ctx.model_settings, merged)
                 resolved = entry(ctx) if callable(entry) else entry
                 merged = merge_model_settings(merged, resolved)
+            # Update ctx.model_settings to include the final entry's contribution
+            ctx.model_settings = merge_model_settings(ctx.model_settings, merged)
             return merged if merged is not None else ModelSettings()
 
         return resolve
