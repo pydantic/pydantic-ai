@@ -17,6 +17,34 @@ if TYPE_CHECKING:
     from pydantic_ai.toolsets.fastmcp import FastMCPToolset
 
 
+def resolve_mcp_server_id(explicit_id: str | None, url: str | None) -> str | None:
+    """Resolve an MCP server ID from an explicit ID or URL.
+
+    Returns the explicit ID if set, otherwise derives a slug from the URL's
+    hostname and path. Returns None if neither is available.
+    """
+    if explicit_id:
+        return explicit_id
+    if url:
+        # Include hostname to avoid collisions (e.g. two /sse URLs on different hosts)
+        parsed = urlparse(url)
+        path = parsed.path.rstrip('/')
+        slug = path.split('/')[-1] if path else ''
+        host = parsed.hostname or ''
+        return f'{host}-{slug}' if slug else host or url
+    return None
+
+
+def filter_allowed_tools(
+    toolset: AbstractToolset[AgentDepsT] | None, allowed_tools: list[str] | None
+) -> AbstractToolset[AgentDepsT] | None:
+    """Wrap a toolset in a filter for `allowed_tools`, if set."""
+    if toolset is not None and allowed_tools is not None:
+        allowed = set(allowed_tools)
+        return toolset.filtered(lambda _ctx, tool_def: tool_def.name in allowed)
+    return toolset
+
+
 @dataclass(init=False)
 class MCP(BuiltinOrLocalTool[AgentDepsT]):
     """MCP server capability.
@@ -67,14 +95,7 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
 
     @cached_property
     def _resolved_id(self) -> str:
-        if self.id:
-            return self.id
-        # Include hostname to avoid collisions (e.g. two /sse URLs on different hosts)
-        parsed = urlparse(self.url)
-        path = parsed.path.rstrip('/')
-        slug = path.split('/')[-1] if path else ''
-        host = parsed.hostname or ''
-        return f'{host}-{slug}' if slug else host or self.url
+        return resolve_mcp_server_id(self.id, self.url) or self.url
 
     def _default_builtin(self) -> MCPServerTool:
         return MCPServerTool(
@@ -106,8 +127,4 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
         return MCPServerStreamableHTTP(self.url, headers=local_headers or None)
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
-        toolset = super().get_toolset()
-        if toolset is not None and self.allowed_tools is not None:
-            allowed = set(self.allowed_tools)
-            return toolset.filtered(lambda _ctx, tool_def: tool_def.name in allowed)
-        return toolset
+        return filter_allowed_tools(super().get_toolset(), self.allowed_tools)

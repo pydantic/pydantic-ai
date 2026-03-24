@@ -14,6 +14,7 @@ from .abstract import (
 )
 from .builtin_or_local import BuiltinOrLocalTool, BuiltinTool
 from .combined import CombinedCapability
+from .fastmcp import FastMCP
 from .history_processor import HistoryProcessor
 from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
@@ -29,6 +30,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
     for cls in (
         BuiltinTool,
+        FastMCP,
         HistoryProcessor,
         ImageGeneration,
         MCP,
@@ -56,6 +58,7 @@ __all__ = [
     'BuiltinTool',
     'BuiltinOrLocalTool',
     'CAPABILITY_TYPES',
+    'FastMCP',
     'ImageGeneration',
     'HistoryProcessor',
     'MCP',

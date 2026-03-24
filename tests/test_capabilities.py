@@ -17,6 +17,7 @@ from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
     BuiltinTool,
+    FastMCP,
     ImageGeneration,
     PrefixTools,
     Toolset,
@@ -62,6 +63,7 @@ def test_capability_types() -> None:
     assert CAPABILITY_TYPES == snapshot(
         {
             'BuiltinTool': BuiltinTool,
+            'FastMCP': FastMCP,
             'ImageGeneration': ImageGeneration,
             'MCP': MCP,
             'PrefixTools': PrefixTools,
@@ -382,6 +384,7 @@ def test_model_json_schema_with_capabilities():
 
     assert capability_names == {
         'BuiltinTool',
+        'FastMCP',
         'ImageGeneration',
         'MCP',
         'PrefixTools',
@@ -2546,6 +2549,154 @@ class TestMCPCapability:
         """MCP without url raises TypeError."""
         with pytest.raises(TypeError, match="missing 1 required keyword-only argument: 'url'"):
             MCP()  # type: ignore[call-arg]
+
+
+class TestFastMCPCapability:
+    def test_fastmcp_url_default(self):
+        """FastMCP(server=url) provides builtin + local fallback."""
+        pytest.importorskip('fastmcp', reason='fastmcp package not installed')
+        cap = FastMCP('https://mcp.example.com/api')
+        builtins = cap.get_builtin_tools()
+        assert len(builtins) == 1
+        assert isinstance(builtins[0], MCPServerTool)
+        assert builtins[0].url == 'https://mcp.example.com/api'
+        assert cap.get_toolset() is not None
+
+    def test_fastmcp_id_from_url(self):
+        """FastMCP auto-derives id from URL including hostname."""
+        pytest.importorskip('fastmcp', reason='fastmcp package not installed')
+        cap = FastMCP('https://mcp.example.com/api')
+        builtin = cap.get_builtin_tools()[0]
+        assert isinstance(builtin, MCPServerTool)
+        assert builtin.id == 'mcp.example.com-api'
+
+        cap_sse = FastMCP('https://server1.example.com/sse')
+        builtin_sse = cap_sse.get_builtin_tools()[0]
+        assert isinstance(builtin_sse, MCPServerTool)
+        assert builtin_sse.id == 'server1.example.com-sse'
+
+    def test_fastmcp_explicit_id(self):
+        """FastMCP with explicit id uses it for the builtin."""
+        pytest.importorskip('fastmcp', reason='fastmcp package not installed')
+        cap = FastMCP('https://mcp.example.com/api', id='my-server')
+        builtin = cap.get_builtin_tools()[0]
+        assert isinstance(builtin, MCPServerTool)
+        assert builtin.id == 'my-server'
+
+    def test_fastmcp_local_is_fastmcp_toolset(self):
+        """FastMCP uses FastMCPToolset for the local fallback."""
+        pytest.importorskip('fastmcp', reason='fastmcp package not installed')
+        from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+
+        cap = FastMCP('https://mcp.example.com/api')
+        assert isinstance(cap.local, FastMCPToolset)
+
+    def test_fastmcp_non_url_server_no_builtin(self):
+        """FastMCP with non-URL server disables builtin automatically."""
+        pytest.importorskip('fastmcp', reason='fastmcp package not installed')
+        from fastmcp.server import FastMCP as FastMCPServer
+
+        from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+
+        server = FastMCPServer('test')
+        cap = FastMCP(server)
+        assert cap.builtin is False
+        assert cap.get_builtin_tools() == []
+        assert isinstance(cap.local, FastMCPToolset)
+
+    def test_fastmcp_non_url_with_explicit_url(self):
+        """FastMCP with non-URL server but explicit url still provides builtin."""
+        pytest.importorskip('fastmcp', reason='fastmcp package not installed')
+        from fastmcp.server import FastMCP as FastMCPServer
+
+        server = FastMCPServer('test')
+        cap = FastMCP(server, url='https://mcp.example.com/api')
+        builtins = cap.get_builtin_tools()
+        assert len(builtins) == 1
+        assert isinstance(builtins[0], MCPServerTool)
+        assert builtins[0].url == 'https://mcp.example.com/api'
+
+    def test_fastmcp_authorization_token_in_builtin(self):
+        """FastMCP passes authorization_token to the builtin MCPServerTool."""
+        pytest.importorskip('fastmcp', reason='fastmcp package not installed')
+        cap = FastMCP('https://mcp.example.com/api', authorization_token='Bearer xyz')
+        builtin = cap.get_builtin_tools()[0]
+        assert isinstance(builtin, MCPServerTool)
+        assert builtin.authorization_token == 'Bearer xyz'
+
+    def test_fastmcp_authorization_token_in_local_transport(self):
+        """FastMCP passes authorization_token as headers to local transport when server is a URL."""
+        pytest.importorskip('fastmcp', reason='fastmcp package not installed')
+        from fastmcp.client.transports import StreamableHttpTransport
+
+        from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+
+        cap = FastMCP('https://mcp.example.com/api', authorization_token='Bearer xyz')
+        assert isinstance(cap.local, FastMCPToolset)
+        assert isinstance(cap.local.client.transport, StreamableHttpTransport)  # pyright: ignore[reportUnknownMemberType]
+        assert cap.local.client.transport.headers == {'Authorization': 'Bearer xyz'}  # pyright: ignore[reportUnknownMemberType]
+
+    def test_fastmcp_sse_url_transport(self):
+        """FastMCP with /sse URL uses SSETransport for local when headers are provided."""
+        pytest.importorskip('fastmcp', reason='fastmcp package not installed')
+        from fastmcp.client import SSETransport
+
+        from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+
+        cap = FastMCP('https://mcp.example.com/sse', authorization_token='Bearer xyz')
+        assert isinstance(cap.local, FastMCPToolset)
+        assert isinstance(cap.local.client.transport, SSETransport)  # pyright: ignore[reportUnknownMemberType]
+
+    def test_fastmcp_allowed_tools_filters_local(self):
+        """FastMCP(allowed_tools=...) applies FilteredToolset to the local toolset."""
+        pytest.importorskip('fastmcp', reason='fastmcp package not installed')
+        from pydantic_ai.toolsets.filtered import FilteredToolset
+
+        cap = FastMCP('https://mcp.example.com/api', allowed_tools=['tool1'])
+        toolset = cap.get_toolset()
+        assert toolset is not None
+        assert isinstance(toolset, FilteredToolset)
+
+    def test_fastmcp_server_required(self):
+        """FastMCP without server raises TypeError."""
+        pytest.importorskip('fastmcp', reason='fastmcp package not installed')
+        with pytest.raises(TypeError, match="missing 1 required positional argument: 'server'"):
+            FastMCP()  # type: ignore[call-arg]
+
+    def test_fastmcp_builtin_disabled(self):
+        """FastMCP(builtin=False) disables the builtin even with a URL."""
+        pytest.importorskip('fastmcp', reason='fastmcp package not installed')
+        cap = FastMCP('https://mcp.example.com/api', builtin=False)
+        assert cap.get_builtin_tools() == []
+        assert cap.get_toolset() is not None
+
+    def test_fastmcp_non_url_resolved_id_fallback(self):
+        """FastMCP with non-URL server and no explicit id falls back to 'fastmcp'."""
+        pytest.importorskip('fastmcp', reason='fastmcp package not installed')
+        from fastmcp.server import FastMCP as FastMCPServer
+
+        cap = FastMCP(FastMCPServer('test'))
+        assert cap._resolved_id == 'fastmcp'  # pyright: ignore[reportPrivateUsage]
+
+    def test_fastmcp_default_builtin_returns_none_without_url(self):
+        """FastMCP._default_builtin() returns None when no URL is available."""
+        pytest.importorskip('fastmcp', reason='fastmcp package not installed')
+        from fastmcp.server import FastMCP as FastMCPServer
+
+        cap = FastMCP(FastMCPServer('test'))
+        assert cap._default_builtin() is None  # pyright: ignore[reportPrivateUsage]
+
+    def test_fastmcp_headers_only_local_transport(self):
+        """FastMCP with headers but no auth token constructs transport with headers."""
+        pytest.importorskip('fastmcp', reason='fastmcp package not installed')
+        from fastmcp.client.transports import StreamableHttpTransport
+
+        from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+
+        cap = FastMCP('https://mcp.example.com/api', headers={'X-Custom': 'value'})
+        assert isinstance(cap.local, FastMCPToolset)
+        assert isinstance(cap.local.client.transport, StreamableHttpTransport)  # pyright: ignore[reportUnknownMemberType]
+        assert cap.local.client.transport.headers == {'X-Custom': 'value'}  # pyright: ignore[reportUnknownMemberType]
 
 
 class TestNamedSpecDictRoundTrip:
