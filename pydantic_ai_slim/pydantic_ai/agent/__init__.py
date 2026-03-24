@@ -1358,12 +1358,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     for _cv_pair in _wrap_context or ():
                         _context_tokens.append((_cv_pair[0], _cv_pair[0].set(_cv_pair[1])))
 
+                    async def _finalize_result(r: AgentRunResult[Any]) -> None:
+                        """Call after_run, store the result override, and clear any pending error."""
+                        nonlocal _run_error
+                        r = await run_capability.after_run(run_ctx, result=r)
+                        agent_run._result_override = r  # pyright: ignore[reportPrivateUsage]
+                        _run_error = None
+
                     try:
                         _short_circuited = _wrap_task.done() and not _run_ready.is_set()
                         if _short_circuited:
-                            _result = _wrap_task.result()
-                            _result = await run_capability.after_run(run_ctx, result=_result)
-                            agent_run._result_override = _result  # pyright: ignore[reportPrivateUsage]
+                            await _finalize_result(_wrap_task.result())
 
                         try:
                             yield agent_run
@@ -1388,18 +1393,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                             if not _short_circuited:
                                 _run_done.set()
                                 if _run_error is None and agent_run.result is not None:
-                                    _result = await _wrap_task
-                                    _result = await run_capability.after_run(run_ctx, result=_result)
-                                    agent_run._result_override = _result  # pyright: ignore[reportPrivateUsage]
+                                    await _finalize_result(await _wrap_task)
                                 elif _run_error is not None:
                                     # Error path: await wrap_run to see if it recovers.
                                     # _do_run() re-raises _run_error; if wrap_run catches
                                     # it and returns a result, recovery succeeds.
                                     try:
-                                        _result = await _wrap_task
-                                        _result = await run_capability.after_run(run_ctx, result=_result)
-                                        agent_run._result_override = _result  # pyright: ignore[reportPrivateUsage]
-                                        _run_error = None  # Recovery succeeded
+                                        await _finalize_result(await _wrap_task)
                                     except BaseException as _wrap_exc:
                                         # Attach wrap_run's own errors as context so they're
                                         # visible in tracebacks (but don't mask the original).
@@ -1426,9 +1426,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                             except BaseException as _on_error_exc:
                                 _run_error = _on_error_exc
                             else:
-                                _result = await run_capability.after_run(run_ctx, result=_result)
-                                agent_run._result_override = _result  # pyright: ignore[reportPrivateUsage]
-                                _run_error = None  # Recovery succeeded
+                                await _finalize_result(_result)
 
                         # If on_run_error didn't recover either, re-raise.
                         # In an @asynccontextmanager, not re-raising suppresses the exception.
@@ -1705,7 +1703,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             model_settings_token = None
 
-        # Set capability from spec, combining with agent's existing root capability
+        # Set capability from spec, replacing the agent's existing root capability
         if resolved is not None and resolved.capability is not None:
             cap_token = self._override_root_capability.set(_utils.Some(resolved.capability))
         else:

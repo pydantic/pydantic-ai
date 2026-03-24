@@ -60,12 +60,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     A capability is a reusable, composable unit of agent behavior that can provide
     instructions, model settings, tools, and request/response hooks.
 
-    Lifecycle: capabilities are passed to an [`Agent`][pydantic_ai.Agent] at construction time, where their
-    `get_*` methods are called to collect static configuration (instructions, model
-    settings, toolsets, builtin tools). Then, on each model request during a run, the
-    [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] and
-    [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request] hooks
-    are called to allow dynamic adjustments.
+    Lifecycle: capabilities are passed to an [`Agent`][pydantic_ai.Agent] at construction time, where
+    most `get_*` methods are called to collect static configuration (instructions, model
+    settings, toolsets, builtin tools). The exception is
+    [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset],
+    which is called per-run during toolset assembly. Then, on each model request during a
+    run, the [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request]
+    and [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request]
+    hooks are called to allow dynamic adjustments.
 
     See the [capabilities documentation](capabilities.md) for built-in capabilities.
 

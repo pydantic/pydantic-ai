@@ -82,10 +82,11 @@ class RunContext(Generic[RunContextAgentDepsT]):
     model_settings: ModelSettings | None = None
     """The resolved model settings for the current run step.
 
-    Populated after model settings resolution during `_prepare_request`, before the
-    model request is sent. Available in tools, system prompts, output validators, and
-    other callbacks. Will be `None` during agent construction and before the first
-    model request of a run.
+    Populated before each model request, after all model settings layers
+    (model defaults, agent-level, capability, and run-level) have been merged.
+    Available in model request hooks (`before_model_request`, `wrap_model_request`,
+    `after_model_request`). Currently `None` in tool hooks, output validators,
+    and during agent construction.
     """
 
     @property
