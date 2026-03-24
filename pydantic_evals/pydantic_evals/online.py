@@ -33,15 +33,13 @@ import logging
 import random
 import threading
 import time
-import warnings
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 import anyio
-import sniffio
 from typing_extensions import ParamSpec, TypeVar
 
 from ._utils import UNSET, Unset, logfire_span
@@ -75,46 +73,31 @@ logger = logging.getLogger('pydantic_evals.online')
 _P = ParamSpec('_P')
 _R = TypeVar('_R')
 
-# Strong references to background tasks/threads to prevent garbage collection
-# and enable deterministic waiting via wait_for_evaluations().
-# Protected by _background_lock for thread-safety (free-threaded Python, multiple sync callers).
+# Background threads for evaluation dispatch. Protected by _background_lock
+# for thread-safety (free-threaded Python, concurrent sync callers).
 _background_lock = threading.Lock()
-_background_tasks: set[asyncio.Task[Any]] = set()
 _background_threads: set[threading.Thread] = set()
 
 
-def _remove_background_task(task: asyncio.Task[Any]) -> None:
-    """Callback to remove a completed task from the tracking set (thread-safe)."""
-    with _background_lock:
-        _background_tasks.discard(task)
+def _dispatch_in_background_thread(coro: Coroutine[Any, Any, None]) -> None:
+    """Dispatch an async coroutine to a background daemon thread.
 
-
-async def _spawn_background_task(coro: Any) -> None:
-    """Spawn a fire-and-forget background task using the current async backend.
-
-    Uses sniffio to detect the backend (asyncio or trio) and dispatches accordingly.
-    The task is tracked in _background_tasks for deterministic cleanup via wait_for_evaluations().
+    The thread runs its own event loop via asyncio.run(). This is backend-agnostic —
+    it works regardless of whether the caller is using asyncio, trio, or no async
+    framework at all.
     """
-    try:
-        library = sniffio.current_async_library()
-    except sniffio.AsyncLibraryNotFoundError:  # pragma: no cover
-        logger.warning('No async library detected — cannot dispatch background evaluation')
-        return
 
-    if library == 'trio':  # pragma: no cover
+    def _thread_target() -> None:
         try:
-            import trio.lowlevel  # pyright: ignore[reportMissingImports]
+            asyncio.run(coro)
+        finally:
+            with _background_lock:
+                _background_threads.discard(thread)
 
-            trio.lowlevel.spawn_system_task(coro)  # pyright: ignore[reportUnknownMemberType]
-        except ImportError:
-            logger.warning('trio detected but not installed — cannot dispatch background evaluation')
-    else:
-        # asyncio (or any asyncio-compatible backend)
-        loop = asyncio.get_running_loop()
-        task = loop.create_task(coro)
-        with _background_lock:
-            _background_tasks.add(task)
-        task.add_done_callback(_remove_background_task)
+    thread = threading.Thread(target=_thread_target, daemon=True)
+    with _background_lock:
+        _background_threads.add(thread)
+    thread.start()
 
 
 # ============================================================================
@@ -672,8 +655,8 @@ def _wrap_async(
         # Extract span reference from the logfire span
         span_reference = _extract_span_reference(span)
 
-        # Dispatch all sampled evaluators to the background — gate checks happen there
-        await _spawn_background_task(_dispatch_evaluators(sampled, context, span_reference, config))
+        # Dispatch all sampled evaluators to a background thread — gate checks happen there
+        _dispatch_in_background_thread(_dispatch_evaluators(sampled, context, span_reference, config))
 
         return result
 
@@ -725,26 +708,8 @@ def _wrap_sync(
         # Extract span reference
         span_reference = _extract_span_reference(span)
 
-        # Dispatch all sampled evaluators to the background — gate checks happen there
-        try:
-            loop = asyncio.get_running_loop()
-            task = loop.create_task(_dispatch_evaluators(sampled, context, span_reference, config))
-            with _background_lock:
-                _background_tasks.add(task)
-            task.add_done_callback(_remove_background_task)
-        except RuntimeError:
-            # No running loop — run in a background thread
-            def _thread_target() -> None:
-                try:
-                    asyncio.run(_dispatch_evaluators(sampled, context, span_reference, config))
-                finally:
-                    with _background_lock:
-                        _background_threads.discard(thread)
-
-            thread = threading.Thread(target=_thread_target, daemon=True)
-            with _background_lock:
-                _background_threads.add(thread)
-            thread.start()
+        # Dispatch all sampled evaluators to a background thread — gate checks happen there
+        _dispatch_in_background_thread(_dispatch_evaluators(sampled, context, span_reference, config))
 
         return result
 
@@ -849,43 +814,21 @@ def configure(
 
 
 async def wait_for_evaluations(*, timeout: float = 30.0) -> None:
-    """Wait for all pending background evaluation tasks and threads to complete.
+    """Wait for all pending background evaluation threads to complete.
 
     This is useful in tests to deterministically wait for background evaluators
     to finish instead of relying on timing-based sleeps.
 
-    For async tasks (dispatched from async decorated functions), this awaits them directly.
-    For background threads (dispatched from sync decorated functions called outside an
-    async context), this joins them with the given timeout.
+    All evaluation dispatch (from both async and sync decorated functions) uses
+    background threads, so this simply joins them.
 
     Args:
         timeout: Maximum seconds to wait for each background thread. Defaults to 30.
     """
-    # Snapshot under lock, then await/join without holding the lock
     with _background_lock:
-        tasks_snapshot = list(_background_tasks)
         threads_snapshot = list(_background_threads)
 
-    # Await all pending async tasks (using anyio for backend compatibility)
-    if tasks_snapshot:
-        async with anyio.create_task_group() as tg:
-            for task in tasks_snapshot:
-                tg.start_soon(_wait_task, task)
-    # Join all pending background threads (from sync function dispatch)
     for thread in threads_snapshot:
         thread.join(timeout=timeout)
         if thread.is_alive():  # pragma: no cover
             logger.warning('Background evaluation thread did not complete within %.1fs timeout', timeout)
-
-
-async def _wait_task(task: asyncio.Task[Any]) -> None:
-    """Await an asyncio.Task, suppressing exceptions (they're already logged by the task)."""
-    try:
-        await task
-    except asyncio.CancelledError:  # pragma: no cover
-        pass  # Expected during shutdown
-    except BaseException as exc:  # pragma: no cover
-        warnings.warn(
-            f'Unexpected exception in background evaluation task: {type(exc).__name__}: {exc}',
-            stacklevel=1,
-        )
