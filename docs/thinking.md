@@ -29,7 +29,7 @@ The `thinking` setting accepts:
 
 - `True` — enable thinking with the provider's default effort level
 - `False` — disable thinking (silently ignored on always-on models)
-- `'low'` / `'medium'` / `'high'` — enable thinking at a specific effort level
+- `'minimal'` / `'low'` / `'medium'` / `'high'` / `'xhigh'` — enable thinking at a specific effort level (unsupported levels map to the closest available value)
 
 When omitted, the model uses its default behavior. Provider-specific settings (documented in the sections below) take precedence when both are set.
 
