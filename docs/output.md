@@ -355,6 +355,36 @@ print(repr(result.output))
 
 _(This example is complete, it can be run "as is")_
 
+##### Output Examples
+
+You can provide examples of correct tool usage to improve the model's understanding of your tool's expected input. Examples can be provided in two ways:
+
+1. **Structured Examples**: Pass a list of examples to the `examples` parameter in [`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], or the [`Tool`][pydantic_ai.tools.Tool] class directly.
+2. **Docstring Examples**: Include an `Examples:` section in the tool's docstring.
+
+Anthropic models natively support structured examples via the `input_examples` parameter in their API payload. For models that do not natively support this feature, Pydantic AI will gracefully fall back to serializing the structured examples as JSON and appending them to the tool's text description.
+
+```python {title="tool_examples.py"}
+from pydantic_ai import Agent
+
+agent = Agent('anthropic:claude-opus-4-6')
+
+@agent.tool_plain(
+    examples=[
+        {'location': 'London', 'celsius': True},
+        {'location': 'New York', 'celsius': False},
+    ]
+)
+def get_weather(location: str, celsius: bool) -> str:
+    """Get the weather for a given location.
+
+    Examples:
+        >>> get_weather('London', True)
+        'It is 20°C in London.'
+    """
+    return f"It is 20{'°C' if celsius else '°F'} in {location}."
+```
+
 ##### Parallel Output Tool Calls
 
 When the model calls other tools in parallel with an output tool, you can control how tool calls are executed by setting the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy]:

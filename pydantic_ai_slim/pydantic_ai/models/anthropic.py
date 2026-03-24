@@ -1233,6 +1233,9 @@ class AnthropicModel(Model):
         }
         if f.strict and self.profile.supports_json_schema_output:
             tool_param['strict'] = f.strict
+
+        if f.examples and self.profile.supports_tool_examples:
+            tool_param['input_examples'] = f.examples
         return tool_param
 
     @staticmethod

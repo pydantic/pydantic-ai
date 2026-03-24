@@ -59,6 +59,9 @@ class ModelProfile:
     thinking_tags: tuple[str, str] = ('<think>', '</think>')
     """The tags used to indicate thinking parts in the model's output. Defaults to ('<think>', '</think>')."""
 
+    supports_tool_examples: bool = False
+    """Whether the model natively supports providing structured tool examples."""
+
     ignore_streamed_leading_whitespace: bool = False
     """Whether to ignore leading whitespace when streaming a response.
 
