@@ -49,6 +49,7 @@ from ..messages import (
     is_multi_modal_content,
 )
 from ..profiles import ModelProfileSpec
+from ..profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP, AnthropicModelProfile
 from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import ModelSettings, merge_model_settings
@@ -415,13 +416,9 @@ class AnthropicModel(Model):
         thinking = model_request_parameters.thinking
         if thinking is None or thinking is False:
             return OMIT  # type: ignore[return-value]
-        from ..profiles.anthropic import AnthropicModelProfile
-
         profile = AnthropicModelProfile.from_profile(self.profile)
         if profile.anthropic_supports_adaptive_thinking:
             return {'type': 'adaptive'}
-        from ..profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP
-
         return {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
 
     @overload
@@ -1270,6 +1267,7 @@ class AnthropicModel(Model):
 
         effort = model_settings.get('anthropic_effort')
         # Fall back to unified thinking effort level when anthropic_effort is not set
+        # Only map effort level strings; bare True just enables thinking without a specific effort
         if effort is None and isinstance(model_request_parameters.thinking, str):
             effort = model_request_parameters.thinking
 

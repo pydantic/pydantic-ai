@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
 
-from pydantic_ai.settings import ModelSettings as _ModelSettings
+from pydantic_ai.settings import ModelSettings as _ModelSettings, ThinkingLevel
 from pydantic_ai.tools import AgentDepsT
 
 from .abstract import AbstractCapability
@@ -19,7 +18,7 @@ class Thinking(AbstractCapability[AgentDepsT]):
     ``openai_reasoning_effort``) take precedence when both are set.
     """
 
-    effort: bool | Literal['low', 'medium', 'high'] = True
+    effort: ThinkingLevel = True
     """The thinking effort level.
 
     - ``True``: Enable thinking with the provider's default effort.

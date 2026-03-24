@@ -48,7 +48,7 @@ from ..messages import (
 from ..output import OutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
 from ..providers import Provider, infer_provider, infer_provider_class
-from ..settings import ModelSettings, merge_model_settings
+from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 
@@ -630,7 +630,7 @@ class ModelRequestParameters:
     allow_text_output: bool = True
     allow_image_output: bool = False
 
-    thinking: bool | Literal['low', 'medium', 'high'] | None = None
+    thinking: ThinkingLevel | None = None
     """Resolved thinking/reasoning configuration for this request.
 
     `None` means the model should use its default behavior. Set by the base

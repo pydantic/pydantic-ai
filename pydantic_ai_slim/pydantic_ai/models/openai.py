@@ -65,7 +65,7 @@ from ..messages import (
     is_multi_modal_content,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
-from ..profiles.openai import SAMPLING_PARAMS, OpenAIModelProfile, OpenAISystemPromptRole
+from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP, SAMPLING_PARAMS, OpenAIModelProfile, OpenAISystemPromptRole
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -659,8 +659,6 @@ class OpenAIChatModel(Model):
         thinking = model_request_parameters.thinking
         if thinking is None:
             return OMIT
-        from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP
-
         return OPENAI_REASONING_EFFORT_MAP[thinking]  # type: ignore[return-value]
 
     @asynccontextmanager
@@ -1806,8 +1804,6 @@ class OpenAIResponsesModel(Model):
 
         # Fall back to unified thinking when openai_reasoning_effort is not set
         if reasoning_effort is None and (thinking := model_request_parameters.thinking) is not None:
-            from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP
-
             reasoning_effort = OPENAI_REASONING_EFFORT_MAP[thinking]
 
         reasoning: Reasoning = {}

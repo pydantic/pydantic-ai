@@ -1,9 +1,17 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 from httpx import Timeout
 from typing_extensions import TypedDict
+
+ThinkingLevel: TypeAlias = bool | Literal['low', 'medium', 'high']
+"""Type alias for thinking/reasoning configuration values.
+
+- ``True``: Enable thinking with the provider's default effort.
+- ``False``: Disable thinking (silently ignored on always-on models).
+- ``'low'``/``'medium'``/``'high'``: Enable thinking at a specific effort level.
+"""
 
 
 class ModelSettings(TypedDict, total=False):
@@ -173,7 +181,7 @@ class ModelSettings(TypedDict, total=False):
     * xAI
     """
 
-    thinking: bool | Literal['low', 'medium', 'high']
+    thinking: ThinkingLevel
     """Enable or configure thinking/reasoning for the model.
 
     - `True`: Enable thinking with the provider's default effort level.

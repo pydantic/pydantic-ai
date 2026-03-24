@@ -45,6 +45,8 @@ from pydantic_ai.builtin_tools import AbstractBuiltinTool, CodeExecutionTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.messages import UploadedFile, is_multi_modal_content
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
+from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP
+from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
 from pydantic_ai.settings import ModelSettings
@@ -581,12 +583,8 @@ class BedrockConverseModel(Model):
             if thinking is False:
                 existing['thinking'] = {'type': 'disabled'}
             else:
-                from ..profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP
-
                 existing['thinking'] = {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
         elif variant == 'openai' and 'reasoning_effort' not in existing:
-            from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP
-
             existing['reasoning_effort'] = OPENAI_REASONING_EFFORT_MAP[thinking]
         elif variant == 'qwen' and 'reasoning_config' not in existing:
             if thinking is not False:

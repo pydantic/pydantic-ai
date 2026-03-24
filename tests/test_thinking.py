@@ -17,7 +17,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ThinkingLevel
 
 from ._inline_snapshot import snapshot
 
@@ -52,8 +52,8 @@ def _make_model(
 
 def _resolve_thinking(
     model: FunctionModel,
-    thinking: bool | Literal['low', 'medium', 'high'] | None = None,
-) -> bool | Literal['low', 'medium', 'high'] | None:
+    thinking: ThinkingLevel | None = None,
+) -> ThinkingLevel | None:
     """Call prepare_request and return the resolved params.thinking value."""
     settings: ModelSettings | None = ModelSettings(thinking=thinking) if thinking is not None else None
     params = ModelRequestParameters()
@@ -118,6 +118,10 @@ class TestPrepareRequestThinkingResolution:
 
 class TestAnthropicThinkingTranslation:
     """Test Anthropic _get_thinking_param and _build_output_config translation."""
+
+    @pytest.fixture(autouse=True)
+    def _require_anthropic(self):
+        pytest.importorskip('anthropic', reason='anthropic not installed')
 
     @pytest.fixture
     def adaptive_model(self):
@@ -238,6 +242,10 @@ class TestAnthropicThinkingTranslation:
 class TestOpenAIChatThinkingTranslation:
     """Test OpenAI Chat model _get_reasoning_effort translation."""
 
+    @pytest.fixture(autouse=True)
+    def _require_openai(self):
+        pytest.importorskip('openai', reason='openai not installed')
+
     def test_thinking_true(self):
         from pydantic_ai.models.openai import OpenAIChatModel
 
@@ -310,6 +318,10 @@ class TestOpenAIChatThinkingTranslation:
 class TestOpenAIResponsesThinkingTranslation:
     """Test OpenAI Responses model _get_reasoning translation."""
 
+    @pytest.fixture(autouse=True)
+    def _require_openai(self):
+        pytest.importorskip('openai', reason='openai not installed')
+
     def test_thinking_true(self):
         from pydantic_ai.models.openai import OpenAIResponsesModel
 
@@ -368,6 +380,10 @@ class TestOpenAIResponsesThinkingTranslation:
 
 class TestGoogleThinkingTranslation:
     """Test Google model _get_thinking_config translation."""
+
+    @pytest.fixture(autouse=True)
+    def _require_google(self):
+        pytest.importorskip('google.genai', reason='google-genai not installed')
 
     @pytest.fixture
     def gemini_3_model(self):
@@ -476,6 +492,10 @@ class TestGoogleThinkingTranslation:
 
 class TestGroqThinkingTranslation:
     """Test Groq model _get_reasoning_format translation."""
+
+    @pytest.fixture(autouse=True)
+    def _require_groq(self):
+        pytest.importorskip('groq', reason='groq not installed')
 
     def test_thinking_true(self):
         from pydantic_ai.models.groq import GroqModel
