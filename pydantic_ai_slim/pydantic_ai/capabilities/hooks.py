@@ -180,6 +180,12 @@ class _HookSlot(Generic[_FuncT]):
     ``AbstractCapability`` method of the same name. Its ``__call__`` auto-detects
     whether it's being used as a decorator (first arg is a callable) or invoked
     by the framework (first arg is a ``RunContext``).
+
+    Note: The decorator overloads infer ``_FuncT`` from the decorated function rather
+    than constraining it against the Protocol type on the ``Hooks`` annotation. This
+    means decorator usage (``@hooks.before_model_request``) does not type-check the
+    hook function's signature — only the constructor kwargs form is checked against
+    the Protocol types. This is a known limitation of the shadowing approach.
     """
 
     __slots__ = ('funcs', '_dispatch', '_default', '_name')
@@ -295,7 +301,7 @@ def _iter_tool_entries(entries: list[_HookEntry[Any]], *, call: ToolCallPart | N
     return [
         entry
         for entry in entries
-        if not (isinstance(entry, _ToolHookEntry) and entry.tools and call.tool_name not in entry.tools)
+        if not (isinstance(entry, _ToolHookEntry) and entry.tools is not None and call.tool_name not in entry.tools)
     ]
 
 

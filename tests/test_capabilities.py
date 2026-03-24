@@ -27,6 +27,7 @@ from pydantic_ai.capabilities import (
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.builtin_or_local import BuiltinTool as BuiltinToolCap
 from pydantic_ai.capabilities.combined import CombinedCapability
+from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
 from pydantic_ai.exceptions import SkipModelRequest, SkipToolExecution, SkipToolValidation, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -4002,8 +4003,6 @@ class TestHooksCapability:
     """Tests for the Hooks decorator-based capability."""
 
     async def test_decorator_registration(self):
-        from pydantic_ai.capabilities.hooks import Hooks
-
         hooks = Hooks()
         call_log: list[str] = []
 
@@ -4024,8 +4023,6 @@ class TestHooksCapability:
         assert call_log == ['before_model_request', 'after_model_request']
 
     async def test_constructor_form(self):
-        from pydantic_ai.capabilities.hooks import Hooks
-
         call_log: list[str] = []
 
         async def log_request(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
@@ -4037,8 +4034,6 @@ class TestHooksCapability:
         assert call_log == ['before_model_request']
 
     async def test_multiple_hooks_same_event(self):
-        from pydantic_ai.capabilities.hooks import Hooks
-
         hooks = Hooks()
         call_log: list[str] = []
 
@@ -4057,8 +4052,6 @@ class TestHooksCapability:
         assert call_log == ['first', 'second']
 
     async def test_tool_names_filtering(self):
-        from pydantic_ai.capabilities.hooks import Hooks
-
         hooks = Hooks()
         call_log: list[str] = []
 
@@ -4087,8 +4080,6 @@ class TestHooksCapability:
         assert 'unfiltered:target_tool' in call_log
 
     async def test_wrap_model_request(self):
-        from pydantic_ai.capabilities.hooks import Hooks
-
         hooks = Hooks()
         call_log: list[str] = []
 
@@ -4104,8 +4095,6 @@ class TestHooksCapability:
         assert call_log == ['wrap_start', 'wrap_end']
 
     async def test_wrap_run(self):
-        from pydantic_ai.capabilities.hooks import Hooks
-
         hooks = Hooks()
         call_log: list[str] = []
 
@@ -4121,8 +4110,6 @@ class TestHooksCapability:
         assert call_log == ['wrap_run_start', 'wrap_run_end']
 
     async def test_on_error_recovery(self):
-        from pydantic_ai.capabilities.hooks import Hooks
-
         hooks = Hooks()
 
         @hooks.on_model_request_error
@@ -4139,8 +4126,6 @@ class TestHooksCapability:
         assert result.output == 'recovered'
 
     async def test_sync_function_auto_wrapping(self):
-        from pydantic_ai.capabilities.hooks import Hooks
-
         hooks = Hooks()
         call_log: list[str] = []
 
@@ -4154,8 +4139,6 @@ class TestHooksCapability:
         assert call_log == ['sync_hook']
 
     async def test_timeout(self):
-        from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
-
         hooks = Hooks()
 
         @hooks.before_model_request(timeout=0.01)
@@ -4171,8 +4154,6 @@ class TestHooksCapability:
         assert exc_info.value.timeout == 0.01
 
     async def test_has_wrap_node_run(self):
-        from pydantic_ai.capabilities.hooks import Hooks
-
         hooks = Hooks()
         assert hooks.has_wrap_node_run is False
 
@@ -4190,8 +4171,6 @@ class TestHooksCapability:
         assert len(nodes_seen) > 0
 
     async def test_composition_with_other_capabilities(self):
-        from pydantic_ai.capabilities.hooks import Hooks
-
         hooks = Hooks()
         call_log: list[str] = []
 
@@ -4207,8 +4186,6 @@ class TestHooksCapability:
         assert 'before_model_request' in cap.log
 
     async def test_before_run(self):
-        from pydantic_ai.capabilities.hooks import Hooks
-
         hooks = Hooks()
         call_log: list[str] = []
 
@@ -4221,8 +4198,6 @@ class TestHooksCapability:
         assert call_log == ['before_run']
 
     async def test_after_run(self):
-        from pydantic_ai.capabilities.hooks import Hooks
-
         hooks = Hooks()
         outputs: list[str] = []
 
@@ -4236,8 +4211,6 @@ class TestHooksCapability:
         assert outputs == [result.output]
 
     async def test_repr(self):
-        from pydantic_ai.capabilities.hooks import Hooks
-
         hooks = Hooks()
         assert repr(hooks) == 'Hooks({})'
 
@@ -4253,7 +4226,6 @@ class TestHooksCapability:
 
     async def test_on_model_request_error_reraise(self):
         """Error hooks that re-raise propagate the error to the caller."""
-        from pydantic_ai.capabilities.hooks import Hooks
 
         hooks = Hooks()
 
@@ -4272,7 +4244,6 @@ class TestHooksCapability:
 
     async def test_on_run_error_reraise(self):
         """on_run_error hooks that re-raise propagate the error."""
-        from pydantic_ai.capabilities.hooks import Hooks
 
         hooks = Hooks()
 
@@ -4288,8 +4259,6 @@ class TestHooksCapability:
             await agent.run('hello')
 
     async def test_on_run_error_recovery(self):
-        from pydantic_ai.capabilities.hooks import Hooks
-
         hooks = Hooks()
 
         @hooks.on_run_error
@@ -4304,8 +4273,6 @@ class TestHooksCapability:
         assert result.output == 'recovered from run error'
 
     async def test_on_run_error_chaining(self):
-        from pydantic_ai.capabilities.hooks import Hooks
-
         hooks = Hooks()
 
         @hooks.on_run_error
@@ -4324,8 +4291,6 @@ class TestHooksCapability:
         assert 'transformed by first' in result.output
 
     async def test_error_hook_chaining(self):
-        from pydantic_ai.capabilities.hooks import Hooks
-
         hooks = Hooks()
 
         @hooks.on_model_request_error
@@ -4348,8 +4313,6 @@ class TestHooksCapability:
         assert 'transformed' in result.output
 
     async def test_wrap_run_event_stream(self):
-        from pydantic_ai.capabilities.hooks import Hooks
-
         hooks = Hooks()
         events_seen: list[str] = []
 
@@ -4371,7 +4334,6 @@ class TestHooksCapability:
 
     async def test_hooks_with_streaming_run(self):
         """Hooks capability used during a streaming run exercises the default wrap_run_event_stream path."""
-        from pydantic_ai.capabilities.hooks import Hooks
 
         hooks = Hooks()
         call_log: list[str] = []
@@ -4390,8 +4352,6 @@ class TestHooksCapability:
         assert 'before_model_request' in call_log
 
     async def test_get_serialization_name(self):
-        from pydantic_ai.capabilities.hooks import Hooks
-
         assert Hooks.get_serialization_name() is None
 
     async def test_default_on_tool_execute_error_reraises(self):

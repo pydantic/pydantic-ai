@@ -138,23 +138,71 @@ print(result.output)
 
 Tool hooks (validation and execution) support a `tools` parameter to target specific tools:
 
-```python {title="hooks_tool_filter.py" test="skip" lint="skip"}
-@hooks.before_tool_execute(tools=['send_email', 'delete_record'])
-async def audit_dangerous_tools(ctx, *, call, tool_def, args):
-    print(f'Dangerous tool called: {call.tool_name}')
+```python {title="hooks_tool_filter.py"}
+from typing import Any
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities.hooks import Hooks
+from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.tools import ToolDefinition
+
+hooks = Hooks()
+call_log: list[str] = []
+
+
+@hooks.before_tool_execute(tools=['send_email'])
+async def audit_dangerous_tools(
+    ctx: RunContext[None],
+    *,
+    call: ToolCallPart,
+    tool_def: ToolDefinition,
+    args: dict[str, Any],
+) -> dict[str, Any]:
+    call_log.append(f'audit: {call.tool_name}')
     return args
+
+
+agent = Agent('test', capabilities=[hooks])
+
+
+@agent.tool_plain
+def send_email(to: str) -> str:
+    return f'sent to {to}'
+
+
+result = agent.run_sync('Send an email to test@example.com')
+print(call_log)
+#> ['audit: send_email']
 ```
 
 ### Timeouts
 
 Each hook supports an optional `timeout` in seconds. If the hook exceeds the timeout, a [`HookTimeoutError`][pydantic_ai.capabilities.HookTimeoutError] is raised:
 
-```python {title="hooks_timeout.py" test="skip" lint="skip"}
-@hooks.before_model_request(timeout=5.0)
-async def maybe_slow_hook(ctx, request_context):
-    # If this takes more than 5 seconds, HookTimeoutError is raised
-    ...
-    return request_context
+```python {title="hooks_timeout.py"}
+import asyncio
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
+from pydantic_ai.models import ModelRequestContext
+
+hooks = Hooks()
+
+
+@hooks.before_model_request(timeout=0.01)
+async def slow_hook(
+    ctx: RunContext[None], request_context: ModelRequestContext
+) -> ModelRequestContext:
+    await asyncio.sleep(10)  # Will be interrupted by timeout
+    return request_context  # pragma: no cover
+
+
+agent = Agent('test', capabilities=[hooks])
+try:
+    agent.run_sync('Hello')
+except HookTimeoutError as e:
+    print(f'Hook timed out: {e.hook_name} after {e.timeout}s')
+    #> Hook timed out: before_model_request after 0.01s
 ```
 
 ### When to use `Hooks` vs `AbstractCapability`
