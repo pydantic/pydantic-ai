@@ -4707,43 +4707,25 @@ async def test_prefix_tools_prefixes_wrapped_capability_tools():
 
 
 async def test_prefix_tools_from_spec():
-    """PrefixTools can be constructed from an AgentSpec with a nested capability."""
+    """PrefixTools from spec supports both dict-form and bare-name nested capabilities."""
+
+    # Dict form (kwargs): nested capability with arguments
     agent = Agent.from_spec(
         {
             'model': 'test',
             'capabilities': [
                 {
                     'PrefixTools': {
-                        'prefix': 'search',
-                        'capability': 'WebSearch',
+                        'prefix': 'remote',
+                        'capability': {'MCP': {'url': 'http://localhost:1234/mcp'}},
                     }
                 },
             ],
-        }
+        },
     )
     assert agent.model is not None
 
-
-async def test_prefix_tools_from_spec_bare_name():
-    """PrefixTools can wrap a bare capability name (no-arg form)."""
-    agent = Agent.from_spec(
-        {
-            'model': 'test',
-            'capabilities': [
-                {
-                    'PrefixTools': {
-                        'prefix': 'ws',
-                        'capability': 'WebSearch',
-                    }
-                },
-            ],
-        }
-    )
-    assert agent.model is not None
-
-
-async def test_prefix_tools_from_spec_with_custom_capability():
-    """PrefixTools.from_spec forwards custom_capability_types to nested capability."""
+    # Bare name form with custom_capability_types forwarded through contextvar
     agent = Agent.from_spec(
         {
             'model': 'test',
