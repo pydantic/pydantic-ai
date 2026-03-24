@@ -713,11 +713,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 pass
 
                 # Advance graph with remaining hooks (before_node_run already fired above).
-                try:
-                    next_node = await cap.wrap_node_run(run_ctx, node=node, handler=agent_run._advance_graph)  # pyright: ignore[reportPrivateUsage]
-                except Exception as e:
-                    next_node = await cap.on_node_run_error(run_ctx, node=node, error=e)
-                next_node = await cap.after_node_run(run_ctx, node=node, result=next_node)
+                # Rebuild run_ctx after streaming so hooks see post-streaming state (e.g. run_step).
+                run_ctx = _agent_graph.build_run_context(graph_ctx)
+                next_node = await agent_run._wrap_and_advance(run_ctx, node, agent_run._advance_graph)  # pyright: ignore[reportPrivateUsage]
                 if isinstance(next_node, End) and agent_run.result is not None:
                     # A final output could have been produced by the CallToolsNode rather than the ModelRequestNode,
                     # if a tool function raised CallDeferred or ApprovalRequired.

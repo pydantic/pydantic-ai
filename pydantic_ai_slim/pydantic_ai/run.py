@@ -240,6 +240,29 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             pass
         return self._task_to_node(task)
 
+    async def _wrap_and_advance(
+        self,
+        run_context: Any,
+        node: _agent_graph.AgentNode[AgentDepsT, Any],
+        step_fn: Callable[
+            [_agent_graph.AgentNode[AgentDepsT, Any]],
+            Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
+        ],
+    ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+        """Execute `wrap_node_run(step_fn)` → `on_node_run_error` → `after_node_run`.
+
+        This is the portion of the hook lifecycle after `before_node_run` has already fired.
+        Used by both `_run_node_with_hooks` and directly by `run_stream()` which calls
+        `before_node_run` separately (before streaming).
+        """
+        cap = self.ctx.deps.root_capability
+        try:
+            result = await cap.wrap_node_run(run_context, node=node, handler=step_fn)
+        except Exception as e:
+            result = await cap.on_node_run_error(run_context, node=node, error=e)
+        result = await cap.after_node_run(run_context, node=node, result=result)
+        return result
+
     async def _run_node_with_hooks(
         self,
         node: _agent_graph.AgentNode[AgentDepsT, Any],
@@ -256,12 +279,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         run_context = _agent_graph.build_run_context(self.ctx)
         cap = self.ctx.deps.root_capability
         node = await cap.before_node_run(run_context, node=node)
-        try:
-            result = await cap.wrap_node_run(run_context, node=node, handler=step_fn)
-        except Exception as e:
-            result = await cap.on_node_run_error(run_context, node=node, error=e)
-        result = await cap.after_node_run(run_context, node=node, result=result)
-        return result
+        return await self._wrap_and_advance(run_context, node, step_fn)
 
     async def next(
         self,
