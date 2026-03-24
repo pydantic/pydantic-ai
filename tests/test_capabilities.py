@@ -4041,9 +4041,9 @@ class TestCapabilityId:
         ig = ImageGeneration(id='my-img')
         assert ig.id == 'my-img'
 
+    @pytest.mark.skipif(not has_mcp, reason='mcp is not installed')
     def test_id_on_mcp_capability(self):
         """MCP capability accepts id (requires mcp optional dependency)."""
-        pytest.importorskip('mcp')
         mcp = MCP(url='http://localhost', id='my-mcp')
         assert mcp.id == 'my-mcp'
 
