@@ -2562,6 +2562,11 @@ class TestMCPCapability:
         with pytest.raises(TypeError, match="missing 1 required keyword-only argument: 'url'"):
             MCP()  # type: ignore[call-arg]
 
+    def test_mcp_id(self):
+        """MCP capability accepts id kwarg."""
+        mcp = MCP(url='http://localhost', id='my-mcp')
+        assert mcp.id == 'my-mcp'
+
 
 class TestNamedSpecDictRoundTrip:
     """Test that NamedSpec correctly round-trips a dict-as-first-arg without misinterpreting it as kwargs."""
@@ -4040,12 +4045,6 @@ class TestCapabilityId:
 
         ig = ImageGeneration(id='my-img')
         assert ig.id == 'my-img'
-
-    @pytest.mark.skipif(not has_mcp, reason='mcp is not installed')
-    def test_id_on_mcp_capability(self):
-        """MCP capability accepts id (requires mcp optional dependency)."""
-        mcp = MCP(url='http://localhost', id='my-mcp')
-        assert mcp.id == 'my-mcp'
 
 
 class TestVisitAndReplace:
