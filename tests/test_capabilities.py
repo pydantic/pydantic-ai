@@ -4743,6 +4743,13 @@ async def test_prefix_tools_from_spec():
     assert agent.model is not None
 
 
+async def test_prefix_tools_from_spec_direct():
+    """PrefixTools.from_spec works outside Agent.from_spec (no contextvar), using default registry."""
+    cap = PrefixTools.from_spec(prefix='ws', capability='WebSearch')
+    assert isinstance(cap, PrefixTools)
+    assert cap.prefix == 'ws'
+
+
 async def test_prefix_tools_returns_none_when_no_toolset():
     """PrefixTools.get_toolset() returns None if the wrapped capability has no toolset."""
     cap = PrefixTools(wrapped=CustomCapability(), prefix='ns')
