@@ -4006,12 +4006,12 @@ class TestHooksCapability:
         hooks = Hooks()
         call_log: list[str] = []
 
-        @hooks.before_model_request
+        @hooks.on.before_model_request
         async def log_request(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
             call_log.append('before_model_request')
             return request_context
 
-        @hooks.after_model_request
+        @hooks.on.after_model_request
         async def log_response(
             ctx: RunContext[Any], *, request_context: ModelRequestContext, response: ModelResponse
         ) -> ModelResponse:
@@ -4037,12 +4037,12 @@ class TestHooksCapability:
         hooks = Hooks()
         call_log: list[str] = []
 
-        @hooks.before_model_request
+        @hooks.on.before_model_request
         async def first(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
             call_log.append('first')
             return request_context
 
-        @hooks.before_model_request
+        @hooks.on.before_model_request
         async def second(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
             call_log.append('second')
             return request_context
@@ -4055,14 +4055,14 @@ class TestHooksCapability:
         hooks = Hooks()
         call_log: list[str] = []
 
-        @hooks.before_tool_execute(tools=['target_tool'])
+        @hooks.on.before_tool_execute(tools=['target_tool'])
         async def filtered(
             ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
         ) -> dict[str, Any]:
             call_log.append(f'filtered:{call.tool_name}')
             return args
 
-        @hooks.after_tool_execute
+        @hooks.on.after_tool_execute
         async def unfiltered(
             ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any], result: Any
         ) -> Any:
@@ -4083,7 +4083,7 @@ class TestHooksCapability:
         hooks = Hooks()
         call_log: list[str] = []
 
-        @hooks.wrap_model_request
+        @hooks.on.model_request
         async def wrap(ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any) -> ModelResponse:
             call_log.append('wrap_start')
             result = await handler(request_context)
@@ -4098,7 +4098,7 @@ class TestHooksCapability:
         hooks = Hooks()
         call_log: list[str] = []
 
-        @hooks.wrap_run
+        @hooks.on.run
         async def wrap(ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
             call_log.append('wrap_run_start')
             result = await handler()
@@ -4112,7 +4112,7 @@ class TestHooksCapability:
     async def test_on_error_recovery(self):
         hooks = Hooks()
 
-        @hooks.on_model_request_error
+        @hooks.on.model_request_error
         async def recover(
             ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
         ) -> ModelResponse:
@@ -4129,7 +4129,7 @@ class TestHooksCapability:
         hooks = Hooks()
         call_log: list[str] = []
 
-        @hooks.before_model_request
+        @hooks.on.before_model_request
         def sync_hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
             call_log.append('sync_hook')
             return request_context
@@ -4141,7 +4141,7 @@ class TestHooksCapability:
     async def test_timeout(self):
         hooks = Hooks()
 
-        @hooks.before_model_request(timeout=0.01)
+        @hooks.on.before_model_request(timeout=0.01)
         async def slow_hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
             await asyncio.sleep(10)
             return request_context  # pragma: no cover
@@ -4159,7 +4159,7 @@ class TestHooksCapability:
 
         nodes_seen: list[str] = []
 
-        @hooks.wrap_node_run
+        @hooks.on.node_run
         async def wrap(ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
             nodes_seen.append(type(node).__name__)
             return await handler(node)
@@ -4174,7 +4174,7 @@ class TestHooksCapability:
         hooks = Hooks()
         call_log: list[str] = []
 
-        @hooks.before_model_request
+        @hooks.on.before_model_request
         async def hooks_before(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
             call_log.append('hooks_before')
             return request_context
@@ -4189,7 +4189,7 @@ class TestHooksCapability:
         hooks = Hooks()
         call_log: list[str] = []
 
-        @hooks.before_run
+        @hooks.on.before_run
         async def on_start(ctx: RunContext[Any]) -> None:
             call_log.append('before_run')
 
@@ -4201,7 +4201,7 @@ class TestHooksCapability:
         hooks = Hooks()
         outputs: list[str] = []
 
-        @hooks.after_run
+        @hooks.on.after_run
         async def on_end(ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
             outputs.append(result.output)
             return result
@@ -4214,7 +4214,7 @@ class TestHooksCapability:
         hooks = Hooks()
         assert repr(hooks) == 'Hooks({})'
 
-        @hooks.before_model_request
+        @hooks.on.before_model_request
         async def hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
             return request_context
 
@@ -4229,7 +4229,7 @@ class TestHooksCapability:
 
         hooks = Hooks()
 
-        @hooks.on_model_request_error
+        @hooks.on.model_request_error
         async def log_and_reraise(
             ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
         ) -> ModelResponse:
@@ -4247,7 +4247,7 @@ class TestHooksCapability:
 
         hooks = Hooks()
 
-        @hooks.on_run_error
+        @hooks.on.run_error
         async def log_and_reraise(ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
             raise error
 
@@ -4261,7 +4261,7 @@ class TestHooksCapability:
     async def test_on_run_error_recovery(self):
         hooks = Hooks()
 
-        @hooks.on_run_error
+        @hooks.on.run_error
         async def recover(ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
             return AgentRunResult(output='recovered from run error')
 
@@ -4275,11 +4275,11 @@ class TestHooksCapability:
     async def test_on_run_error_chaining(self):
         hooks = Hooks()
 
-        @hooks.on_run_error
+        @hooks.on.run_error
         async def first_handler(ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
             raise ValueError('transformed by first')
 
-        @hooks.on_run_error
+        @hooks.on.run_error
         async def second_handler(ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
             return AgentRunResult(output=f'caught: {error}')
 
@@ -4293,13 +4293,13 @@ class TestHooksCapability:
     async def test_error_hook_chaining(self):
         hooks = Hooks()
 
-        @hooks.on_model_request_error
+        @hooks.on.model_request_error
         async def first(
             ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
         ) -> ModelResponse:
             raise ValueError('transformed')
 
-        @hooks.on_model_request_error
+        @hooks.on.model_request_error
         async def second(
             ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
         ) -> ModelResponse:
@@ -4316,7 +4316,7 @@ class TestHooksCapability:
         hooks = Hooks()
         events_seen: list[str] = []
 
-        @hooks.wrap_run_event_stream
+        @hooks.on.run_event_stream
         async def observe_stream(
             ctx: RunContext[Any], *, stream: AsyncIterable[AgentStreamEvent]
         ) -> AsyncIterable[AgentStreamEvent]:
@@ -4338,7 +4338,7 @@ class TestHooksCapability:
         hooks = Hooks()
         call_log: list[str] = []
 
-        @hooks.before_model_request
+        @hooks.on.before_model_request
         async def log_request(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
             call_log.append('before_model_request')
             return request_context

@@ -101,7 +101,7 @@ from pydantic_ai.models import ModelRequestContext
 hooks = Hooks()
 
 
-@hooks.before_model_request
+@hooks.on.before_model_request
 async def log_request(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
     print(f'Sending {len(request_context.messages)} messages to the model')
     #> Sending 1 messages to the model
@@ -150,7 +150,7 @@ hooks = Hooks()
 call_log: list[str] = []
 
 
-@hooks.before_tool_execute(tools=['send_email'])
+@hooks.on.before_tool_execute(tools=['send_email'])
 async def audit_dangerous_tools(
     ctx: RunContext[None],
     *,
@@ -189,7 +189,7 @@ from pydantic_ai.models import ModelRequestContext
 hooks = Hooks()
 
 
-@hooks.before_model_request(timeout=0.01)
+@hooks.on.before_model_request(timeout=0.01)
 async def slow_hook(
     ctx: RunContext[None], request_context: ModelRequestContext
 ) -> ModelRequestContext:

@@ -1,11 +1,19 @@
 """Hooks capability for decorator-based hook registration.
 
-Provides the `Hooks` class as an ergonomic alternative to subclassing
-`AbstractCapability` for registering hook functions.
+Provides the [`Hooks`][pydantic_ai.capabilities.Hooks] class as an ergonomic
+alternative to subclassing [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability]
+for registering hook functions.
 
-Hooks intentionally shadows AbstractCapability methods with _HookSlot instance
-attributes. The framework invokes these through AbstractCapability-typed refs
-(type-safe), while users access the _HookSlot type for decorator registration.
+Hook functions are registered via the `hooks.on` namespace::
+
+    hooks = Hooks()
+
+    @hooks.on.before_model_request
+    async def log_request(ctx, request_context):
+        print(f'Request: {request_context}')
+        return request_context
+
+    agent = Agent('openai:gpt-5', capabilities=[hooks])
 """
 
 from __future__ import annotations
@@ -13,6 +21,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass
+from functools import cached_property
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, overload
 
 import anyio
@@ -40,11 +49,44 @@ if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.run import AgentRunResult
 
+_FuncT = TypeVar('_FuncT', bound=Callable[..., Any])
+
+
+# --- Timeout exception ---
+
+
+class HookTimeoutError(TimeoutError):
+    """Raised when a hook function exceeds its configured timeout."""
+
+    def __init__(self, hook_name: str, func_name: str, timeout: float):
+        self.hook_name = hook_name
+        self.func_name = func_name
+        self.timeout = timeout
+        super().__init__(f'Hook {hook_name!r} function {func_name!r} timed out after {timeout}s')
+
+
+# --- Hook entries ---
+
+
+@dataclass
+class _HookEntry(Generic[_FuncT]):
+    """A registered hook function with optional timeout."""
+
+    func: _FuncT
+    timeout: float | None = None
+
+
+@dataclass
+class _ToolHookEntry(_HookEntry[_FuncT]):
+    """A registered tool hook function with optional tools filter and timeout."""
+
+    tools: frozenset[str] | None = None
+
+
 # fmt: off
 # --- Hook function protocols ---
 # These define the exact signatures users must implement for each hook type.
 # Both sync and async functions are accepted (sync auto-wrapped at runtime).
-# Uses RunContext[Any] since AgentDepsT is contravariant (Protocol requires invariant).
 
 
 class BeforeRunHookFunc(Protocol):
@@ -82,6 +124,10 @@ class OnNodeRunErrorHookFunc(Protocol):
 class WrapRunEventStreamHookFunc(Protocol):
     """Protocol for :meth:`~AbstractCapability.wrap_run_event_stream` hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, stream: AsyncIterable[AgentStreamEvent]) -> AsyncIterable[AgentStreamEvent]: ...
+
+class OnEventHookFunc(Protocol):
+    """Protocol for per-event hook functions (convenience over wrap_run_event_stream)."""
+    def __call__(self, ctx: RunContext[Any], event: AgentStreamEvent, /) -> AgentStreamEvent | Awaitable[AgentStreamEvent]: ...
 
 class BeforeModelRequestHookFunc(Protocol):
     """Protocol for :meth:`~AbstractCapability.before_model_request` hook functions."""
@@ -134,140 +180,10 @@ class WrapToolExecuteHookFunc(Protocol):
 class OnToolExecuteErrorHookFunc(Protocol):
     """Protocol for :meth:`~AbstractCapability.on_tool_execute_error` hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs, error: Exception) -> Any | Awaitable[Any]: ...
-    # fmt: on
-
-_FuncT = TypeVar('_FuncT', bound=Callable[..., Any])
+# fmt: on
 
 
-# --- Timeout exception ---
-
-
-class HookTimeoutError(TimeoutError):
-    """Raised when a hook function exceeds its configured timeout."""
-
-    def __init__(self, hook_name: str, func_name: str, timeout: float):
-        self.hook_name = hook_name
-        self.func_name = func_name
-        self.timeout = timeout
-        super().__init__(f'Hook {hook_name!r} function {func_name!r} timed out after {timeout}s')
-
-
-# --- Hook entries ---
-
-
-@dataclass
-class _HookEntry(Generic[_FuncT]):
-    """A registered hook function with optional timeout."""
-
-    func: _FuncT
-    timeout: float | None = None
-
-
-@dataclass
-class _ToolHookEntry(_HookEntry[_FuncT]):
-    """A registered tool hook function with optional tools filter and timeout."""
-
-    tools: frozenset[str] | None = None
-
-
-# --- Hook slots ---
-
-
-class _HookSlot(Generic[_FuncT]):
-    """A hook registration slot that serves as both a decorator and framework dispatch.
-
-    When accessed on a ``Hooks`` instance, this object shadows the inherited
-    ``AbstractCapability`` method of the same name. Its ``__call__`` auto-detects
-    whether it's being used as a decorator (first arg is a callable) or invoked
-    by the framework (first arg is a ``RunContext``).
-
-    Note: The decorator overloads infer ``_FuncT`` from the decorated function rather
-    than constraining it against the Protocol type on the ``Hooks`` annotation. This
-    means decorator usage (``@hooks.before_model_request``) does not type-check the
-    hook function's signature — only the constructor kwargs form is checked against
-    the Protocol types. This is a known limitation of the shadowing approach.
-    """
-
-    __slots__ = ('funcs', '_dispatch', '_default', '_name')
-
-    def __init__(self, dispatch: Callable[..., Any], default: Callable[..., Any], name: str = ''):
-        self.funcs: list[_HookEntry[Any]] = []
-        self._dispatch = dispatch
-        self._default = default
-        self._name = name
-
-    @overload
-    def __call__(self, func: _FuncT, /) -> _FuncT: ...
-
-    @overload
-    def __call__(self, *, timeout: float | None = None) -> Callable[[_FuncT], _FuncT]: ...
-
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        if not args:
-            # Parameterized decorator: @hooks.before_model_request(timeout=5)
-            timeout = kwargs.get('timeout')
-            return self._make_decorator(timeout=timeout)
-
-        first = args[0]
-        if isinstance(first, RunContext):
-            # Framework dispatch
-            if not self.funcs:
-                return self._default(*args, **kwargs)
-            return self._dispatch(self.funcs, self._name, *args, **kwargs)
-
-        # Bare decorator: @hooks.before_model_request
-        self.funcs.append(self._make_entry(first))
-        return first
-
-    def _make_entry(self, func: _FuncT, *, timeout: float | None = None) -> _HookEntry[_FuncT]:
-        """Create a hook entry. Override in subclasses to change the entry type."""
-        return _HookEntry(func, timeout=timeout)
-
-    def _make_decorator(self, *, timeout: float | None = None) -> Callable[[_FuncT], _FuncT]:
-        def decorator(func: _FuncT) -> _FuncT:
-            self.funcs.append(self._make_entry(func, timeout=timeout))
-            return func
-
-        return decorator
-
-
-class _ToolHookSlot(_HookSlot[_FuncT]):
-    """Hook slot for tool hooks — adds ``tools`` filtering parameter."""
-
-    @overload
-    def __call__(self, func: _FuncT, /) -> _FuncT: ...
-
-    @overload
-    def __call__(
-        self, *, tools: Sequence[str] | None = None, timeout: float | None = None
-    ) -> Callable[[_FuncT], _FuncT]: ...
-
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        if not args:
-            # Parameterized decorator: @hooks.before_tool_execute(tools=['x'], timeout=5)
-            timeout = kwargs.get('timeout')
-            tools = kwargs.get('tools')
-            return self._make_tool_decorator(timeout=timeout, tools=tools)
-        # Delegate RunContext dispatch and bare-decorator to parent
-        return super().__call__(*args, **kwargs)
-
-    def _make_entry(self, func: _FuncT, *, timeout: float | None = None) -> _HookEntry[_FuncT]:
-        """Override to create _ToolHookEntry for bare decorators."""
-        return _ToolHookEntry(func, timeout=timeout)
-
-    def _make_tool_decorator(
-        self, *, timeout: float | None = None, tools: Sequence[str] | None = None
-    ) -> Callable[[_FuncT], _FuncT]:
-        frozen_tools = frozenset(tools) if tools is not None else None
-
-        def decorator(func: _FuncT) -> _FuncT:
-            self.funcs.append(_ToolHookEntry(func, timeout=timeout, tools=frozen_tools))
-            return func
-
-        return decorator
-
-
-# --- Dispatch helpers ---
+# --- Helpers ---
 
 
 async def _call_entry(entry: _HookEntry[Any], hook_name: str, *args: Any, **kwargs: Any) -> Any:
@@ -294,7 +210,7 @@ async def _call_func(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any
     return result
 
 
-def _iter_tool_entries(entries: list[_HookEntry[Any]], *, call: ToolCallPart | None = None) -> list[_HookEntry[Any]]:
+def _filter_tool_entries(entries: list[_HookEntry[Any]], *, call: ToolCallPart | None = None) -> list[_HookEntry[Any]]:
     """Filter entries by tool names if applicable."""
     if call is None:
         return entries
@@ -305,54 +221,698 @@ def _iter_tool_entries(entries: list[_HookEntry[Any]], *, call: ToolCallPart | N
     ]
 
 
-# --- Dispatch functions for each pattern ---
-# These are called by _HookSlot when the framework invokes the hook.
-# Signature: (entries, hook_name, ctx, *args, **kwargs) -> coroutine | async_iterable
+# --- Registration decorator helpers ---
 
 
-async def _dispatch_observe(entries: list[_HookEntry[Any]], hook_name: str, ctx: RunContext[Any]) -> None:
-    """before_run: call each for side effects."""
-    for entry in entries:
-        await _call_entry(entry, hook_name, ctx)
+def _bare_or_parameterized(
+    registry: dict[str, list[_HookEntry[Any]]],
+    key: str,
+    func: _FuncT | None,
+    *,
+    timeout: float | None = None,
+) -> _FuncT | Callable[[_FuncT], _FuncT]:
+    """Handle bare decorator or parameterized decorator for non-tool hooks."""
+    if func is not None:
+        registry.setdefault(key, []).append(_HookEntry(func, timeout=timeout))
+        return func
+
+    def decorator(f: _FuncT) -> _FuncT:
+        registry.setdefault(key, []).append(_HookEntry(f, timeout=timeout))
+        return f
+
+    return decorator
 
 
-async def _dispatch_forward_positional(
-    entries: list[_HookEntry[Any]], hook_name: str, ctx: RunContext[Any], value: Any, **kwargs: Any
-) -> Any:
-    """before_model_request, prepare_tools: chain through 2nd positional arg."""
-    for entry in _iter_tool_entries(entries, call=kwargs.get('call')):
-        value = await _call_entry(entry, hook_name, ctx, value, **kwargs)
-    return value
+def _tool_bare_or_parameterized(
+    registry: dict[str, list[_HookEntry[Any]]],
+    key: str,
+    func: _FuncT | None,
+    *,
+    tools: Sequence[str] | None = None,
+    timeout: float | None = None,
+) -> _FuncT | Callable[[_FuncT], _FuncT]:
+    """Handle bare decorator or parameterized decorator for tool hooks."""
+    frozen_tools = frozenset(tools) if tools is not None else None
+    if func is not None:
+        registry.setdefault(key, []).append(_ToolHookEntry(func, timeout=timeout, tools=frozen_tools))
+        return func
+
+    def decorator(f: _FuncT) -> _FuncT:
+        registry.setdefault(key, []).append(_ToolHookEntry(f, timeout=timeout, tools=frozen_tools))
+        return f
+
+    return decorator
 
 
-def _make_dispatch_forward_keyword(return_key: str) -> Callable[..., Any]:
-    """Create dispatch for hooks that chain through a keyword arg (after_*, before_node_run, etc.)."""
-
-    async def dispatch(entries: list[_HookEntry[Any]], hook_name: str, ctx: RunContext[Any], **kwargs: Any) -> Any:
-        for entry in _iter_tool_entries(entries, call=kwargs.get('call')):
-            kwargs[return_key] = await _call_entry(entry, hook_name, ctx, **kwargs)
-        return kwargs[return_key]
-
-    return dispatch
+# --- Hook registration namespace ---
 
 
-def _make_dispatch_wrap(handler_arg: str | None) -> Callable[..., Any]:
-    """Create dispatch for wrap_* hooks that build a middleware chain."""
+class _HookRegistration(Generic[AgentDepsT]):
+    """Decorator namespace for registering hooks on a :class:`Hooks` instance.
 
-    async def dispatch(entries: list[_HookEntry[Any]], hook_name: str, ctx: RunContext[Any], **kwargs: Any) -> Any:
-        handler = kwargs.pop('handler')
-        chain = handler
-        filtered = _iter_tool_entries(entries, call=kwargs.get('call'))
-        for entry in reversed(filtered):
-            chain = _build_wrap_link(entry, hook_name, ctx, kwargs, chain, handler_arg)
-        if handler_arg and handler_arg in kwargs:
-            return await chain(kwargs[handler_arg])
+    Accessed via ``hooks.on``. Each method corresponds to a lifecycle hook and
+    can be used as a bare decorator or a parameterized decorator::
+
+        @hooks.on.before_model_request
+        async def my_hook(ctx, request_context):
+            return request_context
+
+        @hooks.on.before_tool_execute(tools=['dangerous'], timeout=5.0)
+        async def guard(ctx, *, call, tool_def, args):
+            return args
+    """
+
+    def __init__(self, hooks: Hooks[AgentDepsT]) -> None:
+        self._hooks = hooks
+
+    @property
+    def _r(self) -> dict[str, list[_HookEntry[Any]]]:
+        return self._hooks._registry  # pyright: ignore[reportPrivateUsage]
+
+    # --- Run lifecycle ---
+
+    @overload
+    def before_run(self, func: BeforeRunHookFunc, /) -> BeforeRunHookFunc: ...
+    @overload
+    def before_run(self, *, timeout: float | None = None) -> Callable[[BeforeRunHookFunc], BeforeRunHookFunc]: ...
+    def before_run(self, func: BeforeRunHookFunc | None = None, *, timeout: float | None = None) -> Any:
+        return _bare_or_parameterized(self._r, 'before_run', func, timeout=timeout)
+
+    @overload
+    def after_run(self, func: AfterRunHookFunc, /) -> AfterRunHookFunc: ...
+    @overload
+    def after_run(self, *, timeout: float | None = None) -> Callable[[AfterRunHookFunc], AfterRunHookFunc]: ...
+    def after_run(self, func: AfterRunHookFunc | None = None, *, timeout: float | None = None) -> Any:
+        return _bare_or_parameterized(self._r, 'after_run', func, timeout=timeout)
+
+    @overload
+    def run(self, func: WrapRunHookFunc, /) -> WrapRunHookFunc: ...
+    @overload
+    def run(self, *, timeout: float | None = None) -> Callable[[WrapRunHookFunc], WrapRunHookFunc]: ...
+    def run(self, func: WrapRunHookFunc | None = None, *, timeout: float | None = None) -> Any:
+        return _bare_or_parameterized(self._r, 'wrap_run', func, timeout=timeout)
+
+    @overload
+    def run_error(self, func: OnRunErrorHookFunc, /) -> OnRunErrorHookFunc: ...
+    @overload
+    def run_error(self, *, timeout: float | None = None) -> Callable[[OnRunErrorHookFunc], OnRunErrorHookFunc]: ...
+    def run_error(self, func: OnRunErrorHookFunc | None = None, *, timeout: float | None = None) -> Any:
+        return _bare_or_parameterized(self._r, 'on_run_error', func, timeout=timeout)
+
+    # --- Node lifecycle ---
+
+    @overload
+    def before_node_run(self, func: BeforeNodeRunHookFunc, /) -> BeforeNodeRunHookFunc: ...
+    @overload
+    def before_node_run(
+        self, *, timeout: float | None = None
+    ) -> Callable[[BeforeNodeRunHookFunc], BeforeNodeRunHookFunc]: ...
+    def before_node_run(self, func: BeforeNodeRunHookFunc | None = None, *, timeout: float | None = None) -> Any:
+        return _bare_or_parameterized(self._r, 'before_node_run', func, timeout=timeout)
+
+    @overload
+    def after_node_run(self, func: AfterNodeRunHookFunc, /) -> AfterNodeRunHookFunc: ...
+    @overload
+    def after_node_run(
+        self, *, timeout: float | None = None
+    ) -> Callable[[AfterNodeRunHookFunc], AfterNodeRunHookFunc]: ...
+    def after_node_run(self, func: AfterNodeRunHookFunc | None = None, *, timeout: float | None = None) -> Any:
+        return _bare_or_parameterized(self._r, 'after_node_run', func, timeout=timeout)
+
+    @overload
+    def node_run(self, func: WrapNodeRunHookFunc, /) -> WrapNodeRunHookFunc: ...
+    @overload
+    def node_run(self, *, timeout: float | None = None) -> Callable[[WrapNodeRunHookFunc], WrapNodeRunHookFunc]: ...
+    def node_run(self, func: WrapNodeRunHookFunc | None = None, *, timeout: float | None = None) -> Any:
+        return _bare_or_parameterized(self._r, 'wrap_node_run', func, timeout=timeout)
+
+    @overload
+    def node_run_error(self, func: OnNodeRunErrorHookFunc, /) -> OnNodeRunErrorHookFunc: ...
+    @overload
+    def node_run_error(
+        self, *, timeout: float | None = None
+    ) -> Callable[[OnNodeRunErrorHookFunc], OnNodeRunErrorHookFunc]: ...
+    def node_run_error(self, func: OnNodeRunErrorHookFunc | None = None, *, timeout: float | None = None) -> Any:
+        return _bare_or_parameterized(self._r, 'on_node_run_error', func, timeout=timeout)
+
+    # --- Event stream ---
+
+    @overload
+    def run_event_stream(self, func: WrapRunEventStreamHookFunc, /) -> WrapRunEventStreamHookFunc: ...
+    @overload
+    def run_event_stream(
+        self, *, timeout: float | None = None
+    ) -> Callable[[WrapRunEventStreamHookFunc], WrapRunEventStreamHookFunc]: ...
+    def run_event_stream(self, func: WrapRunEventStreamHookFunc | None = None, *, timeout: float | None = None) -> Any:
+        return _bare_or_parameterized(self._r, 'wrap_run_event_stream', func, timeout=timeout)
+
+    @overload
+    def event(self, func: OnEventHookFunc, /) -> OnEventHookFunc: ...
+    @overload
+    def event(self, *, timeout: float | None = None) -> Callable[[OnEventHookFunc], OnEventHookFunc]: ...
+    def event(self, func: OnEventHookFunc | None = None, *, timeout: float | None = None) -> Any:
+        return _bare_or_parameterized(self._r, '_on_event', func, timeout=timeout)
+
+    # --- Model request ---
+
+    @overload
+    def before_model_request(self, func: BeforeModelRequestHookFunc, /) -> BeforeModelRequestHookFunc: ...
+    @overload
+    def before_model_request(
+        self, *, timeout: float | None = None
+    ) -> Callable[[BeforeModelRequestHookFunc], BeforeModelRequestHookFunc]: ...
+    def before_model_request(
+        self, func: BeforeModelRequestHookFunc | None = None, *, timeout: float | None = None
+    ) -> Any:
+        return _bare_or_parameterized(self._r, 'before_model_request', func, timeout=timeout)
+
+    @overload
+    def after_model_request(self, func: AfterModelRequestHookFunc, /) -> AfterModelRequestHookFunc: ...
+    @overload
+    def after_model_request(
+        self, *, timeout: float | None = None
+    ) -> Callable[[AfterModelRequestHookFunc], AfterModelRequestHookFunc]: ...
+    def after_model_request(
+        self, func: AfterModelRequestHookFunc | None = None, *, timeout: float | None = None
+    ) -> Any:
+        return _bare_or_parameterized(self._r, 'after_model_request', func, timeout=timeout)
+
+    @overload
+    def model_request(self, func: WrapModelRequestHookFunc, /) -> WrapModelRequestHookFunc: ...
+    @overload
+    def model_request(
+        self, *, timeout: float | None = None
+    ) -> Callable[[WrapModelRequestHookFunc], WrapModelRequestHookFunc]: ...
+    def model_request(self, func: WrapModelRequestHookFunc | None = None, *, timeout: float | None = None) -> Any:
+        return _bare_or_parameterized(self._r, 'wrap_model_request', func, timeout=timeout)
+
+    @overload
+    def model_request_error(self, func: OnModelRequestErrorHookFunc, /) -> OnModelRequestErrorHookFunc: ...
+    @overload
+    def model_request_error(
+        self, *, timeout: float | None = None
+    ) -> Callable[[OnModelRequestErrorHookFunc], OnModelRequestErrorHookFunc]: ...
+    def model_request_error(
+        self, func: OnModelRequestErrorHookFunc | None = None, *, timeout: float | None = None
+    ) -> Any:
+        return _bare_or_parameterized(self._r, 'on_model_request_error', func, timeout=timeout)
+
+    # --- Tool preparation ---
+
+    @overload
+    def prepare_tools(self, func: PrepareToolsHookFunc, /) -> PrepareToolsHookFunc: ...
+    @overload
+    def prepare_tools(
+        self, *, timeout: float | None = None
+    ) -> Callable[[PrepareToolsHookFunc], PrepareToolsHookFunc]: ...
+    def prepare_tools(self, func: PrepareToolsHookFunc | None = None, *, timeout: float | None = None) -> Any:
+        return _bare_or_parameterized(self._r, 'prepare_tools', func, timeout=timeout)
+
+    # --- Tool validation ---
+
+    @overload
+    def before_tool_validate(self, func: BeforeToolValidateHookFunc, /) -> BeforeToolValidateHookFunc: ...
+    @overload
+    def before_tool_validate(
+        self, *, tools: Sequence[str] | None = None, timeout: float | None = None
+    ) -> Callable[[BeforeToolValidateHookFunc], BeforeToolValidateHookFunc]: ...
+    def before_tool_validate(
+        self,
+        func: BeforeToolValidateHookFunc | None = None,
+        *,
+        tools: Sequence[str] | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        return _tool_bare_or_parameterized(self._r, 'before_tool_validate', func, tools=tools, timeout=timeout)
+
+    @overload
+    def after_tool_validate(self, func: AfterToolValidateHookFunc, /) -> AfterToolValidateHookFunc: ...
+    @overload
+    def after_tool_validate(
+        self, *, tools: Sequence[str] | None = None, timeout: float | None = None
+    ) -> Callable[[AfterToolValidateHookFunc], AfterToolValidateHookFunc]: ...
+    def after_tool_validate(
+        self,
+        func: AfterToolValidateHookFunc | None = None,
+        *,
+        tools: Sequence[str] | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        return _tool_bare_or_parameterized(self._r, 'after_tool_validate', func, tools=tools, timeout=timeout)
+
+    @overload
+    def tool_validate(self, func: WrapToolValidateHookFunc, /) -> WrapToolValidateHookFunc: ...
+    @overload
+    def tool_validate(
+        self, *, tools: Sequence[str] | None = None, timeout: float | None = None
+    ) -> Callable[[WrapToolValidateHookFunc], WrapToolValidateHookFunc]: ...
+    def tool_validate(
+        self,
+        func: WrapToolValidateHookFunc | None = None,
+        *,
+        tools: Sequence[str] | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        return _tool_bare_or_parameterized(self._r, 'wrap_tool_validate', func, tools=tools, timeout=timeout)
+
+    @overload
+    def tool_validate_error(self, func: OnToolValidateErrorHookFunc, /) -> OnToolValidateErrorHookFunc: ...
+    @overload
+    def tool_validate_error(
+        self, *, tools: Sequence[str] | None = None, timeout: float | None = None
+    ) -> Callable[[OnToolValidateErrorHookFunc], OnToolValidateErrorHookFunc]: ...
+    def tool_validate_error(
+        self,
+        func: OnToolValidateErrorHookFunc | None = None,
+        *,
+        tools: Sequence[str] | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        return _tool_bare_or_parameterized(self._r, 'on_tool_validate_error', func, tools=tools, timeout=timeout)
+
+    # --- Tool execution ---
+
+    @overload
+    def before_tool_execute(self, func: BeforeToolExecuteHookFunc, /) -> BeforeToolExecuteHookFunc: ...
+    @overload
+    def before_tool_execute(
+        self, *, tools: Sequence[str] | None = None, timeout: float | None = None
+    ) -> Callable[[BeforeToolExecuteHookFunc], BeforeToolExecuteHookFunc]: ...
+    def before_tool_execute(
+        self,
+        func: BeforeToolExecuteHookFunc | None = None,
+        *,
+        tools: Sequence[str] | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        return _tool_bare_or_parameterized(self._r, 'before_tool_execute', func, tools=tools, timeout=timeout)
+
+    @overload
+    def after_tool_execute(self, func: AfterToolExecuteHookFunc, /) -> AfterToolExecuteHookFunc: ...
+    @overload
+    def after_tool_execute(
+        self, *, tools: Sequence[str] | None = None, timeout: float | None = None
+    ) -> Callable[[AfterToolExecuteHookFunc], AfterToolExecuteHookFunc]: ...
+    def after_tool_execute(
+        self,
+        func: AfterToolExecuteHookFunc | None = None,
+        *,
+        tools: Sequence[str] | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        return _tool_bare_or_parameterized(self._r, 'after_tool_execute', func, tools=tools, timeout=timeout)
+
+    @overload
+    def tool_execute(self, func: WrapToolExecuteHookFunc, /) -> WrapToolExecuteHookFunc: ...
+    @overload
+    def tool_execute(
+        self, *, tools: Sequence[str] | None = None, timeout: float | None = None
+    ) -> Callable[[WrapToolExecuteHookFunc], WrapToolExecuteHookFunc]: ...
+    def tool_execute(
+        self,
+        func: WrapToolExecuteHookFunc | None = None,
+        *,
+        tools: Sequence[str] | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        return _tool_bare_or_parameterized(self._r, 'wrap_tool_execute', func, tools=tools, timeout=timeout)
+
+    @overload
+    def tool_execute_error(self, func: OnToolExecuteErrorHookFunc, /) -> OnToolExecuteErrorHookFunc: ...
+    @overload
+    def tool_execute_error(
+        self, *, tools: Sequence[str] | None = None, timeout: float | None = None
+    ) -> Callable[[OnToolExecuteErrorHookFunc], OnToolExecuteErrorHookFunc]: ...
+    def tool_execute_error(
+        self,
+        func: OnToolExecuteErrorHookFunc | None = None,
+        *,
+        tools: Sequence[str] | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        return _tool_bare_or_parameterized(self._r, 'on_tool_execute_error', func, tools=tools, timeout=timeout)
+
+
+# --- The Hooks capability ---
+
+
+class Hooks(AbstractCapability[AgentDepsT]):
+    """Register hook functions via decorators or constructor kwargs.
+
+    For extension developers building reusable capabilities, subclass
+    :class:`AbstractCapability` directly. For application code that needs
+    a few hooks without the ceremony of a subclass, use ``Hooks``.
+
+    Example using decorators::
+
+        hooks = Hooks()
+
+        @hooks.on.before_model_request
+        async def log_request(ctx, request_context):
+            print(f'Request: {request_context}')
+            return request_context
+
+        agent = Agent('openai:gpt-5', capabilities=[hooks])
+
+    Example using constructor kwargs::
+
+        agent = Agent('openai:gpt-5', capabilities=[
+            Hooks(before_model_request=log_request)
+        ])
+    """
+
+    _registry: dict[str, list[_HookEntry[Any]]]
+
+    def __init__(
+        self,
+        *,
+        before_run: BeforeRunHookFunc | None = None,
+        after_run: AfterRunHookFunc | None = None,
+        wrap_run: WrapRunHookFunc | None = None,
+        on_run_error: OnRunErrorHookFunc | None = None,
+        before_node_run: BeforeNodeRunHookFunc | None = None,
+        after_node_run: AfterNodeRunHookFunc | None = None,
+        wrap_node_run: WrapNodeRunHookFunc | None = None,
+        on_node_run_error: OnNodeRunErrorHookFunc | None = None,
+        wrap_run_event_stream: WrapRunEventStreamHookFunc | None = None,
+        on_event: OnEventHookFunc | None = None,
+        before_model_request: BeforeModelRequestHookFunc | None = None,
+        after_model_request: AfterModelRequestHookFunc | None = None,
+        wrap_model_request: WrapModelRequestHookFunc | None = None,
+        on_model_request_error: OnModelRequestErrorHookFunc | None = None,
+        prepare_tools: PrepareToolsHookFunc | None = None,
+        before_tool_validate: BeforeToolValidateHookFunc | None = None,
+        after_tool_validate: AfterToolValidateHookFunc | None = None,
+        wrap_tool_validate: WrapToolValidateHookFunc | None = None,
+        on_tool_validate_error: OnToolValidateErrorHookFunc | None = None,
+        before_tool_execute: BeforeToolExecuteHookFunc | None = None,
+        after_tool_execute: AfterToolExecuteHookFunc | None = None,
+        wrap_tool_execute: WrapToolExecuteHookFunc | None = None,
+        on_tool_execute_error: OnToolExecuteErrorHookFunc | None = None,
+    ):
+        self._registry = {}
+        # Register constructor-provided functions via the .on namespace
+        _kwargs: dict[str, Any] = {
+            'before_run': before_run,
+            'after_run': after_run,
+            'wrap_run': wrap_run,
+            'on_run_error': on_run_error,
+            'before_node_run': before_node_run,
+            'after_node_run': after_node_run,
+            'wrap_node_run': wrap_node_run,
+            'on_node_run_error': on_node_run_error,
+            'wrap_run_event_stream': wrap_run_event_stream,
+            '_on_event': on_event,
+            'before_model_request': before_model_request,
+            'after_model_request': after_model_request,
+            'wrap_model_request': wrap_model_request,
+            'on_model_request_error': on_model_request_error,
+            'prepare_tools': prepare_tools,
+            'before_tool_validate': before_tool_validate,
+            'after_tool_validate': after_tool_validate,
+            'wrap_tool_validate': wrap_tool_validate,
+            'on_tool_validate_error': on_tool_validate_error,
+            'before_tool_execute': before_tool_execute,
+            'after_tool_execute': after_tool_execute,
+            'wrap_tool_execute': wrap_tool_execute,
+            'on_tool_execute_error': on_tool_execute_error,
+        }
+        for key, func in _kwargs.items():
+            if func is not None:
+                self._registry.setdefault(key, []).append(_HookEntry(func))
+
+    @cached_property
+    def on(self) -> _HookRegistration[AgentDepsT]:
+        """Decorator namespace for registering hook functions."""
+        return _HookRegistration(self)
+
+    def _get(self, key: str) -> list[_HookEntry[Any]]:
+        return self._registry.get(key, [])
+
+    @property
+    def has_wrap_node_run(self) -> bool:
+        return bool(self._get('wrap_node_run'))
+
+    @classmethod
+    def get_serialization_name(cls) -> str | None:
+        return None
+
+    def __repr__(self) -> str:
+        registered = {k: len(v) for k, v in self._registry.items() if v}
+        return f'Hooks({registered})'
+
+    # --- AbstractCapability method overrides ---
+    # These dispatch to registered hook functions in self._registry.
+
+    async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
+        for entry in self._get('before_run'):
+            await _call_entry(entry, 'before_run', ctx)
+
+    async def after_run(self, ctx: RunContext[AgentDepsT], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+        for entry in self._get('after_run'):
+            result = await _call_entry(entry, 'after_run', ctx, result=result)
+        return result
+
+    async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+        entries = self._get('wrap_run')
+        if not entries:
+            return await handler()
+        chain: Callable[..., Any] = handler
+        for entry in reversed(entries):
+            chain = _make_wrap_link(entry, 'wrap_run', ctx, {}, chain, None)
         return await chain()
 
-    return dispatch
+    async def on_run_error(self, ctx: RunContext[AgentDepsT], *, error: BaseException) -> AgentRunResult[Any]:
+        for entry in self._get('on_run_error'):
+            try:
+                return await _call_entry(entry, 'on_run_error', ctx, error=error)
+            except BaseException as new_error:
+                error = new_error
+        raise error
+
+    async def before_node_run(
+        self, ctx: RunContext[AgentDepsT], *, node: AgentNode[AgentDepsT]
+    ) -> AgentNode[AgentDepsT]:
+        for entry in self._get('before_node_run'):
+            node = await _call_entry(entry, 'before_node_run', ctx, node=node)
+        return node
+
+    async def after_node_run(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        node: AgentNode[AgentDepsT],
+        result: NodeResult[AgentDepsT],
+    ) -> NodeResult[AgentDepsT]:
+        for entry in self._get('after_node_run'):
+            result = await _call_entry(entry, 'after_node_run', ctx, node=node, result=result)
+        return result
+
+    async def wrap_node_run(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        node: AgentNode[AgentDepsT],
+        handler: WrapNodeRunHandler[AgentDepsT],
+    ) -> NodeResult[AgentDepsT]:
+        entries = self._get('wrap_node_run')
+        if not entries:
+            return await handler(node)
+        chain: Callable[..., Any] = handler
+        for entry in reversed(entries):
+            chain = _make_wrap_link(entry, 'wrap_node_run', ctx, {}, chain, 'node')
+        return await chain(node)
+
+    async def on_node_run_error(
+        self, ctx: RunContext[AgentDepsT], *, node: AgentNode[AgentDepsT], error: Exception
+    ) -> NodeResult[AgentDepsT]:
+        for entry in self._get('on_node_run_error'):
+            try:
+                return await _call_entry(entry, 'on_node_run_error', ctx, node=node, error=error)
+            except Exception as new_error:
+                error = new_error
+        raise error
+
+    async def wrap_run_event_stream(
+        self, ctx: RunContext[AgentDepsT], *, stream: AsyncIterable[AgentStreamEvent]
+    ) -> AsyncIterable[AgentStreamEvent]:
+        # First, wrap with per-event callbacks (innermost)
+        event_entries = self._get('_on_event')
+        if event_entries:
+            stream = _event_callback_stream(ctx, stream, event_entries)
+        # Then chain explicit stream wrappers (outermost)
+        for entry in reversed(self._get('wrap_run_event_stream')):
+            stream = entry.func(ctx, stream=stream)
+        async for event in stream:
+            yield event
+
+    async def before_model_request(
+        self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        for entry in self._get('before_model_request'):
+            request_context = await _call_entry(entry, 'before_model_request', ctx, request_context)
+        return request_context
+
+    async def after_model_request(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        request_context: ModelRequestContext,
+        response: ModelResponse,
+    ) -> ModelResponse:
+        for entry in self._get('after_model_request'):
+            response = await _call_entry(
+                entry, 'after_model_request', ctx, request_context=request_context, response=response
+            )
+        return response
+
+    async def wrap_model_request(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        request_context: ModelRequestContext,
+        handler: WrapModelRequestHandler,
+    ) -> ModelResponse:
+        entries = self._get('wrap_model_request')
+        if not entries:
+            return await handler(request_context)
+        chain: Callable[..., Any] = handler
+        for entry in reversed(entries):
+            chain = _make_wrap_link(entry, 'wrap_model_request', ctx, {}, chain, 'request_context')
+        return await chain(request_context)
+
+    async def on_model_request_error(
+        self, ctx: RunContext[AgentDepsT], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
+        for entry in self._get('on_model_request_error'):
+            try:
+                return await _call_entry(
+                    entry, 'on_model_request_error', ctx, request_context=request_context, error=error
+                )
+            except Exception as new_error:
+                error = new_error
+        raise error
+
+    async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        for entry in self._get('prepare_tools'):
+            tool_defs = await _call_entry(entry, 'prepare_tools', ctx, tool_defs)
+        return tool_defs
+
+    async def before_tool_validate(
+        self, ctx: RunContext[AgentDepsT], *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs
+    ) -> RawToolArgs:
+        for entry in _filter_tool_entries(self._get('before_tool_validate'), call=call):
+            args = await _call_entry(entry, 'before_tool_validate', ctx, call=call, tool_def=tool_def, args=args)
+        return args
+
+    async def after_tool_validate(
+        self, ctx: RunContext[AgentDepsT], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+    ) -> ValidatedToolArgs:
+        for entry in _filter_tool_entries(self._get('after_tool_validate'), call=call):
+            args = await _call_entry(entry, 'after_tool_validate', ctx, call=call, tool_def=tool_def, args=args)
+        return args
+
+    async def wrap_tool_validate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: RawToolArgs,
+        handler: WrapToolValidateHandler,
+    ) -> ValidatedToolArgs:
+        entries = _filter_tool_entries(self._get('wrap_tool_validate'), call=call)
+        if not entries:
+            return await handler(args)
+        chain: Callable[..., Any] = handler
+        for entry in reversed(entries):
+            chain = _make_wrap_link(
+                entry, 'wrap_tool_validate', ctx, {'call': call, 'tool_def': tool_def}, chain, 'args'
+            )
+        return await chain(args)
+
+    async def on_tool_validate_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: RawToolArgs,
+        error: ValidationError | ModelRetry,
+    ) -> ValidatedToolArgs:
+        for entry in _filter_tool_entries(self._get('on_tool_validate_error'), call=call):
+            try:
+                return await _call_entry(
+                    entry, 'on_tool_validate_error', ctx, call=call, tool_def=tool_def, args=args, error=error
+                )
+            except Exception as new_error:
+                error = new_error  # type: ignore[assignment]
+        raise error
+
+    async def before_tool_execute(
+        self, ctx: RunContext[AgentDepsT], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+    ) -> ValidatedToolArgs:
+        for entry in _filter_tool_entries(self._get('before_tool_execute'), call=call):
+            args = await _call_entry(entry, 'before_tool_execute', ctx, call=call, tool_def=tool_def, args=args)
+        return args
+
+    async def after_tool_execute(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        result: Any,
+    ) -> Any:
+        for entry in _filter_tool_entries(self._get('after_tool_execute'), call=call):
+            result = await _call_entry(
+                entry, 'after_tool_execute', ctx, call=call, tool_def=tool_def, args=args, result=result
+            )
+        return result
+
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        handler: WrapToolExecuteHandler,
+    ) -> Any:
+        entries = _filter_tool_entries(self._get('wrap_tool_execute'), call=call)
+        if not entries:
+            return await handler(args)
+        chain: Callable[..., Any] = handler
+        for entry in reversed(entries):
+            chain = _make_wrap_link(
+                entry, 'wrap_tool_execute', ctx, {'call': call, 'tool_def': tool_def}, chain, 'args'
+            )
+        return await chain(args)
+
+    async def on_tool_execute_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        error: Exception,
+    ) -> Any:
+        for entry in _filter_tool_entries(self._get('on_tool_execute_error'), call=call):
+            try:
+                return await _call_entry(
+                    entry, 'on_tool_execute_error', ctx, call=call, tool_def=tool_def, args=args, error=error
+                )
+            except Exception as new_error:
+                error = new_error
+        raise error
 
 
-def _build_wrap_link(
+# --- Wrap chain helper ---
+
+
+def _make_wrap_link(
     entry: _HookEntry[Any],
     hook_name: str,
     ctx: RunContext[Any],
@@ -378,322 +938,16 @@ def _build_wrap_link(
     return wrapper_no_arg
 
 
-def _dispatch_wrap_stream(
-    entries: list[_HookEntry[Any]],
-    hook_name: str,
+# --- Event stream helper ---
+
+
+async def _event_callback_stream(
     ctx: RunContext[Any],
-    *,
-    stream: AsyncIterable[Any],
-) -> AsyncIterable[Any]:
-    """wrap_run_event_stream: chain async generators (sync return, not a coroutine).
-
-    Timeout is not supported for stream wrapper hooks because they are async
-    generators, not single coroutines.  Calls entry.func directly.
-    """
-    for entry in reversed(entries):
-        stream = entry.func(ctx, stream=stream)
-    return stream
-
-
-async def _dispatch_error(entries: list[_HookEntry[Any]], hook_name: str, ctx: RunContext[Any], **kwargs: Any) -> Any:
-    """on_*_error: try each handler, first recovery wins."""
-    error = kwargs.pop('error')
-    for entry in _iter_tool_entries(entries, call=kwargs.get('call')):
-        try:
-            return await _call_entry(entry, hook_name, ctx, error=error, **kwargs)
-        except Exception as new_error:
-            error = new_error
-    raise error
-
-
-# --- Default functions (when no hooks registered) ---
-
-
-async def _noop_observe(ctx: RunContext[Any]) -> None:
-    pass
-
-
-async def _noop_forward_positional(ctx: RunContext[Any], value: Any, **kwargs: Any) -> Any:
-    return value
-
-
-def _make_noop_forward_keyword(return_key: str) -> Callable[..., Any]:
-    async def noop(ctx: RunContext[Any], **kwargs: Any) -> Any:
-        return kwargs[return_key]
-
-    return noop
-
-
-def _make_noop_wrap(handler_arg: str | None) -> Callable[..., Any]:
-    async def noop(ctx: RunContext[Any], **kwargs: Any) -> Any:
-        handler = kwargs['handler']
-        if handler_arg and handler_arg in kwargs:
-            return await handler(kwargs[handler_arg])
-        return await handler()
-
-    return noop
-
-
-def _noop_wrap_stream(ctx: RunContext[Any], *, stream: AsyncIterable[Any]) -> AsyncIterable[Any]:
-    return stream
-
-
-async def _noop_error(ctx: RunContext[Any], **kwargs: Any) -> Any:
-    raise kwargs['error']
-
-
-# --- on_run_error needs BaseException handling ---
-
-
-async def _dispatch_run_error(
-    entries: list[_HookEntry[Any]], hook_name: str, ctx: RunContext[Any], *, error: BaseException
-) -> Any:
-    for entry in entries:
-        try:
-            return await _call_entry(entry, hook_name, ctx, error=error)
-        except BaseException as new_error:
-            error = new_error
-    raise error
-
-
-async def _noop_run_error(ctx: RunContext[Any], *, error: BaseException) -> Any:
-    raise error
-
-
-# --- The Hooks capability ---
-
-
-class Hooks(AbstractCapability[AgentDepsT]):
-    """Register hook functions via decorators or constructor kwargs.
-
-    For extension developers building reusable capabilities, subclass
-    :class:`AbstractCapability` directly. For application code that needs
-    a few hooks without the ceremony of a subclass, use ``Hooks``.
-
-    Example using decorators::
-
-        hooks = Hooks()
-
-        @hooks.before_model_request
-        async def log_request(ctx, request_context):
-            print(f'Request: {request_context}')
-            return request_context
-
-        agent = Agent('openai:gpt-5', capabilities=[hooks])
-
-    Example using constructor kwargs::
-
-        agent = Agent('openai:gpt-5', capabilities=[
-            Hooks(before_model_request=log_request)
-        ])
-    """
-
-    # --- Type annotations for hook slots ---
-    # These intentionally shadow the inherited AbstractCapability methods on instances,
-    # giving pyright the _HookSlot type for decorator usage while the framework sees
-    # AbstractCapability methods through the base class type.
-
-    # Run lifecycle
-    before_run: _HookSlot[BeforeRunHookFunc]
-    after_run: _HookSlot[AfterRunHookFunc]
-    wrap_run: _HookSlot[WrapRunHookFunc]
-    on_run_error: _HookSlot[OnRunErrorHookFunc]
-
-    # Node lifecycle
-    before_node_run: _HookSlot[BeforeNodeRunHookFunc]
-    after_node_run: _HookSlot[AfterNodeRunHookFunc]
-    wrap_node_run: _HookSlot[WrapNodeRunHookFunc]
-    on_node_run_error: _HookSlot[OnNodeRunErrorHookFunc]
-
-    # Event stream
-    wrap_run_event_stream: _HookSlot[WrapRunEventStreamHookFunc]
-
-    # Model request
-    before_model_request: _HookSlot[BeforeModelRequestHookFunc]
-    after_model_request: _HookSlot[AfterModelRequestHookFunc]
-    wrap_model_request: _HookSlot[WrapModelRequestHookFunc]
-    on_model_request_error: _HookSlot[OnModelRequestErrorHookFunc]
-
-    # Tool preparation
-    prepare_tools: _HookSlot[PrepareToolsHookFunc]
-
-    # Tool validation
-    before_tool_validate: _ToolHookSlot[BeforeToolValidateHookFunc]
-    after_tool_validate: _ToolHookSlot[AfterToolValidateHookFunc]
-    wrap_tool_validate: _ToolHookSlot[WrapToolValidateHookFunc]
-    on_tool_validate_error: _ToolHookSlot[OnToolValidateErrorHookFunc]
-
-    # Tool execution
-    before_tool_execute: _ToolHookSlot[BeforeToolExecuteHookFunc]
-    after_tool_execute: _ToolHookSlot[AfterToolExecuteHookFunc]
-    wrap_tool_execute: _ToolHookSlot[WrapToolExecuteHookFunc]
-    on_tool_execute_error: _ToolHookSlot[OnToolExecuteErrorHookFunc]
-
-    def __init__(
-        self,
-        *,
-        # Run lifecycle
-        before_run: BeforeRunHookFunc | None = None,
-        after_run: AfterRunHookFunc | None = None,
-        wrap_run: WrapRunHookFunc | None = None,
-        on_run_error: OnRunErrorHookFunc | None = None,
-        # Node lifecycle
-        before_node_run: BeforeNodeRunHookFunc | None = None,
-        after_node_run: AfterNodeRunHookFunc | None = None,
-        wrap_node_run: WrapNodeRunHookFunc | None = None,
-        on_node_run_error: OnNodeRunErrorHookFunc | None = None,
-        # Event stream
-        wrap_run_event_stream: WrapRunEventStreamHookFunc | None = None,
-        # Model request
-        before_model_request: BeforeModelRequestHookFunc | None = None,
-        after_model_request: AfterModelRequestHookFunc | None = None,
-        wrap_model_request: WrapModelRequestHookFunc | None = None,
-        on_model_request_error: OnModelRequestErrorHookFunc | None = None,
-        # Tool preparation
-        prepare_tools: PrepareToolsHookFunc | None = None,
-        # Tool validation
-        before_tool_validate: BeforeToolValidateHookFunc | None = None,
-        after_tool_validate: AfterToolValidateHookFunc | None = None,
-        wrap_tool_validate: WrapToolValidateHookFunc | None = None,
-        on_tool_validate_error: OnToolValidateErrorHookFunc | None = None,
-        # Tool execution
-        before_tool_execute: BeforeToolExecuteHookFunc | None = None,
-        after_tool_execute: AfterToolExecuteHookFunc | None = None,
-        wrap_tool_execute: WrapToolExecuteHookFunc | None = None,
-        on_tool_execute_error: OnToolExecuteErrorHookFunc | None = None,
-    ):
-        # --- Initialize hook slots ---
-
-        # Run lifecycle
-        self.before_run = _HookSlot(_dispatch_observe, _noop_observe, 'before_run')  # pyright: ignore[reportIncompatibleMethodOverride]
-        self.after_run = _HookSlot(  # pyright: ignore[reportIncompatibleMethodOverride]
-            _make_dispatch_forward_keyword('result'), _make_noop_forward_keyword('result'), 'after_run'
-        )
-        self.wrap_run = _HookSlot(_make_dispatch_wrap(None), _make_noop_wrap(None), 'wrap_run')  # pyright: ignore[reportIncompatibleMethodOverride]
-        self.on_run_error = _HookSlot(_dispatch_run_error, _noop_run_error, 'on_run_error')  # pyright: ignore[reportIncompatibleMethodOverride]
-
-        # Node lifecycle
-        self.before_node_run = _HookSlot(  # pyright: ignore[reportIncompatibleMethodOverride]
-            _make_dispatch_forward_keyword('node'), _make_noop_forward_keyword('node'), 'before_node_run'
-        )
-        self.after_node_run = _HookSlot(  # pyright: ignore[reportIncompatibleMethodOverride]
-            _make_dispatch_forward_keyword('result'), _make_noop_forward_keyword('result'), 'after_node_run'
-        )
-        self.wrap_node_run = _HookSlot(_make_dispatch_wrap('node'), _make_noop_wrap('node'), 'wrap_node_run')  # pyright: ignore[reportIncompatibleMethodOverride]
-        self.on_node_run_error = _HookSlot(_dispatch_error, _noop_error, 'on_node_run_error')  # pyright: ignore[reportIncompatibleMethodOverride]
-
-        # Event stream
-        self.wrap_run_event_stream = _HookSlot(_dispatch_wrap_stream, _noop_wrap_stream, 'wrap_run_event_stream')  # pyright: ignore[reportIncompatibleMethodOverride]
-
-        # Model request
-        self.before_model_request = _HookSlot(  # pyright: ignore[reportIncompatibleMethodOverride]
-            _dispatch_forward_positional, _noop_forward_positional, 'before_model_request'
-        )
-        self.after_model_request = _HookSlot(  # pyright: ignore[reportIncompatibleMethodOverride]
-            _make_dispatch_forward_keyword('response'),
-            _make_noop_forward_keyword('response'),
-            'after_model_request',
-        )
-        self.wrap_model_request = _HookSlot(  # pyright: ignore[reportIncompatibleMethodOverride]
-            _make_dispatch_wrap('request_context'), _make_noop_wrap('request_context'), 'wrap_model_request'
-        )
-        self.on_model_request_error = _HookSlot(_dispatch_error, _noop_error, 'on_model_request_error')  # pyright: ignore[reportIncompatibleMethodOverride]
-
-        # Tool preparation
-        self.prepare_tools = _HookSlot(_dispatch_forward_positional, _noop_forward_positional, 'prepare_tools')  # pyright: ignore[reportIncompatibleMethodOverride]
-
-        # Tool validation
-        self.before_tool_validate = _ToolHookSlot(  # pyright: ignore[reportIncompatibleMethodOverride]
-            _make_dispatch_forward_keyword('args'), _make_noop_forward_keyword('args'), 'before_tool_validate'
-        )
-        self.after_tool_validate = _ToolHookSlot(  # pyright: ignore[reportIncompatibleMethodOverride]
-            _make_dispatch_forward_keyword('args'), _make_noop_forward_keyword('args'), 'after_tool_validate'
-        )
-        self.wrap_tool_validate = _ToolHookSlot(  # pyright: ignore[reportIncompatibleMethodOverride]
-            _make_dispatch_wrap('args'), _make_noop_wrap('args'), 'wrap_tool_validate'
-        )
-        self.on_tool_validate_error = _ToolHookSlot(_dispatch_error, _noop_error, 'on_tool_validate_error')  # pyright: ignore[reportIncompatibleMethodOverride]
-
-        # Tool execution
-        self.before_tool_execute = _ToolHookSlot(  # pyright: ignore[reportIncompatibleMethodOverride]
-            _make_dispatch_forward_keyword('args'), _make_noop_forward_keyword('args'), 'before_tool_execute'
-        )
-        self.after_tool_execute = _ToolHookSlot(  # pyright: ignore[reportIncompatibleMethodOverride]
-            _make_dispatch_forward_keyword('result'), _make_noop_forward_keyword('result'), 'after_tool_execute'
-        )
-        self.wrap_tool_execute = _ToolHookSlot(  # pyright: ignore[reportIncompatibleMethodOverride]
-            _make_dispatch_wrap('args'), _make_noop_wrap('args'), 'wrap_tool_execute'
-        )
-        self.on_tool_execute_error = _ToolHookSlot(_dispatch_error, _noop_error, 'on_tool_execute_error')  # pyright: ignore[reportIncompatibleMethodOverride]
-
-        # --- Register constructor-provided functions ---
-        _register_if_provided(self.before_run, before_run)
-        _register_if_provided(self.after_run, after_run)
-        _register_if_provided(self.wrap_run, wrap_run)
-        _register_if_provided(self.on_run_error, on_run_error)
-        _register_if_provided(self.before_node_run, before_node_run)
-        _register_if_provided(self.after_node_run, after_node_run)
-        _register_if_provided(self.wrap_node_run, wrap_node_run)
-        _register_if_provided(self.on_node_run_error, on_node_run_error)
-        _register_if_provided(self.wrap_run_event_stream, wrap_run_event_stream)
-        _register_if_provided(self.before_model_request, before_model_request)
-        _register_if_provided(self.after_model_request, after_model_request)
-        _register_if_provided(self.wrap_model_request, wrap_model_request)
-        _register_if_provided(self.on_model_request_error, on_model_request_error)
-        _register_if_provided(self.prepare_tools, prepare_tools)
-        _register_if_provided(self.before_tool_validate, before_tool_validate)
-        _register_if_provided(self.after_tool_validate, after_tool_validate)
-        _register_if_provided(self.wrap_tool_validate, wrap_tool_validate)
-        _register_if_provided(self.on_tool_validate_error, on_tool_validate_error)
-        _register_if_provided(self.before_tool_execute, before_tool_execute)
-        _register_if_provided(self.after_tool_execute, after_tool_execute)
-        _register_if_provided(self.wrap_tool_execute, wrap_tool_execute)
-        _register_if_provided(self.on_tool_execute_error, on_tool_execute_error)
-
-    @property
-    def has_wrap_node_run(self) -> bool:
-        return bool(self.wrap_node_run.funcs)
-
-    @classmethod
-    def get_serialization_name(cls) -> str | None:
-        return None  # Not spec-serializable (contains callables)
-
-    def __repr__(self) -> str:
-        registered = {
-            name: len(slot.funcs)
-            for name in _ALL_HOOK_NAMES
-            if (slot := getattr(self, name, None)) is not None and slot.funcs
-        }
-        return f'Hooks({registered})'
-
-
-def _register_if_provided(slot: _HookSlot[Any], func: Callable[..., Any] | None) -> None:
-    """Register a function on a slot if it's not None."""
-    if func is not None:
-        slot(func)
-
-
-_ALL_HOOK_NAMES: tuple[str, ...] = (
-    'before_run',
-    'after_run',
-    'wrap_run',
-    'on_run_error',
-    'before_node_run',
-    'after_node_run',
-    'wrap_node_run',
-    'on_node_run_error',
-    'wrap_run_event_stream',
-    'before_model_request',
-    'after_model_request',
-    'wrap_model_request',
-    'on_model_request_error',
-    'prepare_tools',
-    'before_tool_validate',
-    'after_tool_validate',
-    'wrap_tool_validate',
-    'on_tool_validate_error',
-    'before_tool_execute',
-    'after_tool_execute',
-    'wrap_tool_execute',
-    'on_tool_execute_error',
-)
+    stream: AsyncIterable[AgentStreamEvent],
+    entries: list[_HookEntry[Any]],
+) -> AsyncIterable[AgentStreamEvent]:
+    """Wrap a stream with per-event callbacks that can observe or modify events."""
+    async for event in stream:
+        for entry in entries:
+            event = await _call_entry(entry, 'on_event', ctx, event)
+        yield event
