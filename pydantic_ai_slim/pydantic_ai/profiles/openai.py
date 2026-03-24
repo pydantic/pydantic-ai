@@ -8,9 +8,10 @@ from typing import Any, Literal
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from ..exceptions import UserError
+from ..settings import ThinkingLevel
 from . import ModelProfile
 
-OPENAI_REASONING_EFFORT_MAP: dict[bool | str, str] = {
+OPENAI_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
     True: 'medium',
     False: 'none',
     'minimal': 'minimal',

@@ -590,7 +590,9 @@ class BedrockConverseModel(Model):
         elif variant == 'qwen' and 'reasoning_config' not in existing:
             if thinking is not False:
                 # Qwen only supports low/high; map others to closest
-                level_map: dict[bool | str, str] = {
+                from ..settings import ThinkingLevel
+
+                level_map: dict[ThinkingLevel, str] = {
                     True: 'high',
                     'minimal': 'low',
                     'low': 'low',

@@ -558,7 +558,9 @@ class XaiModel(Model):
             thinking = model_request_parameters.thinking
             if thinking is not False:
                 # xAI only supports 'low' and 'high'; map others to closest
-                xai_map: dict[bool | str, str] = {
+                from ..settings import ThinkingLevel
+
+                xai_map: dict[ThinkingLevel, str] = {
                     True: 'high',
                     'minimal': 'low',
                     'low': 'low',

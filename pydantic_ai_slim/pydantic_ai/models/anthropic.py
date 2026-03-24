@@ -52,7 +52,7 @@ from ..profiles import ModelProfileSpec
 from ..profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP, AnthropicModelProfile
 from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
-from ..settings import ModelSettings, merge_model_settings
+from ..settings import ModelSettings, ThinkingEffort, merge_model_settings
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
@@ -1270,7 +1270,7 @@ class AnthropicModel(Model):
         profile = AnthropicModelProfile.from_profile(self.profile)
         if effort is None and profile.anthropic_supports_effort and isinstance(model_request_parameters.thinking, str):
             # Map unified levels to Anthropic effort; Anthropic accepts low/medium/high/max
-            effort_map: dict[str, str] = {
+            effort_map: dict[ThinkingEffort, str] = {
                 'minimal': 'low',
                 'low': 'low',
                 'medium': 'medium',

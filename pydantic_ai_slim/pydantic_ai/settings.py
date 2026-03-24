@@ -5,7 +5,10 @@ from typing import Literal, TypeAlias
 from httpx import Timeout
 from typing_extensions import TypedDict
 
-ThinkingLevel: TypeAlias = bool | Literal['minimal', 'low', 'medium', 'high', 'xhigh']
+ThinkingEffort: TypeAlias = Literal['minimal', 'low', 'medium', 'high', 'xhigh']
+"""The string effort levels for thinking/reasoning configuration."""
+
+ThinkingLevel: TypeAlias = bool | ThinkingEffort
 """Type alias for thinking/reasoning configuration values.
 
 - ``True``: Enable thinking with the provider's default effort.

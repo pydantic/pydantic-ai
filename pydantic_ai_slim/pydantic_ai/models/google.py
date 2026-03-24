@@ -49,7 +49,7 @@ from ..messages import (
 from ..profiles import ModelProfileSpec
 from ..profiles.google import GoogleModelProfile
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ThinkingEffort
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -541,7 +541,7 @@ class GoogleModel(Model):
         if profile.google_supports_thinking_level:
             if thinking is True:
                 return ThinkingConfigDict(include_thoughts=True)
-            level_map: dict[str, str] = {
+            level_map: dict[ThinkingEffort, str] = {
                 'minimal': 'MINIMAL',
                 'low': 'LOW',
                 'medium': 'MEDIUM',
@@ -552,7 +552,7 @@ class GoogleModel(Model):
         else:
             if thinking is True:
                 return ThinkingConfigDict(include_thoughts=True)
-            budget_map: dict[str, int] = {
+            budget_map: dict[ThinkingEffort, int] = {
                 'minimal': 128,  # minimum for Gemini 2.5 Pro
                 'low': 2048,
                 'medium': 8192,

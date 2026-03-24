@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
 
+from ..settings import ThinkingLevel
 from . import ModelProfile
 
 
@@ -27,7 +28,7 @@ class AnthropicModelProfile(ModelProfile):
     """
 
 
-ANTHROPIC_THINKING_BUDGET_MAP: dict[bool | str, int] = {
+ANTHROPIC_THINKING_BUDGET_MAP: dict[ThinkingLevel, int] = {
     True: 10000,
     'minimal': 1024,
     'low': 2048,
