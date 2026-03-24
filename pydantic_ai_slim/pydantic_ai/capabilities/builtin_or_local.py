@@ -29,10 +29,8 @@ class BuiltinOrLocalTool(AbstractCapability[AgentDepsT]):
     cap = BuiltinOrLocalTool(builtin=WebSearchTool(), local=my_search_func)
     ```
 
-    Or subclassed to set defaults via
-    [`_default_builtin`][pydantic_ai.capabilities.BuiltinOrLocalTool._default_builtin],
-    [`_default_local`][pydantic_ai.capabilities.BuiltinOrLocalTool._default_local], and
-    [`_requires_builtin`][pydantic_ai.capabilities.BuiltinOrLocalTool._requires_builtin].
+    Or subclassed to set defaults by overriding `_default_builtin`, `_default_local`,
+    and `_requires_builtin`.
     The built-in [`WebSearch`][pydantic_ai.capabilities.WebSearch],
     [`WebFetch`][pydantic_ai.capabilities.WebFetch], and
     [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] capabilities
