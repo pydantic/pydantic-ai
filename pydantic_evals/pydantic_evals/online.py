@@ -902,8 +902,8 @@ async def wait_for_evaluations(*, timeout: float = 30.0) -> None:
             pass  # Exceptions are handled inside _dispatch_single_evaluator
 
     # Await trio events (from async decorated functions on trio)
-    for event in events_snapshot:  # pragma: no cover
-        await event.wait()
+    for event in events_snapshot:
+        await event.wait()  # pragma: no cover
 
     # Join background threads (from sync decorated functions) without blocking the event loop
     if threads_snapshot:
