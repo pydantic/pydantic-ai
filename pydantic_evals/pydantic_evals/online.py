@@ -263,7 +263,7 @@ class OnlineEvaluator:
     Args:
         evaluator: The evaluator to run.
         sample_rate: Probability of running this evaluator (0.0–1.0), or a callable returning
-            a float or bool. Defaults to `UNSET`, which uses the config's `default_sample_rate`
+            a float or bool. Defaults to `None`, which uses the config's `default_sample_rate`
             at each call. Set explicitly to override.
         sink: Override sink(s) for this evaluator. If None, the config's default_sink is used.
         max_concurrency: Maximum number of concurrent evaluations for this evaluator.
@@ -272,7 +272,7 @@ class OnlineEvaluator:
     """
 
     evaluator: Evaluator
-    sample_rate: float | Callable[[], float | bool] | Unset = UNSET
+    sample_rate: float | Callable[[], float | bool] | None = None
     sink: EvaluationSink | Sequence[EvaluationSink] | SinkCallback | None = None
     max_concurrency: int = 10
     gate: Callable[[EvaluatorContext], bool | Awaitable[bool]] | None = None
@@ -359,8 +359,8 @@ def _resolve_sample_rate_field(
     online_eval: OnlineEvaluator,
     config: OnlineEvalConfig,
 ) -> float | Callable[[], float | bool]:
-    """Resolve an OnlineEvaluator's sample_rate, falling back to config default if UNSET."""
-    if isinstance(online_eval.sample_rate, Unset):
+    """Resolve an OnlineEvaluator's sample_rate, falling back to config default if None."""
+    if online_eval.sample_rate is None:
         return config.default_sample_rate
     return online_eval.sample_rate
 
@@ -538,7 +538,7 @@ class OnlineEvalConfig:
 
         Bare `Evaluator` instances are auto-wrapped in `OnlineEvaluator` at decoration time
         (so concurrency semaphores are shared across calls). Their `sample_rate` defaults to
-        `UNSET`, which resolves to the config's `default_sample_rate` at each call — so
+        `None`, which resolves to the config's `default_sample_rate` at each call — so
         changes to the config after decoration take effect.
 
         Args:
