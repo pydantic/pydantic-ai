@@ -203,6 +203,22 @@ class PrintSink:
             print(f'  FAILED {f.name}: {f.error_message}')
 ```
 
+!!! note "Evaluators require at least one sink"
+    Evaluators are designed to produce evaluation results, not side effects — use sinks for
+    any actions you want to take on results (logging, alerting, storing, etc.).
+    Because of this, **evaluators are skipped entirely when no sinks are configured**
+    (neither a per-evaluator sink nor a default sink). This avoids wasted work when there's
+    nowhere to send results.
+
+    If you need side effects produced _within_ an evaluator itself, configure a no-op sink
+    to ensure the evaluator runs:
+
+    ```python
+    from pydantic_evals.online import OnlineEvalConfig
+
+    config = OnlineEvalConfig(default_sink=lambda results, failures, context: None)
+    ```
+
 ## Sampling
 
 Control evaluation frequency with per-evaluator sample rates to balance quality monitoring against cost.

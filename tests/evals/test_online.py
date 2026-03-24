@@ -552,8 +552,8 @@ async def test_per_evaluator_sink_override():
     assert len(override_collector.calls) == 1
 
 
-async def test_no_sink_runs_without_error():
-    """When no sink is configured, evaluators run but results are dropped silently."""
+async def test_no_sink_skips_evaluators():
+    """When no sink is configured, evaluators are skipped entirely."""
     config = OnlineEvalConfig()  # no sink
 
     @config.evaluate(AlwaysTrue())

@@ -521,10 +521,16 @@ async def _dispatch_evaluators(
     span_reference: SpanReference | None,
     config: OnlineEvalConfig,
 ) -> None:
-    """Run all selected evaluators concurrently and submit results to their sinks."""
+    """Run all selected evaluators concurrently and submit results to their sinks.
+
+    Evaluators with no resolved sinks are skipped entirely — there's nowhere
+    to send results, so running the evaluator would be wasted work.
+    """
     async with anyio.create_task_group() as tg:
         for online_eval in online_evaluators:
             sinks = _resolve_sinks(online_eval.sink, config.default_sink)
+            if not sinks:
+                continue
             tg.start_soon(
                 _dispatch_single_evaluator,
                 online_eval,
