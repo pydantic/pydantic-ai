@@ -20,6 +20,7 @@ __all__ = (
     'MemoryTool',
     'MCPServerTool',
     'FileSearchTool',
+    'GoogleMapsTool',
     'BUILTIN_TOOL_TYPES',
     'DEPRECATED_BUILTIN_TOOLS',
     'SUPPORTED_BUILTIN_TOOLS',
@@ -464,6 +465,53 @@ class FileSearchTool(AbstractBuiltinTool):
     """
 
     kind: str = 'file_search'
+    """The kind of tool."""
+
+
+@dataclass(kw_only=True)
+class GoogleMapsTool(AbstractBuiltinTool):
+    """A builtin tool that allows your agent to ground responses using Google Maps data.
+
+    Provides location-aware, factually accurate answers by leveraging Google Maps'
+    database of places, reviews, addresses, and more.
+
+    Supported by:
+
+    * Google (Gemini 2.0 Flash, 2.5 Flash-Lite, 2.5 Flash, 2.5 Pro)
+
+    See <https://ai.google.dev/gemini-api/docs/maps-grounding> for more details.
+    """
+
+    latitude: float | None = None
+    """Optional latitude of the user's location for localised results.
+
+    Must be provided together with `longitude`.
+
+    Supported by:
+
+    * Google
+    """
+
+    longitude: float | None = None
+    """Optional longitude of the user's location for localised results.
+
+    Must be provided together with `latitude`.
+
+    Supported by:
+
+    * Google
+    """
+
+    enable_widget: bool = False
+    """If `True`, the response will include a `google_maps_widget_context_token` in `grounding_metadata`
+    that can be used to render a Google Maps contextual widget.
+
+    Supported by:
+
+    * Google
+    """
+
+    kind: str = 'google_maps'
     """The kind of tool."""
 
 

@@ -18,6 +18,7 @@ from ..builtin_tools import (
     AbstractBuiltinTool,
     CodeExecutionTool,
     FileSearchTool,
+    GoogleMapsTool,
     ImageGenerationTool,
     WebFetchTool,
     WebSearchTool,
@@ -85,14 +86,17 @@ try:
         GenerateContentConfigDict,
         GenerateContentResponse,
         GenerationConfigDict,
+        GoogleMapsDict,
         GoogleSearchDict,
         GroundingMetadata,
         HttpOptionsDict,
         ImageConfigDict,
+        LatLngDict,
         MediaResolution,
         Modality,
         Part,
         PartDict,
+        RetrievalConfigDict,
         SafetySettingDict,
         ThinkingConfigDict,
         ToolCodeExecutionDict,
@@ -281,7 +285,9 @@ class GoogleModel(Model):
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """Return the set of builtin tool types this model can handle."""
-        return frozenset({WebSearchTool, CodeExecutionTool, FileSearchTool, WebFetchTool, ImageGenerationTool})
+        return frozenset(
+            {WebSearchTool, CodeExecutionTool, FileSearchTool, WebFetchTool, ImageGenerationTool, GoogleMapsTool}
+        )
 
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
@@ -455,6 +461,9 @@ class GoogleModel(Model):
                 elif isinstance(tool, FileSearchTool):
                     file_search_config = FileSearchDict(file_search_store_names=list(tool.file_store_ids))
                     tools.append(ToolDict(file_search=file_search_config))
+                elif isinstance(tool, GoogleMapsTool):
+                    google_maps_config = GoogleMapsDict(enable_widget=True) if tool.enable_widget else GoogleMapsDict()
+                    tools.append(ToolDict(google_maps=google_maps_config))
                 elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
                     if not self.profile.supports_image_output:
                         raise UserError(
@@ -470,15 +479,35 @@ class GoogleModel(Model):
     def _get_tool_config(
         self, model_request_parameters: ModelRequestParameters, tools: list[ToolDict] | None
     ) -> ToolConfigDict | None:
+        tool_config: ToolConfigDict | None = None
         if not model_request_parameters.allow_text_output and tools:
             names: list[str] = []
             for tool in tools:
                 for function_declaration in tool.get('function_declarations') or []:
                     if name := function_declaration.get('name'):  # pragma: no branch
                         names.append(name)
-            return _tool_config(names)
-        else:
-            return None
+            tool_config = _tool_config(names)
+
+        # Inject Maps location into tool_config if a GoogleMapsTool with lat/lng is provided
+        maps_tool = next(
+            (t for t in (model_request_parameters.builtin_tools or []) if isinstance(t, GoogleMapsTool)),
+            None,
+        )
+        if maps_tool and (maps_tool.latitude is None) != (maps_tool.longitude is None):
+            raise UserError(
+                '`GoogleMapsTool` requires both `latitude` and `longitude` to be set, or neither. '
+                f'Got latitude={maps_tool.latitude!r}, longitude={maps_tool.longitude!r}.'
+            )
+        if maps_tool and maps_tool.latitude is not None and maps_tool.longitude is not None:
+            retrieval_config = RetrievalConfigDict(
+                lat_lng=LatLngDict(latitude=maps_tool.latitude, longitude=maps_tool.longitude)
+            )
+            if tool_config is None:
+                tool_config = ToolConfigDict(retrieval_config=retrieval_config)
+            else:
+                tool_config['retrieval_config'] = retrieval_config
+
+        return tool_config
 
     @overload
     async def _generate_content(
@@ -962,6 +991,11 @@ class GeminiStreamedResponse(StreamedResponse):
                 #     yield self._parts_manager.handle_part(
                 #         vendor_part_id=uuid4(), part=web_search_return
                 #     )
+                # Maps grounding metadata has the same ordering issue as web search grounding:
+                # it arrives _after_ the text content, causing out-of-order stream events.
+                # For this reason, maps grounding metadata is intentionally not emitted in
+                # the streaming path. Use agent.run() instead of agent.run_stream() if you
+                # need maps grounding metadata (BuiltinToolCallPart/BuiltinToolReturnPart).
 
                 # URL context metadata (for WebFetchTool) is streamed in the first chunk, before the text,
                 # so we can safely yield it here
@@ -1196,12 +1230,18 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
                 elif item.tool_name == WebSearchTool.kind:
                     # Web search calls are not sent back
                     pass
+                elif item.tool_name == GoogleMapsTool.kind:
+                    # Maps grounding calls are not sent back
+                    pass
         elif isinstance(item, BuiltinToolReturnPart):
             if item.provider_name == provider_name:
                 if item.tool_name == CodeExecutionTool.kind and isinstance(item.content, dict):
                     part['code_execution_result'] = cast(CodeExecutionResultDict, item.content)  # pyright: ignore[reportUnknownMemberType]
                 elif item.tool_name == WebSearchTool.kind:
                     # Web search results are not sent back
+                    pass
+                elif item.tool_name == GoogleMapsTool.kind:
+                    # Maps grounding results are not sent back
                     pass
         elif isinstance(item, FilePart):
             content = item.content
@@ -1288,6 +1328,11 @@ def _process_response_from_parts(
     if web_search_call and web_search_return:
         items.append(web_search_call)
         items.append(web_search_return)
+
+    maps_call, maps_return = _map_maps_grounding_metadata(grounding_metadata, provider_name)
+    if maps_call and maps_return:
+        items.append(maps_call)
+        items.append(maps_return)
 
     file_search_call, file_search_return = _map_file_search_grounding_metadata(grounding_metadata, provider_name)
     if file_search_call and file_search_return:
@@ -1413,6 +1458,33 @@ def _map_grounding_metadata(
         )
     else:
         return None, None
+
+
+def _map_maps_grounding_metadata(
+    grounding_metadata: GroundingMetadata | None, provider_name: str
+) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart] | tuple[None, None]:
+    if not grounding_metadata or not (grounding_chunks := grounding_metadata.grounding_chunks):
+        return None, None
+    maps_chunks = [chunk.maps for chunk in grounding_chunks if chunk.maps is not None]
+    if not maps_chunks:
+        return None, None
+    tool_call_id = _utils.generate_tool_call_id()
+    content: list[dict[str, Any]] = [maps.model_dump(mode='json') for maps in maps_chunks]
+    widget_token = grounding_metadata.google_maps_widget_context_token
+    return (
+        BuiltinToolCallPart(
+            provider_name=provider_name,
+            tool_name=GoogleMapsTool.kind,
+            tool_call_id=tool_call_id,
+            args={},
+        ),
+        BuiltinToolReturnPart(
+            provider_name=provider_name,
+            tool_name=GoogleMapsTool.kind,
+            tool_call_id=tool_call_id,
+            content={'chunks': content, 'widget_token': widget_token} if widget_token else content,
+        ),
+    )
 
 
 def _extract_file_search_retrieved_contexts(
