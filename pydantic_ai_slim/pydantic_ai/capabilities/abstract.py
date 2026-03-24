@@ -106,7 +106,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return cls(*args, **kwargs)
 
-    def visit(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
+    def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         """Run a visitor function on all "leaf" capabilities.
 
         Composite capabilities override this to recurse into their children.

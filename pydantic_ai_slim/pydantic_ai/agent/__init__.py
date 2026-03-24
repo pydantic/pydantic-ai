@@ -1174,7 +1174,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         run_capability = await effective_capability.for_run(initial_ctx)
         cap_toolsets: list[AgentToolset[AgentDepsT]] | None
 
-        cap_by_id_override = self._override_capabilities_by_id.get()
         if run_capability is not effective_capability:
             source_cap = run_capability
         elif (
@@ -2689,7 +2688,7 @@ def _validate_unique_ids(
     """Validate that capability and toolset IDs are unique within the agent."""
     # Check capability IDs
     cap_ids: list[str] = []
-    root_capability.visit(lambda cap: cap_ids.append(cap.id) if cap.id is not None else None)
+    root_capability.apply(lambda cap: cap_ids.append(cap.id) if cap.id is not None else None)
     seen: set[str] = set()
     for cap_id in cap_ids:
         if cap_id in seen:

@@ -4720,6 +4720,16 @@ class TestCapabilityId:
         ig = ImageGeneration(id='my-img')
         assert ig.id == 'my-img'
 
+    def test_duplicate_capability_ids_rejected(self):
+        """Agent raises UserError when two capabilities share the same id."""
+        with pytest.raises(UserError, match="Duplicate capability id: 'dup'"):
+            Agent('test', capabilities=[_InsCap('a', id='dup'), _InsCap('b', id='dup')])
+
+    def test_duplicate_toolset_ids_rejected(self):
+        """Agent raises UserError when two toolsets share the same id."""
+        with pytest.raises(UserError, match="Duplicate toolset id: 'dup'"):
+            Agent('test', toolsets=[FunctionToolset(id='dup'), FunctionToolset(id='dup')])
+
 
 class TestVisitAndReplace:
     def test_visit_and_replace_leaf(self):
@@ -4763,6 +4773,26 @@ class TestVisitAndReplace:
         inner_result = result.capabilities[0]
         assert isinstance(inner_result, CombinedCapability)
         assert inner_result.capabilities[0] is replacement
+
+    def test_visit_and_replace_wrapper(self):
+        """visit_and_replace on WrapperCapability recurses into wrapped."""
+        inner = _InsCap('hello', id='target')
+        wrapper = WrapperCapability(wrapped=inner)
+
+        replacement = _InsCap('replaced', id='target')
+        result = wrapper.visit_and_replace(lambda cap: replacement if cap.id == 'target' else cap)
+
+        assert isinstance(result, WrapperCapability)
+        assert result.wrapped is replacement
+
+    def test_apply_wrapper(self):
+        """apply on WrapperCapability visits the wrapped capability."""
+        inner = _InsCap('hello', id='inner')
+        wrapper = WrapperCapability(wrapped=inner)
+
+        visited_ids: list[str | None] = []
+        wrapper.apply(lambda cap: visited_ids.append(cap.id))
+        assert visited_ids == ['inner']
 
 
 class TestOverrideCapabilitiesById:

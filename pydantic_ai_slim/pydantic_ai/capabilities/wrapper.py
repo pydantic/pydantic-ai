@@ -49,8 +49,8 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def has_wrap_node_run(self) -> bool:
         return type(self).wrap_node_run is not WrapperCapability.wrap_node_run or self.wrapped.has_wrap_node_run
 
-    def visit(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
-        self.wrapped.visit(visitor)
+    def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
+        self.wrapped.apply(visitor)
 
     def visit_and_replace(
         self, visitor: Callable[[AbstractCapability[AgentDepsT]], AbstractCapability[AgentDepsT]]

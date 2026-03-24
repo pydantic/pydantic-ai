@@ -36,9 +36,9 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     def has_wrap_node_run(self) -> bool:
         return any(c.has_wrap_node_run for c in self.capabilities)
 
-    def visit(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
+    def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         for cap in self.capabilities:
-            cap.visit(visitor)
+            cap.apply(visitor)
 
     def visit_and_replace(
         self, visitor: Callable[[AbstractCapability[AgentDepsT]], AbstractCapability[AgentDepsT]]
