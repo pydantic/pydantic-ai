@@ -3312,6 +3312,20 @@ async def test_google_builtin_tools_with_other_tools(allow_model_requests: None,
     assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
 
 
+async def test_google_combined_tools_gemini_3(allow_model_requests: None, google_provider: GoogleProvider):
+    """Gemini 3 models should support function tools and built-in tools together."""
+    m = GoogleModel('gemini-3-pro-preview', provider=google_provider)
+
+    agent = Agent(m, builtin_tools=[WebFetchTool()])
+
+    @agent.tool_plain
+    async def get_user_country() -> str:
+        return 'Mexico'  # pragma: no cover
+
+    result = await agent.run('What is the largest city in the user country?')
+    assert isinstance(result.output, str)
+
+
 async def test_google_native_output_with_builtin_tools_gemini_3(
     allow_model_requests: None, google_provider: GoogleProvider
 ):

@@ -12,7 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
+from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, GoogleModelProfile, google_model_profile
 
 from .._inline_snapshot import snapshot
 
@@ -189,17 +189,19 @@ def test_model_profile_gemini_2():
     """Gemini 2.x models should have proper profile settings."""
     profile = google_model_profile('gemini-2.0-flash')
     assert profile is not None
+    assert isinstance(profile, GoogleModelProfile)
     assert profile.json_schema_transformer == GoogleJsonSchemaTransformer
     assert profile.supports_json_schema_output is True
-    assert profile.google_supports_combined_tools is False  # type: ignore
+    assert profile.google_supports_combined_tools is False
 
 
 def test_model_profile_gemini_3():
     """Gemini 3.x models should support native output with builtin tools and combined tools."""
     profile = google_model_profile('gemini-3.0-pro')
     assert profile is not None
-    assert profile.google_supports_native_output_with_builtin_tools is True  # type: ignore
-    assert profile.google_supports_combined_tools is True  # type: ignore
+    assert isinstance(profile, GoogleModelProfile)
+    assert profile.google_supports_native_output_with_builtin_tools is True
+    assert profile.google_supports_combined_tools is True
 
 
 def test_model_profile_image_model():

@@ -1,0 +1,168 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '450'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the largest city in the user country?
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          allowedFunctionNames:
+          - get_user_country
+          mode: AUTO
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_user_country
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+      - urlContext: {}
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '800'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1520
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args: {}
+              name: get_user_country
+            thoughtSignature: EqkBCqYBAXLI2nxFGW9oAYt0fTQoHlYcudYTgqNXlir9nzbXoqFXqLY9sWOIMaevBSmRIl/38GhJB+V+cQHNBmUzxq17UwAqJmMgQ99kWRCfLmU1uUtLpz260ep1CbMwDTJeIsjLz9JzjMd3vMx7gWYrvmOMg7aANsbpw1iHw/YtlA5mXdU0Mn6TOdO9UiGTnnDgzfqu/ao
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-pro-preview
+      responseId: abc123def456
+      usageMetadata:
+        candidatesTokenCount: 12
+        promptTokenCount: 45
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 45
+        thoughtsTokenCount: 95
+        totalTokenCount: 152
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '800'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the largest city in the user country?
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            name: get_user_country
+        role: model
+      - parts:
+        - functionResponse:
+            name: get_user_country
+            response:
+              return_value: Mexico
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          allowedFunctionNames:
+          - get_user_country
+          mode: AUTO
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_user_country
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+      - urlContext: {}
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '600'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=2100
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: The largest city in Mexico is Mexico City (Ciudad de México). It is the capital and most populous city, with a metropolitan area population of over 21 million people.
+            thoughtSignature: EqkBCqYBAXLI2nxFGW9oAYt0fTQoHlYcudYTgqNXlir9nzbXoqFXqLY9sWOIMaevBSmRIl/38GhJB+V+cQHNBmUzxq17UwAqJmMgQ99kWRCfLmU1uUtLpz260ep1CbMwDTJeIsjLz9JzjMd3vMx7gWYrvmOMg7aANsbpw1iHw/YtlA5mXdU0Mn6TOdO9UiGTnnDgzfqu/ao
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-pro-preview
+      responseId: xyz789ghi012
+      usageMetadata:
+        candidatesTokenCount: 42
+        promptTokenCount: 58
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 58
+        thoughtsTokenCount: 120
+        totalTokenCount: 220
+    status:
+      code: 200
+      message: OK
+version: 1
