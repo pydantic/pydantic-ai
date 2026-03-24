@@ -985,6 +985,24 @@ async def test_concurrent_runs_capability_isolation():
 # --- Hooks test helpers ---
 
 
+@dataclass
+class _ReplacingCapability(AbstractCapability[Any]):
+    """Capability that replaces ModelRequestNode with a fresh copy in before_node_run.
+
+    Used to test that streaming + node replacement doesn't cause double model execution.
+    """
+
+    replaced: bool = field(default=False, init=False)
+
+    async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
+        from pydantic_ai._agent_graph import ModelRequestNode
+
+        if isinstance(node, ModelRequestNode) and not self.replaced:
+            self.replaced = True
+            return ModelRequestNode(request=node.request)  # pyright: ignore[reportUnknownVariableType]
+        return node  # pyright: ignore[reportUnknownVariableType]
+
+
 def make_text_response(text: str = 'hello') -> ModelResponse:
     return ModelResponse(parts=[TextPart(content=text)])
 
@@ -5295,3 +5313,130 @@ async def test_wrapper_capability_delegates_on_tool_execute_error():
 
     result = await agent.run('call tool')
     assert result.output == 'final response'
+
+
+# --- Tests for double-execution bug fix (streaming + before_node_run replacement) ---
+
+
+class TestNodeStreamingWithHooks:
+    """Tests that node streaming with event_stream_handler doesn't cause double model execution
+    when before_node_run replaces a node."""
+
+    async def test_before_node_run_replacement_no_double_execution(self):
+        """When before_node_run replaces a ModelRequestNode and event_stream_handler is set,
+        the model should be called exactly once (not twice)."""
+        model_call_count = 0
+
+        async def counting_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            nonlocal model_call_count
+            model_call_count += 1
+            yield 'streamed response'
+
+        cap = _ReplacingCapability()
+        agent = Agent(FunctionModel(simple_model_function, stream_function=counting_stream), capabilities=[cap])
+
+        events_received: list[AgentStreamEvent] = []
+
+        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                events_received.append(event)
+
+        result = await agent.run('hello', event_stream_handler=handler)
+        assert result.output == 'streamed response'
+        assert model_call_count == 1, f'Model was called {model_call_count} times, expected 1'
+        assert len(events_received) > 0
+
+    async def test_hook_ordering_with_event_stream_handler(self):
+        """before_node_run fires BEFORE streaming events, wrap_node_run wraps the streaming,
+        and after_node_run fires after graph advancement."""
+        log: list[str] = []
+
+        @dataclass
+        class OrderTrackingCapability(AbstractCapability[Any]):
+            async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
+                log.append(f'before:{type(node).__name__}')
+                return node
+
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                log.append(f'wrap:enter:{type(node).__name__}')
+                result = await handler(node)
+                log.append(f'wrap:exit:{type(node).__name__}')
+                return result
+
+            async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+                log.append(f'after:{type(node).__name__}')
+                return result
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[OrderTrackingCapability()],
+        )
+
+        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for _ in stream:
+                pass
+            log.append('stream:consumed')
+
+        await agent.run('hello', event_stream_handler=handler)
+
+        # For ModelRequestNode: before → wrap:enter → stream:consumed → wrap:exit → after
+        mr_before = log.index('before:ModelRequestNode')
+        mr_wrap_enter = log.index('wrap:enter:ModelRequestNode')
+        stream_consumed_idx = log.index('stream:consumed')
+        mr_wrap_exit = log.index('wrap:exit:ModelRequestNode')
+        mr_after = log.index('after:ModelRequestNode')
+        assert mr_before < mr_wrap_enter < stream_consumed_idx < mr_wrap_exit < mr_after
+
+    async def test_run_stream_before_node_run_replacement_no_double_execution(self):
+        """Same as the run() test but for run_stream(): before_node_run replacement
+        should not cause double model execution."""
+        model_call_count = 0
+
+        async def counting_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            nonlocal model_call_count
+            model_call_count += 1
+            yield 'streamed response'
+
+        cap = _ReplacingCapability()
+        agent = Agent(FunctionModel(simple_model_function, stream_function=counting_stream), capabilities=[cap])
+
+        async with agent.run_stream('hello') as streamed:
+            output = await streamed.get_output()
+
+        assert output == 'streamed response'
+        assert model_call_count == 1, f'Model was called {model_call_count} times, expected 1'
+
+    async def test_on_node_run_error_fires_in_run_stream(self):
+        """on_node_run_error in run_stream() fires when wrap_node_run raises during graph advancement."""
+        error_log: list[str] = []
+
+        @dataclass
+        class WrapErrorCap(AbstractCapability[Any]):
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                # Raise on CallToolsNode — after UserPromptNode and ModelRequestNode pass through.
+                # ModelRequestNode with tool calls doesn't produce a FinalResultEvent in run_stream(),
+                # so it falls through to wrap_node_run; CallToolsNode is next and triggers the error.
+                from pydantic_ai._agent_graph import CallToolsNode
+
+                if isinstance(node, CallToolsNode):
+                    raise RuntimeError('wrap error')
+                return await handler(node)
+
+            async def on_node_run_error(self, ctx: RunContext[Any], *, node: Any, error: Exception) -> Any:
+                error_log.append(type(node).__name__)
+                raise error
+
+        agent = Agent(
+            FunctionModel(tool_calling_model, stream_function=tool_calling_stream_function),
+            capabilities=[WrapErrorCap()],
+        )
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'
+
+        with pytest.raises(RuntimeError, match='wrap error'):
+            async with agent.run_stream('hello') as _streamed:
+                pass
+
+        assert error_log == ['CallToolsNode']

@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import dataclasses
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from copy import deepcopy
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Generic, Literal, overload
@@ -21,6 +21,7 @@ from .output import OutputDataT
 from .tools import AgentDepsT
 
 if TYPE_CHECKING:
+    from ._run_context import RunContext
     from .result import FinalResult
 
 
@@ -228,6 +229,59 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     def _node_to_task(self, node: _agent_graph.AgentNode[AgentDepsT, OutputDataT]) -> GraphTaskRequest:
         return GraphTaskRequest(NodeStep(type(node)).id, inputs=node, fork_stack=())
 
+    async def _advance_graph(
+        self,
+        node: _agent_graph.AgentNode[AgentDepsT, Any],
+    ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+        """Execute a single graph step without firing capability hooks."""
+        task = [self._node_to_task(node)]
+        try:
+            task = await self._graph_run.next(task)
+        except StopAsyncIteration:
+            pass
+        return self._task_to_node(task)
+
+    async def _wrap_and_advance(
+        self,
+        run_context: RunContext[AgentDepsT],
+        node: _agent_graph.AgentNode[AgentDepsT, Any],
+        step_fn: Callable[
+            [_agent_graph.AgentNode[AgentDepsT, Any]],
+            Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
+        ],
+    ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+        """Execute `wrap_node_run(step_fn)` → `on_node_run_error` → `after_node_run`.
+
+        This is the portion of the hook lifecycle after `before_node_run` has already fired.
+        Used by both `_run_node_with_hooks` and directly by `run_stream()` which calls
+        `before_node_run` separately (before streaming).
+        """
+        cap = self.ctx.deps.root_capability
+        try:
+            result = await cap.wrap_node_run(run_context, node=node, handler=step_fn)
+        except Exception as e:
+            result = await cap.on_node_run_error(run_context, node=node, error=e)
+        result = await cap.after_node_run(run_context, node=node, result=result)
+        return result
+
+    async def _run_node_with_hooks(
+        self,
+        node: _agent_graph.AgentNode[AgentDepsT, Any],
+        step_fn: Callable[
+            [_agent_graph.AgentNode[AgentDepsT, Any]],
+            Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
+        ],
+    ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+        """Run a node through the full capability hook lifecycle with a custom step function.
+
+        Fires hooks in order: `before_node_run` → `wrap_node_run(step_fn)` → `after_node_run`,
+        with `on_node_run_error` handling exceptions from `wrap_node_run`.
+        """
+        run_context = _agent_graph.build_run_context(self.ctx)
+        cap = self.ctx.deps.root_capability
+        node = await cap.before_node_run(run_context, node=node)
+        return await self._wrap_and_advance(run_context, node, step_fn)
+
     async def next(
         self,
         node: _agent_graph.AgentNode[AgentDepsT, OutputDataT],
@@ -300,26 +354,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """
         # Note: It might be nice to expose a synchronous interface for iteration, but we shouldn't do it
         # on this class, or else IDEs won't warn you if you accidentally use `for` instead of `async for` to iterate.
-        run_context = _agent_graph.build_run_context(self.ctx)
-
-        async def _step_handler(
-            n: _agent_graph.AgentNode[AgentDepsT, OutputDataT],
-        ) -> _agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]:
-            task = [self._node_to_task(n)]
-            try:
-                task = await self._graph_run.next(task)
-            except StopAsyncIteration:
-                pass
-            return self._task_to_node(task)
-
-        cap = self.ctx.deps.root_capability
-        node = await cap.before_node_run(run_context, node=node)
-        try:
-            result = await cap.wrap_node_run(run_context, node=node, handler=_step_handler)
-        except Exception as e:
-            result = await cap.on_node_run_error(run_context, node=node, error=e)
-        result = await cap.after_node_run(run_context, node=node, result=result)
-        return result
+        return await self._run_node_with_hooks(node, self._advance_graph)
 
     # TODO (v2): Make this a property
     def usage(self) -> _usage.RunUsage:
