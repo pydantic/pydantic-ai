@@ -15,18 +15,16 @@ from .abstract import (
 from .builtin_or_local import BuiltinOrLocalTool, BuiltinTool
 from .combined import CombinedCapability
 from .history_processor import HistoryProcessor
+from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
-from .instructions import Instructions
 from .mcp import MCP
-
-# Short name is intentional — passing a dict is enough to get type checking,
-# and users rarely need both this and settings.ModelSettings in the same scope.
-from .model_settings import ModelSettings
+from .prefix_tools import PrefixTools
 from .prepare_tools import PrepareTools
 from .thinking import Thinking
 from .toolset import Toolset
 from .web_fetch import WebFetch
 from .web_search import WebSearch
+from .wrapper import WrapperCapability
 
 CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
@@ -34,9 +32,8 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         BuiltinTool,
         HistoryProcessor,
         ImageGeneration,
-        Instructions,
         MCP,
-        ModelSettings,
+        PrefixTools,
         PrepareTools,
         Thinking,
         Toolset,
@@ -62,14 +59,16 @@ __all__ = [
     'BuiltinOrLocalTool',
     'CAPABILITY_TYPES',
     'ImageGeneration',
-    'Instructions',
     'HistoryProcessor',
     'MCP',
-    'ModelSettings',
+    'PrefixTools',
     'PrepareTools',
     'Thinking',
     'Toolset',
     'WebFetch',
     'WebSearch',
+    'WrapperCapability',
     'CombinedCapability',
+    'HookTimeoutError',
+    'Hooks',
 ]

@@ -18,16 +18,17 @@ from pydantic_ai.capabilities import (
     MCP,
     BuiltinTool,
     ImageGeneration,
-    Instructions,
-    ModelSettings,
+    PrefixTools,
     Thinking,
     Toolset,
     WebFetch,
     WebSearch,
+    WrapperCapability,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.builtin_or_local import BuiltinTool as BuiltinToolCap
 from pydantic_ai.capabilities.combined import CombinedCapability
+from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
 from pydantic_ai.exceptions import SkipModelRequest, SkipToolExecution, SkipToolValidation, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -39,7 +40,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
@@ -63,9 +64,8 @@ def test_capability_types() -> None:
         {
             'BuiltinTool': BuiltinTool,
             'ImageGeneration': ImageGeneration,
-            'Instructions': Instructions,
             'MCP': MCP,
-            'ModelSettings': ModelSettings,
+            'PrefixTools': PrefixTools,
             'Thinking': Thinking,
             'WebFetch': WebFetch,
             'WebSearch': WebSearch,
@@ -78,10 +78,10 @@ def test_agent_from_spec_basic():
     agent = Agent.from_spec(
         {
             'model': 'test',
+            'instructions': 'You are a helpful agent.',
+            'model_settings': {'max_tokens': 4096},
             'capabilities': [
-                {'Instructions': 'You are a helpful agent.'},
                 'WebSearch',
-                {'ModelSettings': {'max_tokens': 4096}},
             ],
         }
     )
@@ -107,12 +107,12 @@ def test_agent_from_spec_unknown_capability():
 
 def test_agent_from_spec_bad_args():
     """Test Agent.from_spec with bad arguments for a capability."""
-    with pytest.raises(ValueError, match="Failed to instantiate capability 'Instructions'"):
+    with pytest.raises(ValueError, match="Failed to instantiate capability 'WebSearch'"):
         Agent.from_spec(
             {
                 'model': 'test',
                 'capabilities': [
-                    {'Instructions': {'nonexistent_param': 'value'}},
+                    {'WebSearch': {'nonexistent_param': 'value'}},
                 ],
             }
         )
@@ -141,8 +141,8 @@ def test_agent_from_spec_with_agent_spec_object():
     """Test Agent.from_spec with an AgentSpec instance."""
     spec = AgentSpec(
         model='test',
+        instructions='You are helpful.',
         capabilities=[
-            NamedSpec(name='Instructions', arguments=('You are helpful.',)),
             NamedSpec(name='WebSearch', arguments=None),
         ],
     )
@@ -346,13 +346,13 @@ def test_agent_from_spec_capabilities_merged():
     agent = Agent.from_spec(
         {
             'model': 'test',
-            'capabilities': [{'Instructions': 'From spec.'}],
+            'capabilities': ['WebSearch'],
         },
         capabilities=[ExtraCap()],
     )
-    # Should have both the Instructions capability from spec and ExtraCap from arg
+    # Should have both the WebSearch capability from spec and ExtraCap from arg
     children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
-    assert any(isinstance(c, Instructions) for c in children)
+    assert any(isinstance(c, WebSearch) for c in children)
     assert any(isinstance(c, ExtraCap) for c in children)
 
 
@@ -385,9 +385,8 @@ def test_model_json_schema_with_capabilities():
     assert capability_names == {
         'BuiltinTool',
         'ImageGeneration',
-        'Instructions',
         'MCP',
-        'ModelSettings',
+        'PrefixTools',
         'Thinking',
         'WebFetch',
         'WebSearch',
@@ -684,8 +683,8 @@ async def test_capability_returning_toolset_func_combined():
     """Test that a ToolsetFunc capability works alongside other capabilities via CombinedCapability."""
     agent = Agent(
         TestModel(),
+        instructions='You are a helpful greeter.',
         capabilities=[
-            Instructions('You are a helpful greeter.'),
             ToolsetFuncCapability(),
         ],
     )
@@ -703,50 +702,6 @@ async def test_capability_returning_toolset_func_combined():
     assert tool_returns[0].content.startswith('Hello, ')
 
 
-def test_model_settings_from_spec_positional():
-    """ModelSettings.from_spec with a single positional dict arg."""
-    cap = ModelSettings.from_spec({'max_tokens': 4096, 'temperature': 0.5})
-    assert cap.settings == {'max_tokens': 4096, 'temperature': 0.5}
-
-
-def test_model_settings_from_spec_kwargs():
-    """ModelSettings.from_spec with keyword arguments."""
-    cap = ModelSettings.from_spec(max_tokens=100)
-    assert cap.settings == {'max_tokens': 100}
-
-
-def test_model_settings_callable_get_model_settings():
-    """Callable ModelSettings returns the callable from get_model_settings for resolution in the chain."""
-
-    def dynamic_settings(ctx: RunContext[None]) -> _ModelSettings:
-        return _ModelSettings(temperature=0.9)  # pragma: no cover
-
-    cap = ModelSettings(settings=dynamic_settings)
-
-    # get_model_settings returns the callable directly — resolution happens in the agent's settings chain
-    result = cap.get_model_settings()
-    assert callable(result)
-    assert result is dynamic_settings
-
-
-async def test_model_settings_static_before_model_request():
-    """Static ModelSettings passes through before_model_request without modification."""
-    cap = ModelSettings(settings=_ModelSettings(max_tokens=200))
-
-    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[])
-    input_settings = _ModelSettings(temperature=0.5)
-    result = await cap.before_model_request(
-        ctx,
-        ModelRequestContext(
-            messages=[],
-            model_settings=input_settings,
-            model_request_parameters=ModelRequestParameters(),
-        ),
-    )
-    # Static settings are handled by get_model_settings, not before_model_request
-    assert result.model_settings is input_settings
-
-
 def test_abstract_capability_get_model_settings_default():
     """AbstractCapability.get_model_settings() returns None by default."""
 
@@ -760,10 +715,21 @@ def test_abstract_capability_get_model_settings_default():
 
 def test_combined_capability_get_model_settings_merge():
     """CombinedCapability.get_model_settings() merges settings from all sub-capabilities."""
+
+    @dataclass
+    class MaxTokensCap(AbstractCapability[None]):
+        def get_model_settings(self) -> _ModelSettings | None:
+            return _ModelSettings(max_tokens=100)
+
+    @dataclass
+    class TemperatureCap(AbstractCapability[None]):
+        def get_model_settings(self) -> _ModelSettings | None:
+            return _ModelSettings(temperature=0.5)
+
     caps = CombinedCapability(
         capabilities=[
-            ModelSettings(settings=_ModelSettings(max_tokens=100)),
-            ModelSettings(settings=_ModelSettings(temperature=0.5)),
+            MaxTokensCap(),
+            TemperatureCap(),
         ]
     )
     merged = caps.get_model_settings()
@@ -775,7 +741,12 @@ def test_combined_capability_get_model_settings_merge():
 
 def test_combined_capability_get_model_settings_none():
     """CombinedCapability.get_model_settings() returns None when no capabilities provide settings."""
-    caps = CombinedCapability(capabilities=[Instructions('hello')])
+
+    @dataclass
+    class PlainCap(AbstractCapability[None]):
+        pass
+
+    caps = CombinedCapability(capabilities=[PlainCap()])
     assert caps.get_model_settings() is None
 
 
@@ -857,15 +828,25 @@ def _build_run_context(deps: Any = None) -> RunContext[Any]:
 
 async def test_capability_for_run_default_returns_self():
     """Default for_run returns self."""
-    cap = Instructions(instructions='hello')
+
+    @dataclass
+    class SimpleCap(AbstractCapability[None]):
+        pass
+
+    cap = SimpleCap()
     ctx = _build_run_context()
     assert await cap.for_run(ctx) is cap
 
 
 async def test_combined_capability_for_run_propagates():
     """CombinedCapability propagates for_run to children."""
-    cap1 = Instructions(instructions='a')
-    cap2 = Instructions(instructions='b')
+
+    @dataclass
+    class SimpleCap(AbstractCapability[None]):
+        label: str = ''
+
+    cap1 = SimpleCap(label='a')
+    cap2 = SimpleCap(label='b')
     combined = CombinedCapability([cap1, cap2])
     ctx = _build_run_context()
 
@@ -884,7 +865,11 @@ async def test_combined_capability_for_run_returns_new_when_child_changes():
         async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
             return PerRunCap(run_id=self.run_id + 1)
 
-    static_cap = Instructions(instructions='static')
+    @dataclass
+    class StaticCap(AbstractCapability[None]):
+        pass
+
+    static_cap = StaticCap()
     per_run_cap = PerRunCap()
     combined = CombinedCapability([static_cap, per_run_cap])
     ctx = _build_run_context()
@@ -2567,53 +2552,32 @@ class TestMCPCapability:
 
 
 class TestNamedSpecDictRoundTrip:
-    """Test that NamedSpec correctly round-trips a dict-as-first-arg without misinterpreting it as kwargs."""
+    """Test that NamedSpec correctly round-trips various argument forms."""
 
-    def test_model_settings_dict_round_trip(self):
-        """ModelSettings with a dict positional arg survives serialize -> deserialize."""
-        spec = NamedSpec(name='ModelSettings', arguments=({'max_tokens': 4096, 'temperature': 0.5},))
-
-        # Serialize with short form
+    def test_dict_positional_arg_uses_long_form(self):
+        """A dict positional arg falls back to long form to avoid kwargs misinterpretation on round-trip."""
+        spec = NamedSpec(name='CustomCap', arguments=({'key': 'value', 'other': 42},))
         serialized = spec.model_dump(context={'use_short_form': True})
-
-        # The short form would be ambiguous (dict with string keys), so it should use the long form
-        assert serialized['name'] == 'ModelSettings'
-        # arguments is a tuple with one dict element
+        # Dict with string keys would be ambiguous in short form, so long form is used
+        assert serialized['name'] == 'CustomCap'
         assert len(serialized['arguments']) == 1
-        assert serialized['arguments'][0] == {'max_tokens': 4096, 'temperature': 0.5}
-
-        # Deserialize and verify the round-trip
+        assert serialized['arguments'][0] == {'key': 'value', 'other': 42}
+        # Round-trip preserves the dict as a positional arg
         deserialized = NamedSpec.model_validate(serialized)
-        assert deserialized.name == 'ModelSettings'
-        assert deserialized.arguments == ({'max_tokens': 4096, 'temperature': 0.5},)
-        assert deserialized.args == ({'max_tokens': 4096, 'temperature': 0.5},)
+        assert deserialized.args == ({'key': 'value', 'other': 42},)
         assert deserialized.kwargs == {}
 
     def test_non_dict_positional_arg_uses_short_form(self):
         """A non-dict positional arg still uses the compact short form."""
-        spec = NamedSpec(name='Instructions', arguments=('Be helpful.',))
+        spec = NamedSpec(name='WebSearch', arguments=(True,))
         serialized = spec.model_dump(context={'use_short_form': True})
-        assert serialized == {'Instructions': 'Be helpful.'}
+        assert serialized == {'WebSearch': True}
 
-    def test_kwargs_still_use_short_form(self):
-        """Kwargs (dict arguments) still use the short form correctly."""
-        spec = NamedSpec(name='ModelSettings', arguments={'max_tokens': 4096})
+    def test_kwargs_use_short_form(self):
+        """Kwargs (dict arguments) use the short form correctly."""
+        spec = NamedSpec(name='WebSearch', arguments={'local': True})
         serialized = spec.model_dump(context={'use_short_form': True})
-        assert serialized == {'ModelSettings': {'max_tokens': 4096}}
-
-    def test_agent_from_spec_model_settings_round_trip(self):
-        """Agent.from_spec with ModelSettings dict works correctly both ways."""
-
-        # Construct via the dict short form (kwargs interpretation)
-        agent = Agent.from_spec(
-            {
-                'model': 'test',
-                'capabilities': [
-                    {'ModelSettings': {'max_tokens': 4096, 'temperature': 0.5}},
-                ],
-            }
-        )
-        assert agent.model is not None
+        assert serialized == {'WebSearch': {'local': True}}
 
 
 class TestPrepareToolsCapability:
@@ -2760,8 +2724,8 @@ class TestOverrideWithSpec:
             ]
         )
 
-    async def test_override_with_spec_capabilities(self):
-        """Override with spec capabilities replaces agent's existing capabilities."""
+    async def test_override_with_spec_instructions(self):
+        """Override with spec instructions replaces agent's existing instructions."""
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             instructions = next(
@@ -2769,23 +2733,23 @@ class TestOverrideWithSpec:
             )
             return make_text_response(f'instructions: {instructions}')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[Instructions('agent-cap')])
+        agent = Agent(FunctionModel(model_fn), instructions='agent-instructions')
 
-        with agent.override(spec={'capabilities': [{'Instructions': 'from-spec-cap'}]}):
+        with agent.override(spec={'instructions': 'from-spec-instructions'}):
             result = await agent.run('hello')
-            # Override replaces: only spec capability instructions, not agent's
-            assert 'from-spec-cap' in result.output
-            assert 'agent-cap' not in result.output
+            # Override replaces: only spec instructions, not agent's
+            assert 'from-spec-instructions' in result.output
+            assert 'agent-instructions' not in result.output
             assert result.all_messages() == snapshot(
                 [
                     ModelRequest(
                         parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                         timestamp=IsDatetime(),
-                        instructions='from-spec-cap',
+                        instructions='from-spec-instructions',
                         run_id=IsStr(),
                     ),
                     ModelResponse(
-                        parts=[TextPart(content='instructions: from-spec-cap')],
+                        parts=[TextPart(content='instructions: from-spec-instructions')],
                         usage=RequestUsage(input_tokens=51, output_tokens=2),
                         model_name='function:model_fn:',
                         timestamp=IsDatetime(),
@@ -2793,6 +2757,18 @@ class TestOverrideWithSpec:
                     ),
                 ]
             )
+
+    async def test_override_with_spec_capabilities(self):
+        """Override with spec providing capabilities uses them for the run."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('ok')
+
+        agent = Agent(FunctionModel(model_fn))
+
+        with agent.override(spec={'capabilities': [{'WebSearch': {'local': False}}]}):
+            result = await agent.run('hello')
+            assert result.output == 'ok'
 
 
 class TestRunWithSpec:
@@ -2928,7 +2904,25 @@ also from spec\
         )
 
     async def test_run_with_spec_capabilities(self):
-        """Run with spec capabilities merges with agent's root capability."""
+        """Run with spec capabilities merges them with agent's root capability."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions = next(
+                (m.instructions for m in messages if isinstance(m, ModelRequest) and m.instructions), None
+            )
+            return make_text_response(f'instructions: {instructions}')
+
+        agent = Agent(FunctionModel(model_fn), instructions='agent-level')
+
+        result = await agent.run(
+            'hello',
+            spec={'capabilities': [{'WebSearch': {'local': False}}]},
+        )
+        # Agent-level instructions should be present; spec capabilities are merged additively
+        assert 'agent-level' in result.output
+
+    async def test_run_with_spec_instructions(self):
+        """Run with spec instructions adds to agent's instructions."""
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             instructions = next(
@@ -2941,14 +2935,12 @@ also from spec\
         result = await agent.run(
             'hello',
             spec={
-                'capabilities': [
-                    {'Instructions': 'extra from spec cap'},
-                ],
+                'instructions': 'from-spec',
             },
         )
         # Both should be present (additive)
         assert 'agent-level' in result.output
-        assert 'extra from spec cap' in result.output
+        assert 'from-spec' in result.output
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
@@ -2956,7 +2948,7 @@ also from spec\
                     timestamp=IsDatetime(),
                     instructions="""\
 agent-level
-extra from spec cap\
+from-spec\
 """,
                     run_id=IsStr(),
                 ),
@@ -2965,11 +2957,11 @@ extra from spec cap\
                         TextPart(
                             content="""\
 instructions: agent-level
-extra from spec cap\
+from-spec\
 """
                         )
                     ],
-                    usage=RequestUsage(input_tokens=51, output_tokens=6),
+                    usage=RequestUsage(input_tokens=51, output_tokens=3),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -3295,7 +3287,7 @@ class TestGetWrapperToolsetHook:
 def test_from_spec_no_model_raises():
     """from_spec() without model raises UserError."""
     with pytest.raises(UserError, match='`model` must be provided'):
-        Agent.from_spec({'capabilities': [{'Instructions': 'hello'}]})
+        Agent.from_spec({'instructions': 'hello'})
 
 
 # --- run() with spec: additional merge scenarios ---
@@ -3997,6 +3989,678 @@ class TestToolExecuteErrorHooks:
         result = await agent.run('call tool')
         assert 'fallback result' in result.output
 
+
+# --- Hooks capability tests ---
+
+
+class TestHooksCapability:
+    """Tests for the Hooks decorator-based capability."""
+
+    async def test_decorator_registration(self):
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.on.before_model_request
+        async def log_request(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            call_log.append('before_model_request')
+            return request_context
+
+        @hooks.on.after_model_request
+        async def log_response(
+            ctx: RunContext[Any], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            call_log.append('after_model_request')
+            return response
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert call_log == ['before_model_request', 'after_model_request']
+
+    async def test_constructor_form(self):
+        call_log: list[str] = []
+
+        async def log_request(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            call_log.append('before_model_request')
+            return request_context
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[Hooks(before_model_request=log_request)])
+        await agent.run('hello')
+        assert call_log == ['before_model_request']
+
+    async def test_multiple_hooks_same_event(self):
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.on.before_model_request
+        async def first(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            call_log.append('first')
+            return request_context
+
+        @hooks.on.before_model_request
+        async def second(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            call_log.append('second')
+            return request_context
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert call_log == ['first', 'second']
+
+    async def test_tool_names_filtering(self):
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.on.before_tool_execute(tools=['target_tool'])
+        async def filtered(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+        ) -> dict[str, Any]:
+            call_log.append(f'filtered:{call.tool_name}')
+            return args
+
+        @hooks.on.after_tool_execute
+        async def unfiltered(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any], result: Any
+        ) -> Any:
+            call_log.append(f'unfiltered:{call.tool_name}')
+            return result
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def target_tool() -> str:
+            return 'result'
+
+        await agent.run('call tool')
+        assert 'filtered:target_tool' in call_log
+        assert 'unfiltered:target_tool' in call_log
+
+    async def test_wrap_model_request(self):
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.on.model_request
+        async def wrap(ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any) -> ModelResponse:
+            call_log.append('wrap_start')
+            result = await handler(request_context)
+            call_log.append('wrap_end')
+            return result
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert call_log == ['wrap_start', 'wrap_end']
+
+    async def test_wrap_run(self):
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.on.run
+        async def wrap(ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+            call_log.append('wrap_run_start')
+            result = await handler()
+            call_log.append('wrap_run_end')
+            return result
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert call_log == ['wrap_run_start', 'wrap_run_end']
+
+    async def test_on_error_recovery(self):
+        hooks = Hooks()
+
+        @hooks.on.model_request_error
+        async def recover(
+            ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='recovered')])
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[hooks])
+        result = await agent.run('hello')
+        assert result.output == 'recovered'
+
+    async def test_sync_function_auto_wrapping(self):
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.on.before_model_request
+        def sync_hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            call_log.append('sync_hook')
+            return request_context
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert call_log == ['sync_hook']
+
+    async def test_timeout(self):
+        hooks = Hooks()
+
+        @hooks.on.before_model_request(timeout=0.01)
+        async def slow_hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            await asyncio.sleep(10)
+            return request_context  # pragma: no cover
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        with pytest.raises(HookTimeoutError) as exc_info:
+            await agent.run('hello')
+        assert exc_info.value.hook_name == 'before_model_request'
+        assert exc_info.value.func_name == 'slow_hook'
+        assert exc_info.value.timeout == 0.01
+
+    async def test_has_wrap_node_run(self):
+        hooks = Hooks()
+        assert hooks.has_wrap_node_run is False
+
+        nodes_seen: list[str] = []
+
+        @hooks.on.node_run
+        async def wrap(ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+            nodes_seen.append(type(node).__name__)
+            return await handler(node)
+
+        assert hooks.has_wrap_node_run is True
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert len(nodes_seen) > 0
+
+    async def test_composition_with_other_capabilities(self):
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.on.before_model_request
+        async def hooks_before(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            call_log.append('hooks_before')
+            return request_context
+
+        cap = LoggingCapability()
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks, cap])
+        await agent.run('hello')
+        assert 'hooks_before' in call_log
+        assert 'before_model_request' in cap.log
+
+    async def test_before_run(self):
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.on.before_run
+        async def on_start(ctx: RunContext[Any]) -> None:
+            call_log.append('before_run')
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert call_log == ['before_run']
+
+    async def test_after_run(self):
+        hooks = Hooks()
+        outputs: list[str] = []
+
+        @hooks.on.after_run
+        async def on_end(ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+            outputs.append(result.output)
+            return result
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        result = await agent.run('hello')
+        assert outputs == [result.output]
+
+    async def test_repr(self):
+        hooks = Hooks()
+        assert repr(hooks) == 'Hooks({})'
+
+        @hooks.on.before_model_request
+        async def hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            return request_context
+
+        assert repr(hooks) == "Hooks({'before_model_request': 1})"
+
+        # Verify the registered hook actually works
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+
+    async def test_on_model_request_error_reraise(self):
+        """Error hooks that re-raise propagate the error to the caller."""
+
+        hooks = Hooks()
+
+        @hooks.on.model_request_error
+        async def log_and_reraise(
+            ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            raise error
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[hooks])
+        with pytest.raises(RuntimeError, match='model exploded'):
+            await agent.run('hello')
+
+    async def test_on_run_error_reraise(self):
+        """on_run_error hooks that re-raise propagate the error."""
+
+        hooks = Hooks()
+
+        @hooks.on.run_error
+        async def log_and_reraise(ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            raise error
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[hooks])
+        with pytest.raises(RuntimeError, match='model exploded'):
+            await agent.run('hello')
+
+    async def test_on_run_error_recovery(self):
+        hooks = Hooks()
+
+        @hooks.on.run_error
+        async def recover(ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            return AgentRunResult(output='recovered from run error')
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[hooks])
+        result = await agent.run('hello')
+        assert result.output == 'recovered from run error'
+
+    async def test_on_run_error_chaining(self):
+        hooks = Hooks()
+
+        @hooks.on.run_error
+        async def first_handler(ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            raise ValueError('transformed by first')
+
+        @hooks.on.run_error
+        async def second_handler(ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            return AgentRunResult(output=f'caught: {error}')
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('original error')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[hooks])
+        result = await agent.run('hello')
+        assert 'transformed by first' in result.output
+
+    async def test_error_hook_chaining(self):
+        hooks = Hooks()
+
+        @hooks.on.model_request_error
+        async def first(
+            ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            raise ValueError('transformed')
+
+        @hooks.on.model_request_error
+        async def second(
+            ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content=f'recovered: {error}')])
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('original')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[hooks])
+        result = await agent.run('hello')
+        assert 'transformed' in result.output
+
+    async def test_wrap_run_event_stream(self):
+        hooks = Hooks()
+        events_seen: list[str] = []
+
+        @hooks.on.run_event_stream
+        async def observe_stream(
+            ctx: RunContext[Any], *, stream: AsyncIterable[AgentStreamEvent]
+        ) -> AsyncIterable[AgentStreamEvent]:
+            async for event in stream:
+                events_seen.append(type(event).__name__)
+                yield event
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[hooks],
+        )
+        async with agent.run_stream('hello') as stream:
+            await stream.get_output()
+        assert len(events_seen) > 0
+
+    async def test_hooks_with_streaming_run(self):
+        """Hooks capability used during a streaming run exercises the default wrap_run_event_stream path."""
+
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.on.before_model_request
+        async def log_request(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            call_log.append('before_model_request')
+            return request_context
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[hooks],
+        )
+        async with agent.run_stream('hello') as stream:
+            await stream.get_output()
+        assert 'before_model_request' in call_log
+
+    async def test_node_run_hooks(self):
+        """Exercise before_node_run, after_node_run, and node_run (wrap) via .on namespace."""
+        hooks = Hooks()
+        nodes_seen: list[str] = []
+
+        @hooks.on.before_node_run
+        async def before(ctx: RunContext[Any], *, node: Any) -> Any:
+            nodes_seen.append(f'before:{type(node).__name__}')
+            return node
+
+        @hooks.on.after_node_run
+        async def after(ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+            nodes_seen.append(f'after:{type(node).__name__}')
+            return result
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert any('before:' in n for n in nodes_seen)
+        assert any('after:' in n for n in nodes_seen)
+
+    async def test_node_run_error_hook(self):
+        """on.node_run_error fires when a node fails."""
+        hooks = Hooks()
+        error_log: list[str] = []
+
+        @hooks.on.node_run_error
+        async def handle(ctx: RunContext[Any], *, node: Any, error: Exception) -> Any:
+            error_log.append(f'error:{type(error).__name__}')
+            raise error
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('node exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[hooks])
+        with pytest.raises(RuntimeError, match='node exploded'):
+            await agent.run('hello')
+        assert any('error:RuntimeError' in e for e in error_log)
+
+    async def test_on_event_hook(self):
+        """on.event fires for each stream event and can modify events."""
+        hooks = Hooks()
+        events_seen: list[str] = []
+
+        @hooks.on.event
+        async def observe(ctx: RunContext[Any], event: AgentStreamEvent) -> AgentStreamEvent:
+            events_seen.append(type(event).__name__)
+            return event
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[hooks],
+        )
+        async with agent.run_stream('hello') as stream:
+            await stream.get_output()
+        assert len(events_seen) > 0
+
+    async def test_on_event_with_run_event_stream(self):
+        """on.event and on.run_event_stream can be used together."""
+        hooks = Hooks()
+        event_log: list[str] = []
+        stream_log: list[str] = []
+
+        @hooks.on.event
+        async def per_event(ctx: RunContext[Any], event: AgentStreamEvent) -> AgentStreamEvent:
+            event_log.append(type(event).__name__)
+            return event
+
+        @hooks.on.run_event_stream
+        async def wrap_stream(
+            ctx: RunContext[Any], *, stream: AsyncIterable[AgentStreamEvent]
+        ) -> AsyncIterable[AgentStreamEvent]:
+            stream_log.append('started')
+            async for event in stream:
+                yield event
+            stream_log.append('finished')
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[hooks],
+        )
+        async with agent.run_stream('hello') as stream:
+            await stream.get_output()
+        assert len(event_log) > 0
+        assert stream_log == ['started', 'finished']
+
+    async def test_prepare_tools_hook(self):
+        """on.prepare_tools filters tool definitions."""
+        hooks = Hooks()
+
+        @hooks.on.prepare_tools
+        async def hide_tools(ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+            return [td for td in tool_defs if not td.name.startswith('hidden_')]
+
+        tool_called = False
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def visible_tool() -> str:
+            nonlocal tool_called
+            tool_called = True
+            return 'visible'
+
+        @agent.tool_plain
+        def hidden_tool() -> str:
+            return 'hidden'  # pragma: no cover
+
+        await agent.run('call tool')
+        assert tool_called
+
+    async def test_tool_validate_hooks(self):
+        """Exercise before/after/wrap tool_validate and on_tool_validate_error."""
+        hooks = Hooks()
+        validate_log: list[str] = []
+
+        @hooks.on.before_tool_validate
+        async def before_validate(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any
+        ) -> Any:
+            validate_log.append('before_validate')
+            return args
+
+        @hooks.on.after_tool_validate
+        async def after_validate(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+        ) -> dict[str, Any]:
+            validate_log.append('after_validate')
+            return args
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'result'
+
+        await agent.run('call tool')
+        assert 'before_validate' in validate_log
+        assert 'after_validate' in validate_log
+
+    async def test_wrap_tool_validate_hook(self):
+        """Exercise on.tool_validate (wrap) via decorator."""
+        hooks = Hooks()
+        wrap_log: list[str] = []
+
+        @hooks.on.tool_validate
+        async def wrap_validate(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, handler: Any
+        ) -> dict[str, Any]:
+            wrap_log.append('wrap_start')
+            result = await handler(args)
+            wrap_log.append('wrap_end')
+            return result
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'result'
+
+        await agent.run('call tool')
+        assert wrap_log == ['wrap_start', 'wrap_end']
+
+    async def test_tool_validate_error_hook(self):
+        """on.tool_validate_error can recover from validation failures."""
+        hooks = Hooks()
+
+        @hooks.on.tool_validate_error
+        async def recover_validate(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Any
+        ) -> dict[str, Any]:
+            return {'name': 'recovered'}
+
+        def bad_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return make_text_response(f'got: {part.content}')
+            if info.function_tools:
+                tool = info.function_tools[0]
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=tool.name, args='{"wrong": 1}', tool_call_id='call-1')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        agent = Agent(FunctionModel(bad_args_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def greet(name: str) -> str:
+            return f'hello {name}'
+
+        result = await agent.run('greet someone')
+        assert 'hello recovered' in result.output
+
+    async def test_wrap_tool_execute_hook(self):
+        """Exercise on.tool_execute (wrap) via decorator."""
+        hooks = Hooks()
+        wrap_log: list[str] = []
+
+        @hooks.on.tool_execute
+        async def wrap_exec(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any], handler: Any
+        ) -> Any:
+            wrap_log.append('exec_start')
+            result = await handler(args)
+            wrap_log.append('exec_end')
+            return result
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'result'
+
+        await agent.run('call tool')
+        assert wrap_log == ['exec_start', 'exec_end']
+
+    async def test_tool_execute_error_hook(self):
+        """on.tool_execute_error can recover from tool execution failures."""
+        hooks = Hooks()
+
+        @hooks.on.tool_execute_error
+        async def recover_exec(
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: dict[str, Any],
+            error: Exception,
+        ) -> Any:
+            return 'fallback result'
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return make_text_response(f'got: {part.content}')
+            if info.function_tools:
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[hooks])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            raise ValueError('tool failed')
+
+        result = await agent.run('call tool')
+        assert 'fallback result' in result.output
+
+    async def test_tool_validate_error_reraise(self):
+        """on.tool_validate_error that re-raises propagates the error."""
+        hooks = Hooks()
+
+        @hooks.on.tool_validate_error
+        async def reraise(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Any
+        ) -> dict[str, Any]:
+            raise error
+
+        call_count = 0
+
+        def bad_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return make_text_response(f'got: {part.content}')
+            if info.function_tools:
+                tool = info.function_tools[0]
+                if call_count <= 1:
+                    return ModelResponse(
+                        parts=[ToolCallPart(tool_name=tool.name, args='{"wrong": 1}', tool_call_id='call-1')]
+                    )
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=tool.name, args='{"name": "ok"}', tool_call_id='call-2')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        agent = Agent(FunctionModel(bad_args_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def greet(name: str) -> str:
+            return f'hello {name}'
+
+        await agent.run('greet someone')
+
+    async def test_tool_execute_error_reraise(self):
+        """on.tool_execute_error that re-raises propagates the error."""
+        hooks = Hooks()
+
+        @hooks.on.tool_execute_error
+        async def reraise(
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: dict[str, Any],
+            error: Exception,
+        ) -> Any:
+            raise error
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            raise ValueError('tool failed')
+
+        with pytest.raises(ValueError, match='tool failed'):
+            await agent.run('call tool')
+
+    async def test_get_serialization_name(self):
+        assert Hooks.get_serialization_name() is None
+
     async def test_default_on_tool_execute_error_reraises(self):
         """The default on_tool_execute_error just re-raises, exercised with a minimal capability."""
 
@@ -4015,3 +4679,440 @@ class TestToolExecuteErrorHooks:
 
         with pytest.raises(ValueError, match='tool failed'):
             await agent.run('call the tool')
+
+
+# --- WrapperCapability and PrefixTools tests ---
+
+
+async def test_prefix_tools_prefixes_wrapped_capability_tools():
+    """PrefixTools prefixes only the wrapped capability's tools, not other agent tools."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain
+    def inner_tool() -> str:
+        return 'inner'  # pragma: no cover
+
+    cap = PrefixTools(wrapped=Toolset(toolset), prefix='ns')
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_names = sorted(t.name for t in info.function_tools)
+        return ModelResponse(parts=[TextPart(','.join(tool_names))])
+
+    agent = Agent(FunctionModel(respond), capabilities=[cap])
+
+    @agent.tool_plain
+    def outer_tool() -> str:
+        return 'outer'  # pragma: no cover
+
+    result = await agent.run('list tools')
+    # inner_tool should be prefixed, outer_tool should not
+    assert result.output == 'ns_inner_tool,outer_tool'
+
+
+async def test_prefix_tools_from_spec():
+    """PrefixTools from spec supports both dict-form and bare-name nested capabilities."""
+
+    # Dict form (kwargs): nested capability with arguments
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [
+                {
+                    'PrefixTools': {
+                        'prefix': 'search',
+                        'capability': {'BuiltinTool': {'kind': 'web_search'}},
+                    }
+                },
+            ],
+        },
+    )
+    assert agent.model is not None
+
+    # Bare name form with custom_capability_types forwarded through contextvar
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [
+                {
+                    'PrefixTools': {
+                        'prefix': 'custom',
+                        'capability': 'CustomCapability',
+                    }
+                },
+            ],
+        },
+        custom_capability_types=[CustomCapability],
+    )
+    assert agent.model is not None
+
+
+async def test_prefix_tools_from_spec_direct():
+    """PrefixTools.from_spec works outside Agent.from_spec (no contextvar), using default registry."""
+    cap = PrefixTools.from_spec(prefix='ws', capability='WebSearch')
+    assert isinstance(cap, PrefixTools)
+    assert cap.prefix == 'ws'
+
+
+async def test_prefix_tools_returns_none_when_no_toolset():
+    """PrefixTools.get_toolset() returns None if the wrapped capability has no toolset."""
+    cap = PrefixTools(wrapped=CustomCapability(), prefix='ns')
+    assert cap.get_toolset() is None
+
+
+async def test_prefix_tools_with_callable_toolset():
+    """PrefixTools handles a wrapped capability that returns a callable toolset."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain
+    def dynamic_tool() -> str:
+        return 'dynamic'  # pragma: no cover
+
+    def toolset_func(ctx: RunContext[None]) -> FunctionToolset[None]:
+        return toolset
+
+    cap = PrefixTools(wrapped=Toolset(toolset_func), prefix='dyn')
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_names = sorted(t.name for t in info.function_tools)
+        return ModelResponse(parts=[TextPart(','.join(tool_names))])
+
+    agent = Agent(FunctionModel(respond), capabilities=[cap])
+    result = await agent.run('list tools')
+    assert result.output == 'dyn_dynamic_tool'
+
+
+async def test_prefix_tools_convenience_method():
+    """AbstractCapability.prefix_tools() returns a PrefixTools wrapping self."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain
+    def inner_tool() -> str:
+        return 'inner'  # pragma: no cover
+
+    cap = Toolset(toolset).prefix_tools('ns')
+    assert isinstance(cap, PrefixTools)
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_names = sorted(t.name for t in info.function_tools)
+        return ModelResponse(parts=[TextPart(','.join(tool_names))])
+
+    agent = Agent(FunctionModel(respond), capabilities=[cap])
+    result = await agent.run('list tools')
+    assert result.output == 'ns_inner_tool'
+
+
+async def test_wrapper_capability_delegates_hooks():
+    """WrapperCapability delegates lifecycle hooks to the wrapped capability."""
+    hook_calls: list[str] = []
+
+    @dataclass
+    class HookCap(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            hook_calls.append('before_run')
+
+        async def after_run(self, ctx: RunContext[None], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+            hook_calls.append('after_run')
+            return result
+
+    wrapper = WrapperCapability(wrapped=HookCap())
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(respond), capabilities=[wrapper])
+    await agent.run('Hello')
+
+    assert 'before_run' in hook_calls
+    assert 'after_run' in hook_calls
+
+
+async def test_wrapper_capability_for_run_replaces():
+    """WrapperCapability.for_run replaces wrapped when it changes."""
+    toolset_a = FunctionToolset(id='a')
+
+    @toolset_a.tool_plain
+    def tool_a() -> str:
+        return 'a'  # pragma: no cover
+
+    toolset_b = FunctionToolset(id='b')
+
+    @toolset_b.tool_plain
+    def tool_b() -> str:
+        return 'b'  # pragma: no cover
+
+    @dataclass
+    class SwitchCap(AbstractCapability[None]):
+        use_b: bool = False
+
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            return SwitchCap(use_b=True)
+
+        def get_toolset(self) -> AbstractToolset[None]:
+            return toolset_b if self.use_b else toolset_a
+
+    wrapper = WrapperCapability(wrapped=SwitchCap())
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_names = sorted(t.name for t in info.function_tools)
+        return ModelResponse(parts=[TextPart(','.join(tool_names))])
+
+    agent = Agent(FunctionModel(respond), capabilities=[wrapper])
+    result = await agent.run('Hello')
+    # for_run switches to toolset_b
+    assert 'tool_b' in result.output
+
+
+async def test_wrapper_capability_has_wrap_node_run():
+    """WrapperCapability.has_wrap_node_run delegates to the wrapped capability."""
+    plain = CustomCapability()
+    assert WrapperCapability(wrapped=plain).has_wrap_node_run is False
+
+    @dataclass
+    class NodeRunCap(AbstractCapability[None]):
+        async def wrap_node_run(self, ctx: RunContext[None], *, node: Any, handler: Any) -> Any:
+            return await handler(node)  # pragma: no cover
+
+    assert WrapperCapability(wrapped=NodeRunCap()).has_wrap_node_run is True
+
+
+async def test_wrapper_capability_delegates_model_request_hooks():
+    """WrapperCapability delegates before/after model request hooks."""
+    hook_calls: list[str] = []
+
+    @dataclass
+    class ModelRequestHookCap(AbstractCapability[None]):
+        async def before_model_request(
+            self, ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            hook_calls.append('before_model_request')
+            return request_context
+
+        async def after_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            hook_calls.append('after_model_request')
+            return response
+
+    wrapper = WrapperCapability(wrapped=ModelRequestHookCap())
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(respond), capabilities=[wrapper])
+    await agent.run('Hello')
+
+    assert 'before_model_request' in hook_calls
+    assert 'after_model_request' in hook_calls
+
+
+async def test_prefix_tools_tool_call_strips_prefix():
+    """PrefixTools correctly strips the prefix when calling the underlying tool."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain
+    def greet(name: str) -> str:
+        return f'hello {name}'
+
+    cap = PrefixTools(wrapped=Toolset(toolset), prefix='ns')
+
+    call_count = 0
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart('ns_greet', {'name': 'world'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(respond), capabilities=[cap])
+    result = await agent.run('greet world')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='greet world', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='ns_greet',
+                        args={'name': 'world'},
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(input_tokens=52, output_tokens=5),
+                model_name='function:respond:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='ns_greet',
+                        content='hello world',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=54, output_tokens=6),
+                model_name='function:respond:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+def test_wrapper_capability_get_serialization_name():
+    """WrapperCapability.get_serialization_name returns None (abstract base)."""
+    assert WrapperCapability.get_serialization_name() is None
+
+
+async def test_wrapper_capability_delegates_on_run_error():
+    """WrapperCapability delegates on_run_error to the wrapped capability."""
+
+    @dataclass
+    class RecoverCap(AbstractCapability[Any]):
+        async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            return AgentRunResult(output='recovered')
+
+    def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('model exploded')
+
+    agent = Agent(FunctionModel(failing_model), capabilities=[WrapperCapability(wrapped=RecoverCap())])
+    result = await agent.run('hello')
+    assert result.output == 'recovered'
+
+
+async def test_wrapper_capability_delegates_on_node_run_error():
+    """WrapperCapability delegates on_node_run_error to the wrapped capability."""
+    from pydantic_ai.result import FinalResult
+    from pydantic_graph import End
+
+    @dataclass
+    class NodeRecoverCap(AbstractCapability[Any]):
+        async def on_node_run_error(self, ctx: RunContext[Any], *, node: Any, error: Exception) -> Any:
+            return End(FinalResult(output='node recovered'))
+
+    def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('model exploded')
+
+    agent = Agent(FunctionModel(failing_model), capabilities=[WrapperCapability(wrapped=NodeRecoverCap())])
+    async with agent.iter('hello') as agent_run:
+        node = agent_run.next_node
+        while not isinstance(node, End):
+            node = await agent_run.next(node)
+    assert isinstance(node, End)
+    assert node.data.output == 'node recovered'
+
+
+async def test_wrapper_capability_delegates_wrap_run_event_stream():
+    """WrapperCapability delegates wrap_run_event_stream to the wrapped capability."""
+    observed_events: list[AgentStreamEvent] = []
+
+    @dataclass
+    class StreamObserverCap(AbstractCapability[Any]):
+        async def wrap_run_event_stream(
+            self,
+            ctx: RunContext[Any],
+            *,
+            stream: AsyncIterable[AgentStreamEvent],
+        ) -> AsyncIterable[AgentStreamEvent]:
+            async for event in stream:
+                observed_events.append(event)
+                yield event
+
+    agent = Agent(
+        FunctionModel(simple_model_function, stream_function=simple_stream_function),
+        capabilities=[WrapperCapability(wrapped=StreamObserverCap())],
+    )
+
+    async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in stream:
+            pass
+
+    await agent.run('hello', event_stream_handler=handler)
+    assert len(observed_events) > 0
+
+
+async def test_wrapper_capability_delegates_on_model_request_error():
+    """WrapperCapability delegates on_model_request_error to the wrapped capability."""
+
+    @dataclass
+    class ModelErrorRecoverCap(AbstractCapability[Any]):
+        async def on_model_request_error(
+            self, ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='recovered from model error')])
+
+    def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('model request failed')
+
+    agent = Agent(FunctionModel(failing_model), capabilities=[WrapperCapability(wrapped=ModelErrorRecoverCap())])
+    result = await agent.run('hello')
+    assert result.output == 'recovered from model error'
+
+
+async def test_wrapper_capability_delegates_on_tool_validate_error():
+    """WrapperCapability delegates on_tool_validate_error to the wrapped capability."""
+
+    @dataclass
+    class ValidateErrorCap(AbstractCapability[Any]):
+        async def on_tool_validate_error(
+            self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Any
+        ) -> dict[str, Any]:
+            # Recover by providing valid args
+            return {'x': 1}
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        for msg in messages:
+            for part in msg.parts:
+                if isinstance(part, ToolReturnPart):
+                    return ModelResponse(parts=[TextPart(content='done')])
+        if info.function_tools:
+            return ModelResponse(parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='invalid json!!')])
+        return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[WrapperCapability(wrapped=ValidateErrorCap())])
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        return f'result: {x}'
+
+    result = await agent.run('call tool')
+    assert result.output == 'done'
+
+
+async def test_wrapper_capability_delegates_on_tool_execute_error():
+    """WrapperCapability delegates on_tool_execute_error to the wrapped capability."""
+
+    @dataclass
+    class ExecuteErrorCap(AbstractCapability[Any]):
+        async def on_tool_execute_error(
+            self,
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: dict[str, Any],
+            error: Exception,
+        ) -> Any:
+            return 'recovered tool result'
+
+    agent = Agent(
+        FunctionModel(tool_calling_model),
+        capabilities=[WrapperCapability(wrapped=ExecuteErrorCap())],
+    )
+
+    @agent.tool_plain
+    def my_tool() -> str:
+        raise ValueError('tool failed')
+
+    result = await agent.run('call tool')
+    assert result.output == 'final response'
