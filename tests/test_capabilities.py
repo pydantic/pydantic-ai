@@ -20,9 +20,11 @@ from pydantic_ai.capabilities import (
     ImageGeneration,
     Instructions,
     ModelSettings,
+    PrefixTools,
     Toolset,
     WebFetch,
     WebSearch,
+    WrapperCapability,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.builtin_or_local import BuiltinTool as BuiltinToolCap
@@ -65,6 +67,7 @@ def test_capability_types() -> None:
             'Instructions': Instructions,
             'MCP': MCP,
             'ModelSettings': ModelSettings,
+            'PrefixTools': PrefixTools,
             'WebFetch': WebFetch,
             'WebSearch': WebSearch,
         }
@@ -386,6 +389,7 @@ def test_model_json_schema_with_capabilities():
         'Instructions',
         'MCP',
         'ModelSettings',
+        'PrefixTools',
         'WebFetch',
         'WebSearch',
     }
@@ -4012,3 +4016,261 @@ class TestToolExecuteErrorHooks:
 
         with pytest.raises(ValueError, match='tool failed'):
             await agent.run('call the tool')
+
+
+# --- WrapperCapability and PrefixTools tests ---
+
+
+async def test_prefix_tools_prefixes_wrapped_capability_tools():
+    """PrefixTools prefixes only the wrapped capability's tools, not other agent tools."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain
+    def inner_tool() -> str:
+        return 'inner'  # pragma: no cover
+
+    cap = PrefixTools(wrapped=Toolset(toolset), prefix='ns')
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_names = sorted(t.name for t in info.function_tools)
+        return ModelResponse(parts=[TextPart(','.join(tool_names))])
+
+    agent = Agent(FunctionModel(respond), capabilities=[cap])
+
+    @agent.tool_plain
+    def outer_tool() -> str:
+        return 'outer'  # pragma: no cover
+
+    result = await agent.run('list tools')
+    # inner_tool should be prefixed, outer_tool should not
+    assert result.output == 'ns_inner_tool,outer_tool'
+
+
+async def test_prefix_tools_from_spec():
+    """PrefixTools can be constructed from an AgentSpec with a nested capability."""
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [
+                {
+                    'PrefixTools': {
+                        'prefix': 'search',
+                        'capability': {'Instructions': 'Use search tools.'},
+                    }
+                },
+            ],
+        }
+    )
+    assert agent.model is not None
+
+
+async def test_prefix_tools_from_spec_bare_name():
+    """PrefixTools can wrap a bare capability name (no-arg form)."""
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [
+                {
+                    'PrefixTools': {
+                        'prefix': 'ws',
+                        'capability': 'WebSearch',
+                    }
+                },
+            ],
+        }
+    )
+    assert agent.model is not None
+
+
+async def test_prefix_tools_returns_none_when_no_toolset():
+    """PrefixTools.get_toolset() returns None if the wrapped capability has no toolset."""
+    cap = PrefixTools(wrapped=Instructions('hello'), prefix='ns')
+    assert cap.get_toolset() is None
+
+
+async def test_prefix_tools_convenience_method():
+    """AbstractCapability.prefix_tools() returns a PrefixTools wrapping self."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain
+    def inner_tool() -> str:
+        return 'inner'  # pragma: no cover
+
+    cap = Toolset(toolset).prefix_tools('ns')
+    assert isinstance(cap, PrefixTools)
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_names = sorted(t.name for t in info.function_tools)
+        return ModelResponse(parts=[TextPart(','.join(tool_names))])
+
+    agent = Agent(FunctionModel(respond), capabilities=[cap])
+    result = await agent.run('list tools')
+    assert result.output == 'ns_inner_tool'
+
+
+async def test_wrapper_capability_delegates_hooks():
+    """WrapperCapability delegates lifecycle hooks to the wrapped capability."""
+    hook_calls: list[str] = []
+
+    @dataclass
+    class HookCap(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            hook_calls.append('before_run')
+
+        async def after_run(self, ctx: RunContext[None], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+            hook_calls.append('after_run')
+            return result
+
+    wrapper = WrapperCapability(wrapped=HookCap())
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(respond), capabilities=[wrapper])
+    await agent.run('Hello')
+
+    assert 'before_run' in hook_calls
+    assert 'after_run' in hook_calls
+
+
+async def test_wrapper_capability_for_run_replaces():
+    """WrapperCapability.for_run replaces wrapped when it changes."""
+    toolset_a = FunctionToolset(id='a')
+
+    @toolset_a.tool_plain
+    def tool_a() -> str:
+        return 'a'  # pragma: no cover
+
+    toolset_b = FunctionToolset(id='b')
+
+    @toolset_b.tool_plain
+    def tool_b() -> str:
+        return 'b'  # pragma: no cover
+
+    @dataclass
+    class SwitchCap(AbstractCapability[None]):
+        use_b: bool = False
+
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            return SwitchCap(use_b=True)
+
+        def get_toolset(self) -> AbstractToolset[None]:
+            return toolset_b if self.use_b else toolset_a
+
+    wrapper = WrapperCapability(wrapped=SwitchCap())
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_names = sorted(t.name for t in info.function_tools)
+        return ModelResponse(parts=[TextPart(','.join(tool_names))])
+
+    agent = Agent(FunctionModel(respond), capabilities=[wrapper])
+    result = await agent.run('Hello')
+    # for_run switches to toolset_b
+    assert 'tool_b' in result.output
+
+
+async def test_wrapper_capability_has_wrap_node_run():
+    """WrapperCapability.has_wrap_node_run delegates to the wrapped capability."""
+    plain = Instructions('hello')
+    assert WrapperCapability(wrapped=plain).has_wrap_node_run is False
+
+    @dataclass
+    class NodeRunCap(AbstractCapability[None]):
+        async def wrap_node_run(self, ctx: RunContext[None], *, node: Any, handler: Any) -> Any:
+            return await handler(node)  # pragma: no cover
+
+    assert WrapperCapability(wrapped=NodeRunCap()).has_wrap_node_run is True
+
+
+async def test_wrapper_capability_delegates_model_request_hooks():
+    """WrapperCapability delegates before/after model request hooks."""
+    hook_calls: list[str] = []
+
+    @dataclass
+    class ModelRequestHookCap(AbstractCapability[None]):
+        async def before_model_request(
+            self, ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            hook_calls.append('before_model_request')
+            return request_context
+
+        async def after_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            hook_calls.append('after_model_request')
+            return response
+
+    wrapper = WrapperCapability(wrapped=ModelRequestHookCap())
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(respond), capabilities=[wrapper])
+    await agent.run('Hello')
+
+    assert 'before_model_request' in hook_calls
+    assert 'after_model_request' in hook_calls
+
+
+async def test_prefix_tools_tool_call_strips_prefix():
+    """PrefixTools correctly strips the prefix when calling the underlying tool."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain
+    def greet(name: str) -> str:
+        return f'hello {name}'
+
+    cap = PrefixTools(wrapped=Toolset(toolset), prefix='ns')
+
+    call_count = 0
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart('ns_greet', {'name': 'world'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(respond), capabilities=[cap])
+    result = await agent.run('greet world')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='greet world', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='ns_greet',
+                        args={'name': 'world'},
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(input_tokens=52, output_tokens=5),
+                model_name='function:respond:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='ns_greet',
+                        content='hello world',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=54, output_tokens=6),
+                model_name='function:respond:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )

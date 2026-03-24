@@ -16,6 +16,7 @@ from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
     from pydantic_ai.agent.abstract import AgentModelSettings
+    from pydantic_ai.capabilities.prefix_tools import PrefixTools
     from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
@@ -485,3 +486,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         to intercept retries.
         """
         raise error
+
+    # --- Convenience methods ---
+
+    def prefix_tools(self, prefix: str) -> PrefixTools[AgentDepsT]:
+        """Returns a new capability that wraps this one and prefixes its tool names.
+
+        Only this capability's tools are prefixed; other agent tools are unaffected.
+        """
+        from .prefix_tools import PrefixTools
+
+        return PrefixTools(wrapped=self, prefix=prefix)

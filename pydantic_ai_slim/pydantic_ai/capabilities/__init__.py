@@ -22,10 +22,12 @@ from .mcp import MCP
 # Short name is intentional — passing a dict is enough to get type checking,
 # and users rarely need both this and settings.ModelSettings in the same scope.
 from .model_settings import ModelSettings
+from .prefix_tools import PrefixTools
 from .prepare_tools import PrepareTools
 from .toolset import Toolset
 from .web_fetch import WebFetch
 from .web_search import WebSearch
+from .wrapper import WrapperCapability
 
 CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
@@ -36,6 +38,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         Instructions,
         MCP,
         ModelSettings,
+        PrefixTools,
         PrepareTools,
         Toolset,
         WebFetch,
@@ -67,6 +70,8 @@ __all__ = [
     'PrepareTools',
     'Toolset',
     'WebFetch',
+    'WrapperCapability',
+    'PrefixTools',
     'WebSearch',
     'CombinedCapability',
 ]
