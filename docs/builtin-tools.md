@@ -802,9 +802,19 @@ The [`GoogleMapsTool`][pydantic_ai.builtin_tools.GoogleMapsTool] allows your age
 
 ### Provider Support
 
-| Provider | Support | Notes |
-|----------|---------|-------|
+| Provider | Supported | Notes |
+|----------|-----------|-------|
+| OpenAI | ❌ | |
+| OpenAI Responses | ❌ | |
 | Google | ✅ | Supported on Gemini 2.0 Flash, 2.5 Flash-Lite, 2.5 Flash, and 2.5 Pro. Not supported on Gemini 3.x models. |
+| Anthropic | ❌ | |
+| xAI | ❌ | |
+| Groq | ❌ | |
+| Bedrock | ❌ | |
+| Mistral | ❌ | |
+| Cohere | ❌ | |
+| HuggingFace | ❌ | |
+| Outlines | ❌ | |
 
 ### Usage
 
