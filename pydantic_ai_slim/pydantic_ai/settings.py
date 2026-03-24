@@ -11,13 +11,13 @@ ThinkingEffort: TypeAlias = Literal['minimal', 'low', 'medium', 'high', 'xhigh']
 ThinkingLevel: TypeAlias = bool | ThinkingEffort
 """Type alias for thinking/reasoning configuration values.
 
-- ``True``: Enable thinking with the provider's default effort.
-- ``False``: Disable thinking (silently ignored on always-on models).
-- ``'minimal'``/``'low'``/``'medium'``/``'high'``/``'xhigh'``: Enable thinking at a specific effort level.
+- `True`: Enable thinking with the provider's default effort.
+- `False`: Disable thinking (silently ignored on always-on models).
+- `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`: Enable thinking at a specific effort level.
 
 Not all providers support all levels. When a level is not natively supported,
-it maps to the closest available value (e.g. ``'xhigh'`` → ``'high'`` on providers
-that don't support it, ``'minimal'`` → ``'low'`` on providers without a minimal level).
+it maps to the closest available value (e.g. `'xhigh'` → `'high'` on providers
+that don't support it, `'minimal'` → `'low'` on providers without a minimal level).
 """
 
 

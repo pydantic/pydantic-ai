@@ -17,7 +17,7 @@ class GrokModelProfile(ModelProfile):
     """Whether the model supports builtin tools (web_search, code_execution, mcp)."""
 
     grok_supports_tool_choice_required: bool = True
-    """Whether the provider accepts the value ``tool_choice='required'`` in the request payload."""
+    """Whether the provider accepts the value `tool_choice='required'` in the request payload."""
 
 
 def grok_model_profile(model_name: str) -> ModelProfile | None:

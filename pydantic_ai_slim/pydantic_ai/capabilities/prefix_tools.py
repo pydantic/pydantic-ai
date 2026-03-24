@@ -46,8 +46,8 @@ class PrefixTools(WrapperCapability[AgentDepsT]):
         """Create from spec with a nested capability specification.
 
         Args:
-            prefix: The prefix to add to tool names (e.g. ``'mcp'`` turns ``'search'`` into ``'mcp_search'``).
-            capability: A capability spec (same format as entries in the ``capabilities`` list).
+            prefix: The prefix to add to tool names (e.g. `'mcp'` turns `'search'` into `'mcp_search'`).
+            capability: A capability spec (same format as entries in the `capabilities` list).
         """
         from pydantic_ai.agent.spec import load_capability_from_nested_spec
 
