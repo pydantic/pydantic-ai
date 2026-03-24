@@ -1,7 +1,6 @@
-
 # Agent Specs
 
-Agent specs let you define agents declaratively in YAML or JSON — model, instructions, capabilities, and all. One line to load, no Python agent construction code required.
+Agent specs let you define agents declaratively in YAML or JSON — [model](models/overview.md), [instructions](agent.md#instructions), [capabilities](capabilities.md), and all. One line to load, no Python agent construction code required.
 
 This is useful for:
 
@@ -72,7 +71,15 @@ For more control over spec loading, use [`AgentSpec.from_file`][pydantic_ai.agen
 
 ## Template strings
 
-[`TemplateStr`][pydantic_ai.TemplateStr] provides Handlebars-style templates (`{{variable}}`) that are rendered against the agent's [dependencies](dependencies.md) at runtime. Template strings work anywhere instructions or descriptions are accepted — in Python code, in [capabilities](capabilities.md), and in agent specs.
+[`TemplateStr`][pydantic_ai.TemplateStr] provides Handlebars-style templates (`{{variable}}`) that are rendered against the agent's [dependencies](dependencies.md) at runtime. In spec files, strings containing `{{` are automatically converted to template strings:
+
+```yaml {test="skip"}
+instructions: "You are assisting {{name}}, who is a {{role}}."
+```
+
+Template variables are resolved from the fields of the `deps` object. When a `deps_type` (or [`deps_schema`](#deps_schema)) is provided, template variable names are validated at construction time.
+
+In Python code, [`TemplateStr`][pydantic_ai.TemplateStr] can be used explicitly, but a callable with [`RunContext`][pydantic_ai.tools.RunContext] is generally preferred for IDE autocomplete and type checking:
 
 ```python {title="template_instructions.py"}
 from dataclasses import dataclass
@@ -95,13 +102,6 @@ result = agent.run_sync('hello', deps=UserProfile(name='Alice', role='engineer')
 print(result.output)
 #> Hello! How can I help you today?
 ```
-
-Template variables are resolved from the fields of the `deps` object. When a `deps_type` is provided, template variable names are validated at construction time.
-
-In agent specs, strings containing `{{` are automatically converted to template strings — no explicit `TemplateStr` wrapper is needed. This applies to the `instructions` and `description` fields.
-
-!!! tip
-    In Python code, a callable with [`RunContext`][pydantic_ai.tools.RunContext] is generally preferred over `TemplateStr` for IDE autocomplete and type checking. Template strings shine in spec files where callables aren't available.
 
 ## Capability spec syntax
 
@@ -181,24 +181,24 @@ The [`AgentSpec`][pydantic_ai.agent.spec.AgentSpec] model represents the full sp
 
 | Field | Type | Description |
 |---|---|---|
-| `model` | `str` | Model name (required) |
+| `model` | `str` | [Model](models/overview.md) name (required) |
 | `name` | `str \| None` | Agent name |
 | `description` | `str \| None` | Agent description (supports [templates](#template-strings)) |
-| `instructions` | `str \| list[str] \| None` | System prompt instructions (supports [templates](#template-strings)) |
-| `model_settings` | `dict \| None` | Model settings |
-| `capabilities` | `list` | Capabilities (see [spec syntax](#capability-spec-syntax)) |
+| `instructions` | `str \| list[str] \| None` | [Instructions](agent.md#instructions) (supports [templates](#template-strings)) |
+| `model_settings` | `dict \| None` | [Model settings](agent.md#model-run-settings) |
+| `capabilities` | `list` | [Capabilities](capabilities.md) (see [spec syntax](#capability-spec-syntax)) |
 | `deps_schema` | `dict \| None` | JSON Schema for [template string](#template-strings) validation (see below) |
 | `output_schema` | `dict \| None` | JSON Schema for [structured output](output.md) (see below) |
-| `retries` | `int` | Default tool retries (default: `1`) |
-| `output_retries` | `int \| None` | Output validation retries |
+| `retries` | `int` | Default [tool retries](retries.md) (default: `1`) |
+| `output_retries` | `int \| None` | [Output](output.md) validation retries |
 | `end_strategy` | `EndStrategy` | When to stop (`'early'` or `'exhaustive'`) |
-| `tool_timeout` | `float \| None` | Default tool timeout in seconds |
+| `tool_timeout` | `float \| None` | Default [tool](tools.md) timeout in seconds |
 | `instrument` | `bool \| None` | Enable [Logfire](logfire.md) instrumentation |
-| `metadata` | `dict \| None` | Agent metadata |
+| `metadata` | `dict \| None` | Agent [metadata](agent.md#run-metadata) |
 
 ### `deps_schema`
 
-When loading a spec without a Python `deps_type`, `deps_schema` provides a JSON Schema that is used to validate [template string](#template-strings) variable names at construction time. It does **not** validate the actual deps object at runtime — it only ensures that template variables like `{{user_name}}` correspond to properties defined in the schema.
+When loading a spec file without a Python `deps_type`, `deps_schema` provides a JSON Schema that validates [template string](#template-strings) variable names at construction time. It does **not** validate the actual deps object at runtime — it only ensures that template variables like `{{user_name}}` correspond to properties defined in the schema.
 
 ### `output_schema`
 

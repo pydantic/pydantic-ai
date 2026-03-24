@@ -45,13 +45,7 @@ See [Custom capabilities in specs](agent-spec.md#custom-capabilities-in-specs) f
 
 ### Toolsets
 
-Many third-party extensions are available as [toolsets](toolsets.md), which can also be wrapped as [capabilities](capabilities.md) to take advantage of hooks, instructions, and model settings:
-
-- [MCP servers](mcp/overview.md) — access thousands of tools via the Model Context Protocol
-- [LangChain tools](third-party-tools.md) — use LangChain tools via [`tool_from_langchain`][pydantic_ai.ext.langchain.tool_from_langchain]
-- [ACI.dev tools](third-party-tools.md) — use ACI tools via [`tool_from_aci`][pydantic_ai.ext.aci.tool_from_aci]
-
-See [Third-party tools](third-party-tools.md) for the full list.
+Many third-party extensions are available as [toolsets](toolsets.md), which can also be wrapped as [capabilities](capabilities.md) to take advantage of hooks, instructions, and model settings. See [Third-party toolsets](toolsets.md#third-party-toolsets) for the full list.
 
 ## Other extension points
 
@@ -78,6 +72,7 @@ See [Custom Models](models/overview.md#custom-models) for details.
 
 ### Custom agents
 
-For custom agent behavior, subclass [`AbstractAgent`][pydantic_ai.agent.AbstractAgent]:
+For custom agent behavior, subclass [`AbstractAgent`][pydantic_ai.agent.AbstractAgent] or [`WrapperAgent`][pydantic_ai.agent.WrapperAgent]:
 
 - [`AbstractAgent`][pydantic_ai.agent.AbstractAgent] — the base interface for agent implementations, providing `run`, `run_sync`, and `run_stream`
+- [`WrapperAgent`][pydantic_ai.agent.WrapperAgent] — delegates to a wrapped agent, useful for adding pre/post-processing or context management
