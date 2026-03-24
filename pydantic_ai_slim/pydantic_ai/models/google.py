@@ -541,12 +541,24 @@ class GoogleModel(Model):
         if profile.google_supports_thinking_level:
             if thinking is True:
                 return ThinkingConfigDict(include_thoughts=True)
-            level_map: dict[str, str] = {'low': 'LOW', 'medium': 'MEDIUM', 'high': 'HIGH'}
+            level_map: dict[str, str] = {
+                'minimal': 'MINIMAL',
+                'low': 'LOW',
+                'medium': 'MEDIUM',
+                'high': 'HIGH',
+                'xhigh': 'HIGH',  # no higher level available
+            }
             return ThinkingConfigDict(include_thoughts=True, thinking_level=cast(Any, level_map[thinking]))
         else:
             if thinking is True:
                 return ThinkingConfigDict(include_thoughts=True)
-            budget_map: dict[str, int] = {'low': 2048, 'medium': 8192, 'high': 24576}
+            budget_map: dict[str, int] = {
+                'minimal': 128,  # minimum for Gemini 2.5 Pro
+                'low': 2048,
+                'medium': 8192,
+                'high': 24576,
+                'xhigh': 24576,  # max for Flash; Pro goes to 32768 but we use a safe common max
+            }
             return ThinkingConfigDict(include_thoughts=True, thinking_budget=budget_map[thinking])
 
     async def _build_content_and_config(

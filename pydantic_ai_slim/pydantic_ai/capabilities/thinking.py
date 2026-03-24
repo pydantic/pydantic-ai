@@ -23,7 +23,7 @@ class Thinking(AbstractCapability[AgentDepsT]):
 
     - ``True``: Enable thinking with the provider's default effort.
     - ``False``: Disable thinking (silently ignored on always-on models).
-    - ``'low'``/``'medium'``/``'high'``: Enable thinking at a specific effort level.
+    - ``'minimal'``/``'low'``/``'medium'``/``'high'``/``'xhigh'``: Enable thinking at a specific effort level.
     """
 
     def get_model_settings(self) -> _ModelSettings | None:

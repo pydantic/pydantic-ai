@@ -557,7 +557,15 @@ class XaiModel(Model):
         if 'reasoning_effort' not in xai_settings and model_request_parameters.thinking is not None:
             thinking = model_request_parameters.thinking
             if thinking is not False:
-                xai_map: dict[bool | str, str] = {True: 'high', 'low': 'low', 'medium': 'high', 'high': 'high'}
+                # xAI only supports 'low' and 'high'; map others to closest
+                xai_map: dict[bool | str, str] = {
+                    True: 'high',
+                    'minimal': 'low',
+                    'low': 'low',
+                    'medium': 'high',
+                    'high': 'high',
+                    'xhigh': 'high',
+                }
                 xai_settings['reasoning_effort'] = xai_map[thinking]
 
         # Populate use_encrypted_content and include based on model settings

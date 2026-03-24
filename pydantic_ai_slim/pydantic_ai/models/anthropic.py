@@ -1269,7 +1269,15 @@ class AnthropicModel(Model):
         # Only map effort level strings; bare True just enables thinking without a specific effort
         profile = AnthropicModelProfile.from_profile(self.profile)
         if effort is None and profile.anthropic_supports_effort and isinstance(model_request_parameters.thinking, str):
-            effort = model_request_parameters.thinking
+            # Map unified levels to Anthropic effort; Anthropic accepts low/medium/high/max
+            effort_map: dict[str, str] = {
+                'minimal': 'low',
+                'low': 'low',
+                'medium': 'medium',
+                'high': 'high',
+                'xhigh': 'max',  # Opus 4.6 only; other models ignore unsupported values
+            }
+            effort = effort_map.get(model_request_parameters.thinking, model_request_parameters.thinking)
 
         if output_format is None and effort is None:
             return None
@@ -1278,7 +1286,7 @@ class AnthropicModel(Model):
         if output_format is not None:
             config['format'] = output_format
         if effort is not None:
-            config['effort'] = effort
+            config['effort'] = effort  # type: ignore[typeddict-item]
         return config
 
 

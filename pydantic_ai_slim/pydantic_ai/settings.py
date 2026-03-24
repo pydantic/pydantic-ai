@@ -5,12 +5,16 @@ from typing import Literal, TypeAlias
 from httpx import Timeout
 from typing_extensions import TypedDict
 
-ThinkingLevel: TypeAlias = bool | Literal['low', 'medium', 'high']
+ThinkingLevel: TypeAlias = bool | Literal['minimal', 'low', 'medium', 'high', 'xhigh']
 """Type alias for thinking/reasoning configuration values.
 
 - ``True``: Enable thinking with the provider's default effort.
 - ``False``: Disable thinking (silently ignored on always-on models).
-- ``'low'``/``'medium'``/``'high'``: Enable thinking at a specific effort level.
+- ``'minimal'``/``'low'``/``'medium'``/``'high'``/``'xhigh'``: Enable thinking at a specific effort level.
+
+Not all providers support all levels. When a level is not natively supported,
+it maps to the closest available value (e.g. ``'xhigh'`` → ``'high'`` on providers
+that don't support it, ``'minimal'`` → ``'low'`` on providers without a minimal level).
 """
 
 
@@ -186,7 +190,7 @@ class ModelSettings(TypedDict, total=False):
 
     - `True`: Enable thinking with the provider's default effort level.
     - `False`: Disable thinking (silently ignored if the model always thinks).
-    - `'low'`/`'medium'`/`'high'`: Enable thinking at a specific effort level.
+    - `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`: Enable thinking at a specific effort level.
 
     When omitted, the model uses its default behavior (which may include thinking
     for reasoning models).

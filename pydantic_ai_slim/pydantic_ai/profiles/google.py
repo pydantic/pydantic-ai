@@ -43,9 +43,9 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     is_image_model = 'image' in model_name
     is_3_or_newer = 'gemini-3' in model_name
     is_thinking_model = 'gemini-2.5' in model_name or is_3_or_newer
-    # Gemini 3+ Pro models have always-on thinking (reject MINIMAL/budget=0)
+    # Pro models have always-on thinking: Gemini 2.5 Pro rejects budget=0, Gemini 3+ Pro rejects MINIMAL
     is_pro = 'pro' in model_name and 'flash' not in model_name
-    thinking_always_enabled = is_3_or_newer and is_pro
+    thinking_always_enabled = is_thinking_model and is_pro
     return GoogleModelProfile(
         json_schema_transformer=GoogleJsonSchemaTransformer,
         supports_image_output=is_image_model,

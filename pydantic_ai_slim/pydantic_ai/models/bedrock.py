@@ -589,7 +589,15 @@ class BedrockConverseModel(Model):
                 existing['reasoning_effort'] = OPENAI_REASONING_EFFORT_MAP[thinking]
         elif variant == 'qwen' and 'reasoning_config' not in existing:
             if thinking is not False:
-                level_map: dict[bool | str, str] = {True: 'high', 'low': 'low', 'medium': 'high', 'high': 'high'}
+                # Qwen only supports low/high; map others to closest
+                level_map: dict[bool | str, str] = {
+                    True: 'high',
+                    'minimal': 'low',
+                    'low': 'low',
+                    'medium': 'high',
+                    'high': 'high',
+                    'xhigh': 'high',
+                }
                 existing['reasoning_config'] = level_map[thinking]
 
         return existing or None

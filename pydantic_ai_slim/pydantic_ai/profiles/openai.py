@@ -13,9 +13,11 @@ from . import ModelProfile
 OPENAI_REASONING_EFFORT_MAP: dict[bool | str, str] = {
     True: 'medium',
     False: 'none',
+    'minimal': 'minimal',
     'low': 'low',
     'medium': 'medium',
     'high': 'high',
+    'xhigh': 'xhigh',
 }
 """Maps unified thinking values to OpenAI reasoning_effort strings."""
 

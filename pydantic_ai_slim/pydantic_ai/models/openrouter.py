@@ -533,10 +533,16 @@ def _openrouter_settings_to_openai_settings(
         thinking = model_request_parameters.thinking
         if thinking is not False:
             unified_reasoning: OpenRouterReasoning = {}
-            if thinking is True:
-                unified_reasoning['effort'] = 'medium'
-            else:
-                unified_reasoning['effort'] = thinking
+            # OpenRouter only supports low/medium/high; map others to closest
+            effort_map: dict[bool | str, str] = {
+                True: 'medium',
+                'minimal': 'low',
+                'low': 'low',
+                'medium': 'medium',
+                'high': 'high',
+                'xhigh': 'high',
+            }
+            unified_reasoning['effort'] = effort_map[thinking]  # type: ignore[typeddict-item]
             model_settings['openrouter_reasoning'] = unified_reasoning
 
     if reasoning := model_settings.pop('openrouter_reasoning', None):

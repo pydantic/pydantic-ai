@@ -27,7 +27,14 @@ class AnthropicModelProfile(ModelProfile):
     """
 
 
-ANTHROPIC_THINKING_BUDGET_MAP: dict[bool | str, int] = {True: 10000, 'low': 2048, 'medium': 10000, 'high': 16384}
+ANTHROPIC_THINKING_BUDGET_MAP: dict[bool | str, int] = {
+    True: 10000,
+    'minimal': 1024,
+    'low': 2048,
+    'medium': 10000,
+    'high': 16384,
+    'xhigh': 32768,
+}
 """Maps unified thinking values to Anthropic budget_tokens for non-adaptive models."""
 
 
