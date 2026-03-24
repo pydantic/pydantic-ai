@@ -24,7 +24,8 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Grok model."""
     # Grok-4 models support builtin tools
     grok_supports_builtin_tools = model_name.startswith('grok-4') or 'code' in model_name
-    is_reasoning = 'reasoning' in model_name or model_name.startswith('grok-3-mini')
+    # grok-3-mini supports reasoning_effort; grok-4 reasoning models always reason but don't support the parameter
+    supports_thinking_effort = model_name.startswith('grok-3-mini')
 
     # Set supported builtin tools based on model capability
     supported_builtin_tools: frozenset[type[AbstractBuiltinTool]] = (
@@ -38,7 +39,7 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
         supports_json_schema_output=True,
         # xAI supports JSON object output
         supports_json_object_output=True,
-        supports_thinking=is_reasoning,
+        supports_thinking=supports_thinking_effort,
         # Support for builtin tools (web_search, code_execution, mcp)
         grok_supports_builtin_tools=grok_supports_builtin_tools,
         supported_builtin_tools=supported_builtin_tools,
