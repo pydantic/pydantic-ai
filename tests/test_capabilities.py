@@ -4716,8 +4716,8 @@ async def test_prefix_tools_from_spec():
             'capabilities': [
                 {
                     'PrefixTools': {
-                        'prefix': 'remote',
-                        'capability': {'MCP': {'url': 'http://localhost:1234/mcp'}},
+                        'prefix': 'search',
+                        'capability': {'BuiltinTool': {'kind': 'web_search'}},
                     }
                 },
             ],
