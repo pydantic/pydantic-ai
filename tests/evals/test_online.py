@@ -597,15 +597,24 @@ async def test_configure_updates_default_config():
     original_sink = DEFAULT_CONFIG.default_sink
     original_rate = DEFAULT_CONFIG.default_sample_rate
 
+    original_on_max = DEFAULT_CONFIG.on_max_concurrency
+
     try:
         configure(enabled=False, default_sample_rate=0.5)
         assert DEFAULT_CONFIG.enabled is False
         assert DEFAULT_CONFIG.default_sample_rate == 0.5
         assert DEFAULT_CONFIG.default_sink is original_sink
+
+        def handler(ctx: EvaluatorContext[Any, Any, Any]) -> None:
+            pass
+
+        configure(on_max_concurrency=handler)
+        assert DEFAULT_CONFIG.on_max_concurrency is handler
     finally:
         DEFAULT_CONFIG.enabled = original_enabled
         DEFAULT_CONFIG.default_sink = original_sink
         DEFAULT_CONFIG.default_sample_rate = original_rate
+        DEFAULT_CONFIG.on_max_concurrency = original_on_max
 
 
 @pytest.mark.anyio
