@@ -16,7 +16,7 @@ ASSETS = Path(__file__).parent.parent / 'tests' / 'assets'
 async def upload_openai() -> None:
     from openai import AsyncOpenAI
 
-    client = AsyncOpenAI(api_key=os.environ['OPENAI_API_KEY'])
+    client = AsyncOpenAI(api_key=os.environ['OPENAI_API_KEY'], timeout=60.0, max_retries=3)
 
     image_file = await client.files.create(
         file=ASSETS / 'kiwi.jpg',
@@ -34,7 +34,7 @@ async def upload_openai() -> None:
 async def upload_anthropic() -> None:
     import anthropic
 
-    client = anthropic.Anthropic(api_key=os.environ['ANTHROPIC_API_KEY'])
+    client = anthropic.Anthropic(api_key=os.environ['ANTHROPIC_API_KEY'], timeout=60.0, max_retries=3)
 
     with open(ASSETS / 'kiwi.jpg', 'rb') as f:
         image_file = client.beta.files.upload(file=f)  # type: ignore[reportUnknownMemberType]
@@ -51,6 +51,8 @@ async def upload_xai() -> None:
     client = AsyncOpenAI(
         api_key=os.environ['XAI_API_KEY'],
         base_url='https://api.x.ai/v1',
+        timeout=60.0,
+        max_retries=3,
     )
 
     image_file = await client.files.create(

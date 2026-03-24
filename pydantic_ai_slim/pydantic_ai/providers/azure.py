@@ -138,5 +138,6 @@ class AzureProvider(Provider[AsyncOpenAI]):
                 api_key=api_key,
                 api_version=api_version,
                 http_client=http_client,
+                timeout=60.0, max_retries=3,
             )
             self._base_url = str(self._client.base_url)
