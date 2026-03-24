@@ -31,16 +31,17 @@ pytestmark = [
 # ---------------------------------------------------------------------------
 
 
+def _echo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Shared echo function for FunctionModel instances."""
+    return ModelResponse(parts=[TextPart(content='ok')])
+
+
 def _make_model(
     *,
     supports_thinking: bool = False,
     thinking_always_enabled: bool = False,
 ) -> FunctionModel:
     """Create a FunctionModel with a specific thinking profile."""
-
-    def _echo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart(content='ok')])
-
     return FunctionModel(
         _echo,
         profile=ModelProfile(
@@ -127,9 +128,6 @@ class TestAnthropicThinkingTranslation:
     def adaptive_model(self):
         from pydantic_ai.profiles.anthropic import AnthropicModelProfile
 
-        def _echo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart(content='ok')])
-
         return FunctionModel(
             _echo,
             profile=AnthropicModelProfile(
@@ -141,9 +139,6 @@ class TestAnthropicThinkingTranslation:
     @pytest.fixture
     def non_adaptive_model(self):
         from pydantic_ai.profiles.anthropic import AnthropicModelProfile
-
-        def _echo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart(content='ok')])
 
         return FunctionModel(
             _echo,
@@ -269,8 +264,6 @@ class TestOpenAIChatThinkingTranslation:
         settings: ModelSettings = {}
 
         # We need a model-like object to call the method; use a FunctionModel with the right profile
-        def _echo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart(content='ok')])
 
         model = FunctionModel(_echo)
         result = OpenAIChatModel._get_reasoning_effort(model, settings, params)
@@ -282,9 +275,6 @@ class TestOpenAIChatThinkingTranslation:
         params = ModelRequestParameters(thinking='high')
         settings: ModelSettings = {}
 
-        def _echo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart(content='ok')])
-
         model = FunctionModel(_echo)
         result = OpenAIChatModel._get_reasoning_effort(model, settings, params)
         assert result == 'high'
@@ -294,9 +284,6 @@ class TestOpenAIChatThinkingTranslation:
 
         params = ModelRequestParameters(thinking=False)
         settings: ModelSettings = {}
-
-        def _echo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart(content='ok')])
 
         model = FunctionModel(_echo)
         result = OpenAIChatModel._get_reasoning_effort(model, settings, params)
@@ -310,9 +297,6 @@ class TestOpenAIChatThinkingTranslation:
         params = ModelRequestParameters(thinking=None)
         settings: ModelSettings = {}
 
-        def _echo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart(content='ok')])
-
         model = FunctionModel(_echo)
         result = OpenAIChatModel._get_reasoning_effort(model, settings, params)
         assert result is omit
@@ -322,9 +306,6 @@ class TestOpenAIChatThinkingTranslation:
 
         params = ModelRequestParameters(thinking=True)
         settings = {'openai_reasoning_effort': 'low'}
-
-        def _echo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart(content='ok')])
 
         model = FunctionModel(_echo)
         result = OpenAIChatModel._get_reasoning_effort(model, settings, params)
@@ -344,9 +325,6 @@ class TestOpenAIResponsesThinkingTranslation:
         params = ModelRequestParameters(thinking=True)
         settings: ModelSettings = {}
 
-        def _echo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart(content='ok')])
-
         model = FunctionModel(_echo)
         result = OpenAIResponsesModel._get_reasoning(model, settings, params)
         assert result == snapshot({'effort': 'medium'})
@@ -356,9 +334,6 @@ class TestOpenAIResponsesThinkingTranslation:
 
         params = ModelRequestParameters(thinking='high')
         settings: ModelSettings = {}
-
-        def _echo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart(content='ok')])
 
         model = FunctionModel(_echo)
         result = OpenAIResponsesModel._get_reasoning(model, settings, params)
@@ -371,9 +346,6 @@ class TestOpenAIResponsesThinkingTranslation:
         params = ModelRequestParameters(thinking=False)
         settings: ModelSettings = {}
 
-        def _echo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart(content='ok')])
-
         model = FunctionModel(_echo)
         result = OpenAIResponsesModel._get_reasoning(model, settings, params)
         # 'none' is falsy for dict truthiness check, but the effort_map maps False -> 'none'
@@ -385,9 +357,6 @@ class TestOpenAIResponsesThinkingTranslation:
 
         params = ModelRequestParameters(thinking=True)
         settings = {'openai_reasoning_effort': 'high'}
-
-        def _echo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart(content='ok')])
 
         model = FunctionModel(_echo)
         result = OpenAIResponsesModel._get_reasoning(model, settings, params)
@@ -406,9 +375,6 @@ class TestGoogleThinkingTranslation:
         """A model with thinking_level support (Gemini 3+)."""
         from pydantic_ai.profiles.google import GoogleModelProfile
 
-        def _echo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart(content='ok')])
-
         return FunctionModel(
             _echo,
             profile=GoogleModelProfile(
@@ -421,9 +387,6 @@ class TestGoogleThinkingTranslation:
     def gemini_25_model(self):
         """A model with thinking_budget support (Gemini 2.5)."""
         from pydantic_ai.profiles.google import GoogleModelProfile
-
-        def _echo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart(content='ok')])
 
         return FunctionModel(
             _echo,
@@ -528,9 +491,6 @@ class TestGroqThinkingTranslation:
         params = ModelRequestParameters(thinking=True)
         settings: ModelSettings = {}
 
-        def _echo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart(content='ok')])
-
         model = FunctionModel(_echo)
         result = GroqModel._get_reasoning_format(model, settings, params)
         assert result == 'parsed'
@@ -541,9 +501,6 @@ class TestGroqThinkingTranslation:
 
         params = ModelRequestParameters(thinking='high')
         settings: ModelSettings = {}
-
-        def _echo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart(content='ok')])
 
         model = FunctionModel(_echo)
         result = GroqModel._get_reasoning_format(model, settings, params)
@@ -558,9 +515,6 @@ class TestGroqThinkingTranslation:
         params = ModelRequestParameters(thinking=False)
         settings: ModelSettings = {}
 
-        def _echo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart(content='ok')])
-
         model = FunctionModel(_echo)
         result = GroqModel._get_reasoning_format(model, settings, params)
         assert result is NOT_GIVEN
@@ -573,9 +527,6 @@ class TestGroqThinkingTranslation:
         params = ModelRequestParameters(thinking=None)
         settings: ModelSettings = {}
 
-        def _echo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart(content='ok')])
-
         model = FunctionModel(_echo)
         result = GroqModel._get_reasoning_format(model, settings, params)
         assert result is NOT_GIVEN
@@ -585,9 +536,6 @@ class TestGroqThinkingTranslation:
 
         params = ModelRequestParameters(thinking=True)
         settings = {'groq_reasoning_format': 'raw'}
-
-        def _echo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart(content='ok')])
 
         model = FunctionModel(_echo)
         result = GroqModel._get_reasoning_format(model, settings, params)
