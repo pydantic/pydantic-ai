@@ -346,8 +346,8 @@ def test_agent_from_spec_capabilities_merged():
     )
     # Should have both the WebSearch capability from spec and ExtraCap from arg
     children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
+    assert any(isinstance(c, WebSearch) for c in children)
     assert any(isinstance(c, ExtraCap) for c in children)
-    assert len(children) >= 2
 
 
 def test_model_json_schema_with_capabilities():
