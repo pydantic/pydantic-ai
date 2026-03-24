@@ -442,7 +442,8 @@ class GoogleModel(Model):
         image_config: ImageConfigDict | None = None
 
         if model_request_parameters.builtin_tools:
-            if model_request_parameters.function_tools:
+            supports_combined = GoogleModelProfile.from_profile(self.profile).google_supports_combined_tools
+            if model_request_parameters.function_tools and not supports_combined:
                 raise UserError('Google does not support function tools and built-in tools at the same time.')
 
             for tool in model_request_parameters.builtin_tools:

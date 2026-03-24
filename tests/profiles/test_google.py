@@ -191,13 +191,15 @@ def test_model_profile_gemini_2():
     assert profile is not None
     assert profile.json_schema_transformer == GoogleJsonSchemaTransformer
     assert profile.supports_json_schema_output is True
+    assert profile.google_supports_combined_tools is False  # type: ignore
 
 
 def test_model_profile_gemini_3():
-    """Gemini 3.x models should support native output with builtin tools."""
+    """Gemini 3.x models should support native output with builtin tools and combined tools."""
     profile = google_model_profile('gemini-3.0-pro')
     assert profile is not None
     assert profile.google_supports_native_output_with_builtin_tools is True  # type: ignore
+    assert profile.google_supports_combined_tools is True  # type: ignore
 
 
 def test_model_profile_image_model():
