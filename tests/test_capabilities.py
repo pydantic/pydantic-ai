@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -48,6 +49,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.toolsets._dynamic import ToolsetFunc
 from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsStr
@@ -4012,3 +4014,109 @@ class TestToolExecuteErrorHooks:
 
         with pytest.raises(ValueError, match='tool failed'):
             await agent.run('call the tool')
+
+
+# --- Context var propagation tests ---
+
+_test_cv: contextvars.ContextVar[str] = contextvars.ContextVar('_test_cv')
+
+
+class TestContextVarPropagation:
+    """Context vars set in wrap_run propagate to all hooks in the outer task."""
+
+    async def test_wrap_run_contextvar_visible_in_node_hooks(self):
+        """A capability that sets a contextvar in wrap_run should have it
+        visible in another capability's node-level hooks via agent.run()."""
+
+        @dataclass
+        class Setter(AbstractCapability):
+            async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+                token = _test_cv.set('from-wrap-run')
+                try:
+                    return await handler()
+                finally:
+                    _test_cv.reset(token)
+
+        @dataclass
+        class Reader(AbstractCapability):
+            seen: list[tuple[str, str | None]] = field(default_factory=list)
+
+            async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
+                self.seen.append(('before_node_run', _test_cv.get(None)))
+                return node
+
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                self.seen.append(('wrap_node_run', _test_cv.get(None)))
+                return await handler(node)
+
+            async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+                self.seen.append(('after_node_run', _test_cv.get(None)))
+                return result
+
+            async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+                self.seen.append(('after_run', _test_cv.get(None)))
+                return result
+
+        reader = Reader()
+        agent = Agent(TestModel(), capabilities=[Setter(), reader])
+        await agent.run('hello')
+
+        for hook_name, value in reader.seen:
+            assert value == 'from-wrap-run', f'{hook_name} did not see contextvar'
+
+    async def test_wrap_run_contextvar_visible_via_iter_next(self):
+        """Context vars set in wrap_run are visible when using agent.iter() + next()."""
+
+        @dataclass
+        class Setter(AbstractCapability):
+            async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+                token = _test_cv.set('from-iter')
+                try:
+                    return await handler()
+                finally:
+                    _test_cv.reset(token)
+
+        @dataclass
+        class Reader(AbstractCapability):
+            seen: list[tuple[str, str | None]] = field(default_factory=list)
+
+            async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
+                self.seen.append(('before_node_run', _test_cv.get(None)))
+                return node
+
+            async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+                self.seen.append(('after_run', _test_cv.get(None)))
+                return result
+
+        reader = Reader()
+        agent = Agent(TestModel(), capabilities=[Setter(), reader])
+
+        async with agent.iter('hello') as agent_run:
+            node = agent_run.next_node
+            while not isinstance(node, End):
+                if agent_run.result is not None:
+                    break
+                node = await agent_run.next(node)
+
+        for hook_name, value in reader.seen:
+            assert value == 'from-iter', f'{hook_name} did not see contextvar'
+
+    async def test_contextvar_cleaned_up_after_run(self):
+        """Context vars set in wrap_run are restored after the run completes."""
+
+        @dataclass
+        class Setter(AbstractCapability):
+            async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+                token = _test_cv.set('temporary')
+                try:
+                    return await handler()
+                finally:
+                    _test_cv.reset(token)
+
+        agent = Agent(TestModel(), capabilities=[Setter()])
+        assert _test_cv.get(None) is None
+
+        await agent.run('hello')
+
+        # After the run, the contextvar should be cleaned up
+        assert _test_cv.get(None) is None

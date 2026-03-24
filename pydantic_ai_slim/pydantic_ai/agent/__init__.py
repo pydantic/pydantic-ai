@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import contextvars
 import dataclasses
 import inspect
 import json
@@ -1324,7 +1325,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         # Capture context vars set by wrap_run middleware so
                         # they can be propagated to the outer task where
                         # agent_run.next() (and therefore node hooks) execute.
-                        _current_ctx = _contextvars.copy_context()
+                        _current_ctx = contextvars.copy_context()
                         _wrap_context = [
                             (var, _current_ctx[var])
                             for var in _current_ctx
@@ -1340,9 +1341,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         assert r is not None
                         return r
 
-                    import contextvars as _contextvars
-
-                    _outer_context = _contextvars.copy_context()
+                    _outer_context = contextvars.copy_context()
                     _wrap_task = asyncio.create_task(run_capability.wrap_run(run_ctx, handler=_do_run))
 
                     # Wait for handler to start or wrap_run to complete (short-circuit)
@@ -1353,7 +1352,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     # Propagate context vars set by wrap_run to the outer task
                     # so that agent_run.next() (and therefore node hooks) can
                     # see them.
-                    _context_tokens: list[tuple[ContextVar[Any], _contextvars.Token[Any]]] = []
+                    _context_tokens: list[tuple[ContextVar[Any], contextvars.Token[Any]]] = []
                     for _cv_pair in _wrap_context or ():
                         _context_tokens.append((_cv_pair[0], _cv_pair[0].set(_cv_pair[1])))
 
@@ -1417,11 +1416,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                                 except (asyncio.CancelledError, BaseException):
                                     pass
 
-                        # Restore context vars that were propagated from
-                        # wrap_run, after all run-level hooks have completed.
-                        for _var, _token in _context_tokens:
-                            _var.reset(_token)
-
                     # If wrap_run didn't recover, give on_run_error a chance.
                     if _run_error is not None:
                         try:
@@ -1432,6 +1426,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                             _result = await run_capability.after_run(run_ctx, result=_result)
                             agent_run._result_override = _result  # pyright: ignore[reportPrivateUsage]
                             _run_error = None  # Recovery succeeded
+
+                    # Restore context vars that were propagated from
+                    # wrap_run, after all run-level hooks have completed.
+                    for _var, _token in _context_tokens:
+                        _var.reset(_token)
 
                     # If on_run_error didn't recover either, re-raise.
                     # In an @asynccontextmanager, not re-raising suppresses the exception.
