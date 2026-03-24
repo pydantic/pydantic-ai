@@ -4679,20 +4679,30 @@ class TestHooksCapability:
             await agent.run('call the tool')
 
 
+@dataclass
+class _InsCap(AbstractCapability[Any]):
+    """Simple capability that provides instructions, used in override-by-id tests."""
+
+    text: str
+
+    def get_instructions(self) -> str:
+        return self.text
+
+
 class TestCapabilityId:
     def test_id_defaults_to_none(self):
         """Capabilities have id=None by default."""
-        cap = Instructions('hello')
+        cap = _InsCap('hello')
         assert cap.id is None
 
     def test_id_can_be_set(self):
         """Capabilities accept an id keyword argument."""
-        cap = Instructions('hello', id='greet')
+        cap = _InsCap('hello', id='greet')
         assert cap.id == 'greet'
 
     def test_id_on_combined_capability(self):
         """CombinedCapability inherits id=None."""
-        cap = CombinedCapability([Instructions('a'), Instructions('b')])
+        cap = CombinedCapability([_InsCap('a'), _InsCap('b')])
         assert cap.id is None
 
     def test_id_on_init_false_capabilities(self):
@@ -4710,25 +4720,25 @@ class TestCapabilityId:
 class TestVisitAndReplace:
     def test_visit_and_replace_leaf(self):
         """visit_and_replace on a leaf capability calls the visitor."""
-        original = Instructions('hello', id='greet')
-        replacement = Instructions('goodbye', id='greet')
+        original = _InsCap('hello', id='greet')
+        replacement = _InsCap('goodbye', id='greet')
 
         result = original.visit_and_replace(lambda cap: replacement if cap.id == 'greet' else cap)
         assert result is replacement
 
     def test_visit_and_replace_no_match(self):
         """visit_and_replace returns original when visitor doesn't replace."""
-        original = Instructions('hello', id='greet')
+        original = _InsCap('hello', id='greet')
         result = original.visit_and_replace(lambda cap: cap)
         assert result is original
 
     def test_visit_and_replace_combined(self):
         """visit_and_replace on CombinedCapability recurses into children."""
-        cap_a = Instructions('hello', id='a')
-        cap_b = Instructions('world', id='b')
+        cap_a = _InsCap('hello', id='a')
+        cap_b = _InsCap('world', id='b')
         combined = CombinedCapability([cap_a, cap_b])
 
-        replacement_b = Instructions('replaced', id='b')
+        replacement_b = _InsCap('replaced', id='b')
         result = combined.visit_and_replace(lambda cap: replacement_b if cap.id == 'b' else cap)
 
         assert isinstance(result, CombinedCapability)
@@ -4738,11 +4748,11 @@ class TestVisitAndReplace:
 
     def test_visit_and_replace_nested_combined(self):
         """visit_and_replace recurses through nested CombinedCapability."""
-        inner_cap = Instructions('inner', id='target')
+        inner_cap = _InsCap('inner', id='target')
         inner_combined = CombinedCapability([inner_cap])
-        outer_combined = CombinedCapability([inner_combined, Instructions('other')])
+        outer_combined = CombinedCapability([inner_combined, _InsCap('other')])
 
-        replacement = Instructions('replaced', id='target')
+        replacement = _InsCap('replaced', id='target')
         result = outer_combined.visit_and_replace(lambda cap: replacement if cap.id == 'target' else cap)
 
         assert isinstance(result, CombinedCapability)
@@ -4761,9 +4771,9 @@ class TestOverrideCapabilitiesById:
             )
             return make_text_response(f'instructions: {instructions}')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[Instructions('original', id='greet')])
+        agent = Agent(FunctionModel(model_fn), capabilities=[_InsCap('original', id='greet')])
 
-        with agent.override(capabilities=[Instructions('replaced')]):
+        with agent.override(capabilities=[_InsCap('replaced')]):
             result = await agent.run('hello')
 
         assert 'replaced' in result.output
@@ -4780,10 +4790,10 @@ class TestOverrideCapabilitiesById:
 
         agent = Agent(
             FunctionModel(model_fn),
-            capabilities=[Instructions('first', id='a'), Instructions('second', id='b')],
+            capabilities=[_InsCap('first', id='a'), _InsCap('second', id='b')],
         )
 
-        with agent.override(capabilities={'a': Instructions('replaced-a', id='a')}):
+        with agent.override(capabilities={'a': _InsCap('replaced-a', id='a')}):
             result = await agent.run('hello')
 
         # Both 'replaced-a' (from override) and 'second' (untouched) should be in instructions
@@ -4802,7 +4812,7 @@ class TestOverrideCapabilitiesById:
 
         agent = Agent(
             FunctionModel(model_fn),
-            capabilities=[Instructions('keep-me', id='a'), Instructions('remove-me', id='b')],
+            capabilities=[_InsCap('keep-me', id='a'), _InsCap('remove-me', id='b')],
         )
 
         with agent.override(capabilities={'b': None}):
@@ -4820,7 +4830,7 @@ class TestOverrideCapabilitiesById:
             )
             return make_text_response(f'instructions: {instructions}')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[Instructions('original', id='a')])
+        agent = Agent(FunctionModel(model_fn), capabilities=[_InsCap('original', id='a')])
 
         with agent.override(capabilities={'nonexistent': None}):
             result = await agent.run('hello')
