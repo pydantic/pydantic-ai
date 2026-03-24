@@ -67,9 +67,10 @@ class PrefixTools(WrapperCapability[AgentDepsT]):
         toolset = super().get_toolset()
         if toolset is None:
             return None
-        if callable(toolset):
-            from pydantic_ai.toolsets._dynamic import DynamicToolset
+        if isinstance(toolset, AbstractToolset):
+            # Pyright can't narrow Callable type aliases out of unions after isinstance check
+            return PrefixedToolset(toolset, prefix=self.prefix)  # pyright: ignore[reportUnknownArgumentType]
+        # ToolsetFunc callable — wrap in DynamicToolset so PrefixedToolset can delegate
+        from pydantic_ai.toolsets._dynamic import DynamicToolset
 
-            toolset = DynamicToolset[AgentDepsT](toolset_func=toolset)
-        assert isinstance(toolset, AbstractToolset)
-        return PrefixedToolset(toolset, prefix=self.prefix)
+        return PrefixedToolset(DynamicToolset[AgentDepsT](toolset_func=toolset), prefix=self.prefix)
