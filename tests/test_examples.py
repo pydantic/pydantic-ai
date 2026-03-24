@@ -589,6 +589,9 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         '1. "Attention Is All You Need" - The foundational paper on the Transformer model.\n'
         '2. "FlashAttention: Fast and Memory-Efficient Exact Attention" - Proposes an IO-aware attention algorithm.'
     ),
+    'What was the mass of the largest meteorite found this year?': (
+        'The largest meteorite recovered this year weighed approximately 7.6 kg, found in the Sahara Desert in January.'
+    ),
 }
 
 tool_responses: dict[tuple[str, str], str] = {

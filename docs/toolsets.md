@@ -1,7 +1,7 @@
 
 # Toolsets
 
-A toolset represents a collection of [tools](tools.md) that can be registered with an agent in one go. They can be reused by different agents, swapped out at runtime or during testing, and composed in order to dynamically filter which tools are available, modify tool definitions, or change tool execution behavior. A toolset can contain locally defined functions, depend on an external service to provide them, or implement custom logic to list available tools and handle them being called.
+A toolset represents a collection of [tools](tools.md) that can be registered with an agent in one go. They can be reused by different agents, swapped out at runtime or during testing, and composed in order to dynamically filter which tools are available, modify tool definitions, or change tool execution behavior. A toolset can contain locally defined functions, depend on an external service to provide them, or implement custom logic to list available tools and handle them being called. Toolsets can also be provided via [capabilities](capabilities.md), which bundle tools with hooks, instructions, and model settings.
 
 Toolsets are used (among many other things) to define [MCP servers](mcp/client.md) available to an agent. Pydantic AI includes many kinds of toolsets which are described below, and you can define a [custom toolset](#building-a-custom-toolset) by inheriting from the [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] class.
 
@@ -657,6 +657,9 @@ _(This example is complete, it can be run "as is")_
 
 To define a fully custom toolset with its own logic to list available tools and handle them being called, you can subclass [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] and implement the [`get_tools()`][pydantic_ai.toolsets.AbstractToolset.get_tools] and [`call_tool()`][pydantic_ai.toolsets.AbstractToolset.call_tool] methods.
 
+!!! tip
+    If your toolset also needs to provide instructions, model settings, or hooks, consider building a [custom capability](capabilities.md#building-custom-capabilities) instead.
+
 The toolset lifecycle provides hooks for managing state at different scopes:
 
 - [`for_run()`][pydantic_ai.toolsets.AbstractToolset.for_run]: Called once before each agent run. Return a fresh instance for per-run state isolation (e.g. resetting counters, creating a new session). The framework enters and exits the returned instance.
@@ -671,6 +674,8 @@ Toolsets support lifecycle hooks for per-run isolation and per-step state manage
 - [`for_run_step(ctx)`][pydantic_ai.toolsets.AbstractToolset.for_run_step] -- called at the start of each run step. Manage internal transitions (e.g. refreshing tool availability) in-place. Default: returns `self`.
 
 ## Third-Party Toolsets
+
+Many third-party extensions are evolving to [capabilities](capabilities.md), which can bundle tools with hooks, instructions, and model settings. See [Extensibility](extensibility.md) for the full ecosystem.
 
 ### MCP Servers
 
