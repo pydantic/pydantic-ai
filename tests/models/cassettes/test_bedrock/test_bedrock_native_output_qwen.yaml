@@ -8,7 +8,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        M2VlMWE0MjktYmNmYS00ZjE5LTlmYWMtMjllY2FkZThlNGE2
+        ZmEyZDRlYTAtZWZmNi00ZjA0LWIzZjMtODkzNjQxNWRkYmY3
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -24,23 +24,28 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '313'
+      - '305'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 388
+        latencyMs: 339
       output:
         message:
           content:
-          - text: "{  \n  \"city\": \"Paris\",  \n  \"country\": \"France\",  \n  \"population\": 2148000  \n}"
+          - text: |-
+              {
+                "city": "Paris",
+                "country": "France",
+                "population": 2148000
+              }
           role: assistant
       stopReason: end_turn
       usage:
         inputTokens: 30
-        outputTokens: 33
+        outputTokens: 30
         serverToolUsage: {}
-        totalTokens: 63
+        totalTokens: 60
     status:
       code: 200
       message: OK

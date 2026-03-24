@@ -476,7 +476,7 @@ class BedrockConverseModel(Model[BaseClient]):
             tool_spec['description'] = f.description
 
         if f.strict and self.profile.supports_json_schema_output:
-            tool_spec['strict'] = f.strict  # type: ignore[typeddict-unknown-key]
+            tool_spec['strict'] = f.strict
 
         return {'toolSpec': tool_spec}
 
@@ -730,7 +730,7 @@ class BedrockConverseModel(Model[BaseClient]):
         self._limit_cache_points(system_prompt, bedrock_messages, tools)
 
         if output_config := self._native_output_format(model_request_parameters):
-            params['outputConfig'] = output_config  # type: ignore[typeddict-unknown-key]
+            params['outputConfig'] = output_config  # type: ignore[typeddict-item]
 
         # Bedrock supports a set of specific extra parameters
         if model_settings:

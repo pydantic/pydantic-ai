@@ -133,25 +133,21 @@ class BedrockModelProfile(ModelProfile):
 
 def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Anthropic model used via Bedrock."""
-    models_that_support_json_schema_output = (
-        'claude-haiku-4-5',
-        'claude-sonnet-4-5',
-        'claude-sonnet-4-6',
-        'claude-opus-4-5',
-        'claude-opus-4-6',
-    )
-    return replace(
-        BedrockModelProfile(
-            bedrock_supports_tool_choice=True,
-            bedrock_send_back_thinking_parts=True,
-            bedrock_supports_prompt_caching=True,
-            bedrock_supports_tool_caching=True,
-            bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
-            bedrock_thinking_variant='anthropic',
-            json_schema_transformer=BedrockJsonSchemaTransformer,
-        ).update(_without_builtin_tools(anthropic_model_profile(model_name))),
-        supports_json_schema_output=model_name.startswith(models_that_support_json_schema_output),
-    )
+    # Opus 4.1 supports structured output on the direct Anthropic API but is not listed
+    # in the Bedrock docs: https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
+    bedrock_structured_output_unsupported = ('claude-opus-4-1',)
+    profile = BedrockModelProfile(
+        bedrock_supports_tool_choice=True,
+        bedrock_send_back_thinking_parts=True,
+        bedrock_supports_prompt_caching=True,
+        bedrock_supports_tool_caching=True,
+        bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
+        bedrock_thinking_variant='anthropic',
+        json_schema_transformer=BedrockJsonSchemaTransformer,
+    ).update(_without_builtin_tools(anthropic_model_profile(model_name)))
+    if model_name.startswith(bedrock_structured_output_unsupported):
+        profile = replace(profile, supports_json_schema_output=False)
+    return profile
 
 
 def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:

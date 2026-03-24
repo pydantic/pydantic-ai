@@ -4,13 +4,13 @@ interactions:
       "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "lookup_population", "inputSchema":
       {"json": {"additionalProperties": false, "properties": {"city": {"type": "string"}}, "required": ["city"], "type": "object"}},
       "strict": true}}], "toolChoice": {"auto": {}}}, "outputConfig": {"textFormat": {"type": "json_schema", "structure":
-      {"jsonSchema": {"schema": "{\"additionalProperties\": false, \"properties\": {\"city\": {\"type\": \"string\"}, \"country\":
-      {\"type\": \"string\"}, \"population\": {\"type\": \"integer\"}}, \"required\": [\"city\", \"country\", \"population\"],
-      \"type\": \"object\"}", "name": "CityInfo", "description": "Information about a city."}}}}}'
+      {"jsonSchema": {"name": "CityInfo", "schema": "{\"additionalProperties\": false, \"properties\": {\"city\": {\"type\":
+      \"string\"}, \"country\": {\"type\": \"string\"}, \"population\": {\"type\": \"integer\"}}, \"required\": [\"city\",
+      \"country\", \"population\"], \"type\": \"object\"}", "description": "Information about a city."}}}}}'
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        OWQ1N2JkZGItNmVhNC00OGZmLWJhNWEtYTVmNzRlOTI2ZTk2
+        ODRiNzdiNTItOWE3Yy00YTAwLWJhZWUtYzZjZjZhODE0M2Nk
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -26,12 +26,12 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '469'
+      - '468'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 12164
+        latencyMs: 3859
       output:
         message:
           content:
@@ -39,7 +39,7 @@ interactions:
               input:
                 city: Paris
               name: lookup_population
-              toolUseId: tooluse_dmvLDxZHRJV7wpdkAptBz3
+              toolUseId: tooluse_ckKeSOeZlKAoQLhwNPuLCe
               type: tool_use
           role: assistant
       stopReason: tool_use
@@ -57,19 +57,19 @@ interactions:
       message: OK
 - request:
     body: '{"messages": [{"role": "user", "content": [{"text": "Give me details about Paris including its population"}]},
-      {"role": "assistant", "content": [{"toolUse": {"toolUseId": "tooluse_dmvLDxZHRJV7wpdkAptBz3", "name": "lookup_population",
-      "input": {"city": "Paris"}}}]}, {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_dmvLDxZHRJV7wpdkAptBz3",
+      {"role": "assistant", "content": [{"toolUse": {"toolUseId": "tooluse_ckKeSOeZlKAoQLhwNPuLCe", "name": "lookup_population",
+      "input": {"city": "Paris"}}}]}, {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_ckKeSOeZlKAoQLhwNPuLCe",
       "content": [{"text": "2161000"}], "status": "success"}}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools":
       [{"toolSpec": {"name": "lookup_population", "inputSchema": {"json": {"additionalProperties": false, "properties": {"city":
       {"type": "string"}}, "required": ["city"], "type": "object"}}, "strict": true}}], "toolChoice": {"auto": {}}}, "outputConfig":
-      {"textFormat": {"type": "json_schema", "structure": {"jsonSchema": {"schema": "{\"additionalProperties\": false, \"properties\":
-      {\"city\": {\"type\": \"string\"}, \"country\": {\"type\": \"string\"}, \"population\": {\"type\": \"integer\"}}, \"required\":
-      [\"city\", \"country\", \"population\"], \"type\": \"object\"}", "name": "CityInfo", "description": "Information about
-      a city."}}}}}'
+      {"textFormat": {"type": "json_schema", "structure": {"jsonSchema": {"name": "CityInfo", "schema": "{\"additionalProperties\":
+      false, \"properties\": {\"city\": {\"type\": \"string\"}, \"country\": {\"type\": \"string\"}, \"population\": {\"type\":
+      \"integer\"}}, \"required\": [\"city\", \"country\", \"population\"], \"type\": \"object\"}", "description": "Information
+      about a city."}}}}}'
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        NDg0ODVhMTItOTIyMy00ZWNiLTk0YTctZTVlYjY4NTAyNWJm
+        MDc1Y2ZmMGYtNGFmMS00NzE3LTk3ODQtZTI3MWM4M2YwN2Fj
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -90,7 +90,7 @@ interactions:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 1662
+        latencyMs: 4007
       output:
         message:
           content:

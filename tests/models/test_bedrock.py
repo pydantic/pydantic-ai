@@ -8,7 +8,6 @@ from types import SimpleNamespace
 from typing import Annotated, Any
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
@@ -4023,15 +4022,15 @@ async def test_bedrock_native_output_qwen(
                 parts=[
                     TextPart(
                         content="""\
-{  \n\
-  "city": "Paris",  \n\
-  "country": "France",  \n\
-  "population": 2148000  \n\
+{
+  "city": "Paris",
+  "country": "France",
+  "population": 2148000
 }\
 """
                     )
                 ],
-                usage=RequestUsage(input_tokens=30, output_tokens=33),
+                usage=RequestUsage(input_tokens=30, output_tokens=30),
                 model_name='qwen.qwen3-32b-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -4119,28 +4118,26 @@ async def test_bedrock_native_output_minimax(
                 parts=[
                     ThinkingPart(
                         content="""\
-I need to provide specifics about France's capital city, which is Paris. I'll focus on the city name, country, and population. The estimated population for Paris is approximately 2.1 million according to INSEE, while the urban area is around 12 million. The user wants these details in a clear format, so I'll ensure to list: \n\
+I need to answer the user's question about Paris' capital status, including the country and population. I'll provide the city, which is Paris, France, and its population. As of 2023, the population for Paris is approximately 2.1 million within the city proper and over 12 million in the metropolitan area. I want to clarify whether the user prefers the city or metropolitan area population to avoid any ambiguity.
 
-- City: Paris \n\
-- Country: France \n\
-- Population (2023 estimate): about 2,102,650 \n\
+It's best to clarify that Paris has a population of about 2.1 million, and the metropolitan area is over 12 million. I want to avoid using ambiguous terms like "approximately 12.5 million" without specifying numbers. So, I can confidently say around 12.1 million for the metropolitan area as of 2023. I also need to confirm the capital of France is indeed Paris, which is essential. Let's keep it straightforward and concise!
 
-This keeps it concise yet informative.
-
-I need to provide the population as "2,102,650," which represents the official population since 2021. To clarify, I'll say it's "Paris proper (commune) population," which is the most commonly cited figure. Although 2,102,650 includes recent numbers, I'll keep it straightforward so I don't overcrowd the information. The answer will contain just these elements without further distractions. I might consider mentioning the time of the estimate, but it's not necessary. Let's finalize the details!
+I'm focusing on the capital of France, which is Paris. The city's population is about 2.1 million, and the metropolitan area has over 12 million residents. I think I should include this information without unnecessary formatting or disclaimers. They didn't ask for 2023 data specifically, but I'll mention "as of 2023" for clarity. So, I'll present the information in a neat format to make it easy for the user to read\
 """
                     ),
                     TextPart(
                         content="""\
 {
- "city": "Paris",
- "country": "France",
- "population": 2102650
+
+
+  "city": "Paris",
+  "country": "France",
+  "population": 2110000
 }\
 """
                     ),
                 ],
-                usage=RequestUsage(input_tokens=40, output_tokens=231),
+                usage=RequestUsage(input_tokens=40, output_tokens=302),
                 model_name='minimax.minimax-m2',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -4342,7 +4339,7 @@ async def test_bedrock_strict_tool_supported_model(
 
     result = await agent.run("What's the weather in Paris?")
     assert result.output == snapshot(
-        "The current weather in Paris is sunny with a temperature of 22°C (approximately 72°F). It's a beautiful day!"
+        "The weather in Paris is currently sunny with a temperature of 22°C (approximately 72°F). It's a beautiful day!"
     )
     assert result.all_messages() == snapshot(
         [
@@ -4377,7 +4374,7 @@ async def test_bedrock_strict_tool_supported_model(
             ModelResponse(
                 parts=[
                     TextPart(
-                        content="The current weather in Paris is sunny with a temperature of 22°C (approximately 72°F). It's a beautiful day!"
+                        content="The weather in Paris is currently sunny with a temperature of 22°C (approximately 72°F). It's a beautiful day!"
                     )
                 ],
                 usage=RequestUsage(input_tokens=637, output_tokens=31),
@@ -4435,12 +4432,10 @@ async def test_bedrock_mixed_strict_tool_run(
             ),
             ModelResponse(
                 parts=[
-                    TextPart(
-                        content="I'll help you find the capital city. Let me use the tools to get this information."
-                    ),
+                    TextPart(content="I'll help you find the capital city using the available tools."),
                     ToolCallPart(tool_name='country_source', args={}, tool_call_id=IsStr()),
                 ],
-                usage=RequestUsage(input_tokens=628, output_tokens=56),
+                usage=RequestUsage(input_tokens=628, output_tokens=50),
                 model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -4469,7 +4464,7 @@ async def test_bedrock_mixed_strict_tool_run(
                         tool_call_id=IsStr(),
                     )
                 ],
-                usage=RequestUsage(input_tokens=697, output_tokens=53),
+                usage=RequestUsage(input_tokens=691, output_tokens=53),
                 model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -4492,7 +4487,7 @@ async def test_bedrock_mixed_strict_tool_run(
             ),
             ModelResponse(
                 parts=[TextPart(content='Capital: Tokyo')],
-                usage=RequestUsage(input_tokens=763, output_tokens=6),
+                usage=RequestUsage(input_tokens=757, output_tokens=6),
                 model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -4503,6 +4498,60 @@ async def test_bedrock_mixed_strict_tool_run(
             ),
         ]
     )
+
+
+class _Address(BaseModel):
+    """A street address (no extra='forbid' — additionalProperties: false not in native schema)."""
+
+    street: str
+    city: str
+
+
+class _PersonQuery(BaseModel):
+    """A person query with a nested Address object (no extra='forbid')."""
+
+    name: str
+    address: _Address
+
+
+@pytest.mark.vcr()
+async def test_bedrock_strict_false_tool_with_nested_objects(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """Bedrock accepts strict=False tools without additionalProperties: false.
+
+    When no strict flag is sent to the API, Bedrock does not validate the schema structure.
+    This test confirms that strict=False tools with nested objects (lacking extra='forbid')
+    are accepted by Bedrock without errors.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    @agent.tool_plain(strict=False)
+    async def lookup_person(query: _PersonQuery) -> str:
+        return f'{query.name} lives at {query.address.street}, {query.address.city}'
+
+    result = await agent.run('Look up John who lives at 123 Main St, Springfield')
+    assert isinstance(result.output, str)
+
+
+@pytest.mark.vcr()
+async def test_bedrock_native_output_nested_objects_without_extra_forbid(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """Native output with nested objects that lack extra='forbid'.
+
+    Bedrock requires additionalProperties: false on all object schemas for native output.
+    prepare_request() forces strict=True for native output, so the transformer adds it
+    even to nested objects that don't have extra='forbid' in their Pydantic config.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
+    agent = Agent(model, output_type=NativeOutput(_PersonQuery))
+
+    result = await agent.run('Look up John who lives at 123 Main St, Springfield')
+    assert isinstance(result.output, _PersonQuery)
 
 
 async def test_bedrock_strict_tool_with_native_output(
