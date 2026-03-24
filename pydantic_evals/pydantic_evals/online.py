@@ -110,6 +110,8 @@ def _dispatch_async(coro: Coroutine[Any, Any, None]) -> None:
             async def _trio_task() -> None:
                 await coro
 
+            # Note: trio system tasks are not tracked in _background_tasks, so
+            # wait_for_evaluations() cannot await them. This is a known limitation.
             trio.lowlevel.spawn_system_task(_trio_task)  # pyright: ignore[reportUnknownMemberType]
         except ImportError:
             logger.warning('trio detected but not installed — cannot dispatch background evaluation')
@@ -602,9 +604,8 @@ async def _dispatch_evaluators(
             )
 
 
-def _capture_inputs(func: Callable[..., Any], args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, Any]:
-    """Capture function inputs as a dictionary."""
-    sig = inspect.signature(func)
+def _capture_inputs(sig: inspect.Signature, args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Capture function inputs as a dictionary using a pre-computed signature."""
     bound = sig.bind(*args, **kwargs)
     bound.apply_defaults()
     return dict(bound.arguments)
@@ -653,6 +654,8 @@ class OnlineEvalConfig:
 
         def decorator(func: Callable[_P, _R]) -> Callable[_P, _R]:
             if inspect.iscoroutinefunction(func):
+                # ParamSpec can't distinguish async from sync return types — _wrap_async returns
+                # Callable[_P, Awaitable[_R]] but the decorator signature expects Callable[_P, _R]
                 return _wrap_async(func, online_evals, self)  # pyright: ignore[reportReturnType]
             else:
                 return _wrap_sync(func, online_evals, self)
@@ -666,6 +669,7 @@ def _wrap_async(
     config: OnlineEvalConfig,
 ) -> Callable[_P, Awaitable[_R]]:
     """Wrap an async function with online evaluation."""
+    sig = inspect.signature(func)
 
     @functools.wraps(func)
     async def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
@@ -681,7 +685,7 @@ def _wrap_async(
             return await func(*args, **kwargs)
 
         # Capture inputs
-        inputs = _capture_inputs(func, args, kwargs)
+        inputs = _capture_inputs(sig, args, kwargs)
 
         # Run the function with span tree capture
         with logfire_span('evaluate {func_name}', func_name=func.__qualname__) as span, context_subtree() as span_tree:
@@ -719,6 +723,7 @@ def _wrap_sync(
     config: OnlineEvalConfig,
 ) -> Callable[_P, _R]:
     """Wrap a sync function with online evaluation."""
+    sig = inspect.signature(func)
 
     @functools.wraps(func)
     def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
@@ -734,7 +739,7 @@ def _wrap_sync(
             return func(*args, **kwargs)
 
         # Capture inputs
-        inputs = _capture_inputs(func, args, kwargs)
+        inputs = _capture_inputs(sig, args, kwargs)
 
         # Run the function with span tree capture
         with logfire_span('evaluate {func_name}', func_name=func.__qualname__) as span, context_subtree() as span_tree:

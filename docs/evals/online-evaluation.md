@@ -456,6 +456,9 @@ print(results_log)
 
 For sync functions, evaluators are always dispatched in a background thread with its own event loop, regardless of whether the caller is in an async context.
 
+!!! note "ContextVar propagation"
+    Background threads don't inherit `ContextVar` values from the calling context. Any context-variable-based state (request IDs, auth context, etc.) set by the caller won't be available to evaluators when decorating sync functions. Evaluators receive all needed context via [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext] (inputs, output, metadata, span tree), so they don't depend on ambient context. For async decorated functions, evaluators run on the caller's event loop and `ContextVar`s propagate normally.
+
 ## Per-Evaluator Sink Overrides
 
 Individual evaluators can override the config's default sink. This is useful when different evaluators need to send results to different destinations:
