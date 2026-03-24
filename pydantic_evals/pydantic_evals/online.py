@@ -41,6 +41,7 @@ from typing import Any, Protocol, runtime_checkable
 
 import anyio
 import sniffio
+from anyio.to_thread import run_sync
 from typing_extensions import ParamSpec, TypeVar
 
 from ._utils import UNSET, Unset, logfire_span
@@ -106,7 +107,10 @@ def _dispatch_async(coro: Coroutine[Any, Any, None]) -> None:
         try:
             import trio.lowlevel  # pyright: ignore[reportMissingImports]
 
-            trio.lowlevel.spawn_system_task(lambda: coro)  # pyright: ignore[reportUnknownMemberType]
+            async def _trio_task() -> None:
+                await coro
+
+            trio.lowlevel.spawn_system_task(_trio_task)  # pyright: ignore[reportUnknownMemberType]
         except ImportError:
             logger.warning('trio detected but not installed — cannot dispatch background evaluation')
     else:
@@ -885,7 +889,6 @@ async def wait_for_evaluations(*, timeout: float = 30.0) -> None:
 
     # Join background threads (from sync decorated functions) without blocking the event loop
     if threads_snapshot:
-        from anyio.to_thread import run_sync
 
         def _join_threads() -> None:
             for thread in threads_snapshot:
