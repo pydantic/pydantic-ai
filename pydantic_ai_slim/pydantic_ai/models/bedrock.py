@@ -675,14 +675,46 @@ class BedrockConverseModel(Model):
         if additional_model_requests_fields := self._translate_thinking(settings, model_request_parameters):
             params['additionalModelRequestFields'] = additional_model_requests_fields
 
+        extra_headers = None
+        if model_settings:
+            extra_headers = model_settings.get('extra_headers')
+
+        handler = None
+        events = None
+
+        if extra_headers and isinstance(extra_headers, dict):
+            handler, events = self._register_extra_headers(self.client, extra_headers, stream=stream)
+
         with _map_api_errors(self.model_name):
-            if stream:
-                model_response = await anyio.to_thread.run_sync(
-                    functools.partial(self.client.converse_stream, **params)
-                )
-            else:
-                model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse, **params))
+            try:
+                if stream:
+                    model_response = await anyio.to_thread.run_sync(
+                        functools.partial(self.client.converse_stream, **params)
+                    )
+                else:
+                    model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse, **params))
+            finally:
+                if handler is not None and events is not None:
+                    self._unregister_extra_headers(self.client, handler, events)
+
         return model_response
+
+    @staticmethod
+    def _register_extra_headers(client, headers, *, stream: bool):
+        def handler(request, **kwargs):
+            for k, v in headers.items():
+                request.headers[k] = v
+
+        event = 'before-send.bedrock-runtime.ConverseStream' if stream else 'before-send.bedrock-runtime.Converse'
+
+        client.meta.events.register(event, handler)
+
+        return handler, [event]
+
+    @staticmethod
+    def _unregister_extra_headers(client, handler, events):
+        for e in events:
+            client.meta.events.unregister(e, handler)
 
     @staticmethod
     def _map_inference_config(
