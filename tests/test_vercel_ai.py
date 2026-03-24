@@ -3433,7 +3433,7 @@ async def test_adapter_load_messages():
     )
 
 
-async def test_adapter_load_messages_with_DataUIPart_in_user_message():
+async def test_adapter_load_messages_with_data_ui_part_in_user_message():
     data = SubmitMessage(
         trigger='submit-message',
         id='bvQXcnrJ4OA2iRKU',
