@@ -63,8 +63,6 @@ __all__ = (
     'configure',
     'disable_evaluation',
     'evaluate',
-    'rebuild_context',
-    'rebuild_contexts',
     'run_evaluators',
     'wait_for_evaluations',
 )
@@ -326,7 +324,7 @@ async def run_evaluators(
 ) -> tuple[list[EvaluationResult], list[EvaluatorFailure]]:
     """Run evaluators on a context and return results.
 
-    Useful for re-running evaluators from stored data (via `rebuild_context()`).
+    Useful for re-running evaluators from stored data.
 
     Args:
         evaluators: The evaluators to run.
@@ -355,38 +353,6 @@ async def run_evaluators(
             all_results.extend(result)
 
     return all_results, all_failures
-
-
-async def rebuild_context(
-    source: EvaluatorContextSource,
-    span: SpanReference,
-) -> EvaluatorContext:
-    """Build an `EvaluatorContext` from stored data via a single fetch.
-
-    Args:
-        source: The context source to fetch data from.
-        span: Reference to the span to rebuild context for.
-
-    Returns:
-        A reconstructed EvaluatorContext.
-    """
-    return await source.fetch(span)
-
-
-async def rebuild_contexts(
-    source: EvaluatorContextSource,
-    spans: Sequence[SpanReference],
-) -> list[EvaluatorContext]:
-    """Build `EvaluatorContext`s for multiple spans in a single batch fetch.
-
-    Args:
-        source: The context source to fetch data from.
-        spans: References to the spans to rebuild context for.
-
-    Returns:
-        Reconstructed EvaluatorContexts in the same order as the input spans.
-    """
-    return await source.fetch_many(spans)
 
 
 def _resolve_sample_rate_field(

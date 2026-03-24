@@ -24,8 +24,6 @@ with try_import() as imports_successful:
         configure,
         disable_evaluation,
         evaluate,
-        rebuild_context,
-        rebuild_contexts,
         run_evaluators,
         wait_for_evaluations,
     )
@@ -654,8 +652,8 @@ async def test_module_level_evaluate():
 
 
 @pytest.mark.anyio
-async def test_rebuild_context():
-    """rebuild_context builds an EvaluatorContext from stored data."""
+async def test_context_source_fetch():
+    """EvaluatorContextSource.fetch retrieves stored context data."""
     source = MockContextSource(
         {
             'span1': _make_context(
@@ -667,7 +665,7 @@ async def test_rebuild_context():
         }
     )
 
-    ctx = await rebuild_context(source, SpanReference(trace_id='trace1', span_id='span1'))
+    ctx = await source.fetch(SpanReference(trace_id='trace1', span_id='span1'))
 
     assert ctx.inputs == {'query': 'hello'}
     assert ctx.output == 'world'
@@ -677,8 +675,8 @@ async def test_rebuild_context():
 
 
 @pytest.mark.anyio
-async def test_rebuild_contexts_batch():
-    """rebuild_contexts builds multiple contexts in a single batch."""
+async def test_context_source_fetch_many():
+    """EvaluatorContextSource.fetch_many retrieves multiple contexts in batch."""
     source = MockContextSource(
         {
             'span1': _make_context(inputs={'q': '1'}, output='a', duration=1.0),
@@ -690,7 +688,7 @@ async def test_rebuild_contexts_batch():
         SpanReference(trace_id='t', span_id='span1'),
         SpanReference(trace_id='t', span_id='span2'),
     ]
-    contexts = await rebuild_contexts(source, spans)
+    contexts = await source.fetch_many(spans)
 
     assert len(contexts) == 2
     assert contexts[0].inputs == {'q': '1'}
@@ -700,15 +698,15 @@ async def test_rebuild_contexts_batch():
 
 
 @pytest.mark.anyio
-async def test_rebuild_and_run_evaluators():
-    """rebuild_context + run_evaluators works end-to-end."""
+async def test_fetch_and_run_evaluators():
+    """EvaluatorContextSource.fetch + run_evaluators works end-to-end."""
     source = MockContextSource(
         {
             'span1': _make_context(output=42, duration=0.1),
         }
     )
 
-    ctx = await rebuild_context(source, SpanReference(trace_id='t', span_id='span1'))
+    ctx = await source.fetch(SpanReference(trace_id='t', span_id='span1'))
     results, failures = await run_evaluators([OutputEquals(value=42), AlwaysTrue()], ctx)
 
     assert len(results) == 2

@@ -616,18 +616,14 @@ asyncio.run(main())
 
 ### EvaluatorContextSource Protocol
 
-For fetching context data from external storage (like Logfire), the [`EvaluatorContextSource`][pydantic_evals.online.EvaluatorContextSource] protocol defines a batch-first interface. Use [`rebuild_context()`][pydantic_evals.online.rebuild_context] and [`rebuild_contexts()`][pydantic_evals.online.rebuild_contexts] to reconstruct [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext] objects from stored data:
+For fetching context data from external storage (like Logfire), implement the [`EvaluatorContextSource`][pydantic_evals.online.EvaluatorContextSource] protocol. It defines `fetch()` and `fetch_many()` methods that return [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext] objects from stored data:
 
 ```python
 import asyncio
 from collections.abc import Sequence
 
 from pydantic_evals.evaluators import EvaluatorContext
-from pydantic_evals.online import (
-    SpanReference,
-    rebuild_context,
-    rebuild_contexts,
-)
+from pydantic_evals.online import SpanReference
 from pydantic_evals.otel.span_tree import SpanTree
 
 
@@ -680,19 +676,19 @@ async def main():
         ),
     })
 
-    # Rebuild a single context
-    ctx = await rebuild_context(source, SpanReference(trace_id='t1', span_id='span_abc'))
+    # Fetch a single context
+    ctx = await source.fetch(SpanReference(trace_id='t1', span_id='span_abc'))
     print(f'inputs: {ctx.inputs}')
     #> inputs: {'query': 'What is AI?'}
     print(f'output: {ctx.output}')
     #> output: AI is artificial intelligence.
 
-    # Rebuild multiple contexts in a batch
+    # Fetch multiple contexts in a batch
     spans = [
         SpanReference(trace_id='t1', span_id='span_abc'),
         SpanReference(trace_id='t1', span_id='span_def'),
     ]
-    contexts = await rebuild_contexts(source, spans)
+    contexts = await source.fetch_many(spans)
     print(f'batch size: {len(contexts)}')
     #> batch size: 2
 
@@ -746,8 +742,7 @@ Key classes and functions:
 | [`CallbackSink`][pydantic_evals.online.CallbackSink] | Built-in sink wrapping a callable |
 | [`SpanReference`][pydantic_evals.online.SpanReference] | Identifies a span for result association |
 | [`run_evaluators()`][pydantic_evals.online.run_evaluators] | Run evaluators on a context directly |
-| [`rebuild_context()`][pydantic_evals.online.rebuild_context] | Reconstruct context from stored data |
-| [`rebuild_contexts()`][pydantic_evals.online.rebuild_contexts] | Batch-reconstruct contexts |
+| [`EvaluatorContextSource`][pydantic_evals.online.EvaluatorContextSource] | Protocol for fetching stored context data |
 
 ## Next Steps
 
