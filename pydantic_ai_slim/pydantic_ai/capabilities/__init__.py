@@ -20,6 +20,7 @@ from .image_generation import ImageGeneration
 from .mcp import MCP
 from .prefix_tools import PrefixTools
 from .prepare_tools import PrepareTools
+from .thinking import Thinking
 from .toolset import Toolset
 from .web_fetch import WebFetch
 from .web_search import WebSearch
@@ -34,6 +35,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         MCP,
         PrefixTools,
         PrepareTools,
+        Thinking,
         Toolset,
         WebFetch,
         WebSearch,
@@ -61,6 +63,7 @@ __all__ = [
     'MCP',
     'PrefixTools',
     'PrepareTools',
+    'Thinking',
     'Toolset',
     'WebFetch',
     'WebSearch',

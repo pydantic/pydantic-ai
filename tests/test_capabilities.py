@@ -20,6 +20,7 @@ from pydantic_ai.capabilities import (
     BuiltinTool,
     ImageGeneration,
     PrefixTools,
+    Thinking,
     Toolset,
     WebFetch,
     WebSearch,
@@ -67,6 +68,7 @@ def test_capability_types() -> None:
             'ImageGeneration': ImageGeneration,
             'MCP': MCP,
             'PrefixTools': PrefixTools,
+            'Thinking': Thinking,
             'WebFetch': WebFetch,
             'WebSearch': WebSearch,
         }
@@ -387,6 +389,7 @@ def test_model_json_schema_with_capabilities():
         'ImageGeneration',
         'MCP',
         'PrefixTools',
+        'Thinking',
         'WebFetch',
         'WebSearch',
     }
