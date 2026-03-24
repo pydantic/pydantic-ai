@@ -872,6 +872,13 @@ class TestThinkingCapability:
 
 
 class TestThinkingIntegration:
+    async def test_thinking_setting_produces_output(self):
+        """Basic smoke test: agent with thinking=True runs successfully."""
+        model = _make_model(supports_thinking=True)
+        agent = Agent(model, model_settings=ModelSettings(thinking=True))
+        result = await agent.run('test')
+        assert result.output == 'ok'
+
     async def test_capability_flows_through_to_model(self):
         """Thinking capability's model settings flow through to resolved params."""
         captured_params: list[ModelRequestParameters] = []
