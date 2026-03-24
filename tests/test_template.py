@@ -14,7 +14,6 @@ from pydantic_ai import Agent, TemplateStr
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._template import validate_from_spec_args
 from pydantic_ai.capabilities.abstract import AbstractCapability
-from pydantic_ai.capabilities.instructions import Instructions
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import RunUsage
@@ -126,21 +125,32 @@ class TestTemplateStrPydanticValidation:
 # --- validate_from_spec_args ---
 
 
+@dataclass
+class _TemplateCap(AbstractCapability[Any]):
+    """Test capability with TemplateStr in from_spec hints."""
+
+    text: TemplateStr[Any] | str = ''
+
+    @classmethod
+    def from_spec(cls, text: TemplateStr[Any] | str = '') -> _TemplateCap:
+        return cls(text=text)  # pragma: lax no cover
+
+
 class TestValidateFromSpecArgs:
     def test_resolves_template_in_positional_arg(self) -> None:
         ctx: dict[str, Any] = {'deps_type': MyDeps}
-        args, _kwargs = validate_from_spec_args(Instructions, ('Hello {{name}}',), {}, ctx)
+        args, _kwargs = validate_from_spec_args(_TemplateCap, ('Hello {{name}}',), {}, ctx)
         assert len(args) == 1
         assert isinstance(args[0], TemplateStr)
 
     def test_resolves_template_in_keyword_arg(self) -> None:
         ctx: dict[str, Any] = {'deps_type': MyDeps}
-        _args, kwargs = validate_from_spec_args(Instructions, (), {'instructions': 'Hello {{name}}'}, ctx)
-        assert isinstance(kwargs['instructions'], TemplateStr)
+        _args, kwargs = validate_from_spec_args(_TemplateCap, (), {'text': 'Hello {{name}}'}, ctx)
+        assert isinstance(kwargs['text'], TemplateStr)
 
     def test_plain_string_unchanged(self) -> None:
         ctx: dict[str, Any] = {'deps_type': MyDeps}
-        args, _kwargs = validate_from_spec_args(Instructions, ('Hello world',), {}, ctx)
+        args, _kwargs = validate_from_spec_args(_TemplateCap, ('Hello world',), {}, ctx)
         assert args == ('Hello world',)
         assert isinstance(args[0], str)
         assert not isinstance(args[0], TemplateStr)
@@ -165,7 +175,7 @@ class TestValidateFromSpecArgs:
     def test_with_deps_schema(self) -> None:
         schema = {'type': 'object', 'properties': {'name': {'type': 'string'}}, 'required': ['name']}
         ctx: dict[str, Any] = {'deps_schema': schema}
-        args, _kwargs = validate_from_spec_args(Instructions, ('Hello {{name}}',), {}, ctx)
+        args, _kwargs = validate_from_spec_args(_TemplateCap, ('Hello {{name}}',), {}, ctx)
         assert isinstance(args[0], TemplateStr)
 
 
@@ -175,7 +185,7 @@ class TestValidateFromSpecArgs:
 class TestAgentFromSpecDeps:
     def test_from_spec_with_deps_type(self) -> None:
         agent = Agent.from_spec(
-            {'model': 'test', 'capabilities': [{'Instructions': 'Hello {{name}}'}]},
+            {'model': 'test', 'instructions': 'Hello {{name}}'},
             deps_type=MyDeps,
         )
         assert agent.model is not None
@@ -189,7 +199,7 @@ class TestAgentFromSpecDeps:
                     'properties': {'name': {'type': 'string'}},
                     'required': ['name'],
                 },
-                'capabilities': [{'Instructions': 'Hello {{name}}'}],
+                'instructions': 'Hello {{name}}',
             },
         )
         assert agent.model is not None
@@ -197,19 +207,18 @@ class TestAgentFromSpecDeps:
     def test_from_spec_plain_string_no_deps(self) -> None:
         """Plain strings work without deps_type."""
         agent = Agent.from_spec(
-            {'model': 'test', 'capabilities': [{'Instructions': 'Hello world'}]},
+            {'model': 'test', 'instructions': 'Hello world'},
         )
         assert agent.model is not None
 
     def test_from_spec_template_instructions_stored(self) -> None:
         """Template instructions are stored as TemplateStr, not plain strings."""
         agent: Agent[Any, str] = Agent.from_spec(
-            {'model': 'test', 'capabilities': [{'Instructions': 'Hello {{name}}'}]},
+            {'model': 'test', 'instructions': 'Hello {{name}}'},
             deps_type=MyDeps,
         )
-        # Capability instructions are stored separately in _cap_instructions
-        assert len(agent._cap_instructions) == 1  # pyright: ignore[reportPrivateUsage]
-        assert isinstance(agent._cap_instructions[0], TemplateStr)  # pyright: ignore[reportPrivateUsage]
+        # Instructions with templates are stored as TemplateStr
+        assert isinstance(agent._instructions[0], TemplateStr)  # pyright: ignore[reportPrivateUsage]
 
     def test_from_spec_without_deps_type_returns_agent_none(self) -> None:
         """Without deps_type, from_spec returns Agent[None, str]."""
@@ -229,7 +238,7 @@ pytestmark = [pytest.mark.anyio]
 async def test_agent_run_with_template_instructions() -> None:
     """Full integration: run an agent with templated instructions and verify they render."""
     agent: Agent[MyDeps, str] = Agent.from_spec(
-        {'model': 'test', 'capabilities': [{'Instructions': 'You are helping {{name}}, age {{age}}.'}]},
+        {'model': 'test', 'instructions': 'You are helping {{name}}, age {{age}}.'},
         deps_type=MyDeps,
     )
     result = await agent.run('hi', deps=MyDeps(name='Alice', age=30))
