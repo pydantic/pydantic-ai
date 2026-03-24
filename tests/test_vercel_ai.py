@@ -4744,9 +4744,7 @@ async def test_adapter_dump_messages_retry_validation_errors():
     When content is a list of ErrorDetails (from Pydantic validation), model_response()
     formats them nicely. Only string content should be used raw.
     """
-    error_details = [
-        {'type': 'missing', 'loc': ('name',), 'msg': 'Field required', 'input': {}}
-    ]
+    error_details = [{'type': 'missing', 'loc': ('name',), 'msg': 'Field required', 'input': {}}]
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Do something')]),
         ModelResponse(
