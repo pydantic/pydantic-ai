@@ -21,7 +21,7 @@ from ..messages import (
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
-from ..providers.openrouter import OpenRouterProvider
+from ..providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
 from ..settings import ModelSettings
 from . import ModelRequestParameters, download_item
 
@@ -621,28 +621,9 @@ class OpenRouterModel(OpenAIChatModel):
         super().__init__(model_name, provider=provider or OpenRouterProvider(), profile=profile, settings=settings)
 
     @property
-    def _downstream_provider(self) -> str:
-        """Extract the downstream provider prefix from the OpenRouter model name.
-
-        OpenRouter model names follow the format ``provider/model`` (e.g.
-        ``anthropic/claude-sonnet-4.6``, ``google/gemini-2.5-pro``).
-        """
-        return self.model_name.split('/')[0]
-
-    @property
-    def _supports_cache_control(self) -> bool:
-        """Whether the downstream provider supports explicit ``cache_control`` breakpoints via OpenRouter."""
-        return self._downstream_provider in ('anthropic', 'google')
-
-    @property
-    def _supports_cache_ttl(self) -> bool:
-        """Whether the downstream provider supports TTL in ``cache_control``."""
-        return self._downstream_provider == 'anthropic'
-
-    @property
-    def _supports_tool_cache(self) -> bool:
-        """Whether the downstream provider supports ``cache_control`` on tool definitions."""
-        return self._downstream_provider == 'anthropic'
+    def _cache_profile(self) -> OpenRouterModelProfile:
+        """Get the OpenRouter-specific model profile with cache capability flags."""
+        return OpenRouterModelProfile.from_profile(self.profile)
 
     def _build_cache_control(self, ttl: Literal['5m', '1h'] = '5m') -> dict[str, str]:
         """Build a ``cache_control`` dict for the downstream provider.
@@ -651,7 +632,7 @@ class OpenRouterModel(OpenAIChatModel):
             ttl: The cache time-to-live. Only included for providers that support it (Anthropic).
         """
         cache_control: dict[str, str] = {'type': 'ephemeral'}
-        if self._supports_cache_ttl:
+        if self._cache_profile.openrouter_supports_cache_ttl:
             cache_control['ttl'] = ttl
         return cache_control
 
@@ -667,7 +648,7 @@ class OpenRouterModel(OpenAIChatModel):
             params: List of content parts to modify.
             ttl: The cache time-to-live ('5m' or '1h'). Ignored for providers that don't support it.
         """
-        if not self._supports_cache_control:
+        if not self._cache_profile.openrouter_supports_cache_control:
             return
 
         if not params:
@@ -713,7 +694,7 @@ class OpenRouterModel(OpenAIChatModel):
             tools
             and model_settings
             and (cache_tool_defs := model_settings.get('openrouter_cache_tool_definitions'))
-            and self._supports_tool_cache
+            and self._cache_profile.openrouter_supports_tool_cache
         ):
             ttl: Literal['5m', '1h'] = '5m' if cache_tool_defs is True else cache_tool_defs
             last_tool = cast(dict[str, Any], tools[-1])
@@ -735,7 +716,7 @@ class OpenRouterModel(OpenAIChatModel):
             openai_messages
             and model_settings
             and (cache_messages := model_settings.get('openrouter_cache_messages'))
-            and self._supports_cache_control
+            and self._cache_profile.openrouter_supports_cache_control
         ):
             ttl: Literal['5m', '1h'] = '5m' if cache_messages is True else cache_messages
             last_msg = openai_messages[-1]
@@ -751,7 +732,7 @@ class OpenRouterModel(OpenAIChatModel):
         if (
             model_settings
             and (cache_instructions := model_settings.get('openrouter_cache_instructions'))
-            and self._supports_cache_control
+            and self._cache_profile.openrouter_supports_cache_control
         ):
             ttl: Literal['5m', '1h'] = '5m' if cache_instructions is True else cache_instructions
             # Find the last system/developer message and add cache_control to its content
@@ -763,6 +744,8 @@ class OpenRouterModel(OpenAIChatModel):
                             {'type': 'text', 'text': content, 'cache_control': self._build_cache_control(ttl)}
                         ]
                     elif isinstance(content, list) and content:  # pragma: no branch
+                        # The implicit else (None/empty content) is unreachable:
+                        # system messages always have str or list content from _map_messages()
                         last_part = cast(dict[str, Any], content[-1])
                         last_part['cache_control'] = self._build_cache_control(ttl)
                     break

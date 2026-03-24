@@ -79,7 +79,7 @@ agent = Agent(model, model_settings=settings)
 OpenRouter supports [prompt caching](https://openrouter.ai/docs/guides/best-practices/prompt-caching) for downstream providers that implement it (currently Anthropic and Gemini). Pydantic AI provides four ways to use prompt caching through OpenRouter:
 
 1. **Cache System Instructions**: Set [`OpenRouterModelSettings.openrouter_cache_instructions`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_cache_instructions] to `True` or specify `'5m'` / `'1h'` directly
-2. **Cache User Messages**: Set [`OpenRouterModelSettings.openrouter_cache_messages`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_cache_messages] to `True` to automatically cache the last user message
+2. **Cache User Messages**: Set [`OpenRouterModelSettings.openrouter_cache_messages`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_cache_messages] to `True` to automatically cache the last message in the conversation
 3. **Cache Tool Definitions**: Set [`OpenRouterModelSettings.openrouter_cache_tool_definitions`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_cache_tool_definitions] to `True` or specify `'5m'` / `'1h'` directly
 4. **Fine-Grained Control with [`CachePoint`][pydantic_ai.messages.CachePoint]**: Insert a `CachePoint` marker in user messages to cache everything before it
 
@@ -88,12 +88,12 @@ OpenRouter supports [prompt caching](https://openrouter.ai/docs/guides/best-prac
     - **Gemini** models only reliably cache system-level content. For Gemini, prefer `openrouter_cache_instructions` over `openrouter_cache_messages`. TTL values are ignored by Gemini.
     - **Minimum token thresholds** apply: Anthropic requires ~2048 tokens, Gemini requires ~1024 tokens for content to be eligible for caching.
 
-### Example 1: Caching System Instructions
+### Caching via Model Settings
 
-Use `openrouter_cache_instructions` to cache long system prompts — this is the most broadly supported approach across providers:
+Use [`OpenRouterModelSettings`][pydantic_ai.models.openrouter.OpenRouterModelSettings] to enable caching for system instructions, user messages, and tool definitions:
 
 ```python
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
 
 model = OpenRouterModel('anthropic/claude-sonnet-4-6')
@@ -101,36 +101,23 @@ agent = Agent(
     model,
     instructions='You are a specialized assistant with deep domain knowledge...',
     model_settings=OpenRouterModelSettings(
-        openrouter_cache_instructions=True,  # Cache system instructions
+        openrouter_cache_instructions=True,  # Cache system instructions (broadly supported)
+        openrouter_cache_messages=True,  # Cache the last message (best with Anthropic)
+        openrouter_cache_tool_definitions=True,  # Cache tool definitions (Anthropic only)
     ),
 )
+
+
+@agent.tool
+def search_docs(ctx: RunContext, query: str) -> str:
+    """Search documentation."""
+    return f'Results for {query}'
 ...
 ```
 
-After running, `result.usage().cache_write_tokens` shows how many tokens were written to the cache.
+Each setting accepts `True` (defaults to `'5m'` TTL) or an explicit `'5m'` / `'1h'` TTL value. After running, check `result.usage().cache_write_tokens` and `result.usage().cache_read_tokens` to see caching in action. On subsequent calls with `message_history=result.all_messages()`, cached tokens are reused.
 
-### Example 2: Automatic Message Caching
-
-Use `openrouter_cache_messages` to cache conversation history in multi-turn conversations. This works best with Anthropic models:
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
-
-model = OpenRouterModel('anthropic/claude-sonnet-4-6')
-agent = Agent(
-    model,
-    instructions='You are a helpful assistant.',
-    model_settings=OpenRouterModelSettings(
-        openrouter_cache_messages=True,
-    ),
-)
-...
-```
-
-On subsequent calls with `message_history=result.all_messages()`, cached tokens are reused and `result.usage().cache_read_tokens` shows the savings.
-
-### Example 3: Fine-Grained Control with CachePoint
+### Fine-Grained Control with CachePoint
 
 Use [`CachePoint`][pydantic_ai.messages.CachePoint] markers to control exactly where cache boundaries are placed:
 
@@ -150,35 +137,6 @@ prompt = [
 ```
 
 Pass the prompt list to `agent.run_sync(prompt)`. Everything before the `CachePoint()` marker is cached. You can place multiple markers for fine-grained control over cache boundaries.
-
-### Example 4: Comprehensive Caching Strategy
-
-Combine multiple cache settings for maximum savings:
-
-```python
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
-
-model = OpenRouterModel('anthropic/claude-sonnet-4-6')
-agent = Agent(
-    model,
-    instructions='Detailed instructions...',
-    model_settings=OpenRouterModelSettings(
-        openrouter_cache_instructions=True,
-        openrouter_cache_tool_definitions=True,
-        openrouter_cache_messages=True,
-    ),
-)
-
-
-@agent.tool
-def search_docs(ctx: RunContext, query: str) -> str:
-    """Search documentation."""
-    return f'Results for {query}'
-...
-```
-
-After running, check `result.usage().cache_write_tokens` and `result.usage().cache_read_tokens` to see caching in action.
 
 ### Provider Routing for Cache Locality
 

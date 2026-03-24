@@ -1489,6 +1489,51 @@ async def test_openrouter_cache_point_anthropic_e2e(
 
     assert isinstance(result.output, str)
     assert len(result.output) > 0
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'Here is some important context to cache.' * 20,
+                            CachePoint(),
+                            'Summarize the context in one sentence.',
+                        ],
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='The context consists of a repeated phrase stating that there is "important context to cache," repeated 20 times, but contains no actual substantive information.'
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=176,
+                    output_tokens=34,
+                    details={'is_byok': False, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
+                ),
+                model_name='anthropic/claude-4.6-sonnet-20260217',
+                timestamp=IsDatetime(),
+                provider_name='openrouter',
+                provider_url='https://openrouter.ai/api/v1',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'downstream_provider': 'Amazon Bedrock',
+                    'cost': 0.001038,
+                    'upstream_inference_cost': 0.001038,
+                    'is_byok': False,
+                    'timestamp': IsDatetime(),
+                },
+                provider_response_id='gen-1773009364-SjDV5yqNtQzbIiXso5JR',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
     # Verify cache_control was in the request
     assert vcr is not None
@@ -1514,6 +1559,47 @@ async def test_openrouter_cache_point_gemini_e2e(
 
     assert isinstance(result.output, str)
     assert len(result.output) > 0
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'Here is some important context to cache.' * 20,
+                            CachePoint(),
+                            'Summarize the context in one sentence.',
+                        ],
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The provided text repeatedly emphasizes the importance of caching context.')],
+                usage=RequestUsage(
+                    input_tokens=168,
+                    output_tokens=11,
+                    details={'is_byok': False, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
+                ),
+                model_name='google/gemini-2.5-flash',
+                timestamp=IsDatetime(),
+                provider_name='openrouter',
+                provider_url='https://openrouter.ai/api/v1',
+                provider_details={
+                    'finish_reason': 'STOP',
+                    'downstream_provider': 'Google',
+                    'cost': 7.79e-05,
+                    'upstream_inference_cost': 7.79e-05,
+                    'is_byok': False,
+                    'timestamp': IsDatetime(),
+                },
+                provider_response_id='gen-1773009367-3zFFs0yQRvCe01Kda6ID',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
     # Verify cache_control was in the request (without TTL for Gemini)
     assert vcr is not None
