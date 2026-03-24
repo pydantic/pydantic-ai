@@ -78,6 +78,7 @@ _R = TypeVar('_R')
 # Protected by _background_lock for thread-safety (free-threaded Python, concurrent callers).
 _background_lock = threading.Lock()
 _background_tasks: set[asyncio.Task[Any]] = set()
+_background_events: set[anyio.Event] = set()  # For trio system tasks (no native handle)
 _background_threads: set[threading.Thread] = set()
 
 
@@ -107,11 +108,18 @@ def _dispatch_async(coro: Coroutine[Any, Any, None]) -> None:
         try:
             import trio.lowlevel  # pyright: ignore[reportMissingImports]
 
-            async def _trio_task() -> None:
-                await coro
+            done_event = anyio.Event()
+            with _background_lock:
+                _background_events.add(done_event)
 
-            # Note: trio system tasks are not tracked in _background_tasks, so
-            # wait_for_evaluations() cannot await them. This is a known limitation.
+            async def _trio_task() -> None:
+                try:
+                    await coro
+                finally:
+                    done_event.set()
+                    with _background_lock:
+                        _background_events.discard(done_event)
+
             trio.lowlevel.spawn_system_task(_trio_task)  # pyright: ignore[reportUnknownMemberType]
         except ImportError:
             logger.warning('trio detected but not installed — cannot dispatch background evaluation')
@@ -883,14 +891,19 @@ async def wait_for_evaluations(*, timeout: float = 30.0) -> None:
     """
     with _background_lock:
         tasks_snapshot = list(_background_tasks)
+        events_snapshot = list(_background_events)
         threads_snapshot = list(_background_threads)
 
-    # Await async tasks (from async decorated functions)
+    # Await async tasks (from async decorated functions on asyncio)
     for task in tasks_snapshot:
         try:
             await task
         except BaseException:  # pragma: no cover
             pass  # Exceptions are handled inside _dispatch_single_evaluator
+
+    # Await trio events (from async decorated functions on trio)
+    for event in events_snapshot:  # pragma: no cover
+        await event.wait()
 
     # Join background threads (from sync decorated functions) without blocking the event loop
     if threads_snapshot:
