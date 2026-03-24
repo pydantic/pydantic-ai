@@ -356,6 +356,14 @@ class TestValidateFromSpecArgsMixedParams:
         # template (TemplateStr | str hint) should be converted
         assert isinstance(args[1], TemplateStr)
 
+    def test_omitted_template_param_is_skipped(self) -> None:
+        """When a TemplateStr param is omitted (has a default), it's left alone."""
+        ctx: dict[str, Any] = {'deps_type': MyDeps}
+        args, kwargs = validate_from_spec_args(_MixedCap, ('my-label',), {}, ctx)
+        # Only the positional label was passed; template was omitted entirely
+        assert args == ('my-label',)
+        assert kwargs == {}
+
 
 class TestTemplateStrDescription:
     async def test_agent_run_with_template_description(self) -> None:

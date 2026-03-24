@@ -2546,6 +2546,19 @@ class TestMCPCapability:
 class TestNamedSpecDictRoundTrip:
     """Test that NamedSpec correctly round-trips various argument forms."""
 
+    def test_dict_positional_arg_uses_long_form(self):
+        """A dict positional arg falls back to long form to avoid kwargs misinterpretation on round-trip."""
+        spec = NamedSpec(name='CustomCap', arguments=({'key': 'value', 'other': 42},))
+        serialized = spec.model_dump(context={'use_short_form': True})
+        # Dict with string keys would be ambiguous in short form, so long form is used
+        assert serialized['name'] == 'CustomCap'
+        assert len(serialized['arguments']) == 1
+        assert serialized['arguments'][0] == {'key': 'value', 'other': 42}
+        # Round-trip preserves the dict as a positional arg
+        deserialized = NamedSpec.model_validate(serialized)
+        assert deserialized.args == ({'key': 'value', 'other': 42},)
+        assert deserialized.kwargs == {}
+
     def test_non_dict_positional_arg_uses_short_form(self):
         """A non-dict positional arg still uses the compact short form."""
         spec = NamedSpec(name='WebSearch', arguments=(True,))
@@ -2703,8 +2716,8 @@ class TestOverrideWithSpec:
             ]
         )
 
-    async def test_override_with_spec_capabilities(self):
-        """Override with spec capabilities replaces agent's existing capabilities."""
+    async def test_override_with_spec_instructions(self):
+        """Override with spec instructions replaces agent's existing instructions."""
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             instructions = next(
@@ -2736,6 +2749,18 @@ class TestOverrideWithSpec:
                     ),
                 ]
             )
+
+    async def test_override_with_spec_capabilities(self):
+        """Override with spec providing capabilities uses them for the run."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('ok')
+
+        agent = Agent(FunctionModel(model_fn))
+
+        with agent.override(spec={'capabilities': [{'WebSearch': {'local': False}}]}):
+            result = await agent.run('hello')
+            assert result.output == 'ok'
 
 
 class TestRunWithSpec:
@@ -2869,6 +2894,24 @@ also from spec\
                 ),
             ]
         )
+
+    async def test_run_with_spec_capabilities(self):
+        """Run with spec capabilities merges them with agent's root capability."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions = next(
+                (m.instructions for m in messages if isinstance(m, ModelRequest) and m.instructions), None
+            )
+            return make_text_response(f'instructions: {instructions}')
+
+        agent = Agent(FunctionModel(model_fn), instructions='agent-level')
+
+        result = await agent.run(
+            'hello',
+            spec={'capabilities': [{'WebSearch': {'local': False}}]},
+        )
+        # Agent-level instructions should be present; spec capabilities are merged additively
+        assert 'agent-level' in result.output
 
     async def test_run_with_spec_instructions(self):
         """Run with spec instructions adds to agent's instructions."""
