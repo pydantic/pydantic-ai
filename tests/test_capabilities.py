@@ -27,6 +27,7 @@ from pydantic_ai.capabilities import (
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.builtin_or_local import BuiltinTool as BuiltinToolCap
 from pydantic_ai.capabilities.combined import CombinedCapability
+from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
 from pydantic_ai.exceptions import SkipModelRequest, SkipToolExecution, SkipToolValidation, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -3993,6 +3994,678 @@ class TestToolExecuteErrorHooks:
 
         result = await agent.run('call tool')
         assert 'fallback result' in result.output
+
+
+# --- Hooks capability tests ---
+
+
+class TestHooksCapability:
+    """Tests for the Hooks decorator-based capability."""
+
+    async def test_decorator_registration(self):
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.on.before_model_request
+        async def log_request(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            call_log.append('before_model_request')
+            return request_context
+
+        @hooks.on.after_model_request
+        async def log_response(
+            ctx: RunContext[Any], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            call_log.append('after_model_request')
+            return response
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert call_log == ['before_model_request', 'after_model_request']
+
+    async def test_constructor_form(self):
+        call_log: list[str] = []
+
+        async def log_request(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            call_log.append('before_model_request')
+            return request_context
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[Hooks(before_model_request=log_request)])
+        await agent.run('hello')
+        assert call_log == ['before_model_request']
+
+    async def test_multiple_hooks_same_event(self):
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.on.before_model_request
+        async def first(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            call_log.append('first')
+            return request_context
+
+        @hooks.on.before_model_request
+        async def second(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            call_log.append('second')
+            return request_context
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert call_log == ['first', 'second']
+
+    async def test_tool_names_filtering(self):
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.on.before_tool_execute(tools=['target_tool'])
+        async def filtered(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+        ) -> dict[str, Any]:
+            call_log.append(f'filtered:{call.tool_name}')
+            return args
+
+        @hooks.on.after_tool_execute
+        async def unfiltered(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any], result: Any
+        ) -> Any:
+            call_log.append(f'unfiltered:{call.tool_name}')
+            return result
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def target_tool() -> str:
+            return 'result'
+
+        await agent.run('call tool')
+        assert 'filtered:target_tool' in call_log
+        assert 'unfiltered:target_tool' in call_log
+
+    async def test_wrap_model_request(self):
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.on.model_request
+        async def wrap(ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any) -> ModelResponse:
+            call_log.append('wrap_start')
+            result = await handler(request_context)
+            call_log.append('wrap_end')
+            return result
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert call_log == ['wrap_start', 'wrap_end']
+
+    async def test_wrap_run(self):
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.on.run
+        async def wrap(ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+            call_log.append('wrap_run_start')
+            result = await handler()
+            call_log.append('wrap_run_end')
+            return result
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert call_log == ['wrap_run_start', 'wrap_run_end']
+
+    async def test_on_error_recovery(self):
+        hooks = Hooks()
+
+        @hooks.on.model_request_error
+        async def recover(
+            ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='recovered')])
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[hooks])
+        result = await agent.run('hello')
+        assert result.output == 'recovered'
+
+    async def test_sync_function_auto_wrapping(self):
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.on.before_model_request
+        def sync_hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            call_log.append('sync_hook')
+            return request_context
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert call_log == ['sync_hook']
+
+    async def test_timeout(self):
+        hooks = Hooks()
+
+        @hooks.on.before_model_request(timeout=0.01)
+        async def slow_hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            await asyncio.sleep(10)
+            return request_context  # pragma: no cover
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        with pytest.raises(HookTimeoutError) as exc_info:
+            await agent.run('hello')
+        assert exc_info.value.hook_name == 'before_model_request'
+        assert exc_info.value.func_name == 'slow_hook'
+        assert exc_info.value.timeout == 0.01
+
+    async def test_has_wrap_node_run(self):
+        hooks = Hooks()
+        assert hooks.has_wrap_node_run is False
+
+        nodes_seen: list[str] = []
+
+        @hooks.on.node_run
+        async def wrap(ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+            nodes_seen.append(type(node).__name__)
+            return await handler(node)
+
+        assert hooks.has_wrap_node_run is True
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert len(nodes_seen) > 0
+
+    async def test_composition_with_other_capabilities(self):
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.on.before_model_request
+        async def hooks_before(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            call_log.append('hooks_before')
+            return request_context
+
+        cap = LoggingCapability()
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks, cap])
+        await agent.run('hello')
+        assert 'hooks_before' in call_log
+        assert 'before_model_request' in cap.log
+
+    async def test_before_run(self):
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.on.before_run
+        async def on_start(ctx: RunContext[Any]) -> None:
+            call_log.append('before_run')
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert call_log == ['before_run']
+
+    async def test_after_run(self):
+        hooks = Hooks()
+        outputs: list[str] = []
+
+        @hooks.on.after_run
+        async def on_end(ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+            outputs.append(result.output)
+            return result
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        result = await agent.run('hello')
+        assert outputs == [result.output]
+
+    async def test_repr(self):
+        hooks = Hooks()
+        assert repr(hooks) == 'Hooks({})'
+
+        @hooks.on.before_model_request
+        async def hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            return request_context
+
+        assert repr(hooks) == "Hooks({'before_model_request': 1})"
+
+        # Verify the registered hook actually works
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+
+    async def test_on_model_request_error_reraise(self):
+        """Error hooks that re-raise propagate the error to the caller."""
+
+        hooks = Hooks()
+
+        @hooks.on.model_request_error
+        async def log_and_reraise(
+            ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            raise error
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[hooks])
+        with pytest.raises(RuntimeError, match='model exploded'):
+            await agent.run('hello')
+
+    async def test_on_run_error_reraise(self):
+        """on_run_error hooks that re-raise propagate the error."""
+
+        hooks = Hooks()
+
+        @hooks.on.run_error
+        async def log_and_reraise(ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            raise error
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[hooks])
+        with pytest.raises(RuntimeError, match='model exploded'):
+            await agent.run('hello')
+
+    async def test_on_run_error_recovery(self):
+        hooks = Hooks()
+
+        @hooks.on.run_error
+        async def recover(ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            return AgentRunResult(output='recovered from run error')
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[hooks])
+        result = await agent.run('hello')
+        assert result.output == 'recovered from run error'
+
+    async def test_on_run_error_chaining(self):
+        hooks = Hooks()
+
+        @hooks.on.run_error
+        async def first_handler(ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            raise ValueError('transformed by first')
+
+        @hooks.on.run_error
+        async def second_handler(ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            return AgentRunResult(output=f'caught: {error}')
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('original error')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[hooks])
+        result = await agent.run('hello')
+        assert 'transformed by first' in result.output
+
+    async def test_error_hook_chaining(self):
+        hooks = Hooks()
+
+        @hooks.on.model_request_error
+        async def first(
+            ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            raise ValueError('transformed')
+
+        @hooks.on.model_request_error
+        async def second(
+            ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content=f'recovered: {error}')])
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('original')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[hooks])
+        result = await agent.run('hello')
+        assert 'transformed' in result.output
+
+    async def test_wrap_run_event_stream(self):
+        hooks = Hooks()
+        events_seen: list[str] = []
+
+        @hooks.on.run_event_stream
+        async def observe_stream(
+            ctx: RunContext[Any], *, stream: AsyncIterable[AgentStreamEvent]
+        ) -> AsyncIterable[AgentStreamEvent]:
+            async for event in stream:
+                events_seen.append(type(event).__name__)
+                yield event
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[hooks],
+        )
+        async with agent.run_stream('hello') as stream:
+            await stream.get_output()
+        assert len(events_seen) > 0
+
+    async def test_hooks_with_streaming_run(self):
+        """Hooks capability used during a streaming run exercises the default wrap_run_event_stream path."""
+
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.on.before_model_request
+        async def log_request(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            call_log.append('before_model_request')
+            return request_context
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[hooks],
+        )
+        async with agent.run_stream('hello') as stream:
+            await stream.get_output()
+        assert 'before_model_request' in call_log
+
+    async def test_node_run_hooks(self):
+        """Exercise before_node_run, after_node_run, and node_run (wrap) via .on namespace."""
+        hooks = Hooks()
+        nodes_seen: list[str] = []
+
+        @hooks.on.before_node_run
+        async def before(ctx: RunContext[Any], *, node: Any) -> Any:
+            nodes_seen.append(f'before:{type(node).__name__}')
+            return node
+
+        @hooks.on.after_node_run
+        async def after(ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+            nodes_seen.append(f'after:{type(node).__name__}')
+            return result
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert any('before:' in n for n in nodes_seen)
+        assert any('after:' in n for n in nodes_seen)
+
+    async def test_node_run_error_hook(self):
+        """on.node_run_error fires when a node fails."""
+        hooks = Hooks()
+        error_log: list[str] = []
+
+        @hooks.on.node_run_error
+        async def handle(ctx: RunContext[Any], *, node: Any, error: Exception) -> Any:
+            error_log.append(f'error:{type(error).__name__}')
+            raise error
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('node exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[hooks])
+        with pytest.raises(RuntimeError, match='node exploded'):
+            await agent.run('hello')
+        assert any('error:RuntimeError' in e for e in error_log)
+
+    async def test_on_event_hook(self):
+        """on.event fires for each stream event and can modify events."""
+        hooks = Hooks()
+        events_seen: list[str] = []
+
+        @hooks.on.event
+        async def observe(ctx: RunContext[Any], event: AgentStreamEvent) -> AgentStreamEvent:
+            events_seen.append(type(event).__name__)
+            return event
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[hooks],
+        )
+        async with agent.run_stream('hello') as stream:
+            await stream.get_output()
+        assert len(events_seen) > 0
+
+    async def test_on_event_with_run_event_stream(self):
+        """on.event and on.run_event_stream can be used together."""
+        hooks = Hooks()
+        event_log: list[str] = []
+        stream_log: list[str] = []
+
+        @hooks.on.event
+        async def per_event(ctx: RunContext[Any], event: AgentStreamEvent) -> AgentStreamEvent:
+            event_log.append(type(event).__name__)
+            return event
+
+        @hooks.on.run_event_stream
+        async def wrap_stream(
+            ctx: RunContext[Any], *, stream: AsyncIterable[AgentStreamEvent]
+        ) -> AsyncIterable[AgentStreamEvent]:
+            stream_log.append('started')
+            async for event in stream:
+                yield event
+            stream_log.append('finished')
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[hooks],
+        )
+        async with agent.run_stream('hello') as stream:
+            await stream.get_output()
+        assert len(event_log) > 0
+        assert stream_log == ['started', 'finished']
+
+    async def test_prepare_tools_hook(self):
+        """on.prepare_tools filters tool definitions."""
+        hooks = Hooks()
+
+        @hooks.on.prepare_tools
+        async def hide_tools(ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+            return [td for td in tool_defs if not td.name.startswith('hidden_')]
+
+        tool_called = False
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def visible_tool() -> str:
+            nonlocal tool_called
+            tool_called = True
+            return 'visible'
+
+        @agent.tool_plain
+        def hidden_tool() -> str:
+            return 'hidden'  # pragma: no cover
+
+        await agent.run('call tool')
+        assert tool_called
+
+    async def test_tool_validate_hooks(self):
+        """Exercise before/after/wrap tool_validate and on_tool_validate_error."""
+        hooks = Hooks()
+        validate_log: list[str] = []
+
+        @hooks.on.before_tool_validate
+        async def before_validate(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any
+        ) -> Any:
+            validate_log.append('before_validate')
+            return args
+
+        @hooks.on.after_tool_validate
+        async def after_validate(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+        ) -> dict[str, Any]:
+            validate_log.append('after_validate')
+            return args
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'result'
+
+        await agent.run('call tool')
+        assert 'before_validate' in validate_log
+        assert 'after_validate' in validate_log
+
+    async def test_wrap_tool_validate_hook(self):
+        """Exercise on.tool_validate (wrap) via decorator."""
+        hooks = Hooks()
+        wrap_log: list[str] = []
+
+        @hooks.on.tool_validate
+        async def wrap_validate(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, handler: Any
+        ) -> dict[str, Any]:
+            wrap_log.append('wrap_start')
+            result = await handler(args)
+            wrap_log.append('wrap_end')
+            return result
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'result'
+
+        await agent.run('call tool')
+        assert wrap_log == ['wrap_start', 'wrap_end']
+
+    async def test_tool_validate_error_hook(self):
+        """on.tool_validate_error can recover from validation failures."""
+        hooks = Hooks()
+
+        @hooks.on.tool_validate_error
+        async def recover_validate(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Any
+        ) -> dict[str, Any]:
+            return {'name': 'recovered'}
+
+        def bad_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return make_text_response(f'got: {part.content}')
+            if info.function_tools:
+                tool = info.function_tools[0]
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=tool.name, args='{"wrong": 1}', tool_call_id='call-1')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        agent = Agent(FunctionModel(bad_args_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def greet(name: str) -> str:
+            return f'hello {name}'
+
+        result = await agent.run('greet someone')
+        assert 'hello recovered' in result.output
+
+    async def test_wrap_tool_execute_hook(self):
+        """Exercise on.tool_execute (wrap) via decorator."""
+        hooks = Hooks()
+        wrap_log: list[str] = []
+
+        @hooks.on.tool_execute
+        async def wrap_exec(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any], handler: Any
+        ) -> Any:
+            wrap_log.append('exec_start')
+            result = await handler(args)
+            wrap_log.append('exec_end')
+            return result
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'result'
+
+        await agent.run('call tool')
+        assert wrap_log == ['exec_start', 'exec_end']
+
+    async def test_tool_execute_error_hook(self):
+        """on.tool_execute_error can recover from tool execution failures."""
+        hooks = Hooks()
+
+        @hooks.on.tool_execute_error
+        async def recover_exec(
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: dict[str, Any],
+            error: Exception,
+        ) -> Any:
+            return 'fallback result'
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return make_text_response(f'got: {part.content}')
+            if info.function_tools:
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[hooks])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            raise ValueError('tool failed')
+
+        result = await agent.run('call tool')
+        assert 'fallback result' in result.output
+
+    async def test_tool_validate_error_reraise(self):
+        """on.tool_validate_error that re-raises propagates the error."""
+        hooks = Hooks()
+
+        @hooks.on.tool_validate_error
+        async def reraise(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Any
+        ) -> dict[str, Any]:
+            raise error
+
+        call_count = 0
+
+        def bad_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return make_text_response(f'got: {part.content}')
+            if info.function_tools:
+                tool = info.function_tools[0]
+                if call_count <= 1:
+                    return ModelResponse(
+                        parts=[ToolCallPart(tool_name=tool.name, args='{"wrong": 1}', tool_call_id='call-1')]
+                    )
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=tool.name, args='{"name": "ok"}', tool_call_id='call-2')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        agent = Agent(FunctionModel(bad_args_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def greet(name: str) -> str:
+            return f'hello {name}'
+
+        await agent.run('greet someone')
+
+    async def test_tool_execute_error_reraise(self):
+        """on.tool_execute_error that re-raises propagates the error."""
+        hooks = Hooks()
+
+        @hooks.on.tool_execute_error
+        async def reraise(
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: dict[str, Any],
+            error: Exception,
+        ) -> Any:
+            raise error
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            raise ValueError('tool failed')
+
+        with pytest.raises(ValueError, match='tool failed'):
+            await agent.run('call tool')
+
+    async def test_get_serialization_name(self):
+        assert Hooks.get_serialization_name() is None
 
     async def test_default_on_tool_execute_error_reraises(self):
         """The default on_tool_execute_error just re-raises, exercised with a minimal capability."""

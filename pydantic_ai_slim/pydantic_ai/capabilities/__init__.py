@@ -15,6 +15,7 @@ from .abstract import (
 from .builtin_or_local import BuiltinOrLocalTool, BuiltinTool
 from .combined import CombinedCapability
 from .history_processor import HistoryProcessor
+from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
 from .instructions import Instructions
 from .mcp import MCP
@@ -69,4 +70,6 @@ __all__ = [
     'WebFetch',
     'WebSearch',
     'CombinedCapability',
+    'HookTimeoutError',
+    'Hooks',
 ]

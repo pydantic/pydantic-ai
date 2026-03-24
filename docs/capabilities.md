@@ -89,6 +89,213 @@ Constraint fields like `allowed_domains` or `blocked_domains` require the builti
 WebSearch(allowed_domains=['example.com'])
 ```
 
+## Quick hooks with `Hooks`
+
+For simple use cases — logging, metrics, lightweight validation — you can register hook functions directly using the [`Hooks`][pydantic_ai.capabilities.Hooks] capability, without subclassing anything:
+
+```python {title="hooks_decorator.py"}
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities.hooks import Hooks
+from pydantic_ai.models import ModelRequestContext
+
+hooks = Hooks()
+
+
+@hooks.on.before_model_request
+async def log_request(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
+    print(f'Sending {len(request_context.messages)} messages to the model')
+    #> Sending 1 messages to the model
+    return request_context
+
+
+agent = Agent('test', capabilities=[hooks])
+result = agent.run_sync('Hello!')
+print(result.output)
+#> success (no tool calls)
+```
+
+You can also pass hook functions directly to the constructor:
+
+```python {title="hooks_constructor.py"}
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities.hooks import Hooks
+from pydantic_ai.models import ModelRequestContext
+
+
+async def log_request(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
+    print(f'Sending {len(request_context.messages)} messages to the model')
+    #> Sending 1 messages to the model
+    return request_context
+
+
+agent = Agent('test', capabilities=[Hooks(before_model_request=log_request)])
+result = agent.run_sync('Hello!')
+print(result.output)
+#> success (no tool calls)
+```
+
+### Tool hook filtering
+
+Tool hooks (validation and execution) support a `tools` parameter to target specific tools:
+
+```python {title="hooks_tool_filter.py"}
+from typing import Any
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities.hooks import Hooks
+from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.tools import ToolDefinition
+
+hooks = Hooks()
+call_log: list[str] = []
+
+
+@hooks.on.before_tool_execute(tools=['send_email'])
+async def audit_dangerous_tools(
+    ctx: RunContext[None],
+    *,
+    call: ToolCallPart,
+    tool_def: ToolDefinition,
+    args: dict[str, Any],
+) -> dict[str, Any]:
+    call_log.append(f'audit: {call.tool_name}')
+    return args
+
+
+agent = Agent('test', capabilities=[hooks])
+
+
+@agent.tool_plain
+def send_email(to: str) -> str:
+    return f'sent to {to}'
+
+
+result = agent.run_sync('Send an email to test@example.com')
+print(call_log)
+#> ['audit: send_email']
+```
+
+### Timeouts
+
+Each hook supports an optional `timeout` in seconds. If the hook exceeds the timeout, a [`HookTimeoutError`][pydantic_ai.capabilities.HookTimeoutError] is raised:
+
+```python {title="hooks_timeout.py"}
+import asyncio
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
+from pydantic_ai.models import ModelRequestContext
+
+hooks = Hooks()
+
+
+@hooks.on.before_model_request(timeout=0.01)
+async def slow_hook(
+    ctx: RunContext[None], request_context: ModelRequestContext
+) -> ModelRequestContext:
+    await asyncio.sleep(10)  # Will be interrupted by timeout
+    return request_context  # pragma: no cover
+
+
+agent = Agent('test', capabilities=[hooks])
+try:
+    agent.run_sync('Hello')
+except HookTimeoutError as e:
+    print(f'Hook timed out: {e.hook_name} after {e.timeout}s')
+    #> Hook timed out: before_model_request after 0.01s
+```
+
+### Wrap hooks
+
+Wrap hooks let you surround an operation with setup/teardown logic. In the `hooks.on` namespace, wrap hooks drop the `wrap_` prefix:
+
+```python {title="hooks_wrap.py"}
+from typing import Any
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities.hooks import Hooks
+from pydantic_ai.messages import ModelResponse
+from pydantic_ai.models import ModelRequestContext
+
+hooks = Hooks()
+wrap_log: list[str] = []
+
+
+@hooks.on.model_request
+async def log_request(
+    ctx: RunContext[None], *, request_context: ModelRequestContext, handler: Any
+) -> ModelResponse:
+    wrap_log.append('before')
+    response = await handler(request_context)
+    wrap_log.append('after')
+    return response
+
+
+agent = Agent('test', capabilities=[hooks])
+result = agent.run_sync('Hello!')
+print(wrap_log)
+#> ['before', 'after']
+```
+
+### Per-event hooks
+
+`hooks.on.event` fires for each event during a streamed run. Callbacks can observe or modify events:
+
+```python {title="hooks_event.py"}
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities.hooks import Hooks
+from pydantic_ai.messages import AgentStreamEvent
+
+hooks = Hooks()
+event_count = 0
+
+
+@hooks.on.event
+async def count_events(ctx: RunContext[None], event: AgentStreamEvent) -> AgentStreamEvent:
+    global event_count
+    event_count += 1
+    return event
+
+
+agent = Agent('test', capabilities=[hooks])
+```
+
+### Available hooks
+
+The `hooks.on` namespace provides these decorator methods. Names match the corresponding [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] methods, with `wrap_` and `on_` prefixes dropped:
+
+| `hooks.on.` method | `AbstractCapability` method | Constructor kwarg |
+|---|---|---|
+| `before_run` | `before_run` | `before_run=` |
+| `after_run` | `after_run` | `after_run=` |
+| `run` | `wrap_run` | `run=` |
+| `run_error` | `on_run_error` | `run_error=` |
+| `before_node_run` | `before_node_run` | `before_node_run=` |
+| `after_node_run` | `after_node_run` | `after_node_run=` |
+| `node_run` | `wrap_node_run` | `node_run=` |
+| `node_run_error` | `on_node_run_error` | `node_run_error=` |
+| `event` | _(wrap_run_event_stream internally)_ | `event=` |
+| `run_event_stream` | `wrap_run_event_stream` | `run_event_stream=` |
+| `before_model_request` | `before_model_request` | `before_model_request=` |
+| `after_model_request` | `after_model_request` | `after_model_request=` |
+| `model_request` | `wrap_model_request` | `model_request=` |
+| `model_request_error` | `on_model_request_error` | `model_request_error=` |
+| `prepare_tools` | `prepare_tools` | `prepare_tools=` |
+| `before_tool_validate` | `before_tool_validate` | `before_tool_validate=` |
+| `after_tool_validate` | `after_tool_validate` | `after_tool_validate=` |
+| `tool_validate` | `wrap_tool_validate` | `tool_validate=` |
+| `tool_validate_error` | `on_tool_validate_error` | `tool_validate_error=` |
+| `before_tool_execute` | `before_tool_execute` | `before_tool_execute=` |
+| `after_tool_execute` | `after_tool_execute` | `after_tool_execute=` |
+| `tool_execute` | `wrap_tool_execute` | `tool_execute=` |
+| `tool_execute_error` | `on_tool_execute_error` | `tool_execute_error=` |
+
+Tool hooks (`*_tool_validate` and `*_tool_execute`) accept an optional `tools` parameter to filter by tool name.
+
+### When to use `Hooks` vs `AbstractCapability`
+
+[`Hooks`][pydantic_ai.capabilities.Hooks] is best for quick, application-level hooks — one-off logging, metrics, lightweight checks. For reusable capabilities with configuration, tools, instructions, or complex state management, subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] directly. See [Lifecycle hooks](#lifecycle-hooks) for the full list of available hooks.
+
 ## Building a custom capability
 
 To build your own capability, subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] and override the methods you need. There are two categories: **configuration methods** that are called once at agent construction, and **lifecycle hooks** that fire during each run.
