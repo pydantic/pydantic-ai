@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 import inspect
 import json
-import re
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
@@ -71,7 +70,6 @@ Usage `OutputValidatorFunc[AgentDepsT, T]`.
 
 DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
 DEFAULT_OUTPUT_TOOL_DESCRIPTION = 'The final response which ends this conversation'
-OUTPUT_TOOL_NAME_SANITIZER = re.compile(r'[^a-zA-Z0-9-_]')
 
 
 async def execute_traced_output_function(
@@ -440,12 +438,12 @@ class ImageOutputSchema(OutputSchema[OutputDataT]):
 @dataclass(init=False)
 class StructuredTextOutputSchema(OutputSchema[OutputDataT], ABC):
     processor: BaseObjectOutputProcessor[OutputDataT]
-    template: str | None
+    template: str | Literal[False] | None
 
     def __init__(
         self,
         *,
-        template: str | None = None,
+        template: str | Literal[False] | None = None,
         processor: BaseObjectOutputProcessor[OutputDataT],
         allows_deferred_tools: bool,
         allows_image: bool,
@@ -910,7 +908,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 name = default_name
                 if multiple:
                     # strip unsupported characters like "[" and "]" from generic class names
-                    safe_name = OUTPUT_TOOL_NAME_SANITIZER.sub('', object_def.name or '')
+                    safe_name = _utils.TOOL_NAME_SANITIZER.sub('', object_def.name or '')
                     name += f'_{safe_name}'
 
             i = 1

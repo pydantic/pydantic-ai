@@ -2200,11 +2200,11 @@ async def test_approval_required_toolset():
 
     toolset = FunctionToolset[None]()
 
-    @toolset.tool
+    @toolset.tool_plain
     def foo(x: int) -> int:
         return x * 2
 
-    @toolset.tool
+    @toolset.tool_plain
     def bar(x: int) -> int:
         return x * 3
 
@@ -2317,6 +2317,7 @@ async def test_approval_required_toolset():
                         content='The tool call was denied.',
                         tool_call_id='foo2',
                         timestamp=IsDatetime(),
+                        outcome='denied',
                     ),
                 ],
                 timestamp=IsDatetime(),
@@ -2423,7 +2424,7 @@ def test_tool_metadata():
     # Test with FunctionToolset.tool decorator
     toolset = FunctionToolset(metadata={'foo': 'bar'})
 
-    @toolset.tool
+    @toolset.tool_plain
     def toolset_plain_tool(a: str) -> str:
         return a.upper()  # pragma: no cover
 
@@ -3129,9 +3130,48 @@ async def test_args_validator_async():
         """Add two numbers."""
         return x + y
 
-    await agent.run('call add_numbers with x=1 and y=2', deps=42)
+    result = await agent.run('call add_numbers with x=1 and y=2', deps=42)
 
     assert validator_called
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id='pyd_ai_tool_call_id__add_numbers'
+                    )
+                ],
+                usage=RequestUsage(input_tokens=56, output_tokens=6),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='add_numbers',
+                        content=0,
+                        tool_call_id='pyd_ai_tool_call_id__add_numbers',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"add_numbers":0}')],
+                usage=RequestUsage(input_tokens=57, output_tokens=9),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 def test_args_validator_with_deps():
@@ -3177,9 +3217,48 @@ def test_args_validator_tool_direct():
         tools=[tool],
     )
 
-    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+    result = agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
 
     assert validator_called
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id='pyd_ai_tool_call_id__add_numbers'
+                    )
+                ],
+                usage=RequestUsage(input_tokens=56, output_tokens=6),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='add_numbers',
+                        content=0,
+                        tool_call_id='pyd_ai_tool_call_id__add_numbers',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"add_numbers":0}')],
+                usage=RequestUsage(input_tokens=57, output_tokens=9),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 def test_args_validator_toolset():
@@ -3203,9 +3282,48 @@ def test_args_validator_toolset():
         toolsets=[toolset],
     )
 
-    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+    result = agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
 
     assert validator_called
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id='pyd_ai_tool_call_id__add_numbers'
+                    )
+                ],
+                usage=RequestUsage(input_tokens=56, output_tokens=6),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='add_numbers',
+                        content=0,
+                        tool_call_id='pyd_ai_tool_call_id__add_numbers',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"add_numbers":0}')],
+                usage=RequestUsage(input_tokens=57, output_tokens=9),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 def test_args_validator_tool_plain():
@@ -3226,9 +3344,48 @@ def test_args_validator_tool_plain():
         """Add two numbers."""
         return x + y
 
-    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+    result = agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
 
     assert validator_called
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id='pyd_ai_tool_call_id__add_numbers'
+                    )
+                ],
+                usage=RequestUsage(input_tokens=56, output_tokens=6),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='add_numbers',
+                        content=0,
+                        tool_call_id='pyd_ai_tool_call_id__add_numbers',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"add_numbers":0}')],
+                usage=RequestUsage(input_tokens=57, output_tokens=9),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 def test_args_validator_max_retries_exceeded():
