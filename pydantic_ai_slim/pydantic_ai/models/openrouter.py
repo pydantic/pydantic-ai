@@ -17,12 +17,13 @@ from ..settings import ModelSettings
 from . import ModelRequestParameters, download_item
 
 try:
-    from openai import APIError, AsyncOpenAI
+    from openai import APIError, AsyncOpenAI, omit
     from openai.types import chat, completion_usage
     from openai.types.chat import chat_completion, chat_completion_chunk, chat_completion_message_function_tool_call
     from openai.types.chat.chat_completion_content_part_param import ChatCompletionContentPartParam
     from openai.types.chat.chat_completion_message import Annotation as _OpenAIAnnotation
     from openai.types.chat.completion_create_params import WebSearchOptions
+    from openai.types.shared import ReasoningEffort
 
     from .openai import (
         OpenAIChatModel,
@@ -594,6 +595,21 @@ class OpenRouterModel(OpenAIChatModel):
             cast(OpenRouterModelSettings, merged_settings or {}), customized_parameters
         )
         return new_settings, customized_parameters
+
+    @override
+    def _get_reasoning_effort(
+        self,
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ReasoningEffort | Any:
+        """OpenRouter handles reasoning via extra_body['reasoning'], not the reasoning_effort parameter.
+
+        Only pass through explicit openai_reasoning_effort if set; unified thinking
+        is handled in _openrouter_settings_to_openai_settings via extra_body['reasoning'].
+        """
+        if effort := model_settings.get('openai_reasoning_effort'):
+            return effort
+        return omit
 
     @override
     def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:
