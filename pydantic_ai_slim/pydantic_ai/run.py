@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import dataclasses
+import warnings
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from copy import deepcopy
 from datetime import datetime
@@ -178,8 +179,6 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         self,
     ) -> AsyncIterator[_agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]]:
         """Provide async-iteration over the nodes in the agent run."""
-        import warnings
-
         if self.ctx.deps.root_capability.has_wrap_node_run:
             warnings.warn(
                 'A capability has `wrap_node_run` hooks, but bare `async for node in agent_run` '
