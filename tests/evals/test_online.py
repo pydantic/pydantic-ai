@@ -18,7 +18,6 @@ with try_import() as imports_successful:
     from pydantic_evals.online import (
         DEFAULT_CONFIG,
         CallbackSink,
-        EvaluatorContextData,
         OnlineEvalConfig,
         OnlineEvaluator,
         SpanReference,
@@ -36,9 +35,6 @@ pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-eval
 
 
 if TYPE_CHECKING or imports_successful():
-    # ============================================================================
-    # Test evaluators
-    # ============================================================================
 
     @dataclass
     class AlwaysTrue(Evaluator):
@@ -85,10 +81,6 @@ if TYPE_CHECKING or imports_successful():
         def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
             return {'accuracy': True, 'score': 0.95, 'label': 'good'}
 
-    # ============================================================================
-    # Helpers
-    # ============================================================================
-
     def _make_context(
         *,
         inputs: Any = None,
@@ -133,19 +125,14 @@ if TYPE_CHECKING or imports_successful():
     class MockContextSource:
         """Mock implementation of EvaluatorContextSource for testing."""
 
-        def __init__(self, data: dict[str, EvaluatorContextData]) -> None:
+        def __init__(self, data: dict[str, EvaluatorContext[Any, Any, Any]]) -> None:
             self._data = data
 
-        async def fetch(self, span: SpanReference) -> EvaluatorContextData:
+        async def fetch(self, span: SpanReference) -> EvaluatorContext[Any, Any, Any]:
             return self._data[span.span_id]
 
-        async def fetch_many(self, spans: Sequence[SpanReference]) -> list[EvaluatorContextData]:
+        async def fetch_many(self, spans: Sequence[SpanReference]) -> list[EvaluatorContext[Any, Any, Any]]:
             return [self._data[s.span_id] for s in spans]
-
-
-# ============================================================================
-# Test CallbackSink
-# ============================================================================
 
 
 async def test_callback_sink_sync():
@@ -194,21 +181,11 @@ async def test_callback_sink_ignores_span_reference():
     assert collector.result_count == 0
 
 
-# ============================================================================
-# Test SpanReference
-# ============================================================================
-
-
 async def test_span_reference():
     """SpanReference stores trace and span IDs."""
     ref = SpanReference(trace_id='abc123', span_id='def456')
     assert ref.trace_id == 'abc123'
     assert ref.span_id == 'def456'
-
-
-# ============================================================================
-# Test OnlineEvaluator
-# ============================================================================
 
 
 async def test_online_evaluator_defaults():
@@ -236,11 +213,6 @@ async def test_online_evaluator_custom_config():
     assert online.sample_rate == 0.5
     assert online.sink is sink
     assert online.max_concurrency == 5
-
-
-# ============================================================================
-# Test run_evaluators
-# ============================================================================
 
 
 async def test_run_evaluators_success():
@@ -292,11 +264,6 @@ async def test_run_evaluators_async_evaluator():
     assert len(results) == 1
     assert results[0].value is True
     assert len(failures) == 0
-
-
-# ============================================================================
-# Test evaluate() decorator — async functions
-# ============================================================================
 
 
 async def test_evaluate_decorator_async_basic():
@@ -374,11 +341,6 @@ async def test_evaluate_decorator_with_failure():
     assert 'Simulated evaluator failure' in failures[0].error_message
 
 
-# ============================================================================
-# Test sampling
-# ============================================================================
-
-
 async def test_sample_rate_zero_skips_evaluation():
     """sample_rate=0.0 skips all evaluations."""
     collector = Collector()
@@ -448,11 +410,6 @@ async def test_sample_rate_callable_returning_bool():
     assert len(collector.calls) == 0
 
 
-# ============================================================================
-# Test disable_evaluation
-# ============================================================================
-
-
 async def test_disable_evaluation_context_manager():
     """disable_evaluation() suppresses all evaluators."""
     collector = Collector()
@@ -486,11 +443,6 @@ async def test_disable_evaluation_restores():
     await my_func(42)
     await wait_for_evaluations()
     assert len(collector.calls) == 1
-
-
-# ============================================================================
-# Test gating
-# ============================================================================
 
 
 async def test_gate_prevents_evaluation():
@@ -563,11 +515,6 @@ async def test_gate_exception_skips_evaluator():
     assert len(collector.calls) == 0
 
 
-# ============================================================================
-# Test config enabled flag
-# ============================================================================
-
-
 async def test_config_enabled_false():
     """OnlineEvalConfig.enabled=False disables all evaluation."""
     collector = Collector()
@@ -582,11 +529,6 @@ async def test_config_enabled_false():
 
     await wait_for_evaluations()
     assert len(collector.calls) == 0
-
-
-# ============================================================================
-# Test per-evaluator sink override
-# ============================================================================
 
 
 async def test_per_evaluator_sink_override():
@@ -610,11 +552,6 @@ async def test_per_evaluator_sink_override():
     assert len(override_collector.calls) == 1
 
 
-# ============================================================================
-# Test no sink configured
-# ============================================================================
-
-
 async def test_no_sink_runs_without_error():
     """When no sink is configured, evaluators run but results are dropped silently."""
     config = OnlineEvalConfig()  # no sink
@@ -626,11 +563,6 @@ async def test_no_sink_runs_without_error():
     result = await my_func(42)
     assert result == 42
     await wait_for_evaluations()
-
-
-# ============================================================================
-# Test configure() module-level function
-# ============================================================================
 
 
 async def test_configure_updates_default_config():
@@ -670,11 +602,6 @@ async def test_configure_can_reset_to_none():
         DEFAULT_CONFIG.metadata = original_metadata
 
 
-# ============================================================================
-# Test module-level evaluate()
-# ============================================================================
-
-
 async def test_module_level_evaluate():
     """Module-level evaluate() delegates to DEFAULT_CONFIG."""
     collector = Collector()
@@ -695,21 +622,15 @@ async def test_module_level_evaluate():
         DEFAULT_CONFIG.default_sink = original_sink
 
 
-# ============================================================================
-# Test rebuild_context and rebuild_contexts
-# ============================================================================
-
-
 async def test_rebuild_context():
     """rebuild_context builds an EvaluatorContext from stored data."""
     source = MockContextSource(
         {
-            'span1': EvaluatorContextData(
+            'span1': _make_context(
                 inputs={'query': 'hello'},
                 output='world',
                 metadata={'service': 'test'},
                 duration=1.5,
-                span_tree=SpanTree(),
             ),
         }
     )
@@ -721,28 +642,14 @@ async def test_rebuild_context():
     assert ctx.expected_output is None
     assert ctx.metadata == {'service': 'test'}
     assert ctx.duration == 1.5
-    assert ctx.attributes == {}
-    assert ctx.metrics == {}
 
 
 async def test_rebuild_contexts_batch():
     """rebuild_contexts builds multiple contexts in a single batch."""
     source = MockContextSource(
         {
-            'span1': EvaluatorContextData(
-                inputs={'q': '1'},
-                output='a',
-                metadata=None,
-                duration=1.0,
-                span_tree=SpanTree(),
-            ),
-            'span2': EvaluatorContextData(
-                inputs={'q': '2'},
-                output='b',
-                metadata=None,
-                duration=2.0,
-                span_tree=SpanTree(),
-            ),
+            'span1': _make_context(inputs={'q': '1'}, output='a', duration=1.0),
+            'span2': _make_context(inputs={'q': '2'}, output='b', duration=2.0),
         }
     )
 
@@ -763,13 +670,7 @@ async def test_rebuild_and_run_evaluators():
     """rebuild_context + run_evaluators works end-to-end."""
     source = MockContextSource(
         {
-            'span1': EvaluatorContextData(
-                inputs={},
-                output=42,
-                metadata=None,
-                duration=0.1,
-                span_tree=SpanTree(),
-            ),
+            'span1': _make_context(output=42, duration=0.1),
         }
     )
 
@@ -779,11 +680,6 @@ async def test_rebuild_and_run_evaluators():
     assert len(results) == 2
     assert len(failures) == 0
     assert all(r.value is True for r in results)
-
-
-# ============================================================================
-# Test OnlineEvalConfig metadata
-# ============================================================================
 
 
 async def test_config_metadata_passed_to_context():
@@ -811,11 +707,6 @@ async def test_config_metadata_passed_to_context():
 
     assert len(collected_contexts) == 1
     assert collected_contexts[0].metadata == {'service': 'test-app', 'version': '1.0'}
-
-
-# ============================================================================
-# Test max_concurrency
-# ============================================================================
 
 
 async def test_max_concurrency_respected():
@@ -853,11 +744,6 @@ async def test_max_concurrency_respected():
     assert max_active <= 2
 
 
-# ============================================================================
-# Test EvaluationSink protocol
-# ============================================================================
-
-
 async def test_custom_sink_protocol():
     """Custom EvaluationSink implementations work."""
 
@@ -889,11 +775,6 @@ async def test_custom_sink_protocol():
     results, _ = sink.submissions[0]
     assert len(results) == 1
     assert results[0].value is True
-
-
-# ============================================================================
-# Test bare evaluator auto-wrapping
-# ============================================================================
 
 
 async def test_bare_evaluator_uses_config_defaults():
@@ -944,11 +825,6 @@ async def test_bare_evaluator_late_binds_config_defaults():
     assert len(collector2.calls) == 0  # still 0 because OnlineEvaluator has explicit sample_rate=0.0
 
 
-# ============================================================================
-# Test multiple sinks
-# ============================================================================
-
-
 async def test_multiple_sinks():
     """Multiple sinks receive all results."""
     collector1 = Collector()
@@ -965,11 +841,6 @@ async def test_multiple_sinks():
 
     assert len(collector1.calls) == 1
     assert len(collector2.calls) == 1
-
-
-# ============================================================================
-# Test fractional sample rate
-# ============================================================================
 
 
 async def test_fractional_sample_rate():
@@ -990,11 +861,6 @@ async def test_fractional_sample_rate():
     assert 5 < len(collector.calls) < 45
 
 
-# ============================================================================
-# Test sample_rate callable exception
-# ============================================================================
-
-
 async def test_sample_rate_callable_exception_skips_evaluator():
     """Exception in sample_rate callable skips the evaluator without breaking the function."""
     collector = Collector()
@@ -1013,11 +879,6 @@ async def test_sample_rate_callable_exception_skips_evaluator():
 
     await wait_for_evaluations()
     assert len(collector.calls) == 0
-
-
-# ============================================================================
-# Test sink exception handling
-# ============================================================================
 
 
 async def test_sink_exception_does_not_propagate():
@@ -1042,11 +903,6 @@ async def test_sink_exception_does_not_propagate():
     assert len(collector.calls) == 1
 
 
-# ============================================================================
-# Test sync function called from async context
-# ============================================================================
-
-
 async def test_sync_function_from_async_context():
     """Sync decorated function called from async context dispatches via background thread."""
     collector = Collector()
@@ -1066,11 +922,6 @@ async def test_sync_function_from_async_context():
     assert len(results) == 1
     assert results[0].value is True
     assert ctx.output == 42
-
-
-# ============================================================================
-# Test span reference extraction (through public API)
-# ============================================================================
 
 
 async def test_span_reference_with_configured_logfire(capfire: Any):

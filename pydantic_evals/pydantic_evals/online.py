@@ -33,7 +33,7 @@ import logging
 import random
 import threading
 import time
-from collections.abc import Awaitable, Callable, Coroutine, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -49,13 +49,11 @@ from .evaluators._run_evaluator import run_evaluator
 from .evaluators.context import EvaluatorContext
 from .evaluators.evaluator import EvaluationResult, Evaluator, EvaluatorFailure
 from .otel._context_subtree import context_subtree
-from .otel.span_tree import SpanTree
 
 __all__ = (
     'CallbackSink',
     'DEFAULT_CONFIG',
     'EvaluationSink',
-    'EvaluatorContextData',
     'EvaluatorContextSource',
     'OnlineEvalConfig',
     'OnlineEvaluator',
@@ -160,15 +158,11 @@ def _dispatch_in_background_thread(coro: Coroutine[Any, Any, None]) -> None:
         logger.exception('Failed to start background evaluation thread')
 
 
-# ============================================================================
-# Context variable for disabling evaluation
-# ============================================================================
-
 _EVALUATION_DISABLED: ContextVar[bool] = ContextVar('_evaluation_disabled', default=False)
 
 
 @contextmanager
-def disable_evaluation():
+def disable_evaluation() -> Iterator[None]:
     """Context manager to disable all online evaluation in the current context.
 
     When active, decorated functions still execute normally but no evaluators are dispatched.
@@ -178,11 +172,6 @@ def disable_evaluation():
         yield
     finally:
         _EVALUATION_DISABLED.reset(token)
-
-
-# ============================================================================
-# SpanReference
-# ============================================================================
 
 
 @dataclass(kw_only=True)
@@ -197,10 +186,6 @@ class SpanReference:
     span_id: str
     """The span ID of the span."""
 
-
-# ============================================================================
-# EvaluationSink protocol and implementations
-# ============================================================================
 
 SinkCallback = Callable[
     [Sequence[EvaluationResult], Sequence[EvaluatorFailure], EvaluatorContext],
@@ -263,11 +248,6 @@ class CallbackSink:
             await result
 
 
-# ============================================================================
-# OnlineEvaluator
-# ============================================================================
-
-
 @dataclass(kw_only=True)
 class OnlineEvaluator:
     """Wraps an `Evaluator` with per-evaluator online configuration.
@@ -302,65 +282,35 @@ class OnlineEvaluator:
         self.semaphore = threading.Semaphore(self.max_concurrency)
 
 
-# ============================================================================
-# EvaluatorContextData and EvaluatorContextSource
-# ============================================================================
-
-
-@dataclass(kw_only=True)
-class EvaluatorContextData:
-    """All the data needed to construct an `EvaluatorContext`, fetched in one shot.
-
-    Used by `EvaluatorContextSource` implementations to return context data
-    from stored traces without requiring re-execution of the original function.
-    """
-
-    inputs: Any
-    """The inputs that were provided to the function."""
-    output: Any
-    """The output that was returned by the function."""
-    metadata: dict[str, Any] | None
-    """Optional metadata associated with the function call."""
-    duration: float
-    """The duration of the function execution in seconds."""
-    span_tree: SpanTree
-    """The span tree captured during the function execution."""
-
-
 class EvaluatorContextSource(Protocol):
-    """Protocol for retrieving stored evaluation context data.
+    """Protocol for retrieving stored evaluator contexts.
 
-    Implementations fetch all data needed to reconstruct an `EvaluatorContext`
-    from stored traces (e.g., Logfire). The batch method allows fetching data
+    Implementations reconstruct [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext]
+    objects from stored traces (e.g., Logfire). The batch method allows fetching contexts
     for multiple spans in a single call.
     """
 
-    async def fetch(self, span: SpanReference) -> EvaluatorContextData:
-        """Fetch context data for a single span.
+    async def fetch(self, span: SpanReference) -> EvaluatorContext:
+        """Fetch an evaluator context for a single span.
 
         Args:
             span: Reference to the span to fetch context for.
 
         Returns:
-            The context data for the span.
+            The evaluator context for the span.
         """
         ...
 
-    async def fetch_many(self, spans: Sequence[SpanReference]) -> list[EvaluatorContextData]:
-        """Fetch context data for multiple spans in a single batch.
+    async def fetch_many(self, spans: Sequence[SpanReference]) -> list[EvaluatorContext]:
+        """Fetch evaluator contexts for multiple spans in a single batch.
 
         Args:
             spans: References to the spans to fetch context for.
 
         Returns:
-            Context data for each span, in the same order as the input.
+            Evaluator contexts in the same order as the input spans.
         """
         ...
-
-
-# ============================================================================
-# Standalone run_evaluators
-# ============================================================================
 
 
 async def run_evaluators(
@@ -400,11 +350,6 @@ async def run_evaluators(
     return all_results, all_failures
 
 
-# ============================================================================
-# Context rebuilding
-# ============================================================================
-
-
 async def rebuild_context(
     source: EvaluatorContextSource,
     span: SpanReference,
@@ -418,18 +363,7 @@ async def rebuild_context(
     Returns:
         A reconstructed EvaluatorContext.
     """
-    data = await source.fetch(span)
-    return EvaluatorContext(
-        name=None,
-        inputs=data.inputs,
-        output=data.output,
-        expected_output=None,
-        metadata=data.metadata,
-        duration=data.duration,
-        _span_tree=data.span_tree,
-        attributes={},
-        metrics={},
-    )
+    return await source.fetch(span)
 
 
 async def rebuild_contexts(
@@ -445,26 +379,7 @@ async def rebuild_contexts(
     Returns:
         Reconstructed EvaluatorContexts in the same order as the input spans.
     """
-    all_data = await source.fetch_many(spans)
-    return [
-        EvaluatorContext(
-            name=None,
-            inputs=d.inputs,
-            output=d.output,
-            expected_output=None,
-            metadata=d.metadata,
-            duration=d.duration,
-            _span_tree=d.span_tree,
-            attributes={},
-            metrics={},
-        )
-        for d in all_data
-    ]
-
-
-# ============================================================================
-# Internal helpers
-# ============================================================================
+    return await source.fetch_many(spans)
 
 
 def _resolve_sample_rate_field(
@@ -617,11 +532,6 @@ def _capture_inputs(sig: inspect.Signature, args: tuple[Any, ...], kwargs: dict[
     bound = sig.bind(*args, **kwargs)
     bound.apply_defaults()
     return dict(bound.arguments)
-
-
-# ============================================================================
-# OnlineEvalConfig
-# ============================================================================
 
 
 @dataclass(kw_only=True)
@@ -803,10 +713,6 @@ def _extract_span_reference(span: Any) -> SpanReference | None:
         )
     return None  # pragma: lax no cover
 
-
-# ============================================================================
-# Global default config and module-level convenience functions
-# ============================================================================
 
 DEFAULT_CONFIG = OnlineEvalConfig()
 """The global default `OnlineEvalConfig` instance.

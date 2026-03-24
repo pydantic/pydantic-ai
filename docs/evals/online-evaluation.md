@@ -609,8 +609,8 @@ For fetching context data from external storage (like Logfire), the [`EvaluatorC
 import asyncio
 from collections.abc import Sequence
 
+from pydantic_evals.evaluators import EvaluatorContext
 from pydantic_evals.online import (
-    EvaluatorContextData,
     SpanReference,
     rebuild_context,
     rebuild_contexts,
@@ -621,31 +621,49 @@ from pydantic_evals.otel.span_tree import SpanTree
 class MyContextSource:
     """Example source that fetches context from a hypothetical store."""
 
-    def __init__(self, store: dict[str, EvaluatorContextData]) -> None:
+    def __init__(self, store: dict[str, EvaluatorContext]) -> None:
         self._store = store
 
-    async def fetch(self, span: SpanReference) -> EvaluatorContextData:
+    async def fetch(self, span: SpanReference) -> EvaluatorContext:
         return self._store[span.span_id]
 
-    async def fetch_many(self, spans: Sequence[SpanReference]) -> list[EvaluatorContextData]:
+    async def fetch_many(self, spans: Sequence[SpanReference]) -> list[EvaluatorContext]:
         return [self._store[s.span_id] for s in spans]
+
+
+def _make_context(
+    *,
+    inputs: object = None,
+    output: object = None,
+    metadata: object = None,
+    duration: float = 0.0,
+) -> EvaluatorContext:
+    return EvaluatorContext(
+        name=None,
+        inputs=inputs,
+        output=output,
+        expected_output=None,
+        metadata=metadata,
+        duration=duration,
+        _span_tree=SpanTree(),
+        attributes={},
+        metrics={},
+    )
 
 
 async def main():
     source = MyContextSource({
-        'span_abc': EvaluatorContextData(
+        'span_abc': _make_context(
             inputs={'query': 'What is AI?'},
             output='AI is artificial intelligence.',
             metadata={'model': 'gpt-4o'},
             duration=1.2,
-            span_tree=SpanTree(),
         ),
-        'span_def': EvaluatorContextData(
+        'span_def': _make_context(
             inputs={'query': 'What is ML?'},
             output='ML is machine learning.',
             metadata={'model': 'gpt-4o'},
             duration=0.8,
-            span_tree=SpanTree(),
         ),
     })
 
