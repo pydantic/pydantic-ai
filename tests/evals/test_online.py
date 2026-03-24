@@ -31,7 +31,7 @@ with try_import() as imports_successful:
     )
     from pydantic_evals.otel.span_tree import SpanTree
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')
 
 
 if TYPE_CHECKING or imports_successful():
@@ -135,6 +135,7 @@ if TYPE_CHECKING or imports_successful():
             return [self._data[s.span_id] for s in spans]
 
 
+@pytest.mark.anyio
 async def test_callback_sink_sync():
     """CallbackSink works with sync callbacks."""
     collected: list[tuple[list[Any], list[Any], Any]] = []
@@ -158,6 +159,7 @@ async def test_callback_sink_sync():
     assert collected[0][2] is ctx
 
 
+@pytest.mark.anyio
 async def test_callback_sink_async():
     """CallbackSink works with async callbacks."""
     collector = Collector()
@@ -169,6 +171,7 @@ async def test_callback_sink_async():
     assert len(collector.calls) == 1
 
 
+@pytest.mark.anyio
 async def test_callback_sink_ignores_span_reference():
     """CallbackSink does not pass span_reference to the callback."""
     collector = Collector()
@@ -181,6 +184,7 @@ async def test_callback_sink_ignores_span_reference():
     assert collector.result_count == 0
 
 
+@pytest.mark.anyio
 async def test_span_reference():
     """SpanReference stores trace and span IDs."""
     ref = SpanReference(trace_id='abc123', span_id='def456')
@@ -188,6 +192,7 @@ async def test_span_reference():
     assert ref.span_id == 'def456'
 
 
+@pytest.mark.anyio
 async def test_online_evaluator_defaults():
     """OnlineEvaluator has sensible defaults."""
     evaluator = AlwaysTrue()
@@ -199,6 +204,7 @@ async def test_online_evaluator_defaults():
     assert online.gate is None
 
 
+@pytest.mark.anyio
 async def test_online_evaluator_custom_config():
     """OnlineEvaluator accepts custom configuration."""
     evaluator = AlwaysTrue()
@@ -215,6 +221,7 @@ async def test_online_evaluator_custom_config():
     assert online.max_concurrency == 5
 
 
+@pytest.mark.anyio
 async def test_run_evaluators_success():
     """run_evaluators returns results from all evaluators."""
     ctx = _make_context(output=42)
@@ -226,6 +233,7 @@ async def test_run_evaluators_success():
     assert results[1].value is True
 
 
+@pytest.mark.anyio
 async def test_run_evaluators_with_failure():
     """run_evaluators collects failures separately from results."""
     ctx = _make_context(output=42)
@@ -237,6 +245,7 @@ async def test_run_evaluators_with_failure():
     assert 'Simulated evaluator failure' in failures[0].error_message
 
 
+@pytest.mark.anyio
 async def test_run_evaluators_empty():
     """run_evaluators handles empty evaluator list."""
     ctx = _make_context(output=42)
@@ -245,6 +254,7 @@ async def test_run_evaluators_empty():
     assert failures == []
 
 
+@pytest.mark.anyio
 async def test_run_evaluators_multi_result():
     """run_evaluators handles evaluators that return multiple results."""
     ctx = _make_context(output=42)
@@ -256,6 +266,7 @@ async def test_run_evaluators_multi_result():
     assert result_names == {'accuracy', 'score', 'label'}
 
 
+@pytest.mark.anyio
 async def test_run_evaluators_async_evaluator():
     """run_evaluators works with async evaluators."""
     ctx = _make_context(output=42)
@@ -266,6 +277,7 @@ async def test_run_evaluators_async_evaluator():
     assert len(failures) == 0
 
 
+@pytest.mark.anyio
 async def test_evaluate_decorator_async_basic():
     """evaluate() decorator runs evaluators on async function calls."""
     collector = Collector()
@@ -289,6 +301,7 @@ async def test_evaluate_decorator_async_basic():
     assert ctx.inputs == {'x': 21}
 
 
+@pytest.mark.anyio
 async def test_evaluate_decorator_async_preserves_signature():
     """evaluate() decorator preserves the function's name and docs."""
 
@@ -302,6 +315,7 @@ async def test_evaluate_decorator_async_preserves_signature():
     assert await my_func(42) == 42
 
 
+@pytest.mark.anyio
 async def test_evaluate_decorator_multiple_evaluators():
     """evaluate() decorator runs multiple evaluators."""
     collector = Collector()
@@ -320,6 +334,7 @@ async def test_evaluate_decorator_multiple_evaluators():
     assert collector.result_count == 2
 
 
+@pytest.mark.anyio
 async def test_evaluate_decorator_with_failure():
     """evaluate() decorator handles evaluator failures gracefully."""
     collector = Collector()
@@ -341,6 +356,7 @@ async def test_evaluate_decorator_with_failure():
     assert 'Simulated evaluator failure' in failures[0].error_message
 
 
+@pytest.mark.anyio
 async def test_sample_rate_zero_skips_evaluation():
     """sample_rate=0.0 skips all evaluations."""
     collector = Collector()
@@ -357,6 +373,7 @@ async def test_sample_rate_zero_skips_evaluation():
     assert len(collector.calls) == 0
 
 
+@pytest.mark.anyio
 async def test_sample_rate_one_always_evaluates():
     """sample_rate=1.0 always evaluates."""
     collector = Collector()
@@ -373,6 +390,7 @@ async def test_sample_rate_one_always_evaluates():
     assert len(collector.calls) == 5
 
 
+@pytest.mark.anyio
 async def test_sample_rate_callable():
     """sample_rate as a callable is evaluated each time."""
     call_count = 0
@@ -396,6 +414,7 @@ async def test_sample_rate_callable():
     assert len(collector.calls) == 1
 
 
+@pytest.mark.anyio
 async def test_sample_rate_callable_returning_bool():
     """sample_rate callable can return bool."""
     collector = Collector()
@@ -410,6 +429,7 @@ async def test_sample_rate_callable_returning_bool():
     assert len(collector.calls) == 0
 
 
+@pytest.mark.anyio
 async def test_disable_evaluation_context_manager():
     """disable_evaluation() suppresses all evaluators."""
     collector = Collector()
@@ -427,6 +447,7 @@ async def test_disable_evaluation_context_manager():
     assert len(collector.calls) == 0
 
 
+@pytest.mark.anyio
 async def test_disable_evaluation_restores():
     """disable_evaluation() restores evaluation after exiting."""
     collector = Collector()
@@ -445,6 +466,7 @@ async def test_disable_evaluation_restores():
     assert len(collector.calls) == 1
 
 
+@pytest.mark.anyio
 async def test_gate_prevents_evaluation():
     """Gate returning False prevents evaluation."""
     collector = Collector()
@@ -459,6 +481,7 @@ async def test_gate_prevents_evaluation():
     assert len(collector.calls) == 0
 
 
+@pytest.mark.anyio
 async def test_gate_allows_evaluation():
     """Gate returning True allows evaluation."""
     collector = Collector()
@@ -473,6 +496,7 @@ async def test_gate_allows_evaluation():
     assert len(collector.calls) == 1
 
 
+@pytest.mark.anyio
 async def test_gate_async():
     """Async gate functions work."""
     collector = Collector()
@@ -495,6 +519,7 @@ async def test_gate_async():
     assert len(collector.calls) == 1
 
 
+@pytest.mark.anyio
 async def test_gate_exception_skips_evaluator():
     """Gate that raises an exception skips the evaluator gracefully."""
     collector = Collector()
@@ -515,6 +540,7 @@ async def test_gate_exception_skips_evaluator():
     assert len(collector.calls) == 0
 
 
+@pytest.mark.anyio
 async def test_config_enabled_false():
     """OnlineEvalConfig.enabled=False disables all evaluation."""
     collector = Collector()
@@ -531,6 +557,7 @@ async def test_config_enabled_false():
     assert len(collector.calls) == 0
 
 
+@pytest.mark.anyio
 async def test_per_evaluator_sink_override():
     """OnlineEvaluator.sink overrides config's default_sink."""
     default_collector = Collector()
@@ -552,6 +579,7 @@ async def test_per_evaluator_sink_override():
     assert len(override_collector.calls) == 1
 
 
+@pytest.mark.anyio
 async def test_no_sink_skips_evaluators():
     """When no sink is configured, evaluators are skipped entirely."""
     config = OnlineEvalConfig()  # no sink
@@ -565,6 +593,7 @@ async def test_no_sink_skips_evaluators():
     await wait_for_evaluations()
 
 
+@pytest.mark.anyio
 async def test_configure_updates_default_config():
     """configure() updates the global DEFAULT_CONFIG."""
     original_enabled = DEFAULT_CONFIG.enabled
@@ -582,6 +611,7 @@ async def test_configure_updates_default_config():
         DEFAULT_CONFIG.default_sample_rate = original_rate
 
 
+@pytest.mark.anyio
 async def test_configure_can_reset_to_none():
     """configure() can explicitly set fields to None to clear them."""
     collector = Collector()
@@ -602,6 +632,7 @@ async def test_configure_can_reset_to_none():
         DEFAULT_CONFIG.metadata = original_metadata
 
 
+@pytest.mark.anyio
 async def test_module_level_evaluate():
     """Module-level evaluate() delegates to DEFAULT_CONFIG."""
     collector = Collector()
@@ -622,6 +653,7 @@ async def test_module_level_evaluate():
         DEFAULT_CONFIG.default_sink = original_sink
 
 
+@pytest.mark.anyio
 async def test_rebuild_context():
     """rebuild_context builds an EvaluatorContext from stored data."""
     source = MockContextSource(
@@ -644,6 +676,7 @@ async def test_rebuild_context():
     assert ctx.duration == 1.5
 
 
+@pytest.mark.anyio
 async def test_rebuild_contexts_batch():
     """rebuild_contexts builds multiple contexts in a single batch."""
     source = MockContextSource(
@@ -666,6 +699,7 @@ async def test_rebuild_contexts_batch():
     assert contexts[1].output == 'b'
 
 
+@pytest.mark.anyio
 async def test_rebuild_and_run_evaluators():
     """rebuild_context + run_evaluators works end-to-end."""
     source = MockContextSource(
@@ -682,6 +716,7 @@ async def test_rebuild_and_run_evaluators():
     assert all(r.value is True for r in results)
 
 
+@pytest.mark.anyio
 async def test_config_metadata_passed_to_context():
     """OnlineEvalConfig.metadata is included in the EvaluatorContext."""
     collected_contexts: list[EvaluatorContext[Any, Any, Any]] = []
@@ -709,6 +744,7 @@ async def test_config_metadata_passed_to_context():
     assert collected_contexts[0].metadata == {'service': 'test-app', 'version': '1.0'}
 
 
+@pytest.mark.anyio
 async def test_max_concurrency_respected():
     """OnlineEvaluator.max_concurrency limits concurrent evaluations."""
     active = 0
@@ -744,6 +780,7 @@ async def test_max_concurrency_respected():
     assert max_active <= 2
 
 
+@pytest.mark.anyio
 async def test_custom_sink_protocol():
     """Custom EvaluationSink implementations work."""
 
@@ -777,6 +814,7 @@ async def test_custom_sink_protocol():
     assert results[0].value is True
 
 
+@pytest.mark.anyio
 async def test_bare_evaluator_uses_config_defaults():
     """Bare Evaluator passed to evaluate() uses config's default_sample_rate."""
     collector = Collector()
@@ -791,6 +829,7 @@ async def test_bare_evaluator_uses_config_defaults():
     assert len(collector.calls) == 0
 
 
+@pytest.mark.anyio
 async def test_bare_evaluator_late_binds_config_defaults():
     """Config defaults are resolved at call time, not decoration time."""
     collector = Collector()
@@ -825,6 +864,7 @@ async def test_bare_evaluator_late_binds_config_defaults():
     assert len(collector2.calls) == 0  # still 0 because OnlineEvaluator has explicit sample_rate=0.0
 
 
+@pytest.mark.anyio
 async def test_multiple_sinks():
     """Multiple sinks receive all results."""
     collector1 = Collector()
@@ -843,6 +883,7 @@ async def test_multiple_sinks():
     assert len(collector2.calls) == 1
 
 
+@pytest.mark.anyio
 async def test_fractional_sample_rate():
     """Fractional sample_rate evaluates a subset of calls."""
     collector = Collector()
@@ -861,6 +902,7 @@ async def test_fractional_sample_rate():
     assert 5 < len(collector.calls) < 45
 
 
+@pytest.mark.anyio
 async def test_sample_rate_callable_exception_skips_evaluator():
     """Exception in sample_rate callable skips the evaluator without breaking the function."""
     collector = Collector()
@@ -881,6 +923,7 @@ async def test_sample_rate_callable_exception_skips_evaluator():
     assert len(collector.calls) == 0
 
 
+@pytest.mark.anyio
 async def test_sink_exception_does_not_propagate():
     """Exception in a sink is logged but does not break other sinks."""
 
@@ -903,6 +946,7 @@ async def test_sink_exception_does_not_propagate():
     assert len(collector.calls) == 1
 
 
+@pytest.mark.anyio
 async def test_sync_function_from_async_context():
     """Sync decorated function called from async context dispatches via background thread."""
     collector = Collector()
@@ -924,6 +968,7 @@ async def test_sync_function_from_async_context():
     assert ctx.output == 42
 
 
+@pytest.mark.anyio
 async def test_span_reference_with_configured_logfire(capfire: Any):
     """Decorator produces valid SpanReference when logfire is configured."""
     span_refs: list[SpanReference | None] = []
@@ -956,3 +1001,115 @@ async def test_span_reference_with_configured_logfire(capfire: Any):
     assert len(ref.span_id) == 16
     assert int(ref.trace_id, 16) != 0
     assert int(ref.span_id, 16) != 0
+
+
+def test_sync_background_thread_dispatch():
+    """Sync decorated function dispatches evaluators via background thread when no event loop is running."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(AlwaysTrue())
+    def my_func(x: int) -> int:
+        return x * 2
+
+    result = my_func(21)
+    assert result == 42
+
+    asyncio.run(wait_for_evaluations())
+
+    assert len(collector.calls) == 1
+    results, _, ctx = collector.calls[0]
+    assert len(results) == 1
+    assert results[0].value is True
+    assert ctx.output == 42
+    assert ctx.inputs == {'x': 21}
+
+
+def test_sync_background_thread_gate():
+    """Sync gates work via background thread dispatch."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), gate=lambda ctx: ctx.output > 10))
+    def my_func(x: int) -> int:
+        return x
+
+    my_func(5)  # gate blocks
+    asyncio.run(wait_for_evaluations())
+    assert len(collector.calls) == 0
+
+    my_func(20)  # gate allows
+    asyncio.run(wait_for_evaluations())
+    assert len(collector.calls) == 1
+
+
+def test_sync_background_thread_async_gate():
+    """Async gates work via background thread dispatch (thread runs its own event loop)."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    async def async_gate(ctx: EvaluatorContext[Any, Any, Any]) -> bool:
+        return ctx.output > 10
+
+    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), gate=async_gate))
+    def my_func(x: int) -> int:
+        return x
+
+    my_func(5)  # gate blocks
+    asyncio.run(wait_for_evaluations())
+    assert len(collector.calls) == 0
+
+    my_func(20)  # gate allows
+    asyncio.run(wait_for_evaluations())
+    assert len(collector.calls) == 1
+
+
+def test_sync_background_thread_disabled():
+    """Disabled config doesn't dispatch any threads."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector, enabled=False)
+
+    @config.evaluate(AlwaysTrue())
+    def my_func(x: int) -> int:
+        return x
+
+    result = my_func(42)
+    assert result == 42
+
+    asyncio.run(wait_for_evaluations())
+    assert len(collector.calls) == 0
+
+
+def test_sync_background_thread_sample_rate_zero():
+    """sample_rate=0 doesn't dispatch any threads."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), sample_rate=0.0))
+    def my_func(x: int) -> int:
+        return x
+
+    result = my_func(42)
+    assert result == 42
+
+    asyncio.run(wait_for_evaluations())
+    assert len(collector.calls) == 0
+
+
+def test_sync_background_thread_gate_exception():
+    """Gate exception in background thread skips evaluator gracefully."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    def bad_gate(ctx: EvaluatorContext[Any, Any, Any]) -> bool:
+        raise ValueError('gate error')
+
+    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), gate=bad_gate))
+    def my_func(x: int) -> int:
+        return x
+
+    result = my_func(42)
+    assert result == 42
+
+    asyncio.run(wait_for_evaluations())
+    assert len(collector.calls) == 0
