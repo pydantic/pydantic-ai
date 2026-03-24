@@ -27,6 +27,7 @@ async def my_function(x: int) -> int:
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import functools
 import inspect
 import logging
@@ -135,14 +136,20 @@ def _dispatch_in_background_thread(coro: Coroutine[Any, Any, None]) -> None:
 
     Used for sync decorated functions where there's no event loop to schedule on.
     The thread runs its own event loop via anyio.run().
+
+    Captures the caller's contextvars so that evaluators running in the background
+    thread can access context set by the caller (e.g. request IDs, auth context).
     """
+    # Capture caller's context before spawning the thread — background threads
+    # don't inherit contextvars, so we snapshot and run within it.
+    ctx = contextvars.copy_context()
 
     async def _run() -> None:
         await coro
 
     def _thread_target() -> None:
         try:
-            anyio.run(_run)
+            ctx.run(anyio.run, _run)
         finally:
             with _background_lock:
                 _background_threads.discard(thread)
