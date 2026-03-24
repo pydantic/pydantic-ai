@@ -7,7 +7,7 @@ the Thinking capability, and end-to-end integration via FunctionModel.
 # pyright: reportPrivateUsage=false, reportArgumentType=false
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 import pytest
 
@@ -567,6 +567,194 @@ class TestGroqThinkingTranslation:
         model = FunctionModel(_echo)
         result = GroqModel._get_reasoning_format(model, settings, params)
         assert result == 'raw'
+
+
+class TestAnthropicUnifiedThinkingConflict:
+    """Test that unified thinking triggers the output tools conflict path in prepare_request."""
+
+    def test_unified_thinking_with_output_tools_auto_mode(self):
+        """thinking='high' (unified) + output tools + auto mode -> switches to native/prompted."""
+        pytest.importorskip('anthropic')
+        from pydantic_ai.models.anthropic import AnthropicModel
+        from pydantic_ai.profiles.anthropic import AnthropicModelProfile
+        from pydantic_ai.tools import ToolDefinition
+
+        model = AnthropicModel.__new__(AnthropicModel)
+        model._profile = AnthropicModelProfile(
+            supports_thinking=True,
+            supports_json_schema_output=True,
+            anthropic_supports_adaptive_thinking=True,
+        )
+        model._settings = None
+
+        output_tool = ToolDefinition(name='output', description='', parameters_json_schema={}, kind='output')
+        params = ModelRequestParameters(output_tools=[output_tool], output_mode='auto')
+        settings = ModelSettings(thinking='high')
+
+        _, resolved_params = model.prepare_request(settings, params)
+        # Should have switched from auto to native (since supports_json_schema_output=True)
+        assert resolved_params.output_mode == 'native'
+        assert resolved_params.thinking == 'high'
+
+
+class TestBedrockThinkingTranslation:
+    """Test Bedrock _get_thinking_fields translation for each variant."""
+
+    def test_anthropic_variant_thinking_true(self):
+        pytest.importorskip('boto3')
+        from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
+        from pydantic_ai.providers.bedrock import BedrockModelProfile
+
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._profile = BedrockModelProfile(
+            bedrock_thinking_variant='anthropic',
+            supports_thinking=True,
+        )
+
+        settings = BedrockModelSettings()
+        params = ModelRequestParameters(thinking=True)
+        result = model._get_thinking_fields(settings, params)
+        assert result == {'thinking': {'type': 'enabled', 'budget_tokens': 10000}}
+
+    def test_anthropic_variant_thinking_false(self):
+        pytest.importorskip('boto3')
+        from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
+        from pydantic_ai.providers.bedrock import BedrockModelProfile
+
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._profile = BedrockModelProfile(
+            bedrock_thinking_variant='anthropic',
+            supports_thinking=True,
+        )
+
+        settings = BedrockModelSettings()
+        params = ModelRequestParameters(thinking=False)
+        result = model._get_thinking_fields(settings, params)
+        assert result == {'thinking': {'type': 'disabled'}}
+
+    def test_openai_variant_thinking_high(self):
+        pytest.importorskip('boto3')
+        from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
+        from pydantic_ai.providers.bedrock import BedrockModelProfile
+
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._profile = BedrockModelProfile(
+            bedrock_thinking_variant='openai',
+            supports_thinking=True,
+        )
+
+        settings = BedrockModelSettings()
+        params = ModelRequestParameters(thinking='high')
+        result = model._get_thinking_fields(settings, params)
+        assert result == {'reasoning_effort': 'high'}
+
+    def test_qwen_variant_thinking_true(self):
+        pytest.importorskip('boto3')
+        from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
+        from pydantic_ai.providers.bedrock import BedrockModelProfile
+
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._profile = BedrockModelProfile(
+            bedrock_thinking_variant='qwen',
+            supports_thinking=True,
+        )
+
+        settings = BedrockModelSettings()
+        params = ModelRequestParameters(thinking=True)
+        result = model._get_thinking_fields(settings, params)
+        assert result == {'reasoning_config': 'high'}
+
+    def test_thinking_none_returns_existing(self):
+        pytest.importorskip('boto3')
+        from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
+        from pydantic_ai.providers.bedrock import BedrockModelProfile
+
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._profile = BedrockModelProfile(bedrock_thinking_variant='anthropic')
+
+        settings = BedrockModelSettings()
+        params = ModelRequestParameters(thinking=None)
+        result = model._get_thinking_fields(settings, params)
+        assert result is None
+
+
+class TestOpenRouterThinkingTranslation:
+    """Test OpenRouter unified thinking fallback in _openrouter_settings_to_openai_settings."""
+
+    def test_thinking_true(self):
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openrouter import OpenRouterModelSettings, _openrouter_settings_to_openai_settings
+
+        settings = OpenRouterModelSettings()
+        params = ModelRequestParameters(thinking=True)
+        result = _openrouter_settings_to_openai_settings(settings, params)
+        extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
+        assert extra_body.get('reasoning') == {'effort': 'medium'}
+
+    def test_thinking_high(self):
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openrouter import OpenRouterModelSettings, _openrouter_settings_to_openai_settings
+
+        settings = OpenRouterModelSettings()
+        params = ModelRequestParameters(thinking='high')
+        result = _openrouter_settings_to_openai_settings(settings, params)
+        extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
+        assert extra_body.get('reasoning') == {'effort': 'high'}
+
+    def test_thinking_false_no_reasoning(self):
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openrouter import OpenRouterModelSettings, _openrouter_settings_to_openai_settings
+
+        settings = OpenRouterModelSettings()
+        params = ModelRequestParameters(thinking=False)
+        result = _openrouter_settings_to_openai_settings(settings, params)
+        extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
+        assert 'reasoning' not in extra_body
+
+
+class TestCerebrasThinkingTranslation:
+    """Test Cerebras unified thinking fallback."""
+
+    def test_thinking_false_sets_disable_reasoning(self):
+        pytest.importorskip('openai')
+        from pydantic_ai.models.cerebras import CerebrasModelSettings, _cerebras_settings_to_openai_settings
+
+        settings = CerebrasModelSettings()
+        params = ModelRequestParameters(thinking=False)
+        result = _cerebras_settings_to_openai_settings(settings, params)
+        extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
+        assert extra_body.get('disable_reasoning') is True
+
+
+class TestXaiThinkingTranslation:
+    """Test xAI unified thinking fallback."""
+
+    def test_thinking_high(self):
+        pytest.importorskip('xai_sdk')
+        from pydantic_ai.models.xai import XaiModel, XaiModelSettings
+
+        model = XaiModel.__new__(XaiModel)
+        model._profile = ModelProfile(supports_thinking=True)
+        model._settings = None
+
+        settings = XaiModelSettings()
+        params = ModelRequestParameters(thinking='high')
+        # We can't call _create_chat directly, but we can verify prepare_request resolves
+        _, resolved_params = model.prepare_request(settings, params)
+        assert resolved_params.thinking == 'high'
+
+    def test_thinking_true(self):
+        pytest.importorskip('xai_sdk')
+        from pydantic_ai.models.xai import XaiModel, XaiModelSettings
+
+        model = XaiModel.__new__(XaiModel)
+        model._profile = ModelProfile(supports_thinking=True)
+        model._settings = None
+
+        settings = XaiModelSettings()
+        params = ModelRequestParameters(thinking=True)
+        _, resolved_params = model.prepare_request(settings, params)
+        assert resolved_params.thinking is True
 
 
 # ---------------------------------------------------------------------------
