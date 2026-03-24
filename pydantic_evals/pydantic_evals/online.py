@@ -26,6 +26,7 @@ async def my_function(x: int) -> int:
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import inspect
 import logging
@@ -39,6 +40,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 import anyio
+import sniffio
 from typing_extensions import ParamSpec, TypeVar
 
 from ._utils import UNSET, Unset, logfire_span
@@ -72,18 +74,55 @@ logger = logging.getLogger('pydantic_evals.online')
 _P = ParamSpec('_P')
 _R = TypeVar('_R')
 
-# Background threads for evaluation dispatch. Protected by _background_lock
-# for thread-safety (free-threaded Python, concurrent sync callers).
+# Protected by _background_lock for thread-safety (free-threaded Python, concurrent callers).
 _background_lock = threading.Lock()
+_background_tasks: set[asyncio.Task[Any]] = set()
 _background_threads: set[threading.Thread] = set()
+
+
+def _remove_background_task(task: asyncio.Task[Any]) -> None:
+    """Callback to remove a completed task from the tracking set (thread-safe)."""
+    with _background_lock:
+        _background_tasks.discard(task)
+
+
+def _dispatch_async(coro: Coroutine[Any, Any, None]) -> None:
+    """Dispatch an evaluation coroutine on the caller's event loop.
+
+    Uses sniffio to detect the backend and dispatches accordingly:
+    - asyncio: asyncio.get_running_loop().create_task() — ContextVars propagate
+    - trio: trio.lowlevel.spawn_system_task()
+
+    The task runs on the caller's event loop, NOT in a separate thread,
+    so ContextVars from the caller's context are preserved.
+    """
+    try:
+        library = sniffio.current_async_library()
+    except sniffio.AsyncLibraryNotFoundError:  # pragma: no cover
+        logger.warning('No async library detected — cannot dispatch background evaluation')
+        return
+
+    if library == 'trio':  # pragma: no cover
+        try:
+            import trio.lowlevel  # pyright: ignore[reportMissingImports]
+
+            trio.lowlevel.spawn_system_task(lambda: coro)  # pyright: ignore[reportUnknownMemberType]
+        except ImportError:
+            logger.warning('trio detected but not installed — cannot dispatch background evaluation')
+    else:
+        # asyncio (or any asyncio-compatible backend)
+        loop = asyncio.get_running_loop()
+        task = loop.create_task(coro)
+        with _background_lock:
+            _background_tasks.add(task)
+        task.add_done_callback(_remove_background_task)
 
 
 def _dispatch_in_background_thread(coro: Coroutine[Any, Any, None]) -> None:
     """Dispatch an async coroutine to a background daemon thread.
 
-    The thread runs its own event loop via anyio.run(). This is backend-agnostic —
-    it works regardless of whether the caller is using asyncio, trio, or no async
-    framework at all.
+    Used for sync decorated functions where there's no event loop to schedule on.
+    The thread runs its own event loop via anyio.run().
     """
 
     async def _run() -> None:
@@ -661,8 +700,8 @@ def _wrap_async(
         # Extract span reference from the logfire span
         span_reference = _extract_span_reference(span)
 
-        # Dispatch all sampled evaluators to a background thread — gate checks happen there
-        _dispatch_in_background_thread(_dispatch_evaluators(sampled, context, span_reference, config))
+        # Dispatch evaluators on the caller's event loop — preserves ContextVars
+        _dispatch_async(_dispatch_evaluators(sampled, context, span_reference, config))
 
         return result
 
@@ -820,27 +859,37 @@ def configure(
 
 
 async def wait_for_evaluations(*, timeout: float = 30.0) -> None:
-    """Wait for all pending background evaluation threads to complete.
+    """Wait for all pending background evaluation tasks and threads to complete.
 
     This is useful in tests to deterministically wait for background evaluators
     to finish instead of relying on timing-based sleeps.
 
-    All evaluation dispatch (from both async and sync decorated functions) uses
-    background threads, so this simply joins them.
+    For async decorated functions, evaluators run as tasks on the caller's event loop
+    and are awaited directly. For sync decorated functions, evaluators run in background
+    threads which are joined with the given timeout.
 
     Args:
         timeout: Maximum seconds to wait for each background thread. Defaults to 30.
     """
     with _background_lock:
+        tasks_snapshot = list(_background_tasks)
         threads_snapshot = list(_background_threads)
 
-    def _join_threads() -> None:
-        for thread in threads_snapshot:
-            thread.join(timeout=timeout)
-            if thread.is_alive():  # pragma: no cover
-                logger.warning('Background evaluation thread did not complete within %.1fs timeout', timeout)
+    # Await async tasks (from async decorated functions)
+    for task in tasks_snapshot:
+        try:
+            await task
+        except BaseException:  # pragma: no cover
+            pass  # Exceptions are handled inside _dispatch_single_evaluator
 
-    # Use anyio.to_thread.run_sync to avoid blocking the event loop
-    from anyio.to_thread import run_sync
+    # Join background threads (from sync decorated functions) without blocking the event loop
+    if threads_snapshot:
+        from anyio.to_thread import run_sync
 
-    await run_sync(_join_threads)
+        def _join_threads() -> None:
+            for thread in threads_snapshot:
+                thread.join(timeout=timeout)
+                if thread.is_alive():  # pragma: no cover
+                    logger.warning('Background evaluation thread did not complete within %.1fs timeout', timeout)
+
+        await run_sync(_join_threads)
