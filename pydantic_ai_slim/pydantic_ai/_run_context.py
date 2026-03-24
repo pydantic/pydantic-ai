@@ -90,7 +90,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
         for message in reversed(self.messages):
             if isinstance(message, _messages.ModelResponse):
                 tokens_used = message.usage.total_tokens
-                if (ctx_window := self.model.profile.context_window) is not None:
+                if (ctx_window := self.model.profile.context_window) is not None and ctx_window > 0:
                     return tokens_used / ctx_window
         return None
 
