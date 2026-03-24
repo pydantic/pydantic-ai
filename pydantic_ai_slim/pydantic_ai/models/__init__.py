@@ -883,7 +883,7 @@ class Model(ABC):
             for model_ref, provider_id in [
                 (self.model_name, self.system),
                 (self.model_name, None),
-                (_profile.upstream_model_name, _profile.upstream_provider_id),
+                (_profile._origin_model_name, _profile._origin_provider),  # pyright: ignore[reportPrivateUsage]
             ]:
                 if model_ref is None:  # model_ref is required
                     continue

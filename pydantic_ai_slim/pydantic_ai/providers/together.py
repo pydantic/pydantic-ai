@@ -61,7 +61,7 @@ class TogetherProvider(Provider[AsyncOpenAI]):
         # As the Together API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer,
         # unless json_schema_transformer is set explicitly
         result = OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
-        return result.with_upstream(provider, model_name)
+        return result._with_origin(provider, model_name)
 
     @overload
     def __init__(self) -> None: ...

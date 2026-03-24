@@ -84,7 +84,7 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
         # we maintain that behavior
         result = OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
         if provider_prefix:
-            return result.with_upstream(provider_prefix, model_suffix)
+            return result._with_origin(provider_prefix, model_suffix)
         return result
 
     @overload

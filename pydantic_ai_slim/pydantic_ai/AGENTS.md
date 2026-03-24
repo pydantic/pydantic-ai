@@ -8,6 +8,7 @@
 - Add capability flags to model profile classes instead of inline `isinstance()` checks — prevents scattered feature detection logic — Centralizing feature support as boolean flags (e.g., `bedrock_supports_prompt_caching`) in profile classes makes capability detection maintainable and prevents duplicating provider/model type checks across usage sites.
 <!-- rule:716 -->
 - Configure provider-specific API features in `Provider.model_profile()`, not in model profile functions — model profiles should contain only intrinsic model characteristics — Keeps provider-agnostic model traits separate from provider-specific API behaviors, enabling models to work consistently across different providers
+- Proxy providers must call `profile._with_origin(provider, model_name)` in their `model_profile()` method — passes the canonical provider ID and model name (as genai-prices knows them) so that `Model.profile` can resolve `context_window` automatically — Without this, the genai-prices lookup only has the proxy-formatted model name (e.g. `"anthropic/claude-sonnet-4-5"` for OpenRouter, `"anthropic.claude-3-5-sonnet-v2:0"` for Bedrock) which doesn't match genai-prices entries. See existing proxy providers (OpenRouter, Bedrock, LiteLLM, etc.) for examples.
 <!-- rule:264 -->
 - Store provider-specific metadata in structured `provider_details` or `provider_metadata` fields, not in `id`, `content`, or `args` — Prevents semantic field overloading and enables consistent provider behavior interpretation while keeping main fields normalized across providers
 <!-- rule:17 -->
