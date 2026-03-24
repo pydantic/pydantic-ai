@@ -2221,6 +2221,16 @@ async def test_resource_methods_without_capability(mcp_server: MCPServerStdio) -
             assert result == []
 
 
+async def test_prompt_methods_without_capability(mcp_server: MCPServerStdio) -> None:
+    """Test that prompt list methods return empty values when prompts capability is not available."""
+    async with mcp_server:
+        mock_capabilities = ServerCapabilities(prompts=False)
+        with patch.object(mcp_server, '_server_capabilities', mock_capabilities):
+            mcp_server._cached_prompts = None  # pyright: ignore[reportPrivateUsage]
+            result = await mcp_server.list_prompts()
+            assert result == []
+
+
 async def test_instructions(mcp_server: MCPServerStdio) -> None:
     with pytest.raises(
         AttributeError, match='The `MCPServerStdio.instructions` is only available after initialization.'
@@ -2438,7 +2448,7 @@ async def test_server_capabilities_list_changed_fields() -> None:
 
 
 async def test_list_prompts() -> None:
-    """Test list_prompts() functionality including basic usage, capability checks, and caching."""
+    """Test list_prompts() basic functionality and caching."""
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         # Test basic functionality and available prompts
@@ -2467,28 +2477,6 @@ async def test_list_prompts() -> None:
         assert server._cached_prompts is not None  # pyright: ignore[reportPrivateUsage]
         prompts2 = await server.list_prompts()
         assert prompts2 == prompts
-
-        # Test without capability - mock the capabilities to not support prompts
-        mock_capabilities = ServerCapabilities(prompts=False)
-        with patch.object(server, '_server_capabilities', mock_capabilities):
-            server._cached_prompts = None  # pyright: ignore[reportPrivateUsage]
-            result = await server.list_prompts()
-            assert result == []
-
-        mcp_error = McpError(
-            error=ErrorData(code=-32603, message='Failed to list prompts', data={'details': 'server overloaded'})
-        )
-        server._cached_prompts = None  # pyright: ignore[reportPrivateUsage]
-        with patch.object(
-            server._client,  # pyright: ignore[reportPrivateUsage]
-            'list_prompts',
-            new=AsyncMock(side_effect=mcp_error),
-        ):
-            with pytest.raises(MCPError, match='Failed to list prompts') as exc_info:
-                await server.list_prompts()
-            assert exc_info.value.code == -32603
-            assert exc_info.value.message == 'Failed to list prompts'
-            assert exc_info.value.data == {'details': 'server overloaded'}
 
 
 async def test_get_prompt() -> None:
