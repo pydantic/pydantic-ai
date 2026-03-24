@@ -8,14 +8,14 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import Any, Generic, Literal
 
-from opentelemetry.trace import Tracer
+from opentelemetry.trace import StatusCode, Tracer
 from pydantic import ValidationError
 from typing_extensions import deprecated
 
 from . import messages as _messages
 from ._instrumentation import InstrumentationNames
 from ._run_context import AgentDepsT, RunContext
-from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior
+from .exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolRetryError, UnexpectedModelBehavior
 from .messages import ToolCallPart
 from .tools import ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
@@ -417,6 +417,20 @@ class ToolManager(Generic[AgentDepsT]):
                 part = e.tool_retry
                 if include_content and span.is_recording():
                     span.set_attribute(instrumentation_names.tool_result_attr, part.model_response())
+                raise
+            except (CallDeferred, ApprovalRequired) as e:
+                # Control flow exceptions should not be recorded as errors on the span.
+                # They are expected behavior, not actual errors.
+                # Record them as regular span attributes instead of error events.
+                if span.is_recording():
+                    span.set_status(StatusCode.OK)
+                    span.set_attribute('pydantic_ai.tool.control_flow_exception', type(e).__name__)
+                    metadata = getattr(e, 'metadata', None)
+                    if metadata is not None:
+                        try:
+                            span.set_attribute('pydantic_ai.tool.control_flow_metadata', json.dumps(metadata))
+                        except (TypeError, ValueError):
+                            span.set_attribute('pydantic_ai.tool.control_flow_metadata', repr(metadata))
                 raise
 
             if include_content and span.is_recording():
