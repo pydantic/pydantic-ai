@@ -47,7 +47,7 @@ from .._template import TemplateStr, validate_from_spec_args
 from .._tool_manager import ParallelExecutionMode, ToolManager
 from ..builtin_tools import AbstractBuiltinTool
 from ..capabilities import AbstractCapability, CombinedCapability
-from ..capabilities.builtin_or_local import BuiltinTool as BuiltinToolCap
+from ..capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
 from ..capabilities.history_processor import HistoryProcessor as HistoryProcessorCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from ..output import OutputDataT, OutputSpec, StructuredDict
