@@ -573,27 +573,33 @@ class TestAnthropicUnifiedThinkingConflict:
     """Test that unified thinking triggers the output tools conflict path in prepare_request."""
 
     def test_unified_thinking_with_output_tools_auto_mode(self):
-        """thinking='high' (unified) + output tools + auto mode -> switches to prompted."""
+        """thinking='high' (unified) + output tools + auto mode -> switches to native."""
         pytest.importorskip('anthropic')
         from pydantic_ai.models.anthropic import AnthropicModel
+        from pydantic_ai.output import OutputObjectDefinition
         from pydantic_ai.profiles.anthropic import AnthropicModelProfile
         from pydantic_ai.tools import ToolDefinition
 
         model = AnthropicModel.__new__(AnthropicModel)
         model._profile = AnthropicModelProfile(
             supports_thinking=True,
-            supports_json_schema_output=False,  # Use prompted mode to avoid output_object assertion
+            supports_json_schema_output=True,
             anthropic_supports_adaptive_thinking=True,
         )
         model._settings = None
 
         output_tool = ToolDefinition(name='output', description='', parameters_json_schema={}, kind='output')
-        params = ModelRequestParameters(output_tools=[output_tool], output_mode='auto')
+        output_object = OutputObjectDefinition(json_schema={'type': 'object', 'properties': {}})
+        params = ModelRequestParameters(
+            output_tools=[output_tool],
+            output_object=output_object,
+            output_mode='auto',
+        )
         settings = ModelSettings(thinking='high')
 
         _, resolved_params = model.prepare_request(settings, params)
-        # Should have switched from auto to prompted (since supports_json_schema_output=False)
-        assert resolved_params.output_mode == 'prompted'
+        # Should have switched from auto to native (since supports_json_schema_output=True)
+        assert resolved_params.output_mode == 'native'
         assert resolved_params.thinking == 'high'
 
 
