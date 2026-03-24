@@ -25,7 +25,9 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, overload
 
 import anyio
+from pydantic import ValidationError
 
+from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
@@ -43,9 +45,6 @@ from .abstract import (
 )
 
 if TYPE_CHECKING:
-    from pydantic import ValidationError
-
-    from pydantic_ai.exceptions import ModelRetry
     from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.run import AgentRunResult
 
@@ -357,14 +356,10 @@ class _HookRegistration(Generic[AgentDepsT]):
 
     # --- Event stream ---
 
-    @overload
-    def run_event_stream(self, func: WrapRunEventStreamHookFunc, /) -> WrapRunEventStreamHookFunc: ...
-    @overload
-    def run_event_stream(
-        self, *, timeout: float | None = None
-    ) -> Callable[[WrapRunEventStreamHookFunc], WrapRunEventStreamHookFunc]: ...
-    def run_event_stream(self, func: WrapRunEventStreamHookFunc | None = None, *, timeout: float | None = None) -> Any:
-        return _bare_or_parameterized(self._r, 'wrap_run_event_stream', func, timeout=timeout)
+    def run_event_stream(self, func: WrapRunEventStreamHookFunc, /) -> WrapRunEventStreamHookFunc:
+        """Register a ``wrap_run_event_stream`` hook. Timeout not supported for stream wrappers."""
+        self._r.setdefault('wrap_run_event_stream', []).append(_HookEntry(func))
+        return func
 
     @overload
     def event(self, func: OnEventHookFunc, /) -> OnEventHookFunc: ...
@@ -845,8 +840,8 @@ class Hooks(AbstractCapability[AgentDepsT]):
                 return await _call_entry(
                     entry, 'on_tool_validate_error', ctx, call=call, tool_def=tool_def, args=args, error=error
                 )
-            except Exception as new_error:
-                error = new_error  # type: ignore[assignment]
+            except (ValidationError, ModelRetry) as new_error:
+                error = new_error
         raise error
 
     async def before_tool_execute(
