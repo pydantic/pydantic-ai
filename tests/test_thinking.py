@@ -688,6 +688,21 @@ class TestBedrockThinkingTranslation:
         # thinking=False on Qwen: no reasoning_config set, returns None (empty dict is falsy)
         assert result is None
 
+    def test_no_variant_thinking_passthrough(self):
+        """When bedrock_thinking_variant is None, unified thinking is a no-op."""
+        pytest.importorskip('boto3')
+        from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
+        from pydantic_ai.providers.bedrock import BedrockModelProfile
+
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._profile = BedrockModelProfile(bedrock_thinking_variant=None)
+
+        settings = BedrockModelSettings()
+        params = ModelRequestParameters(thinking='high')
+        result = model._get_thinking_fields(settings, params)
+        # No variant set, so no thinking fields are added
+        assert result is None
+
     def test_thinking_none_returns_existing(self):
         pytest.importorskip('boto3')
         from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
@@ -734,6 +749,20 @@ class TestOpenRouterThinkingTranslation:
         result = _openrouter_settings_to_openai_settings(settings, params)
         extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
         assert 'reasoning' not in extra_body
+
+    def test_openai_reasoning_effort_passthrough(self):
+        """Explicit openai_reasoning_effort on OpenRouter is passed through."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openrouter import OpenRouterModel
+
+        model = OpenRouterModel.__new__(OpenRouterModel)
+        model._profile = ModelProfile(supports_thinking=True)
+        model._settings = None
+
+        settings: dict[str, Any] = {'openai_reasoning_effort': 'low'}
+        params = ModelRequestParameters(thinking='high')
+        result = model._get_reasoning_effort(settings, params)
+        assert result == 'low'
 
 
 class TestCerebrasThinkingTranslation:
