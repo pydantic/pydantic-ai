@@ -49,18 +49,9 @@ class PrefixTools(WrapperCapability[AgentDepsT]):
             prefix: The prefix to add to tool names (e.g. ``'mcp'`` turns ``'search'`` into ``'mcp_search'``).
             capability: A capability spec (same format as entries in the ``capabilities`` list).
         """
-        from pydantic_ai._spec import NamedSpec, load_from_registry
-        from pydantic_ai.agent.spec import get_capability_registry
+        from pydantic_ai.agent.spec import load_capability_from_nested_spec
 
-        registry = get_capability_registry()
-        cap_spec = NamedSpec.model_validate(capability)
-        wrapped = load_from_registry(
-            registry,
-            cap_spec,
-            label='capability',
-            custom_types_param='custom_capability_types',
-            instantiate=lambda cap_cls, args, kwargs: cap_cls.from_spec(*args, **kwargs),
-        )
+        wrapped = load_capability_from_nested_spec(capability)
         return cls(wrapped=wrapped, prefix=prefix)
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:

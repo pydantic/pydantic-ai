@@ -4742,6 +4742,25 @@ async def test_prefix_tools_from_spec_bare_name():
     assert agent.model is not None
 
 
+async def test_prefix_tools_from_spec_with_custom_capability():
+    """PrefixTools.from_spec forwards custom_capability_types to nested capability."""
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [
+                {
+                    'PrefixTools': {
+                        'prefix': 'custom',
+                        'capability': 'CustomCapability',
+                    }
+                },
+            ],
+        },
+        custom_capability_types=[CustomCapability],
+    )
+    assert agent.model is not None
+
+
 async def test_prefix_tools_returns_none_when_no_toolset():
     """PrefixTools.get_toolset() returns None if the wrapped capability has no toolset."""
     cap = PrefixTools(wrapped=CustomCapability(), prefix='ns')

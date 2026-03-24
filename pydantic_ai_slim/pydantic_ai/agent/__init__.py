@@ -2559,6 +2559,8 @@ def _capabilities_from_spec(
 
     Shared by `Agent.from_spec()` and `Agent._resolve_spec()`.
     """
+    from pydantic_ai.agent import spec as _agent_spec
+
     registry = get_capability_registry(custom_capability_types)
 
     def _instantiate_cap(
@@ -2569,17 +2571,23 @@ def _capabilities_from_spec(
         args, kwargs = validate_from_spec_args(cap_cls, args, kwargs, template_context)
         return cap_cls.from_spec(*args, **kwargs)
 
-    capabilities: list[AbstractCapability[Any]] = []
-    for cap_spec in spec.capabilities:
-        capability = load_from_registry(
-            registry,
-            cap_spec,
-            label='capability',
-            custom_types_param='custom_capability_types',
-            instantiate=_instantiate_cap,
-        )
-        capabilities.append(capability)
-    return capabilities
+    # Set context so nested from_spec calls (e.g. PrefixTools) can reuse the registry
+    ctx = _agent_spec.CapabilitySpecContext(registry=registry, instantiate=_instantiate_cap)
+    token = _agent_spec.capability_spec_context.set(ctx)
+    try:
+        capabilities: list[AbstractCapability[Any]] = []
+        for cap_spec in spec.capabilities:
+            capability = load_from_registry(
+                registry,
+                cap_spec,
+                label='capability',
+                custom_types_param='custom_capability_types',
+                instantiate=_instantiate_cap,
+            )
+            capabilities.append(capability)
+        return capabilities
+    finally:
+        _agent_spec.capability_spec_context.reset(token)
 
 
 @dataclasses.dataclass(init=False)
