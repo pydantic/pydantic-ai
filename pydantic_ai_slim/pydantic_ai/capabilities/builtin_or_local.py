@@ -23,7 +23,7 @@ class BuiltinOrLocalTool(AbstractCapability[AgentDepsT]):
 
     Can be used directly:
 
-    ```python {lint="skip"}
+    ```python {test="skip" lint="skip"}
     from pydantic_ai.capabilities import BuiltinOrLocalTool
 
     cap = BuiltinOrLocalTool(builtin=WebSearchTool(), local=my_search_func)
