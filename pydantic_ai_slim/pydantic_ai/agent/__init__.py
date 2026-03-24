@@ -1316,9 +1316,20 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     _run_ready = asyncio.Event()
                     _run_done = asyncio.Event()
                     _run_error: BaseException | None = None
+                    _wrap_context: list[tuple[ContextVar[Any], Any]] | None = None
 
                     async def _do_run() -> AgentRunResult[Any]:
+                        nonlocal _wrap_context
                         await run_capability.before_run(run_ctx)
+                        # Capture context vars set by wrap_run middleware so
+                        # they can be propagated to the outer task where
+                        # agent_run.next() (and therefore node hooks) execute.
+                        _current_ctx = _contextvars.copy_context()
+                        _wrap_context = [
+                            (var, _current_ctx[var])
+                            for var in _current_ctx
+                            if var not in _outer_context or _outer_context[var] is not _current_ctx[var]
+                        ]
                         _run_ready.set()
                         await _run_done.wait()
                         if _run_error is not None:
@@ -1329,12 +1340,22 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         assert r is not None
                         return r
 
+                    import contextvars as _contextvars
+
+                    _outer_context = _contextvars.copy_context()
                     _wrap_task = asyncio.create_task(run_capability.wrap_run(run_ctx, handler=_do_run))
 
                     # Wait for handler to start or wrap_run to complete (short-circuit)
                     _ready_waiter = asyncio.create_task(_run_ready.wait())
                     await asyncio.wait({_ready_waiter, _wrap_task}, return_when=asyncio.FIRST_COMPLETED)
                     _ready_waiter.cancel()
+
+                    # Propagate context vars set by wrap_run to the outer task
+                    # so that agent_run.next() (and therefore node hooks) can
+                    # see them.
+                    _context_tokens: list[tuple[ContextVar[Any], _contextvars.Token[Any]]] = []
+                    for _cv_pair in _wrap_context or ():
+                        _context_tokens.append((_cv_pair[0], _cv_pair[0].set(_cv_pair[1])))
 
                     _short_circuited = _wrap_task.done() and not _run_ready.is_set()
                     if _short_circuited:
@@ -1395,6 +1416,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                                     await _wrap_task
                                 except (asyncio.CancelledError, BaseException):
                                     pass
+
+                        # Restore context vars that were propagated from
+                        # wrap_run, after all run-level hooks have completed.
+                        for _var, _token in _context_tokens:
+                            _var.reset(_token)
 
                     # If wrap_run didn't recover, give on_run_error a chance.
                     if _run_error is not None:
