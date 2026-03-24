@@ -293,20 +293,41 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             builtin_tools=builtin_tools,
             spec=spec,
         ) as agent_run:
-            # Drive via next() so wrap_node_run hooks fire for each node.
+            # Drive via next() so capability hooks fire for each node.
+            # When event_stream_handler is set, streaming must happen AFTER before_node_run
+            # (which may replace the node) and INSIDE wrap_node_run. We achieve this by
+            # passing a custom step function that streams before advancing the graph.
+            _stream_step: (
+                Callable[
+                    [_agent_graph.AgentNode[AgentDepsT, Any]],
+                    Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
+                ]
+                | None
+            ) = None
+            if event_stream_handler is not None:
+                _handler = event_stream_handler
+
+                async def _stream_and_advance(
+                    n: _agent_graph.AgentNode[AgentDepsT, Any],
+                ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+                    if self.is_model_request_node(n) or self.is_call_tools_node(n):
+                        async with n.stream(agent_run.ctx) as stream:
+                            run_ctx = _agent_graph.build_run_context(agent_run.ctx)
+                            wrapped = agent_run.ctx.deps.root_capability.wrap_run_event_stream(run_ctx, stream=stream)
+                            await _handler(run_ctx, wrapped)
+                    return await agent_run._advance_graph(n)  # pyright: ignore[reportPrivateUsage]
+
+                _stream_step = _stream_and_advance
+
             node = agent_run.next_node
             while not isinstance(node, End):
                 # Handle wrap_run short-circuit: result is already available, skip the graph.
                 if agent_run.result is not None:
                     break
-                if event_stream_handler is not None and (
-                    self.is_model_request_node(node) or self.is_call_tools_node(node)
-                ):
-                    async with node.stream(agent_run.ctx) as stream:
-                        run_ctx = _agent_graph.build_run_context(agent_run.ctx)
-                        wrapped = agent_run.ctx.deps.root_capability.wrap_run_event_stream(run_ctx, stream=stream)
-                        await event_stream_handler(run_ctx, wrapped)
-                node = await agent_run.next(node)  # pyright: ignore[reportArgumentType]
+                if _stream_step is not None:
+                    node = await agent_run._run_node_with_hooks(node, _stream_step)  # pyright: ignore[reportPrivateUsage]
+                else:
+                    node = await agent_run.next(node)  # pyright: ignore[reportArgumentType]
 
         assert agent_run.result is not None, 'The graph run did not finish properly'
         return agent_run.result
@@ -596,6 +617,12 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             node: _agent_graph.AgentNode[Any, Any] = first_node
             while not yielded:
                 graph_ctx = agent_run.ctx
+                # Fire before_node_run BEFORE streaming so that node replacement
+                # happens before any model call, avoiding double execution.
+                run_ctx = _agent_graph.build_run_context(graph_ctx)
+                cap = graph_ctx.deps.root_capability
+                node = await cap.before_node_run(run_ctx, node=node)
+
                 if self.is_model_request_node(node):
                     async with node.stream(graph_ctx) as stream:
                         final_result_event = None
@@ -610,10 +637,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                     final_result_event = event
                                     break
 
-                        run_ctx = _agent_graph.build_run_context(graph_ctx)
-                        wrapped = graph_ctx.deps.root_capability.wrap_run_event_stream(
-                            run_ctx, stream=stream_to_final(stream)
-                        )
+                        wrapped = cap.wrap_run_event_stream(run_ctx, stream=stream_to_final(stream))
                         if event_stream_handler is not None:
                             await event_stream_handler(run_ctx, wrapped)
                         else:
@@ -681,15 +705,19 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                             break
                 elif self.is_call_tools_node(node):
                     async with node.stream(agent_run.ctx) as stream:
-                        run_ctx = _agent_graph.build_run_context(agent_run.ctx)
-                        wrapped = agent_run.ctx.deps.root_capability.wrap_run_event_stream(run_ctx, stream=stream)
+                        wrapped = cap.wrap_run_event_stream(run_ctx, stream=stream)
                         if event_stream_handler is not None:
                             await event_stream_handler(run_ctx, wrapped)
                         else:
                             async for _ in wrapped:
                                 pass
 
-                next_node = await agent_run.next(node)
+                # Advance graph with remaining hooks (before_node_run already fired above).
+                try:
+                    next_node = await cap.wrap_node_run(run_ctx, node=node, handler=agent_run._advance_graph)  # pyright: ignore[reportPrivateUsage]
+                except Exception as e:
+                    next_node = await cap.on_node_run_error(run_ctx, node=node, error=e)
+                next_node = await cap.after_node_run(run_ctx, node=node, result=next_node)
                 if isinstance(next_node, End) and agent_run.result is not None:
                     # A final output could have been produced by the CallToolsNode rather than the ModelRequestNode,
                     # if a tool function raised CallDeferred or ApprovalRequired.
