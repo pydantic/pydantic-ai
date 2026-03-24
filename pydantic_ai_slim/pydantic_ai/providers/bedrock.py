@@ -51,7 +51,9 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
     - `NativeOutput` is used as the `output_type` of the Agent
     - `strict=True` is set on the `Tool`
 
-    The behavior of this transformer differs from the OpenAI one in that it sets `Tool.strict=False` by default when not explicitly set to True.
+    When ``strict=None`` (the default), simple schemas without incompatible constraints are
+    auto-promoted to ``strict=True``. Schemas with incompatible numeric or array constraints
+    remain ``strict=False``.
 
     When ``strict=True``:
     - Strips numeric constraints (``minimum``, ``maximum``, ``exclusiveMinimum``, ``exclusiveMaximum``, ``multipleOf``)
