@@ -1208,7 +1208,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             )
             merged = merge_model_settings(merged, resolved_agent)
 
-            # Capability settings (e.g. from ModelSettings capabilities), cached at init
+            # Capability settings (from custom capabilities that override get_model_settings), cached at init
             run_context.model_settings = merged
             cap_settings = cap_model_settings
             resolved_cap = cap_settings(run_context) if callable(cap_settings) else cap_settings
