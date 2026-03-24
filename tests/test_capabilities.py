@@ -5408,13 +5408,16 @@ class TestNodeStreamingWithHooks:
         assert model_call_count == 1, f'Model was called {model_call_count} times, expected 1'
 
     async def test_on_node_run_error_fires_in_run_stream(self):
-        """on_node_run_error in run_stream() fires when wrap_node_run raises."""
+        """on_node_run_error in run_stream() fires when wrap_node_run raises during graph advancement."""
         error_log: list[str] = []
 
         @dataclass
         class WrapErrorCap(AbstractCapability[Any]):
             async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
-                if type(node).__name__ == 'UserPromptNode':
+                # Raise on CallToolsNode — after UserPromptNode and ModelRequestNode pass through.
+                # ModelRequestNode with tool calls doesn't produce a FinalResultEvent in run_stream(),
+                # so it falls through to wrap_node_run; CallToolsNode is next and triggers the error.
+                if type(node).__name__ == 'CallToolsNode':
                     raise RuntimeError('wrap error')
                 return await handler(node)
 
@@ -5423,12 +5426,16 @@ class TestNodeStreamingWithHooks:
                 raise error
 
         agent = Agent(
-            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            FunctionModel(tool_calling_model, stream_function=tool_calling_stream_function),
             capabilities=[WrapErrorCap()],
         )
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'
 
         with pytest.raises(RuntimeError, match='wrap error'):
             async with agent.run_stream('hello') as _streamed:
                 pass
 
-        assert error_log == ['UserPromptNode:wrap error']
+        assert error_log == ['CallToolsNode:wrap error']
