@@ -4859,6 +4859,11 @@ class TestOverrideToolsetsById:
 
         agent = Agent(FunctionModel(tool_model), toolsets=[ts_a])
 
+        # Verify the original tool works without override
+        original_result = await agent.run('hello')
+        assert 'hello' in original_result.output
+
+        # Now override and verify the replacement is used
         ts_replacement = FunctionToolset(id='a')
 
         @ts_replacement.tool_plain(name='get_greeting')
@@ -4871,19 +4876,27 @@ class TestOverrideToolsetsById:
         assert 'bonjour' in result.output
 
     async def test_override_toolsets_dict_removes_by_id(self):
-        """override(toolsets={'id': None}) removes a specific toolset."""
+        """override(toolsets={'id': None}) removes a specific toolset's tools from the agent."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            # Report available tool names so we can verify the toolset was removed
+            tool_names = ', '.join(t.name for t in info.function_tools) if info.function_tools else 'none'
+            return make_text_response(f'tools: {tool_names}')
+
         ts = FunctionToolset(id='removeme')
 
         @ts.tool_plain
-        def some_tool() -> str:
+        def my_tool() -> str:
             return 'result'
-
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return make_text_response('no tools called')
 
         agent = Agent(FunctionModel(model_fn), toolsets=[ts])
 
+        # Without override, tool is visible
+        result_before = await agent.run('hello')
+        assert 'my_tool' in result_before.output
+
+        # With override removing the toolset, tool is gone
         with agent.override(toolsets={'removeme': None}):
             result = await agent.run('hello')
 
-        assert result.output == 'no tools called'
+        assert 'my_tool' not in result.output
