@@ -41,16 +41,11 @@ See [Custom capabilities in specs](agent-spec.md#custom-capabilities-in-specs) f
 
 ### Capabilities
 
-| Package | Description |
-|---|---|
-| [pydantic-ai-thinking-tools](https://github.com/vstorm-co/pydantic-ai-thinking-tools) | Thinking and reasoning tools |
-| [code_puppy](https://github.com/pydantic/code_puppy) | Code analysis and generation |
-
-See also [Third-party capabilities](capabilities.md#third-party-capabilities).
+[Capabilities](capabilities.md) are the recommended extension mechanism for packages that need to bundle tools with hooks, instructions, or model settings. See [Third-party capabilities](capabilities.md#third-party-capabilities) for community packages.
 
 ### Toolsets
 
-Many third-party extensions are available as [toolsets](toolsets.md), with some migrating to [capabilities](capabilities.md) to take advantage of hooks, instructions, and model settings:
+Many third-party extensions are available as [toolsets](toolsets.md), which can also be wrapped as [capabilities](capabilities.md) to take advantage of hooks, instructions, and model settings:
 
 - [MCP servers](mcp/overview.md) — access thousands of tools via the Model Context Protocol
 - [LangChain tools](third-party-tools.md) — use LangChain tools via [`tool_from_langchain`][pydantic_ai.ext.langchain.tool_from_langchain]

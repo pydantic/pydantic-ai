@@ -256,9 +256,8 @@ Timeouts are set via the decorator parameter (`@hooks.on.before_model_request(ti
 Wrap hooks let you surround an operation with setup/teardown logic. In the `hooks.on` namespace, wrap hooks drop the `wrap_` prefix — `hooks.on.model_request` corresponds to `wrap_model_request`:
 
 ```python {title="hooks_wrap.py"}
-from typing import Any
-
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import WrapModelRequestHandler
 from pydantic_ai.capabilities.hooks import Hooks
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import ModelRequestContext
@@ -269,7 +268,7 @@ wrap_log: list[str] = []
 
 @hooks.on.model_request
 async def log_request(
-    ctx: RunContext[None], *, request_context: ModelRequestContext, handler: Any
+    ctx: RunContext[None], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
 ) -> ModelResponse:
     wrap_log.append('before')
     response = await handler(request_context)

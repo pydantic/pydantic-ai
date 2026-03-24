@@ -50,27 +50,17 @@ Instructions and model settings are configured directly via the `instructions` a
 
 ### Hooks
 
-The [`Hooks`][pydantic_ai.capabilities.Hooks] capability provides decorator-based lifecycle hook registration — the easiest way to intercept model requests, tool calls, and other events without subclassing [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability]:
+The [`Hooks`][pydantic_ai.capabilities.Hooks] capability provides decorator-based lifecycle hook registration — the easiest way to intercept model requests, tool calls, and other events without subclassing [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability]. Create a `Hooks` instance, register hooks via `@hooks.on.*` decorators, and pass it to your agent:
 
-```python {title="hooks_quick.py"}
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities.hooks import Hooks
-from pydantic_ai.models import ModelRequestContext
-
+```python {test="skip" lint="skip"}
 hooks = Hooks()
 
-
 @hooks.on.before_model_request
-async def log_request(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
-    print(f'Sending {len(request_context.messages)} messages to the model')
-    #> Sending 1 messages to the model
+async def log_request(ctx, request_context):
+    print(f'Sending {len(request_context.messages)} messages')
     return request_context
 
-
-agent = Agent('test', capabilities=[hooks])
-result = agent.run_sync('Hello!')
-print(result.output)
-#> success (no tool calls)
+agent = Agent('openai:gpt-5.2', capabilities=[hooks])
 ```
 
 See the dedicated [Hooks](hooks.md) page for the full API: decorator and constructor registration, timeouts, tool filtering, wrap hooks, per-event hooks, and more.
@@ -817,17 +807,9 @@ print(f'Output: {result.output}')
 
 ## Third-party capabilities
 
-The Pydantic AI ecosystem includes community-built capability packages:
+Capabilities are the recommended way for third-party packages to extend Pydantic AI, since they can bundle tools with hooks, instructions, and model settings. See [Extensibility](extensibility.md) for the full ecosystem, including [third-party toolsets](toolsets.md#third-party-toolsets) that can also be wrapped as capabilities.
 
-| Package | Description |
-|---|---|
-| [pydantic-ai-thinking-tools](https://github.com/vstorm-co/pydantic-ai-thinking-tools) | Thinking and reasoning tools |
-| [code_puppy](https://github.com/pydantic/code_puppy) | Code analysis and generation |
-
-!!! note
-    Many third-party extensions are migrating from [toolsets](toolsets.md) to capabilities to take advantage of hooks, instructions, and model settings. See [Extensibility](extensibility.md) for the full ecosystem.
-
-To add your package to this list, open a pull request.
+To add your package to this page, open a pull request.
 
 ## Publishing capabilities
 

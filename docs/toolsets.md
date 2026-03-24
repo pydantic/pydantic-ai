@@ -675,7 +675,7 @@ Toolsets support lifecycle hooks for per-run isolation and per-step state manage
 
 ## Third-Party Toolsets
 
-Many third-party extensions are evolving to [capabilities](capabilities.md), which can bundle tools with hooks, instructions, and model settings. See [Extensibility](extensibility.md) for the full ecosystem.
+Third-party toolsets can also be wrapped as [capabilities](capabilities.md), which bundle tools with hooks, instructions, and model settings. See [Extensibility](extensibility.md) for the full ecosystem.
 
 ### MCP Servers
 
