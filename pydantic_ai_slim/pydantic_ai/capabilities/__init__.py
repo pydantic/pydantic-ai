@@ -69,9 +69,9 @@ __all__ = [
     'ModelSettings',
     'PrepareTools',
     'Toolset',
-    'WebFetch',
-    'WrapperCapability',
     'PrefixTools',
+    'WebFetch',
     'WebSearch',
+    'WrapperCapability',
     'CombinedCapability',
 ]

@@ -4274,3 +4274,152 @@ async def test_prefix_tools_tool_call_strips_prefix():
             ),
         ]
     )
+
+
+def test_wrapper_capability_get_serialization_name():
+    """WrapperCapability.get_serialization_name returns None (abstract base)."""
+    assert WrapperCapability.get_serialization_name() is None
+
+
+async def test_wrapper_capability_delegates_on_run_error():
+    """WrapperCapability delegates on_run_error to the wrapped capability."""
+
+    @dataclass
+    class RecoverCap(AbstractCapability[Any]):
+        async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            return AgentRunResult(output='recovered')
+
+    def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('model exploded')
+
+    agent = Agent(FunctionModel(failing_model), capabilities=[WrapperCapability(wrapped=RecoverCap())])
+    result = await agent.run('hello')
+    assert result.output == 'recovered'
+
+
+async def test_wrapper_capability_delegates_on_node_run_error():
+    """WrapperCapability delegates on_node_run_error to the wrapped capability."""
+    from pydantic_ai.result import FinalResult
+    from pydantic_graph import End
+
+    @dataclass
+    class NodeRecoverCap(AbstractCapability[Any]):
+        async def on_node_run_error(self, ctx: RunContext[Any], *, node: Any, error: Exception) -> Any:
+            return End(FinalResult(output='node recovered'))
+
+    def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('model exploded')
+
+    agent = Agent(FunctionModel(failing_model), capabilities=[WrapperCapability(wrapped=NodeRecoverCap())])
+    async with agent.iter('hello') as agent_run:
+        node = agent_run.next_node
+        while not isinstance(node, End):
+            node = await agent_run.next(node)
+    assert isinstance(node, End)
+    assert node.data.output == 'node recovered'
+
+
+async def test_wrapper_capability_delegates_wrap_run_event_stream():
+    """WrapperCapability delegates wrap_run_event_stream to the wrapped capability."""
+    observed_events: list[AgentStreamEvent] = []
+
+    @dataclass
+    class StreamObserverCap(AbstractCapability[Any]):
+        async def wrap_run_event_stream(
+            self,
+            ctx: RunContext[Any],
+            *,
+            stream: AsyncIterable[AgentStreamEvent],
+        ) -> AsyncIterable[AgentStreamEvent]:
+            async for event in stream:
+                observed_events.append(event)
+                yield event
+
+    agent = Agent(
+        FunctionModel(simple_model_function, stream_function=simple_stream_function),
+        capabilities=[WrapperCapability(wrapped=StreamObserverCap())],
+    )
+
+    async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in stream:
+            pass
+
+    await agent.run('hello', event_stream_handler=handler)
+    assert len(observed_events) > 0
+
+
+async def test_wrapper_capability_delegates_on_model_request_error():
+    """WrapperCapability delegates on_model_request_error to the wrapped capability."""
+
+    @dataclass
+    class ModelErrorRecoverCap(AbstractCapability[Any]):
+        async def on_model_request_error(
+            self, ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='recovered from model error')])
+
+    def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('model request failed')
+
+    agent = Agent(FunctionModel(failing_model), capabilities=[WrapperCapability(wrapped=ModelErrorRecoverCap())])
+    result = await agent.run('hello')
+    assert result.output == 'recovered from model error'
+
+
+async def test_wrapper_capability_delegates_on_tool_validate_error():
+    """WrapperCapability delegates on_tool_validate_error to the wrapped capability."""
+
+    @dataclass
+    class ValidateErrorCap(AbstractCapability[Any]):
+        async def on_tool_validate_error(
+            self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Any
+        ) -> dict[str, Any]:
+            # Recover by providing valid args
+            return {'x': 1}
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        for msg in messages:
+            for part in msg.parts:
+                if isinstance(part, ToolReturnPart):
+                    return ModelResponse(parts=[TextPart(content='done')])
+        if info.function_tools:
+            return ModelResponse(parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='invalid json!!')])
+        return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[WrapperCapability(wrapped=ValidateErrorCap())])
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        return f'result: {x}'
+
+    result = await agent.run('call tool')
+    assert result.output == 'done'
+
+
+async def test_wrapper_capability_delegates_on_tool_execute_error():
+    """WrapperCapability delegates on_tool_execute_error to the wrapped capability."""
+
+    @dataclass
+    class ExecuteErrorCap(AbstractCapability[Any]):
+        async def on_tool_execute_error(
+            self,
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: dict[str, Any],
+            error: Exception,
+        ) -> Any:
+            return 'recovered tool result'
+
+    agent = Agent(
+        FunctionModel(tool_calling_model),
+        capabilities=[WrapperCapability(wrapped=ExecuteErrorCap())],
+    )
+
+    @agent.tool_plain
+    def my_tool() -> str:
+        raise ValueError('tool failed')
+
+    result = await agent.run('call tool')
+    assert result.output == 'final response'

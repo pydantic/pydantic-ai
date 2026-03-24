@@ -47,7 +47,7 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     @property
     def has_wrap_node_run(self) -> bool:
-        return self.wrapped.has_wrap_node_run
+        return type(self).wrap_node_run is not WrapperCapability.wrap_node_run or self.wrapped.has_wrap_node_run
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         new_wrapped = await self.wrapped.for_run(ctx)

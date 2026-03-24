@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai.tools import AgentDepsT
-from pydantic_ai.toolsets import AgentToolset
+from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 from pydantic_ai.toolsets.prefixed import PrefixedToolset
 
 from .wrapper import WrapperCapability
@@ -18,14 +18,17 @@ class PrefixTools(WrapperCapability[AgentDepsT]):
 
     ```python
     from pydantic_ai import Agent
-    from pydantic_ai.capabilities import Instructions, PrefixTools
+    from pydantic_ai.capabilities import PrefixTools, Toolset
+    from pydantic_ai.toolsets import FunctionToolset
+
+    toolset = FunctionToolset()
 
     agent = Agent(
         'openai:gpt-5',
         capabilities=[
             PrefixTools(
-                wrapped=Instructions('You are helpful.'),
-                prefix='helper',
+                wrapped=Toolset(toolset),
+                prefix='ns',
             ),
         ],
     )
@@ -56,11 +59,17 @@ class PrefixTools(WrapperCapability[AgentDepsT]):
             cap_spec,
             label='capability',
             custom_types_param='custom_capability_types',
+            instantiate=lambda cap_cls, args, kwargs: cap_cls.from_spec(*args, **kwargs),
         )
         return cls(wrapped=wrapped, prefix=prefix)
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         toolset = super().get_toolset()
-        if toolset is None or callable(toolset):
-            return toolset
+        if toolset is None:
+            return None
+        if callable(toolset):
+            from pydantic_ai.toolsets._dynamic import DynamicToolset
+
+            toolset = DynamicToolset[AgentDepsT](toolset_func=toolset)
+        assert isinstance(toolset, AbstractToolset)
         return PrefixedToolset(toolset, prefix=self.prefix)
