@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json as _json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Union, cast
 
@@ -269,6 +270,58 @@ def get_capability_registry(
         label='capability',
         validate=_validate_capability,
     )
+
+
+class CapabilitySpecContext:
+    """Holds the registry and instantiation callback for the current spec-loading scope."""
+
+    __slots__ = ('registry', 'instantiate')
+
+    def __init__(
+        self,
+        registry: Mapping[str, type[AbstractCapability[Any]]],
+        instantiate: Callable[
+            [type[AbstractCapability[Any]], tuple[Any, ...], dict[str, Any]], AbstractCapability[Any]
+        ],
+    ) -> None:
+        self.registry = registry
+        self.instantiate = instantiate
+
+
+capability_spec_context: ContextVar[CapabilitySpecContext | None] = ContextVar('capability_spec_context', default=None)
+
+
+def load_capability_from_nested_spec(spec: dict[str, Any] | str) -> AbstractCapability[Any]:
+    """Load a capability from a nested spec, reusing the current spec-loading context.
+
+    When called inside `Agent.from_spec()` or `Agent._resolve_spec()`, this uses the same
+    registry (including custom capability types) and template context as the outer loading.
+    When called outside a spec-loading context, falls back to the default registry.
+
+    This is intended for use in `from_spec()` methods of wrapper capabilities like
+    [`PrefixTools`][pydantic_ai.capabilities.PrefixTools] that need to instantiate
+    a nested capability from a spec argument.
+    """
+    from pydantic_ai._spec import NamedSpec, load_from_registry
+
+    cap_spec = NamedSpec.model_validate(spec)
+    ctx = capability_spec_context.get()
+    if ctx is not None:
+        return load_from_registry(
+            ctx.registry,
+            cap_spec,
+            label='capability',
+            custom_types_param='custom_capability_types',
+            instantiate=ctx.instantiate,
+        )
+    else:
+        return load_from_registry(
+            get_capability_registry(),
+            cap_spec,
+            label='capability',
+            custom_types_param='custom_capability_types',
+            instantiate=lambda cap_cls, args, kwargs: cap_cls.from_spec(*args, **kwargs),
+        )
 
 
 def _build_capability_schema_types(registry: Mapping[str, type[Any]]) -> list[Any]:
