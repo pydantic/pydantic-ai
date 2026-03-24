@@ -1353,6 +1353,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     # the outer task so that agent_run.next() (and therefore
                     # node hooks) can see them.
                     _context_tokens: list[tuple[ContextVar[Any], contextvars.Token[Any]]] = []
+                    # Note: indexing instead of tuple unpacking because pyright
+                    # can't resolve types through nonlocal + Optional unpacking.
                     for _cv_pair in _wrap_context or ():
                         _context_tokens.append((_cv_pair[0], _cv_pair[0].set(_cv_pair[1])))
 

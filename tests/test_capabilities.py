@@ -4828,6 +4828,34 @@ class TestContextVarPropagation:
         for hook_name, value in reader.seen:
             assert value == 'from-before-run', f'{hook_name} did not see contextvar'
 
+    async def test_contextvar_visible_in_on_run_error(self):
+        """Context vars set in wrap_run are visible in on_run_error."""
+
+        @dataclass
+        class SetterWithRecovery(AbstractCapability):
+            seen_in_error: str | None = None
+
+            async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+                token = _test_cv.set('error-path')
+                try:
+                    return await handler()
+                finally:
+                    _test_cv.reset(token)
+
+            async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+                self.seen_in_error = _test_cv.get(None)
+                return AgentRunResult(output='recovered')
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        cap = SetterWithRecovery()
+        agent = Agent(FunctionModel(failing_model), capabilities=[cap])
+        result = await agent.run('hello')
+
+        assert result.output == 'recovered'
+        assert cap.seen_in_error == 'error-path'
+
 
 # --- WrapperCapability and PrefixTools tests ---
 
