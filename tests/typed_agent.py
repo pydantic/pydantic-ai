@@ -427,35 +427,31 @@ coro = VercelAIAdapter.dispatch_request(
 Agent('test', deps_type=MyDeps, capabilities=[Thinking()])
 Agent('test', capabilities=[Thinking(effort='high')])
 
-# WebSearch is BuiltinOrLocalTool[AgentDepsT]; with defaults, AgentDepsT is unconstrained
-Agent('test', deps_type=MyDeps, capabilities=[WebSearch()])
-Agent('test', capabilities=[WebSearch()])
+if not MYPY:
+    # pyright can infer AgentDepsT from capabilities; mypy cannot
+    # WebSearch is BuiltinOrLocalTool[AgentDepsT]; with defaults, AgentDepsT is unconstrained
+    Agent('test', deps_type=MyDeps, capabilities=[WebSearch()])
+    Agent('test', capabilities=[WebSearch()])
 
+    # WebSearch with a deps-typed local Tool constrains AgentDepsT
+    def my_search(ctx: RunContext[MyDeps], query: str) -> str:
+        return f'{ctx.deps} {query}'
 
-# WebSearch with a deps-typed local Tool constrains AgentDepsT
-def my_search(ctx: RunContext[MyDeps], query: str) -> str:
-    return f'{ctx.deps} {query}'
+    my_search_tool = Tool(my_search)
+    assert_type(my_search_tool, Tool[MyDeps])
+    Agent('test', deps_type=MyDeps, capabilities=[WebSearch(local=my_search_tool)])
+    Agent('test', deps_type=MyDeps, capabilities=[WebSearch(local=my_search)])
 
+    # PrepareTools with a deps-typed ToolsPrepareFunc constrains AgentDepsT
 
-my_search_tool = Tool(my_search)
-assert_type(my_search_tool, Tool[MyDeps])
-Agent('test', deps_type=MyDeps, capabilities=[WebSearch(local=my_search_tool)])
-Agent('test', deps_type=MyDeps, capabilities=[WebSearch(local=my_search)])
+    async def my_prepare(ctx: RunContext[MyDeps], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        return tool_defs
 
-# PrepareTools with a deps-typed ToolsPrepareFunc constrains AgentDepsT
+    Agent('test', deps_type=MyDeps, capabilities=[PrepareTools(my_prepare)])
 
+    # Wrong deps type on PrepareTools should be a type error
 
-async def my_prepare(ctx: RunContext[MyDeps], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-    return tool_defs
+    async def wrong_prepare(ctx: RunContext[int], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        return tool_defs
 
-
-Agent('test', deps_type=MyDeps, capabilities=[PrepareTools(my_prepare)])
-
-# Wrong deps type on PrepareTools should be a type error
-
-
-async def wrong_prepare(ctx: RunContext[int], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-    return tool_defs
-
-
-Agent('test', deps_type=MyDeps, capabilities=[PrepareTools(wrong_prepare)])  # pyright: ignore[reportArgumentType,reportCallIssue]
+    Agent('test', deps_type=MyDeps, capabilities=[PrepareTools(wrong_prepare)])  # pyright: ignore[reportArgumentType,reportCallIssue]
