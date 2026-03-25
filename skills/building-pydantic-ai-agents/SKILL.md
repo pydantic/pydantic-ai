@@ -18,7 +18,7 @@ This skill provides patterns, architecture guidance, and tested code examples fo
 
 ### Create a Basic Agent
 
-```python {title="hello_world.py"}
+```python
 from pydantic_ai import Agent
 
 agent = Agent(
@@ -35,7 +35,7 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 
 ### Add Tools to an Agent
 
-```python {title="dice_game.py"}
+```python
 import random
 
 from pydantic_ai import Agent, RunContext
@@ -70,7 +70,7 @@ print(dice_result.output)
 
 ### Structured Output with Pydantic Models
 
-```python {title="olympics.py" line_length="90"}
+```python {line_length="90"}
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
@@ -91,7 +91,7 @@ print(result.usage())
 
 ### Dependency Injection
 
-```python {title="instructions.py"}
+```python
 from datetime import date
 
 from pydantic_ai import Agent, RunContext
@@ -120,7 +120,7 @@ print(result.output)
 
 ### Testing with TestModel
 
-```python {title="test_model_usage.py" call_name="test_my_agent" noqa="I001"}
+```python {call_name="test_my_agent" noqa="I001"}
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
@@ -321,8 +321,10 @@ Use `history_processors` to trim or filter messages before each model request.
 ```python
 from pydantic_ai import Agent, ModelMessage
 
+
 async def keep_recent(messages: list[ModelMessage]) -> list[ModelMessage]:
     return messages[-10:] if len(messages) > 10 else messages
+
 
 agent = Agent('openai:gpt-5.2', history_processors=[keep_recent])
 ```
@@ -337,18 +339,22 @@ agent = Agent('openai:gpt-5.2', history_processors=[keep_recent])
 
 Use `event_stream_handler` with `run()` or `run_stream()` to receive events as they happen.
 
-```python
+```python {test="skip"}
 from collections.abc import AsyncIterable
+
 from pydantic_ai import Agent, AgentStreamEvent, FunctionToolCallEvent, RunContext
 
 agent = Agent('openai:gpt-5.2')
+
 
 async def stream_handler(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]):
     async for event in events:
         if isinstance(event, FunctionToolCallEvent):
             print(f'Calling {event.part.tool_name}...')
 
-result = await agent.run('Do the task', event_stream_handler=stream_handler)
+
+async def main():
+    await agent.run('Do the task', event_stream_handler=stream_handler)
 ```
 
 **Also use for:** Logging, analytics, debugging, progress bars in UIs.
@@ -363,9 +369,9 @@ Use `FallbackModel` to automatically switch providers on 4xx/5xx errors.
 
 ```python
 from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.models.anthropic import AnthropicModel
 
 fallback = FallbackModel(
     OpenAIChatModel('gpt-5.2'),
@@ -397,12 +403,16 @@ with agent.override(model=TestModel()):
 ```
 
 ```python
+from pydantic_ai import Agent, ModelResponse, TextPart
 from pydantic_ai.models.function import FunctionModel
-from pydantic_ai import ModelResponse, TextPart
+
+agent = Agent('openai:gpt-5.2')
+
 
 # FunctionModel: capture requests, return custom responses
 def custom_model(messages, info):
     return ModelResponse(parts=[TextPart(content='mocked response')])
+
 
 with agent.override(model=FunctionModel(custom_model)):
     result = agent.run_sync('test prompt')
