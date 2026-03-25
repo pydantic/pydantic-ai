@@ -11,8 +11,8 @@ metadata:
 
 # Pydantic AI Skill
 
-PydanticAI is a Python agent framework for building production-grade Generative AI applications.
-This skill provides patterns, architecture guidance, and tested code examples for building applications with PydanticAI.
+Pydantic AI is a Python agent framework for building production-grade Generative AI applications.
+This skill provides patterns, architecture guidance, and tested code examples for building applications with Pydantic AI.
 
 ## Quick-Start Patterns
 
@@ -307,7 +307,7 @@ See [Streaming All Events](https://ai.pydantic.dev/agents/#streaming-all-events)
 - `PromptedOutput` — prompt-based structured extraction
 - `TextOutput` — plain text responses
 
-## Key Constraints
+## Key Practices
 
 - **Python 3.10+** compatibility required
 - **Observability**: For production systems, enable Logfire with `logfire.instrument_httpx(capture_all=True)` to see exact HTTP requests sent to model providers — invaluable for debugging tool schema errors, unexpected model behavior, and understanding what's actually being sent to the API
