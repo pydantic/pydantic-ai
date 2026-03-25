@@ -593,6 +593,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 input=part.args_as_dict(),
                                 provider_executed=True,
                                 call_provider_metadata=call_provider_metadata,
+                                # approval.id is not used for matching (tool_call_id is the match key),
+                                # so we use tool_call_id for a stable, deterministic value in dump output.
                                 approval=ToolApprovalRequested(id=part.tool_call_id),
                             )
                         )
@@ -696,6 +698,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     input=part.args_as_dict(),
                     provider_executed=False,
                     call_provider_metadata=call_provider_metadata,
+                    # approval.id is not used for matching (tool_call_id is the match key),
+                    # so we use tool_call_id for a stable, deterministic value in dump output.
                     approval=ToolApprovalRequested(id=part.tool_call_id),
                 )
             )
