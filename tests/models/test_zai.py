@@ -104,10 +104,10 @@ async def test_zai_thinking_stream(allow_model_requests: None, zai_api_key: str)
                 ],
                 usage=RequestUsage(
                     input_tokens=13,
-                    cache_read_tokens=1,
-                    output_tokens=59,
+                    cache_read_tokens=2,
+                    output_tokens=123,
                     details={
-                        'reasoning_tokens': 49,
+                        'reasoning_tokens': 113,
                     },
                 ),
                 model_name='glm-4.7',
@@ -118,7 +118,7 @@ async def test_zai_thinking_stream(allow_model_requests: None, zai_api_key: str)
                     'timestamp': IsDatetime(),
                     'finish_reason': 'stop',
                 },
-                provider_response_id='20260323160404f91d4991ff6c48a3',
+                provider_response_id='20260325232441b45c991535c342af',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
