@@ -66,7 +66,7 @@ from ..messages import (
     is_multi_modal_content,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
-from ..profiles.openai import SAMPLING_PARAMS, OpenAIModelProfile, OpenAISystemPromptRole
+from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP, SAMPLING_PARAMS, OpenAIModelProfile, OpenAISystemPromptRole
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -275,7 +275,11 @@ def _check_azure_content_filter(e: APIStatusError, system: str, model_name: str)
     return None
 
 
-def _drop_sampling_params_for_reasoning(profile: OpenAIModelProfile, model_settings: OpenAIChatModelSettings) -> None:
+def _drop_sampling_params_for_reasoning(
+    profile: OpenAIModelProfile,
+    model_settings: OpenAIChatModelSettings,
+    model_request_parameters: ModelRequestParameters,
+) -> None:
     """Drop sampling params when reasoning is enabled on models that support it.
 
     Reasoning models (o-series, GPT-5, GPT-5.1+) don't support sampling parameters when
@@ -286,8 +290,13 @@ def _drop_sampling_params_for_reasoning(profile: OpenAIModelProfile, model_setti
         return
 
     reasoning_effort = model_settings.get('openai_reasoning_effort')
-    # On GPT-5.1+ models, 'none' is the default
-    if profile.openai_supports_reasoning_effort_none and reasoning_effort in (None, 'none'):
+    thinking = model_request_parameters.thinking
+    # Determine if reasoning is effectively active
+    reasoning_active = reasoning_effort not in (None, 'none') or (
+        reasoning_effort is None and thinking is not None and thinking is not False
+    )
+    # On GPT-5.1+ models, sampling params are allowed when reasoning is off
+    if profile.openai_supports_reasoning_effort_none and not reasoning_active:
         return
 
     if dropped := [k for k in SAMPLING_PARAMS if k in model_settings]:
@@ -610,6 +619,7 @@ class OpenAIChatModel(Model):
         if (
             any(isinstance(tool, WebSearchTool) for tool in model_request_parameters.builtin_tools)
             and not OpenAIModelProfile.from_profile(self.profile).openai_chat_supports_web_search
+            and not any(t.prefer_builtin == 'web_search' for t in model_request_parameters.function_tools)
         ):
             raise UserError(
                 f'WebSearchTool is not supported with `OpenAIChatModel` and model {self.model_name!r}. '
@@ -638,6 +648,19 @@ class OpenAIChatModel(Model):
 
         model_response = self._process_response(response)
         return model_response
+
+    def _get_reasoning_effort(
+        self,
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ReasoningEffort | Omit:
+        """Get reasoning effort, falling back to unified thinking when provider-specific setting is not set."""
+        if effort := model_settings.get('openai_reasoning_effort'):
+            return effort
+        thinking = model_request_parameters.thinking
+        if thinking is None:
+            return OMIT
+        return OPENAI_REASONING_EFFORT_MAP[thinking]  # type: ignore[return-value]
 
     @asynccontextmanager
     async def request_stream(
@@ -705,7 +728,7 @@ class OpenAIChatModel(Model):
         ):  # pragma: no branch
             response_format = {'type': 'json_object'}
 
-        _drop_sampling_params_for_reasoning(profile, model_settings)
+        _drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
 
         _drop_unsupported_params(profile, model_settings)
 
@@ -728,7 +751,7 @@ class OpenAIChatModel(Model):
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 response_format=response_format or OMIT,
                 seed=model_settings.get('seed', OMIT),
-                reasoning_effort=model_settings.get('openai_reasoning_effort', OMIT),
+                reasoning_effort=self._get_reasoning_effort(model_settings, model_request_parameters),
                 user=model_settings.get('openai_user', OMIT),
                 web_search_options=web_search_options or OMIT,
                 service_tier=model_settings.get('openai_service_tier', OMIT),
@@ -1676,7 +1699,7 @@ class OpenAIResponsesModel(Model):
             previous_response_id, messages = self._get_previous_response_id_and_new_messages(messages)
 
         instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
-        reasoning = self._get_reasoning(model_settings)
+        reasoning = self._get_reasoning(model_settings, model_request_parameters)
 
         text: responses.ResponseTextConfigParam | None = None
         if model_request_parameters.output_mode == 'native':
@@ -1702,7 +1725,7 @@ class OpenAIResponsesModel(Model):
             text = text or {}
             text['verbosity'] = verbosity
 
-        _drop_sampling_params_for_reasoning(profile, model_settings)
+        _drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
 
         _drop_unsupported_params(profile, model_settings)
 
@@ -1771,7 +1794,11 @@ class OpenAIResponsesModel(Model):
         except APIConnectionError as e:
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
-    def _get_reasoning(self, model_settings: OpenAIResponsesModelSettings) -> Reasoning | Omit:
+    def _get_reasoning(
+        self,
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> Reasoning | Omit:
         reasoning_effort = model_settings.get('openai_reasoning_effort', None)
         reasoning_summary = model_settings.get('openai_reasoning_summary', None)
         reasoning_generate_summary = model_settings.get('openai_reasoning_generate_summary', None)
@@ -1786,9 +1813,13 @@ class OpenAIResponsesModel(Model):
             )
             reasoning_summary = reasoning_generate_summary
 
+        # Fall back to unified thinking when openai_reasoning_effort is not set
+        if reasoning_effort is None and (thinking := model_request_parameters.thinking) is not None:
+            reasoning_effort = OPENAI_REASONING_EFFORT_MAP[thinking]
+
         reasoning: Reasoning = {}
         if reasoning_effort:
-            reasoning['effort'] = reasoning_effort
+            reasoning['effort'] = reasoning_effort  # type: ignore[typeddict-item]
         if reasoning_summary:
             reasoning['summary'] = reasoning_summary
         return reasoning or OMIT
