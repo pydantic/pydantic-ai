@@ -63,8 +63,7 @@ Different evaluators need different settings. A cheap heuristic could run on 100
 ```python
 from dataclasses import dataclass
 
-from pydantic_evals.evaluators import Evaluator, EvaluatorContext
-from pydantic_evals.evaluators.common import LLMJudge
+from pydantic_evals.evaluators import Evaluator, EvaluatorContext, LLMJudge
 from pydantic_evals.online import OnlineEvaluator
 
 
@@ -395,7 +394,7 @@ async def main():
 asyncio.run(main())
 ```
 
-The gate is checked **after** sampling, so it's only called for requests that were already sampled. Gates can be sync or async. If a gate raises an exception, the evaluator is skipped and the exception is logged.
+The gate is checked **after** sampling, so it's only called for requests that were already sampled. Gates can be sync or async. If a gate raises an exception, the evaluator is skipped and the exception is passed to the [`on_error`](#error-handling) callback if configured, or silently suppressed otherwise.
 
 ## Sync Function Support
 
@@ -739,6 +738,52 @@ config = OnlineEvalConfig(on_max_concurrency=warn_on_drop)
 
 !!! note
     If neither the per-evaluator nor the config-level `on_max_concurrency` is set, dropped evaluations are silently ignored.
+
+## Error Handling
+
+Background evaluation should never crash the user's function. Exceptions in gates, sinks, and `on_max_concurrency` callbacks are caught and either routed to an `on_error` handler or silently suppressed.
+
+Set `on_error` on [`OnlineEvalConfig`][pydantic_evals.online.OnlineEvalConfig] for a global default, or on [`OnlineEvaluator`][pydantic_evals.online.OnlineEvaluator] to override per-evaluator. The callback receives the exception, the [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext], the [`Evaluator`][pydantic_evals.evaluators.Evaluator] instance, and a location string (`'gate'`, `'sink'`, or `'on_max_concurrency'`):
+
+```python
+from dataclasses import dataclass
+
+from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+from pydantic_evals.online import OnErrorLocation, OnlineEvalConfig, OnlineEvaluator
+
+
+def log_errors(
+    exc: Exception,
+    ctx: EvaluatorContext,
+    evaluator: Evaluator,
+    location: OnErrorLocation,
+) -> None:
+    print(f'[{location}] {type(exc).__name__}: {exc}')
+
+
+@dataclass
+class MyCheck(Evaluator):
+    def evaluate(self, ctx: EvaluatorContext) -> bool:
+        return True
+
+
+# Global default — applies to all evaluators in this config
+config = OnlineEvalConfig(
+    default_sink=lambda results, failures, context: None,
+    on_error=log_errors,
+)
+
+# Per-evaluator override
+custom = OnlineEvaluator(evaluator=MyCheck(), on_error=log_errors)
+```
+
+Key behaviors:
+
+- **Evaluator exceptions** are handled separately by [`run_evaluator`][pydantic_evals.evaluators._run_evaluator.run_evaluator], which converts them to [`EvaluatorFailure`][pydantic_evals.evaluators.EvaluatorFailure] objects passed to sinks — they do not go through `on_error`.
+- **One evaluator's error doesn't affect siblings** — each evaluator runs in its own task with isolated error handling.
+- **One sink's error doesn't affect other sinks** — each sink submission is wrapped individually.
+- **If `on_error` itself raises**, the exception is silently suppressed to protect sibling evaluators.
+- **If no `on_error` is set**, exceptions are silently suppressed — this is the safe default.
 
 ## API Reference
 

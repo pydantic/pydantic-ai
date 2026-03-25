@@ -286,7 +286,7 @@ class OnlineEvaluator:
 
     evaluator: Evaluator
     sample_rate: float | Callable[[], float | bool] | None = None
-    sink: EvaluationSink | Sequence[EvaluationSink] | SinkCallback | None = None
+    sink: EvaluationSink | Sequence[EvaluationSink | SinkCallback] | SinkCallback | None = None
     max_concurrency: int = 10
     gate: Callable[[EvaluatorContext], bool | Awaitable[bool]] | None = None
     on_max_concurrency: Callable[[EvaluatorContext], Any] | None = None
@@ -432,8 +432,8 @@ async def _check_gate(gate: Callable[[EvaluatorContext], bool | Awaitable[bool]]
 
 
 def _resolve_sinks(
-    evaluator_sink: EvaluationSink | Sequence[EvaluationSink] | SinkCallback | None,
-    default_sink: EvaluationSink | Sequence[EvaluationSink] | SinkCallback | None,
+    evaluator_sink: EvaluationSink | Sequence[EvaluationSink | SinkCallback] | SinkCallback | None,
+    default_sink: EvaluationSink | Sequence[EvaluationSink | SinkCallback] | SinkCallback | None,
 ) -> list[EvaluationSink]:
     """Resolve the sinks to use for an evaluator, following the resolution order."""
     raw = evaluator_sink if evaluator_sink is not None else default_sink
@@ -443,7 +443,7 @@ def _resolve_sinks(
 
 
 def _normalize_sinks(
-    sink: EvaluationSink | Sequence[EvaluationSink] | SinkCallback,
+    sink: EvaluationSink | Sequence[EvaluationSink | SinkCallback] | SinkCallback,
 ) -> list[EvaluationSink]:
     """Normalize a sink specification to a list of EvaluationSink instances."""
     if isinstance(sink, EvaluationSink):
@@ -589,7 +589,7 @@ class OnlineEvalConfig:
     `DEFAULT_CONFIG` via the module-level `evaluate()` and `configure()` functions.
     """
 
-    default_sink: EvaluationSink | Sequence[EvaluationSink] | SinkCallback | None = None
+    default_sink: EvaluationSink | Sequence[EvaluationSink | SinkCallback] | SinkCallback | None = None
     """Default sink(s) for evaluators that don't specify their own."""
     default_sample_rate: float | Callable[[], float | bool] = 1.0
     """Default sample rate for evaluators that don't specify their own."""
@@ -829,7 +829,7 @@ def evaluate(*evaluators: Evaluator | OnlineEvaluator) -> Callable[[Callable[_P,
 
 def configure(
     *,
-    default_sink: EvaluationSink | Sequence[EvaluationSink] | SinkCallback | None | Unset = UNSET,
+    default_sink: EvaluationSink | Sequence[EvaluationSink | SinkCallback] | SinkCallback | None | Unset = UNSET,
     default_sample_rate: float | Callable[[], float | bool] | Unset = UNSET,
     enabled: bool | Unset = UNSET,
     metadata: dict[str, Any] | None | Unset = UNSET,

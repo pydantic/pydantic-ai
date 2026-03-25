@@ -1162,7 +1162,7 @@ async def test_mixed_list_sink():
 
     # Passing a list with a bare callable alongside a CallbackSink triggers
     # _normalize_single_sink for the callable element.
-    config = OnlineEvalConfig(default_sink=[collector1, CallbackSink(collector2)])  # type: ignore[arg-type]
+    config = OnlineEvalConfig(default_sink=[collector1, CallbackSink(collector2)])
 
     @config.evaluate(AlwaysTrue())
     async def my_func(x: int) -> int:
