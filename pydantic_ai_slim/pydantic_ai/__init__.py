@@ -108,6 +108,7 @@ from .messages import (
 )
 from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
 from .output import NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
+from .prices import update_prices
 from .profiles import (
     DEFAULT_PROFILE,
     InlineDefsJsonSchemaTransformer,
@@ -295,5 +296,7 @@ __all__ = (
     'AgentRun',
     'AgentRunResult',
     'AgentRunResultEvent',
+    # prices
+    'update_prices',
 )
 __version__ = _metadata_version('pydantic_ai_slim')
