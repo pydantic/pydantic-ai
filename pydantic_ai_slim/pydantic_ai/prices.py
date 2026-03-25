@@ -20,7 +20,7 @@ def update_prices() -> None:
 
     pydantic_ai.update_prices()
 
-    agent = pydantic_ai.Agent('openai:gpt-4o')
+    agent = pydantic_ai.Agent('openai:gpt-5.2')
     ```
     """
     try:

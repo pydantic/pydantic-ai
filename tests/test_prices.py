@@ -1,0 +1,37 @@
+from collections.abc import Callable
+from unittest.mock import MagicMock
+
+import pytest
+from pytest_mock import MockerFixture
+
+from pydantic_ai.prices import update_prices
+
+
+def test_update_prices_calls_start(mocker: MockerFixture):
+    """Verify update_prices() creates an UpdatePrices instance and starts it."""
+    mock_cls = mocker.patch('pydantic_ai.prices.UpdatePrices')
+    update_prices()
+    mock_cls.assert_called_once()
+    mock_cls.return_value.start.assert_called_once()
+
+
+def _start_raises(m: MagicMock) -> None:
+    m.return_value.start.side_effect = RuntimeError('already started')
+
+
+def _constructor_raises(m: MagicMock) -> None:
+    m.side_effect = Exception('import failed')
+
+
+@pytest.mark.parametrize(
+    'setup_mock',
+    [
+        pytest.param(_start_raises, id='start-raises'),
+        pytest.param(_constructor_raises, id='constructor-raises'),
+    ],
+)
+def test_update_prices_suppresses_errors(mocker: MockerFixture, setup_mock: Callable[[MagicMock], None]):
+    """Verify update_prices() silently catches exceptions from UpdatePrices."""
+    mock_cls = mocker.patch('pydantic_ai.prices.UpdatePrices')
+    setup_mock(mock_cls)
+    update_prices()
