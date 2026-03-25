@@ -151,6 +151,7 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'prefer_builtin': None,
         }
     )
 
@@ -186,6 +187,7 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'prefer_builtin': None,
         }
     )
 
@@ -229,6 +231,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'prefer_builtin': None,
         }
     )
 
@@ -272,6 +275,7 @@ def test_google_style_with_returns():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'prefer_builtin': None,
         }
     )
 
@@ -313,6 +317,7 @@ def test_sphinx_style_with_returns():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'prefer_builtin': None,
         }
     )
 
@@ -360,6 +365,7 @@ def test_numpy_style_with_returns():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'prefer_builtin': None,
         }
     )
 
@@ -395,6 +401,7 @@ def test_only_returns_type():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'prefer_builtin': None,
         }
     )
 
@@ -421,6 +428,7 @@ def test_docstring_unknown():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'prefer_builtin': None,
         }
     )
 
@@ -465,6 +473,7 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'prefer_builtin': None,
         }
     )
 
@@ -502,6 +511,7 @@ def test_takes_just_model():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'prefer_builtin': None,
         }
     )
 
@@ -548,6 +558,7 @@ def test_takes_model_and_int():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'prefer_builtin': None,
         }
     )
 
@@ -914,6 +925,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'prefer_builtin': None,
         }
     )
 
@@ -987,6 +999,7 @@ def test_json_schema_required_parameters():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
+                'prefer_builtin': None,
             },
             {
                 'description': None,
@@ -1003,6 +1016,7 @@ def test_json_schema_required_parameters():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
+                'prefer_builtin': None,
             },
         ]
     )
@@ -1092,6 +1106,7 @@ def test_schema_generator():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
+                'prefer_builtin': None,
             },
             {
                 'description': None,
@@ -1107,6 +1122,7 @@ def test_schema_generator():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
+                'prefer_builtin': None,
             },
         ]
     )
@@ -1145,6 +1161,7 @@ def test_tool_parameters_with_attribute_docstrings():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'prefer_builtin': None,
         }
     )
 
@@ -2200,11 +2217,11 @@ async def test_approval_required_toolset():
 
     toolset = FunctionToolset[None]()
 
-    @toolset.tool
+    @toolset.tool_plain
     def foo(x: int) -> int:
         return x * 2
 
-    @toolset.tool
+    @toolset.tool_plain
     def bar(x: int) -> int:
         return x * 3
 
@@ -2424,7 +2441,7 @@ def test_tool_metadata():
     # Test with FunctionToolset.tool decorator
     toolset = FunctionToolset(metadata={'foo': 'bar'})
 
-    @toolset.tool
+    @toolset.tool_plain
     def toolset_plain_tool(a: str) -> str:
         return a.upper()  # pragma: no cover
 

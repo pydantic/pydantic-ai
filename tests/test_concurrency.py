@@ -163,7 +163,12 @@ class TestConcurrencyLimiter:
             # Launch all tasks simultaneously
             for i in range(num_concurrent):
                 tg.start_soon(try_acquire, i)
-            await anyio.sleep(0.1)  # Give tasks time to hit the barrier and try to acquire
+
+            # Wait deterministically instead of sleep() to avoid flaky CI failures
+            # where a slow task acquires the freed slot instead of being rejected
+            with anyio.fail_after(2):
+                while limiter.waiting_count < 1 or len(results) < num_concurrent - 1:
+                    await anyio.sleep(0.01)
 
             # Release the holder
             hold.set()

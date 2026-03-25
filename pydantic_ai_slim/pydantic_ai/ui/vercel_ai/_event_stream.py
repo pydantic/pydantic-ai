@@ -10,6 +10,7 @@ from uuid import uuid4
 from pydantic_core import to_json
 
 from ...messages import (
+    BaseToolReturnPart,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     FilePart,
@@ -28,6 +29,7 @@ from ...output import OutputDataT
 from ...run import AgentRunResultEvent
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import UIEventStream
+from .._event_stream import describe_file
 from ._utils import dump_provider_metadata, iter_metadata_chunks, tool_return_output
 from .request_types import RequestData
 from .response_types import (
@@ -73,6 +75,13 @@ VERCEL_AI_DSP_HEADERS = {'x-vercel-ai-ui-message-stream': 'v1'}
 def _json_dumps(obj: Any) -> str:
     """Dump an object to JSON string."""
     return to_json(obj).decode('utf-8')
+
+
+def _tool_return_with_files(part: BaseToolReturnPart) -> Any:
+    """Wrap tool_return_output with file descriptions for multimodal tool returns."""
+    if file_descriptions := [describe_file(f) for f in part.files]:
+        return [part.model_response_object(), *file_descriptions]
+    return tool_return_output(part)
 
 
 @dataclass
@@ -254,7 +263,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         else:
             yield ToolOutputAvailableChunk(
                 tool_call_id=part.tool_call_id,
-                output=tool_return_output(part),
+                output=_tool_return_with_files(part),
                 provider_executed=True,
             )
 
@@ -273,7 +282,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         elif isinstance(part, ToolReturnPart) and part.outcome == 'failed':
             yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=part.model_response_str())
         else:
-            yield ToolOutputAvailableChunk(tool_call_id=tool_call_id, output=tool_return_output(part))
+            yield ToolOutputAvailableChunk(tool_call_id=tool_call_id, output=_tool_return_with_files(part))
 
         # ToolOutputAvailableChunk/ToolOutputErrorChunk.output may hold user parts
         # (e.g. text, images) that Vercel AI does not currently have chunk types for.

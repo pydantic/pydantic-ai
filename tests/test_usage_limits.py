@@ -408,6 +408,51 @@ def test_add_usages_with_none_detail_value():
     )
 
 
+def test_add_request_usages_does_not_mutate_original():
+    """Test that __add__ does not mutate the original object's details dict (issue #4605)."""
+    u1 = RequestUsage(input_tokens=10, details={'reasoning_tokens': 5})
+    u2 = RequestUsage(input_tokens=20, details={'reasoning_tokens': 3})
+
+    result = u1 + u2
+
+    # The result should have the summed details
+    assert result.details == {'reasoning_tokens': 8}
+    # The original must NOT be mutated
+    assert u1.details == {'reasoning_tokens': 5}
+    # They must be independent dict objects
+    assert u1.details is not result.details
+
+
+def test_add_run_usages_does_not_mutate_original():
+    """Test that __add__ does not mutate the original object's details dict (issue #4605)."""
+    r1 = RunUsage(requests=1, input_tokens=10, details={'reasoning_tokens': 50})
+    r2 = RunUsage(requests=1, input_tokens=20, details={'reasoning_tokens': 30})
+
+    result = r1 + r2
+
+    assert result.details == {'reasoning_tokens': 80}
+    assert r1.details == {'reasoning_tokens': 50}
+    assert r1.details is not result.details
+
+
+def test_add_usage_repeated_calls_stable():
+    """Test that repeated __add__ calls return consistent results (issue #4605).
+
+    This simulates AgentStream.usage() at result.py:169 being called multiple times:
+        return self._initial_run_ctx_usage + self._raw_stream_response.usage()
+    """
+    initial = RunUsage(requests=1, input_tokens=500, details={})
+    stream = RequestUsage(input_tokens=500, output_tokens=200, details={'reasoning_tokens': 150})
+
+    results = [initial + stream for _ in range(3)]
+
+    # All calls must return the same values
+    for r in results:
+        assert r.details == {'reasoning_tokens': 150}
+    # The initial usage must remain unchanged
+    assert initial.details == {}
+
+
 async def test_tool_call_limit() -> None:
     test_agent = Agent(TestModel())
 
