@@ -134,9 +134,7 @@ class InstrumentationSettings:
                     https://opentelemetry.io/docs/specs/semconv/gen-ai/non-normative/examples-llm-calls/#multimodal-inputs-example
                 Version 5 is the same as version 4, but CallDeferred and ApprovalRequired exceptions
                     no longer record an exception event or set the span status to ERROR — the span is left
-                    as UNSET, since deferrals are control flow, not errors. Deferral metadata
-                    (`pydantic_ai.tool.deferral.name` and `pydantic_ai.tool.deferral.metadata`)
-                    is recorded as span attributes. Note: deferral attributes are recorded regardless of version.
+                    as UNSET, since deferrals are control flow, not errors.
             event_mode: The mode for emitting events in version 1.
                 If `'attributes'`, events are attached to the span as attributes.
                 If `'logs'`, events are emitted as OpenTelemetry log-based events.

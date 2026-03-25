@@ -424,7 +424,7 @@ class ToolManager(Generic[AgentDepsT]):
                     )
             except (CallDeferred, ApprovalRequired) as exc:
                 span.set_attribute(instrumentation_names.tool_deferral_name_attr, type(exc).__name__)
-                if include_content and exc.metadata is not None:
+                if include_content and span.is_recording() and exc.metadata is not None:
                     try:
                         metadata_str = json.dumps(exc.metadata)
                     except (TypeError, ValueError):
