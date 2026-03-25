@@ -15,7 +15,7 @@ def update_prices() -> None:
     the data bundled with the installed `genai-prices` package.
 
     Example:
-    ```python
+    ```python {test="skip"}
     import pydantic_ai
 
     pydantic_ai.update_prices()
@@ -25,5 +25,5 @@ def update_prices() -> None:
     """
     try:
         UpdatePrices().start()
-    except Exception:
+    except RuntimeError:
         pass
