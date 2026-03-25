@@ -790,6 +790,16 @@ class TestCerebrasThinkingTranslation:
         extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
         assert extra_body.get('disable_reasoning') is True
 
+    def test_thinking_true_sets_disable_reasoning_false(self):
+        pytest.importorskip('openai')
+        from pydantic_ai.models.cerebras import CerebrasModelSettings, _cerebras_settings_to_openai_settings
+
+        settings = CerebrasModelSettings()
+        params = ModelRequestParameters(thinking=True)
+        result = _cerebras_settings_to_openai_settings(settings, params)
+        extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
+        assert extra_body.get('disable_reasoning') is False
+
     def test_explicit_openai_reasoning_effort_passthrough(self):
         """Explicit openai_reasoning_effort on Cerebras is passed through."""
         pytest.importorskip('openai')
