@@ -12,7 +12,8 @@ from .abstract import (
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
 )
-from .builtin_or_local import BuiltinOrLocalTool, BuiltinTool
+from .builtin_or_local import BuiltinOrLocalTool
+from .builtin_tool import BuiltinTool
 from .combined import CombinedCapability
 from .history_processor import HistoryProcessor
 from .hooks import Hooks, HookTimeoutError

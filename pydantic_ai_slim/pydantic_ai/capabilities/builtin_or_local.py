@@ -4,54 +4,14 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
-import pydantic
-
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, RunContext, Tool, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets.function import FunctionToolset
+from pydantic_ai.toolsets.prepared import PreparedToolset
 
 from .abstract import AbstractCapability
-
-_BUILTIN_TOOL_ADAPTER = pydantic.TypeAdapter(AbstractBuiltinTool)
-
-
-@dataclass
-class BuiltinTool(AbstractCapability[AgentDepsT]):
-    """A capability that registers a builtin tool with the agent.
-
-    Wraps a single [`AgentBuiltinTool`][pydantic_ai.tools.AgentBuiltinTool] — either a static
-    [`AbstractBuiltinTool`][pydantic_ai.builtin_tools.AbstractBuiltinTool] instance or a callable
-    that dynamically produces one.
-
-    When `builtin_tools` is passed to [`Agent.__init__`][pydantic_ai.Agent.__init__], each item is
-    automatically wrapped in a `BuiltinTool` capability.
-    """
-
-    tool: AgentBuiltinTool[AgentDepsT]
-
-    def get_builtin_tools(self) -> Sequence[AgentBuiltinTool[AgentDepsT]]:
-        return [self.tool]
-
-    @classmethod
-    def from_spec(cls, tool: AbstractBuiltinTool | None = None, **kwargs: Any) -> BuiltinTool[Any]:
-        """Create from spec.
-
-        Supports two YAML forms:
-
-        - Flat: `{BuiltinTool: {kind: web_search, search_context_size: high}}`
-        - Explicit: `{BuiltinTool: {tool: {kind: web_search}}}`
-        """
-        if tool is not None:
-            validated = _BUILTIN_TOOL_ADAPTER.validate_python(tool)
-        elif kwargs:
-            validated = _BUILTIN_TOOL_ADAPTER.validate_python(kwargs)
-        else:
-            raise TypeError(
-                '`BuiltinTool.from_spec()` requires either a `tool` argument or keyword arguments'
-                ' specifying the builtin tool type (e.g. `kind="web_search"`)'
-            )
-        return cls(tool=validated)
 
 
 @dataclass
@@ -61,8 +21,20 @@ class BuiltinOrLocalTool(AbstractCapability[AgentDepsT]):
     When the model supports the builtin natively, the local fallback is removed.
     When the model doesn't support the builtin, it is removed and the local tool stays.
 
-    Can be used directly by providing `builtin` and `local` arguments, or subclassed
-    to set defaults via `_default_builtin`, `_default_local`, and `_requires_builtin`.
+    Can be used directly:
+
+    ```python {test="skip" lint="skip"}
+    from pydantic_ai.capabilities import BuiltinOrLocalTool
+
+    cap = BuiltinOrLocalTool(builtin=WebSearchTool(), local=my_search_func)
+    ```
+
+    Or subclassed to set defaults by overriding `_default_builtin`, `_default_local`,
+    and `_requires_builtin`.
+    The built-in [`WebSearch`][pydantic_ai.capabilities.WebSearch],
+    [`WebFetch`][pydantic_ai.capabilities.WebFetch], and
+    [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] capabilities
+    are all subclasses.
     """
 
     builtin: AgentBuiltinTool[AgentDepsT] | bool = True
@@ -158,9 +130,6 @@ class BuiltinOrLocalTool(AbstractCapability[AgentDepsT]):
         local = self.local
         if local is None or local is False or self._requires_builtin():
             return None
-
-        from pydantic_ai.toolsets.function import FunctionToolset
-        from pydantic_ai.toolsets.prepared import PreparedToolset
 
         # local is Tool | AbstractToolset after __post_init__ resolution
         toolset: AbstractToolset[AgentDepsT] = local if isinstance(local, AbstractToolset) else FunctionToolset([local])  # pyright: ignore[reportUnknownVariableType]

@@ -51,7 +51,7 @@ from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP
 from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.tools import ToolDefinition
 
 if TYPE_CHECKING:
@@ -592,8 +592,6 @@ class BedrockConverseModel(Model):
         elif variant == 'qwen' and 'reasoning_config' not in existing:
             if thinking is not False:
                 # Qwen only supports low/high; map others to closest
-                from ..settings import ThinkingLevel
-
                 level_map: dict[ThinkingLevel, str] = {
                     True: 'high',
                     'minimal': 'low',

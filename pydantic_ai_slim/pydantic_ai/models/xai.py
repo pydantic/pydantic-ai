@@ -53,7 +53,7 @@ from ..models import (
 from ..profiles import ModelProfileSpec
 from ..profiles.grok import GrokModelProfile
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ThinkingLevel
 from ..usage import RequestUsage
 
 try:
@@ -560,8 +560,6 @@ class XaiModel(Model):
             thinking = model_request_parameters.thinking
             if thinking is not False:
                 # xAI only supports 'low' and 'high'; map others to closest
-                from ..settings import ThinkingLevel
-
                 xai_map: dict[ThinkingLevel, str] = {
                     True: 'high',
                     'minimal': 'low',
