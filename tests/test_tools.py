@@ -812,6 +812,24 @@ def test_dynamic_plain_tool_decorator():
     assert r.output == snapshot('success (no tool calls)')
 
 
+def test_sync_dynamic_tool_plain():
+    agent = Agent('test', deps_type=int)
+
+    def prepare_tool_def(ctx: RunContext[int], tool_def: ToolDefinition) -> ToolDefinition | None:
+        if ctx.deps != 42:
+            return tool_def
+
+    @agent.tool_plain(prepare=prepare_tool_def)
+    def foobar(x: int, y: str) -> str:
+        return f'{x} {y}'
+
+    r = agent.run_sync('', deps=1)
+    assert r.output == snapshot('{"foobar":"0 a"}')
+
+    r = agent.run_sync('', deps=42)
+    assert r.output == snapshot('success (no tool calls)')
+
+
 def test_dynamic_tool_decorator():
     agent = Agent('test', deps_type=int)
 
