@@ -41,7 +41,7 @@ import random
 from pydantic_ai import Agent, RunContext
 
 agent = Agent(
-    'google-gla:gemini-3-flash',
+    'google-gla:gemini-3-flash-preview',
     deps_type=str,
     instructions=(
         "You're a dice game, you should roll the die and see if the number "
@@ -81,7 +81,7 @@ class CityLocation(BaseModel):
     country: str
 
 
-agent = Agent('google-gla:gemini-3-flash', output_type=CityLocation)
+agent = Agent('google-gla:gemini-3-flash-preview', output_type=CityLocation)
 result = agent.run_sync('Where were the olympics held in 2012?')
 print(result.output)
 #> city='London' country='United Kingdom'
@@ -242,12 +242,12 @@ Need deterministic, fast tests?
 
 ### Output Mode Comparison
 
-| Mode | Provider Support | Streaming | Use When |
-|------|-----------------|-----------|----------|
-| `ToolOutput` | All providers | Yes | Default choice. Works with all providers, supports streaming. Use when you need structured data and don't have provider-specific requirements. |
-| `NativeOutput` | OpenAI, Anthropic, Google | Limited | Provider natively forces JSON schema compliance. Use when you want guaranteed schema conformance and don't need tools simultaneously (Gemini limitation). |
-| `PromptedOutput` | All providers | Yes | Provider doesn't support tools or JSON mode. Use as fallback for basic providers or when debugging. |
-| `TextOutput` | All providers | Yes | Custom parsing required. Use when LLM returns non-JSON structured text (e.g., markdown, YAML, or domain-specific formats). |
+| Scenario | Mode |
+|----------|------|
+| Need structured data and want maximum provider compatibility | `ToolOutput` (default) — works with all providers, supports streaming |
+| Want the provider to natively enforce JSON schema compliance | `NativeOutput` — OpenAI, Anthropic, Google only; limited streaming |
+| Provider doesn't support tools or JSON mode | `PromptedOutput` — works everywhere as a fallback |
+| LLM returns non-JSON structured text (markdown, YAML, domain-specific) | `TextOutput` — custom parsing function |
 
 ### Model Provider Prefixes
 
@@ -259,33 +259,34 @@ Need deterministic, fast tests?
 | Google (Vertex) | `google-vertex:` | `google-vertex:gemini-3-pro-preview` |
 | Groq | `groq:` | `groq:llama-3.3-70b-versatile` |
 | Mistral | `mistral:` | `mistral:mistral-large-latest` |
-| Cohere | `cohere:` | `cohere:command-r-plus` |
-| AWS Bedrock | `bedrock:` | `bedrock:anthropic.claude-sonnet-4-5-v2-0` |
+| Cohere | `cohere:` | `cohere:command-r-plus-08-2024` |
+| AWS Bedrock | `bedrock:` | `bedrock:anthropic.claude-sonnet-4-5-20250929-v1:0` |
 | Azure OpenAI | `azure:` | `azure:gpt-5.2` |
 | OpenRouter | `openrouter:` | `openrouter:anthropic/claude-sonnet-4-5` |
 | Ollama (local) | `ollama:` | `ollama:llama3.2` |
-| Custom Provider | N/A | Use `CustomModel(...)` class |
+| Custom Provider | N/A | Subclass `Model` or use `OpenAIChatModel` with custom base URL |
 
-**Custom Providers:** For providers not listed above, implement `CustomModel`. See [Models](https://ai.pydantic.dev/models/).
+**Custom Providers:** For providers not listed above, subclass `Model` or use `OpenAIChatModel` with a custom `base_url` for OpenAI-compatible APIs. See [Models](https://ai.pydantic.dev/models/).
 
 ### Tool Decorator Comparison
 
-| Decorator | RunContext | Use Case |
-|-----------|------------|----------|
-| `@agent.tool` | Required first param | Access deps, usage, messages, retry info |
-| `@agent.tool_plain` | Not available | Pure functions, no context needed |
-| `Tool(fn)` | Auto-detected | Define tools outside agent, pass to constructor |
+| Scenario | Decorator |
+|----------|-----------|
+| Tool needs access to deps, usage stats, messages, or retry info | `@agent.tool` — `RunContext` as required first param |
+| Pure function, no agent context needed | `@agent.tool_plain` |
+| Tools defined in a separate module or shared across agents | `Tool(fn)` — pass to agent constructor via `tools=[...]` |
 
 ### When to Use Each Agent Method
 
-| Method | Async | Streaming | Use When |
-|--------|-------|-----------|----------|
-| `agent.run()` | Yes | No | Standard async. Use for autonomous agents, batch processing, background tasks. Add `event_stream_handler` for real-time UI updates while still running to completion. |
-| `agent.run_sync()` | No | No | Sync code required. Use in scripts, CLI tools, Jupyter notebooks, or when async isn't available. |
-| `agent.run_stream()` | Yes | Yes | Streaming final output. Use for chatbots where you want text to appear word-by-word. May stop early when text arrives before tool calls complete. |
-| `agent.iter()` | Yes | No | Step-by-step control. Use when you need to inspect/modify state between agent nodes, implement human approval for tool calls, or debug agent behavior. |
+| Scenario | Method |
+|----------|--------|
+| Building a chatbot or assistant that shows tool calls, progress, and output in real-time | `agent.run(event_stream_handler=...)` — streams all events while running to completion |
+| Running an autonomous agent, batch job, or background task | `agent.run()` |
+| Writing a CLI tool, script, or Jupyter notebook (no async) | `agent.run_sync()` |
+| Streaming final text word-by-word to a UI | `agent.run_stream()` |
+| Inspecting or modifying state between agent steps, human-in-the-loop approval | `agent.iter()` |
 
-**Recommendation for Interactive Agents:** Use `agent.run(event_stream_handler=...)` for chatbots and assistants. This streams all events (tool calls, results, output) in real-time while running the agent to completion. See [Streaming All Events](https://ai.pydantic.dev/agents/#streaming-all-events).
+See [Streaming All Events](https://ai.pydantic.dev/agents/#streaming-all-events) for `event_stream_handler` details.
 
 ## Architecture Overview
 
