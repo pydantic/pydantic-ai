@@ -22,7 +22,7 @@ This skill provides patterns, architecture guidance, and tested code examples fo
 from pydantic_ai import Agent
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-5',
+    'anthropic:claude-sonnet-4-6',
     instructions='Be concise, reply with one sentence.',
 )
 
@@ -254,15 +254,15 @@ Need deterministic, fast tests?
 | Provider | Prefix | Example |
 |----------|--------|---------|
 | OpenAI | `openai:` | `openai:gpt-5.2` |
-| Anthropic | `anthropic:` | `anthropic:claude-sonnet-4-5` |
+| Anthropic | `anthropic:` | `anthropic:claude-sonnet-4-6` |
 | Google (AI Studio) | `google-gla:` | `google-gla:gemini-3-pro-preview` |
 | Google (Vertex) | `google-vertex:` | `google-vertex:gemini-3-pro-preview` |
 | Groq | `groq:` | `groq:llama-3.3-70b-versatile` |
 | Mistral | `mistral:` | `mistral:mistral-large-latest` |
 | Cohere | `cohere:` | `cohere:command-r-plus-08-2024` |
-| AWS Bedrock | `bedrock:` | `bedrock:anthropic.claude-sonnet-4-5-20250929-v1:0` |
+| AWS Bedrock | `bedrock:` | `bedrock:anthropic.claude-sonnet-4-6` |
 | Azure OpenAI | `azure:` | `azure:gpt-5.2` |
-| OpenRouter | `openrouter:` | `openrouter:anthropic/claude-sonnet-4-5` |
+| OpenRouter | `openrouter:` | `openrouter:anthropic/claude-sonnet-4-6` |
 | Ollama (local) | `ollama:` | `ollama:llama3.2` |
 | Custom Provider | N/A | Subclass `Model` or use `OpenAIChatModel` with custom base URL |
 
@@ -298,7 +298,7 @@ See [Streaming All Events](https://ai.pydantic.dev/agents/#streaming-all-events)
 - `Agent[AgentDepsT, OutputDataT]` — dependency type + output type
 - `RunContext[AgentDepsT]` — available in tools and system prompts
 
-**Model string format:** `"provider:model-name"` (e.g., `"openai:gpt-5.2"`, `"anthropic:claude-sonnet-4-5"`, `"google-gla:gemini-3-pro-preview"`)
+**Model string format:** `"provider:model-name"` (e.g., `"openai:gpt-5.2"`, `"anthropic:claude-sonnet-4-6"`, `"google-gla:gemini-3-pro-preview"`)
 
 **Output modes:**
 
@@ -376,7 +376,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 
 fallback = FallbackModel(
     OpenAIChatModel('gpt-5.2'),
-    AnthropicModel('claude-sonnet-4-5'),
+    AnthropicModel('claude-sonnet-4-6'),
 )
 agent = Agent(fallback)
 ```

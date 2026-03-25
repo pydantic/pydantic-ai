@@ -47,4 +47,4 @@ See the [SKILL.md](https://github.com/pydantic/pydantic-ai/blob/main/skills/buil
 
 ## Best Practices
 
-For guidance on authoring your own skills, see the [Agent Skills Best Practices](https://agentskills.io/best-practices).
+For guidance on authoring your own skills, see the [Agent Skills specification](https://agentskills.io/specification).
