@@ -125,6 +125,7 @@ jobs:
 
       - name: Classify PR with Claude Code
         if: steps.check-label.outputs.has_label == 'false'
+        id: classify
         uses: anthropics/claude-code-action@v1
         env:
           ANTHROPIC_BASE_URL: ${{ secrets.CLAUDE_CODE_BASE_URL }}
@@ -134,6 +135,7 @@ jobs:
           allowed_non_write_users: "*"
           claude_args: |
             --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*)"
+            --json-schema '{"type":"object","properties":{"category":{"type":"string"}},"required":["category"]}'
           prompt: |
             Classify PR #${{ github.event.pull_request.number }} in ${{ github.repository }}.
 
@@ -150,18 +152,13 @@ jobs:
             When both code and docs change, prefer `feature` or `bug` over `docs`.
             If pyproject.toml files changed, run `gh pr diff ${{ github.event.pull_request.number }} --repo ${{ github.repository }}` to see the full diff and distinguish production deps (`dependency`) from dev-only deps in `[dependency-groups]` (`chore`).
 
-            After determining the category, write ONLY the category name (one of: bug, feature, docs, chore, dependency) to /tmp/category.txt with no other text or whitespace.
+            Return your classification as JSON with a "category" field set to one of: bug, feature, docs, chore, dependency.
 
-      - name: Extract category
+      - name: Extract and validate category
         if: steps.check-label.outputs.has_label == 'false'
         id: extract
         run: |
-          if [ ! -f /tmp/category.txt ]; then
-            echo "::error::Claude did not write category to /tmp/category.txt"
-            exit 1
-          fi
-          CATEGORY=$(cat /tmp/category.txt | tr -d '[:space:]')
-          # Validate before even outputting — defense in depth
+          CATEGORY=$(echo "$STRUCTURED_OUTPUT" | jq -r .category | tr -d '[:space:]')
           ALLOWED="bug feature docs chore dependency"
           if ! echo "$ALLOWED" | grep -Fqw "$CATEGORY"; then
             echo "::error::Invalid category '$CATEGORY' from Claude — must be one of: $ALLOWED"
@@ -169,6 +166,8 @@ jobs:
           fi
           echo "category=$CATEGORY" >> $GITHUB_OUTPUT
           echo "Classified as: $CATEGORY"
+        env:
+          STRUCTURED_OUTPUT: ${{ steps.classify.outputs.structured_output }}
 
   category-apply:
     name: Category Apply
