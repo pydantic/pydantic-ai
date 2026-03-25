@@ -249,6 +249,29 @@ class TestAnthropicThinkingTranslation:
         result = model._build_output_config(params, settings)
         assert result is None
 
+    def test_adaptive_model_with_effort_level(self):
+        """thinking='high' on adaptive+effort model sets both thinking type AND output_config effort."""
+        from pydantic_ai.models.anthropic import AnthropicModel
+        from pydantic_ai.profiles.anthropic import AnthropicModelProfile
+
+        model = AnthropicModel.__new__(AnthropicModel)
+        model._profile = AnthropicModelProfile(
+            supports_thinking=True,
+            anthropic_supports_adaptive_thinking=True,
+            anthropic_supports_effort=True,
+        )
+
+        params = ModelRequestParameters(thinking='high')
+        settings: ModelSettings = {}
+
+        # thinking param: adaptive mode (not budget-based)
+        thinking_param = AnthropicModel._get_thinking_param(model, settings, params)
+        assert thinking_param == snapshot({'type': 'adaptive'})
+
+        # output_config: effort is set separately
+        output_config = model._build_output_config(params, settings)
+        assert output_config == snapshot({'effort': 'high'})
+
 
 class TestOpenAIChatThinkingTranslation:
     """Test OpenAI Chat model _get_reasoning_effort translation."""
