@@ -76,6 +76,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
     _thinking_text: bool = False
     _builtin_tool_call_ids: dict[str, str] = field(default_factory=dict[str, str])
+    _ended_tool_call_ids: set[str] = field(default_factory=set[str])
     _error: bool = False
 
     @property
@@ -203,16 +204,21 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         assert tool_call_id, '`ToolCallPartDelta.tool_call_id` must be set'
         if tool_call_id in self._builtin_tool_call_ids:
             tool_call_id = self._builtin_tool_call_ids[tool_call_id]
+        if tool_call_id in self._ended_tool_call_ids:
+            return
         yield ToolCallArgsEvent(
             tool_call_id=tool_call_id,
             delta=delta.args_delta if isinstance(delta.args_delta, str) else json.dumps(delta.args_delta),
         )
 
     async def handle_tool_call_end(self, part: ToolCallPart) -> AsyncIterator[BaseEvent]:
+        self._ended_tool_call_ids.add(part.tool_call_id)
         yield ToolCallEndEvent(tool_call_id=part.tool_call_id)
 
     async def handle_builtin_tool_call_end(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
-        yield ToolCallEndEvent(tool_call_id=self._builtin_tool_call_ids[part.tool_call_id])
+        ag_ui_id = self._builtin_tool_call_ids[part.tool_call_id]
+        self._ended_tool_call_ids.add(ag_ui_id)
+        yield ToolCallEndEvent(tool_call_id=ag_ui_id)
 
     async def handle_builtin_tool_return(self, part: BuiltinToolReturnPart) -> AsyncIterator[BaseEvent]:
         tool_call_id = self._builtin_tool_call_ids[part.tool_call_id]

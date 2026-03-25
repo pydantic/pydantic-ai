@@ -2624,3 +2624,131 @@ async def test_tool_return_with_files():
             },
         ]
     )
+
+
+async def test_builtin_tool_call_stray_delta_after_end() -> None:
+    """Stray TOOL_CALL_ARGS deltas arriving after TOOL_CALL_END should be suppressed.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4733:
+    When using builtin tools (e.g. web search) with streaming, a ToolCallPartDelta
+    can arrive after BuiltinToolCallPart end has already been emitted.  This violates
+    the AG-UI protocol which requires no TOOL_CALL_ARGS after TOOL_CALL_END for the
+    same tool_call_id.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[BuiltinToolCallsReturns | DeltaToolCalls | str]:
+        # Start a builtin tool call with partial args
+        yield {
+            0: BuiltinToolCallPart(
+                tool_name=WebSearchTool.kind,
+                args='{"query":',
+                tool_call_id='search_1',
+                provider_name='function',
+            )
+        }
+        # Stream more args
+        yield {
+            0: DeltaToolCall(
+                json_args='"test query"}',
+                tool_call_id='search_1',
+            )
+        }
+        # Return the result (which triggers end)
+        yield {
+            1: BuiltinToolReturnPart(
+                tool_name=WebSearchTool.kind,
+                content={'results': [{'title': 'Test', 'url': 'https://example.com'}]},
+                tool_call_id='search_1',
+                provider_name='function',
+            )
+        }
+        # Stray delta arriving AFTER the tool call has ended
+        yield {
+            0: DeltaToolCall(
+                json_args='}',
+                tool_call_id='search_1',
+            )
+        }
+        yield 'The answer is 42.'
+
+    agent = Agent(
+        model=FunctionModel(stream_function=stream_function),
+    )
+
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Search for something',
+        ),
+    )
+    events = await run_and_collect_events(agent, run_input)
+
+    # Verify no TOOL_CALL_ARGS appears after TOOL_CALL_END for the same tool_call_id
+    tool_call_ended = set[str]()
+    for event in events:
+        if event.get('type') == 'TOOL_CALL_END':
+            tool_call_ended.add(event['toolCallId'])
+        elif event.get('type') == 'TOOL_CALL_ARGS':
+            assert event['toolCallId'] not in tool_call_ended, (
+                f"TOOL_CALL_ARGS emitted after TOOL_CALL_END for {event['toolCallId']}"
+            )
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
+                'toolCallId': 'pyd_ai_builtin|function|search_1',
+                'toolCallName': 'web_search',
+                'parentMessageId': IsSameStr(),
+            },
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
+                'toolCallId': 'pyd_ai_builtin|function|search_1',
+                'delta': '{"query":',
+            },
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
+                'toolCallId': 'pyd_ai_builtin|function|search_1',
+                'delta': '"test query"}',
+            },
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': 'pyd_ai_builtin|function|search_1'},
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
+                'messageId': IsStr(),
+                'toolCallId': 'pyd_ai_builtin|function|search_1',
+                'content': '{"results":[{"title":"Test","url":"https://example.com"}]}',
+                'role': 'tool',
+            },
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
+                'messageId': message_id,
+                'delta': 'The answer is 42.',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+            },
+        ]
+    )
