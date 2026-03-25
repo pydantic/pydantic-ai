@@ -486,7 +486,7 @@ class Tool(Generic[ToolAgentDepsT]):
             result = self.prepare(ctx, base_tool_def)
             if inspect.isawaitable(result):
                 return await result
-            return result  # type: ignore[return-value]
+            return result
         else:
             return base_tool_def
 
