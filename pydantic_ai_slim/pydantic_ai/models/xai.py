@@ -561,10 +561,10 @@ class XaiModel(Model):
                 from ..settings import ThinkingLevel
 
                 xai_map: dict[ThinkingLevel, str] = {
-                    True: 'high',
+                    True: 'low',
                     'minimal': 'low',
                     'low': 'low',
-                    'medium': 'high',
+                    'medium': 'low',
                     'high': 'high',
                     'xhigh': 'high',
                 }

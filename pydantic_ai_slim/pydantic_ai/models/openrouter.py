@@ -605,7 +605,7 @@ class OpenRouterModel(OpenAIChatModel):
         return new_settings, customized_parameters
 
     @override
-    def _get_reasoning_effort(
+    def _translate_thinking(
         self,
         model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,

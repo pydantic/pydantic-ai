@@ -565,7 +565,7 @@ class BedrockConverseModel(Model):
             provider_details=provider_details,
         )
 
-    def _get_thinking_fields(
+    def _translate_thinking(
         self,
         model_settings: BedrockModelSettings,
         model_request_parameters: ModelRequestParameters,
@@ -661,7 +661,7 @@ class BedrockConverseModel(Model):
                 'bedrock_additional_model_response_fields_paths', None
             ):
                 params['additionalModelResponseFieldPaths'] = additional_model_response_fields_paths
-            if additional_model_requests_fields := self._get_thinking_fields(model_settings, model_request_parameters):
+            if additional_model_requests_fields := self._translate_thinking(model_settings, model_request_parameters):
                 params['additionalModelRequestFields'] = additional_model_requests_fields
             if prompt_variables := model_settings.get('bedrock_prompt_variables', None):
                 params['promptVariables'] = prompt_variables
