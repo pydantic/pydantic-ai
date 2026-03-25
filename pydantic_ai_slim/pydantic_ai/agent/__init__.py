@@ -111,6 +111,7 @@ __all__ = (
     'WrapperAgent',
     'AbstractAgent',
     'EventStreamHandler',
+    'AgentInstructions',
     'AgentModelSettings',
     'BuiltinToolFunc',
 )
