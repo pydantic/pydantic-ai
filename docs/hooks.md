@@ -74,6 +74,115 @@ print(result.output)
 
 Both sync and async hook functions are accepted. Sync functions are automatically wrapped for async execution.
 
+## Lifecycle overview
+
+The following sequence diagram shows all hooks firing during a complete run with one tool call (happy path). Error hooks (`on_*_error`) are mutually exclusive with `after_*` — see [error hooks](capabilities.md#error-hooks) for that flow.
+
+??? note "Expand sequence diagram"
+
+    ```mermaid
+    sequenceDiagram
+        participant App as Application
+        participant R as Run Hooks
+        participant N as Node Hooks
+        participant M as Model Hooks
+        participant P as prepare_tools
+        participant TV as Tool Validate Hooks
+        participant TEx as Tool Execute Hooks
+        participant LLM as LLM Provider
+        participant Fn as Tool Function
+
+        App->>R: before_run(ctx)
+        activate R
+        Note right of R: wrap_run enters
+
+        Note over R,Fn: ── UserPromptNode ──
+        R->>N: before_node_run(ctx, node)
+        activate N
+        Note right of N: wrap_node_run enters
+        Note over N: Build user prompt message
+        Note right of N: wrap_node_run exits
+        N-->>R: after_node_run → next: ModelRequestNode
+        deactivate N
+
+        Note over R,Fn: ── ModelRequestNode ──
+        R->>N: before_node_run(ctx, node)
+        activate N
+        Note right of N: wrap_node_run enters
+        N->>P: prepare_tools(ctx, tool_defs)
+        P-->>N: filtered tool_defs
+        N->>M: before_model_request(ctx, request_context)
+        activate M
+        Note right of M: wrap_model_request enters
+        M->>LLM: HTTP request
+        LLM-->>M: Response (with tool_calls)
+        Note right of M: wrap_model_request exits
+        M-->>N: after_model_request(ctx, request_context, response)
+        deactivate M
+        Note right of N: wrap_node_run exits
+        N-->>R: after_node_run → next: CallToolsNode
+        deactivate N
+
+        Note over R,Fn: ── CallToolsNode ──
+        R->>N: before_node_run(ctx, node)
+        activate N
+        Note right of N: wrap_node_run enters
+
+        Note over TV,TEx: For each tool call
+        N->>TV: before_tool_validate(ctx, call, tool_def, raw_args)
+        activate TV
+        Note right of TV: wrap_tool_validate enters
+        Note over TV: Parse & validate args against schema
+        Note right of TV: wrap_tool_validate exits
+        TV-->>N: after_tool_validate(ctx, call, tool_def, validated_args)
+        deactivate TV
+
+        N->>TEx: before_tool_execute(ctx, call, tool_def, args)
+        activate TEx
+        Note right of TEx: wrap_tool_execute enters
+        TEx->>Fn: call tool function
+        Fn-->>TEx: result
+        Note right of TEx: wrap_tool_execute exits
+        TEx-->>N: after_tool_execute(ctx, call, tool_def, args, result)
+        deactivate TEx
+
+        Note right of N: wrap_node_run exits
+        N-->>R: after_node_run → next: ModelRequestNode
+        deactivate N
+
+        Note over R,Fn: ── ModelRequestNode (with tool results) ──
+        R->>N: before_node_run(ctx, node)
+        activate N
+        Note right of N: wrap_node_run enters
+        N->>P: prepare_tools(ctx, tool_defs)
+        P-->>N: filtered tool_defs
+        N->>M: before_model_request(ctx, request_context)
+        activate M
+        Note right of M: wrap_model_request enters
+        M->>LLM: HTTP request
+        LLM-->>M: Response (text only, no tool calls)
+        Note right of M: wrap_model_request exits
+        M-->>N: after_model_request(ctx, request_context, response)
+        deactivate M
+        Note right of N: wrap_node_run exits
+        N-->>R: after_node_run → next: CallToolsNode
+        deactivate N
+
+        Note over R,Fn: ── CallToolsNode (no tool calls) ──
+        R->>N: before_node_run(ctx, node)
+        activate N
+        Note right of N: wrap_node_run enters
+        Note over N: No tool calls → End(FinalResult)
+        Note right of N: wrap_node_run exits
+        N-->>R: after_node_run → End
+        deactivate N
+
+        Note right of R: wrap_run exits
+        R-->>App: after_run(ctx, result)
+        deactivate R
+        Note over App: AgentRunResult
+    ```
+
 ## Hook types
 
 ### Run hooks
