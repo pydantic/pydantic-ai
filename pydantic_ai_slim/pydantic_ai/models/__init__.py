@@ -48,7 +48,7 @@ from ..messages import (
 from ..output import OutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
 from ..providers import Provider, infer_provider, infer_provider_class
-from ..settings import ModelSettings, merge_model_settings
+from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 
@@ -338,6 +338,10 @@ KnownModelName = TypeAliasType(
         'gateway/openai:gpt-5.2-pro',
         'gateway/openai:gpt-5.2',
         'gateway/openai:gpt-5.3-chat-latest',
+        'gateway/openai:gpt-5.4-mini-2026-03-17',
+        'gateway/openai:gpt-5.4-mini',
+        'gateway/openai:gpt-5.4-nano-2026-03-17',
+        'gateway/openai:gpt-5.4-nano',
         'gateway/openai:gpt-5.4',
         'gateway/openai:gpt-5',
         'gateway/openai:o1-2024-12-17',
@@ -548,6 +552,10 @@ KnownModelName = TypeAliasType(
         'openai:gpt-5.2-pro',
         'openai:gpt-5.2',
         'openai:gpt-5.3-chat-latest',
+        'openai:gpt-5.4-mini-2026-03-17',
+        'openai:gpt-5.4-mini',
+        'openai:gpt-5.4-nano-2026-03-17',
+        'openai:gpt-5.4-nano',
         'openai:gpt-5.4',
         'openai:gpt-5',
         'openai:o1-2024-12-17',
@@ -630,6 +638,14 @@ class ModelRequestParameters:
     allow_text_output: bool = True
     allow_image_output: bool = False
 
+    thinking: ThinkingLevel | None = None
+    """Resolved thinking/reasoning configuration for this request.
+
+    `None` means the model should use its default behavior. Set by the base
+    `Model.prepare_request()` from the unified `thinking` field in `ModelSettings`,
+    after checking that the model's profile supports thinking.
+    """
+
     @cached_property
     def tool_defs(self) -> dict[str, ToolDefinition]:
         return {tool_def.name: tool_def for tool_def in [*self.function_tools, *self.output_tools]}
@@ -641,6 +657,19 @@ class ModelRequestParameters:
         return None
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass
+class ModelRequestContext:
+    """Context for model request hooks.
+
+    Wrapping these parameters in a dataclass instead of a tuple makes the signature
+    future-proof: new fields can be added without breaking existing implementations.
+    """
+
+    messages: list[ModelMessage]
+    model_settings: ModelSettings | None
+    model_request_parameters: ModelRequestParameters
 
 
 class Model(ABC):
@@ -745,6 +774,16 @@ class Model(ABC):
 
         params = self.customize_request_parameters(model_request_parameters)
 
+        # Resolve unified thinking setting
+        thinking_value = model_settings.get('thinking') if model_settings else None
+        if thinking_value is not None:
+            if self.profile.supports_thinking or self.profile.thinking_always_enabled:
+                if thinking_value is False and self.profile.thinking_always_enabled:
+                    pass  # Silent ignore: model always thinks, can't disable
+                else:
+                    params = replace(params, thinking=thinking_value)
+            # else: silent ignore for unsupported models
+
         if builtin_tools := params.builtin_tools:
             # Deduplicate builtin tools
             params = replace(
@@ -783,16 +822,36 @@ class Model(ABC):
         if params.allow_image_output and not self.profile.supports_image_output:
             raise UserError('Image output is not supported by this model.')
 
-        # Check if builtin tools are supported
-        if params.builtin_tools:
+        # Check builtin tools and handle fallback swap
+        if params.builtin_tools or any(t.prefer_builtin for t in params.function_tools):
             supported_types = self.profile.supported_builtin_tools
-            unsupported = [tool for tool in params.builtin_tools if not isinstance(tool, tuple(supported_types))]
-            if unsupported:
-                unsupported_names = [type(tool).__name__ for tool in unsupported]
+
+            supported_builtins = [t for t in params.builtin_tools if isinstance(t, tuple(supported_types))]
+            unsupported_builtins = [t for t in params.builtin_tools if not isinstance(t, tuple(supported_types))]
+
+            supported_ids = {t.unique_id for t in supported_builtins}
+            unsupported_ids = {t.unique_id for t in unsupported_builtins}
+            fallback_ids = {t.prefer_builtin for t in params.function_tools if t.prefer_builtin}
+
+            # Error only for unsupported builtins that have no local fallback
+            without_fallback = unsupported_ids - fallback_ids
+            if without_fallback:
+                unsupported_names = [type(t).__name__ for t in unsupported_builtins if t.unique_id in without_fallback]
                 supported_names = [t.__name__ for t in supported_types]
                 raise UserError(
-                    f'Builtin tool(s) {unsupported_names} not supported by this model. Supported: {supported_names}'
+                    f'Builtin tool(s) {unsupported_names} not supported by this model. '
+                    f'Supported: {supported_names}. '
+                    f'To use these tools with this model, provide a local fallback via '
+                    f'BuiltinOrLocalTool(builtin=..., local=...) or the `local` parameter '
+                    f'of the capability (e.g. ImageGeneration(local=my_func)).'
                 )
+
+            # Remove local fallback tools whose preferred builtin IS supported (model handles natively)
+            # Remove unsupported builtins (their local fallbacks stay)
+            function_tools = [
+                t for t in params.function_tools if not t.prefer_builtin or t.prefer_builtin not in supported_ids
+            ]
+            params = replace(params, builtin_tools=supported_builtins, function_tools=function_tools)
 
         return model_settings, params
 
