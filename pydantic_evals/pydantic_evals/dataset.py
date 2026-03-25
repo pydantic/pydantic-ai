@@ -10,7 +10,6 @@ a task function to produce an evaluation report.
 from __future__ import annotations as _annotations
 
 import functools
-import inspect
 import sys
 import time
 import traceback
@@ -27,13 +26,13 @@ import anyio
 import logfire_api
 import yaml
 from anyio import to_thread
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_serializer
-from pydantic._internal import _typing_extra
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError, model_serializer
 from pydantic_core import to_json
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
 from rich.progress import Progress
-from typing_extensions import NotRequired, Self, TypedDict, TypeVar
+from typing_extensions import Self, TypeVar
 
+from pydantic_ai._spec import build_registry, build_schema_types, load_from_registry
 from pydantic_evals._utils import get_event_loop
 
 from ._utils import get_unwrapped_function_name, logfire_span, task_group_gather
@@ -1316,38 +1315,23 @@ def _get_evaluator_registry(
     defaults: Sequence[type[BaseEvalT]],
     label: str,
 ) -> Mapping[str, type[BaseEvalT]]:
-    """Create a registry of evaluator types from default and custom types.
+    """Create a registry of evaluator types from default and custom types."""
 
-    Args:
-        custom_types: Additional evaluator classes to include in the registry.
-        base_class: The base class that all custom types must subclass.
-        defaults: Default evaluator classes to include (can be overridden by custom types).
-        label: Human-readable label for error messages (e.g. 'evaluator', 'report evaluator').
-
-    Returns:
-        A mapping from evaluator names to evaluator classes.
-    """
-    registry: dict[str, type[BaseEvalT]] = {}
-
-    for evaluator_class in custom_types:
-        if not issubclass(evaluator_class, base_class):
+    def _validate_evaluator(cls: type[BaseEvalT]) -> None:
+        if not issubclass(cls, base_class):
             raise ValueError(
-                f'All custom {label} classes must be subclasses of {base_class.__name__}, but {evaluator_class} is not'
+                f'All custom {label} classes must be subclasses of {base_class.__name__}, but {cls} is not'
             )
-        if '__dataclass_fields__' not in evaluator_class.__dict__:
-            raise ValueError(
-                f'All custom {label} classes must be decorated with `@dataclass`, but {evaluator_class} is not'
-            )
-        name = evaluator_class.get_serialization_name()
-        if name in registry:
-            raise ValueError(f'Duplicate {label} class name: {name!r}')
-        registry[name] = evaluator_class
+        if '__dataclass_fields__' not in cls.__dict__:
+            raise ValueError(f'All custom {label} classes must be decorated with `@dataclass`, but {cls} is not')
 
-    for evaluator_class in defaults:
-        # Allow overriding the default evaluators with custom evaluators without raising an error
-        registry.setdefault(evaluator_class.get_serialization_name(), evaluator_class)
-
-    return registry
+    return build_registry(
+        custom_types=custom_types,
+        defaults=defaults,
+        get_name=lambda cls: cls.get_serialization_name(),
+        label=label,
+        validate=_validate_evaluator,
+    )
 
 
 def _load_evaluator_from_registry(
@@ -1357,80 +1341,16 @@ def _load_evaluator_from_registry(
     custom_types_param: str,
     context: str | None = None,
 ) -> BaseEvalT:
-    """Load an evaluator from the registry based on a specification.
-
-    Args:
-        registry: Mapping from evaluator names to evaluator classes.
-        spec: Specification of the evaluator to load.
-        label: Human-readable label for error messages (e.g. 'evaluator', 'report evaluator').
-        custom_types_param: Name of the parameter for custom types, used in error messages.
-        context: Optional context for error messages (e.g. "case 'foo'", "dataset").
-
-    Returns:
-        An initialized evaluator instance.
-
-    Raises:
-        ValueError: If the evaluator name is not found in the registry.
-    """
-    evaluator_class = registry.get(spec.name)
-    if evaluator_class is None:
-        raise ValueError(
-            f'{label.capitalize()} {spec.name!r} is not in the provided `{custom_types_param}`. Valid choices: {list(registry.keys())}.'
-            f' If you are trying to use a custom {label}, you must include its type in the `{custom_types_param}` argument.'
-        )
-    try:
-        return evaluator_class(*spec.args, **spec.kwargs)
-    except Exception as e:
-        detail = f' for {context}' if context else ''
-        raise ValueError(f'Failed to instantiate {label} {spec.name!r}{detail}: {e}') from e
+    """Load an evaluator from the registry based on a specification."""
+    return load_from_registry(
+        registry,
+        spec,
+        label=label,
+        custom_types_param=custom_types_param,
+        context=context,
+    )
 
 
 def _build_evaluator_schema_types(registry: Mapping[str, type[Any]]) -> list[Any]:
-    """Build a list of schema types for evaluators from a registry.
-
-    This is used to generate the JSON schema for both case-level and report-level evaluators.
-
-    Args:
-        registry: Mapping from evaluator names to evaluator classes.
-
-    Returns:
-        A list of types suitable for use in a Union for JSON schema generation.
-    """
-    schema_types: list[Any] = []
-    for name, evaluator_class in registry.items():
-        type_hints = _typing_extra.get_function_type_hints(evaluator_class)
-        type_hints.pop('return', None)
-        required_type_hints: dict[str, Any] = {}
-
-        for p in inspect.signature(evaluator_class).parameters.values():
-            type_hints.setdefault(p.name, Any)
-            if p.default is not p.empty:
-                type_hints[p.name] = NotRequired[type_hints[p.name]]
-            else:
-                required_type_hints[p.name] = type_hints[p.name]
-
-        def _make_typed_dict(cls_name_prefix: str, fields: dict[str, Any]) -> Any:
-            td = TypedDict(f'{cls_name_prefix}_{name}', fields)  # pyright: ignore[reportArgumentType]
-            config = ConfigDict(extra='forbid', arbitrary_types_allowed=True)
-            # TODO: Replace with pydantic.with_config once pydantic 2.11 is the min supported version
-            td.__pydantic_config__ = config  # pyright: ignore[reportAttributeAccessIssue]
-            return td
-
-        # Shortest form: just the call name
-        if len(type_hints) == 0 or not required_type_hints:
-            schema_types.append(Literal[name])
-
-        # Short form: can be called with only one parameter
-        if len(type_hints) == 1:
-            [type_hint_type] = type_hints.values()
-            schema_types.append(_make_typed_dict('short_evaluator', {name: type_hint_type}))
-        elif len(required_type_hints) == 1:  # pragma: no branch
-            [type_hint_type] = required_type_hints.values()
-            schema_types.append(_make_typed_dict('short_evaluator', {name: type_hint_type}))
-
-        # Long form: multiple parameters, possibly required
-        if len(type_hints) > 1:
-            params_td = _make_typed_dict('evaluator_params', type_hints)
-            schema_types.append(_make_typed_dict('evaluator', {name: params_td}))
-
-    return schema_types
+    """Build a list of schema types for evaluators from a registry."""
+    return build_schema_types(registry)
