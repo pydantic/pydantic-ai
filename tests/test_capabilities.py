@@ -4795,6 +4795,45 @@ class TestVisitAndReplace:
         assert visited_ids == ['inner']
 
 
+class TestRunWithCapabilities:
+    async def test_run_with_additional_capabilities(self):
+        """Capabilities passed to run() are merged additively with agent capabilities."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions = next(
+                (m.instructions for m in messages if isinstance(m, ModelRequest) and m.instructions), None
+            )
+            return make_text_response(f'instructions: {instructions}')
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[_InsCap('from-agent', id='a')])
+
+        result = await agent.run('hello', capabilities=[_InsCap('from-run', id='b')])
+
+        # Both agent and run capabilities should be present
+        assert 'from-agent' in result.output
+        assert 'from-run' in result.output
+
+    async def test_run_capabilities_do_not_persist(self):
+        """Capabilities passed to run() don't affect subsequent runs."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions = next(
+                (m.instructions for m in messages if isinstance(m, ModelRequest) and m.instructions), None
+            )
+            return make_text_response(f'instructions: {instructions}')
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[_InsCap('from-agent')])
+
+        # First run with extra capability
+        result1 = await agent.run('hello', capabilities=[_InsCap('extra')])
+        assert 'extra' in result1.output
+
+        # Second run without extra — should not have it
+        result2 = await agent.run('hello')
+        assert 'extra' not in result2.output
+        assert 'from-agent' in result2.output
+
+
 class TestOverrideCapabilitiesById:
     async def test_override_capabilities_sequence_replaces_all(self):
         """override(capabilities=[...]) replaces all capabilities."""

@@ -924,6 +924,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -945,6 +946,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -966,6 +968,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -1048,6 +1051,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            capabilities: Additional capabilities to use for this run. These are merged additively
+                with the agent's existing capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1164,9 +1169,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 _make_id_override_visitor(cap_by_id_override.value, noop_cap)
             )
 
-        # Merge spec capability additively with base capability
+        # Merge additional capabilities (from parameter and spec) with base capability
+        additional_caps: list[AbstractCapability[AgentDepsT]] = []
         if resolved is not None and resolved.capability is not None:
-            effective_capability = CombinedCapability([base_capability, resolved.capability])
+            additional_caps.append(resolved.capability)
+        if capabilities is not None:
+            additional_caps.extend(capabilities)
+        if additional_caps:
+            effective_capability = CombinedCapability([base_capability, *additional_caps])
         else:
             effective_capability = base_capability
 
@@ -1176,11 +1186,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         if run_capability is not effective_capability:
             source_cap = run_capability
-        elif (
-            override_cap is not None
-            or cap_by_id_override is not None
-            or (resolved is not None and resolved.capability is not None)
-        ):
+        elif override_cap is not None or cap_by_id_override is not None or additional_caps:
             source_cap = effective_capability
         else:
             source_cap = None
