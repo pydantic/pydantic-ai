@@ -49,9 +49,10 @@ from ..messages import (
     is_multi_modal_content,
 )
 from ..profiles import ModelProfileSpec
+from ..profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP, AnthropicModelProfile
 from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
-from ..settings import ModelSettings, merge_model_settings
+from ..settings import ModelSettings, ThinkingEffort, merge_model_settings
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
@@ -371,12 +372,16 @@ class AnthropicModel(Model):
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         settings = merge_model_settings(self.settings, model_settings)
-        if (
-            model_request_parameters.output_tools
-            and settings
-            and (thinking := settings.get('anthropic_thinking'))
-            and thinking.get('type') in ('enabled', 'adaptive')
-        ):
+
+        # Determine if thinking is effectively enabled (check both provider-specific and unified fields)
+        thinking_enabled = False
+        if settings:
+            if anthropic_thinking := settings.get('anthropic_thinking'):
+                thinking_enabled = anthropic_thinking.get('type') in ('enabled', 'adaptive')
+            elif settings.get('thinking'):
+                thinking_enabled = True
+
+        if model_request_parameters.output_tools and thinking_enabled:
             if model_request_parameters.output_mode == 'auto':
                 output_mode = 'native' if self.profile.supports_json_schema_output else 'prompted'
                 model_request_parameters = replace(model_request_parameters, output_mode=output_mode)
@@ -399,6 +404,22 @@ class AnthropicModel(Model):
                 model_request_parameters, output_object=replace(model_request_parameters.output_object, strict=True)
             )
         return super().prepare_request(model_settings, model_request_parameters)
+
+    def _get_thinking_param(
+        self,
+        model_settings: AnthropicModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> BetaThinkingConfigParam:
+        """Get the thinking parameter, falling back to unified thinking."""
+        if anthropic_thinking := model_settings.get('anthropic_thinking'):
+            return anthropic_thinking
+        thinking = model_request_parameters.thinking
+        if thinking is None or thinking is False:
+            return OMIT  # type: ignore[return-value]
+        profile = AnthropicModelProfile.from_profile(self.profile)
+        if profile.anthropic_supports_adaptive_thinking:
+            return {'type': 'adaptive'}
+        return {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
 
     @overload
     async def _messages_create(
@@ -455,7 +476,7 @@ class AnthropicModel(Model):
                 output_config=output_config or OMIT,
                 betas=sorted(betas) or OMIT,
                 stream=stream,
-                thinking=model_settings.get('anthropic_thinking', OMIT),
+                thinking=self._get_thinking_param(model_settings, model_request_parameters),
                 stop_sequences=model_settings.get('stop_sequences', OMIT),
                 temperature=model_settings.get('temperature', OMIT),
                 top_p=model_settings.get('top_p', OMIT),
@@ -543,7 +564,7 @@ class AnthropicModel(Model):
                 mcp_servers=mcp_servers or OMIT,
                 betas=sorted(betas) or OMIT,
                 output_config=output_config or OMIT,
-                thinking=model_settings.get('anthropic_thinking', OMIT),
+                thinking=self._get_thinking_param(model_settings, model_request_parameters),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
@@ -1235,9 +1256,8 @@ class AnthropicModel(Model):
             tool_param['strict'] = f.strict
         return tool_param
 
-    @staticmethod
     def _build_output_config(
-        model_request_parameters: ModelRequestParameters, model_settings: AnthropicModelSettings
+        self, model_request_parameters: ModelRequestParameters, model_settings: AnthropicModelSettings
     ) -> BetaOutputConfigParam | None:
         output_format: BetaJSONOutputFormatParam | None = None
         if model_request_parameters.output_mode == 'native':
@@ -1245,6 +1265,19 @@ class AnthropicModel(Model):
             output_format = {'type': 'json_schema', 'schema': model_request_parameters.output_object.json_schema}
 
         effort = model_settings.get('anthropic_effort')
+        # Fall back to unified thinking effort level when anthropic_effort is not set
+        # Only map effort level strings; bare True just enables thinking without a specific effort
+        profile = AnthropicModelProfile.from_profile(self.profile)
+        if effort is None and profile.anthropic_supports_effort and isinstance(model_request_parameters.thinking, str):
+            # Map unified levels to Anthropic effort; Anthropic accepts low/medium/high/max
+            effort_map: dict[ThinkingEffort, str] = {
+                'minimal': 'low',
+                'low': 'low',
+                'medium': 'medium',
+                'high': 'high',
+                'xhigh': 'max',  # Opus 4.6 only; other models ignore unsupported values
+            }
+            effort = effort_map.get(model_request_parameters.thinking, model_request_parameters.thinking)
 
         if output_format is None and effort is None:
             return None
@@ -1253,7 +1286,7 @@ class AnthropicModel(Model):
         if output_format is not None:
             config['format'] = output_format
         if effort is not None:
-            config['effort'] = effort
+            config['effort'] = effort  # type: ignore[typeddict-item]
         return config
 
 
