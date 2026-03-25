@@ -45,8 +45,8 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
 
     def __init__(
         self,
-        *,
         url: str,
+        *,
         builtin: MCPServerTool | AgentBuiltinTool[AgentDepsT] | bool = True,
         local: MCPServer | FastMCPToolset[AgentDepsT] | Callable[..., Any] | Literal[False] | None = None,
         id: str | None = None,
