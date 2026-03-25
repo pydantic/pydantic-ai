@@ -25,5 +25,5 @@ def update_prices() -> None:
     """
     try:
         UpdatePrices().start()
-    except RuntimeError:
+    except Exception:
         pass
