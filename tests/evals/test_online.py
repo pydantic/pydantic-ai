@@ -1474,7 +1474,6 @@ async def test_on_error_handler_exception_suppressed():
 @pytest.mark.anyio
 async def test_on_error_per_evaluator_overrides_config():
     """Per-evaluator on_error overrides the config default."""
-    config_errors: list[OnErrorLocation] = []
     evaluator_errors: list[OnErrorLocation] = []
 
     def config_on_error(
@@ -1483,7 +1482,7 @@ async def test_on_error_per_evaluator_overrides_config():
         evaluator: Evaluator,
         location: OnErrorLocation,
     ) -> None:
-        config_errors.append(location)
+        pytest.fail('config on_error should not be called when per-evaluator on_error is set')  # pragma: no cover
 
     def evaluator_on_error(
         exc: Exception,
@@ -1508,7 +1507,6 @@ async def test_on_error_per_evaluator_overrides_config():
     await my_func(42)
     await wait_for_evaluations()
 
-    assert len(config_errors) == 0
     assert len(evaluator_errors) == 1
     assert evaluator_errors[0] == 'gate'
 

@@ -747,9 +747,15 @@ def _wrap_sync(
         # dispatch on that loop. Otherwise, spawn a background thread with its own loop.
         try:
             asyncio.get_running_loop()
-            _dispatch_async(_dispatch_evaluators(sampled, context, span_reference, config))
+            has_running_loop = True
         except RuntimeError:
-            _dispatch_in_background_thread(_dispatch_evaluators(sampled, context, span_reference, config))
+            has_running_loop = False
+
+        coro = _dispatch_evaluators(sampled, context, span_reference, config)
+        if has_running_loop:
+            _dispatch_async(coro)
+        else:
+            _dispatch_in_background_thread(coro)
 
         return result
 
