@@ -13,7 +13,7 @@ from ..messages import BinaryContent, FinishReason, ModelResponseStreamEvent, Th
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterProvider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ThinkingLevel
 from . import ModelRequestParameters, download_item
 
 try:
@@ -533,8 +533,6 @@ def _openrouter_settings_to_openai_settings(
         thinking = model_request_parameters.thinking
         if thinking is not False:
             unified_reasoning: OpenRouterReasoning = {}
-            from ..settings import ThinkingLevel
-
             # OpenRouter only supports low/medium/high; map others to closest
             effort_map: dict[ThinkingLevel, str] = {
                 True: 'medium',
