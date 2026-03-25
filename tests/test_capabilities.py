@@ -27,7 +27,7 @@ from pydantic_ai.capabilities import (
     WrapperCapability,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
-from pydantic_ai.capabilities.builtin_or_local import BuiltinTool as BuiltinToolCap
+from pydantic_ai.capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
 from pydantic_ai.exceptions import SkipModelRequest, SkipToolExecution, SkipToolValidation, UserError
@@ -3533,7 +3533,7 @@ def test_builtin_or_local_base_no_default_builtin():
 
 def test_builtin_tool_from_spec_no_args():
     """BuiltinTool.from_spec() with no arguments raises TypeError."""
-    from pydantic_ai.capabilities.builtin_or_local import BuiltinTool as BuiltinToolCapDirect
+    from pydantic_ai.capabilities.builtin_tool import BuiltinTool as BuiltinToolCapDirect
 
     with pytest.raises(TypeError, match='requires either a `tool` argument'):
         BuiltinToolCapDirect.from_spec()
