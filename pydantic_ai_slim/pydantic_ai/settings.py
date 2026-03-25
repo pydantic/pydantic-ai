@@ -16,8 +16,8 @@ ThinkingLevel: TypeAlias = bool | ThinkingEffort
 - `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`: Enable thinking at a specific effort level.
 
 Not all providers support all levels. When a level is not natively supported,
-it maps to the closest available value (e.g. `'xhigh'` → `'high'` on providers
-that don't support it, `'minimal'` → `'low'` on providers without a minimal level).
+it maps to the closest available value (e.g. `'xhigh'` -> `'high'` on providers
+that don't support it, `'minimal'` -> `'low'` on providers without a minimal level).
 """
 
 

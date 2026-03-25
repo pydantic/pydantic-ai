@@ -5,6 +5,7 @@ from typing import Any
 
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
+from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.prefixed import PrefixedToolset
 
 from .wrapper import WrapperCapability
@@ -62,6 +63,4 @@ class PrefixTools(WrapperCapability[AgentDepsT]):
             # Pyright can't narrow Callable type aliases out of unions after isinstance check
             return PrefixedToolset(toolset, prefix=self.prefix)  # pyright: ignore[reportUnknownArgumentType]
         # ToolsetFunc callable — wrap in DynamicToolset so PrefixedToolset can delegate
-        from pydantic_ai.toolsets._dynamic import DynamicToolset
-
         return PrefixedToolset(DynamicToolset[AgentDepsT](toolset_func=toolset), prefix=self.prefix)
