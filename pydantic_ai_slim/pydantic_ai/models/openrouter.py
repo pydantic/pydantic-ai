@@ -13,7 +13,7 @@ from ..messages import BinaryContent, FinishReason, ModelResponseStreamEvent, Th
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterProvider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ThinkingLevel
 from . import ModelRequestParameters, download_item
 
 try:
@@ -198,7 +198,7 @@ class OpenRouterReasoning(TypedDict, total=False):
     token limits, but not both simultaneously.
     """
 
-    effort: Literal['high', 'medium', 'low']
+    effort: Literal['xhigh', 'high', 'medium', 'low', 'minimal', 'none']
     """OpenAI-style reasoning effort level. Cannot be used with max_tokens."""
 
     max_tokens: int
@@ -533,8 +533,6 @@ def _openrouter_settings_to_openai_settings(
         thinking = model_request_parameters.thinking
         if thinking is not False:
             unified_reasoning: OpenRouterReasoning = {}
-            from ..settings import ThinkingLevel
-
             # OpenRouter only supports low/medium/high; map others to closest
             effort_map: dict[ThinkingLevel, str] = {
                 True: 'medium',

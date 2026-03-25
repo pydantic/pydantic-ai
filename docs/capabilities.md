@@ -126,6 +126,15 @@ Constraint fields like `allowed_domains` or `blocked_domains` require the builti
 WebSearch(allowed_domains=['example.com'])
 ```
 
+All of these capabilities are subclasses of [`BuiltinOrLocalTool`][pydantic_ai.capabilities.BuiltinOrLocalTool], which you can use directly or subclass to build your own provider-adaptive tools. For example, to pair [`CodeExecutionTool`][pydantic_ai.builtin_tools.CodeExecutionTool] with a local fallback:
+
+```python {title="custom_builtin_or_local.py" test="skip" lint="skip"}
+from pydantic_ai.builtin_tools import CodeExecutionTool
+from pydantic_ai.capabilities import BuiltinOrLocalTool
+
+cap = BuiltinOrLocalTool(builtin=CodeExecutionTool(), local=my_local_executor)
+```
+
 ### PrepareTools
 
 [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] wraps a [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc] as a capability, for filtering or modifying [tool definitions](tools.md) per step:

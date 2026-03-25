@@ -32,6 +32,7 @@ from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapH
 from rich.progress import Progress
 from typing_extensions import Self, TypeVar
 
+from pydantic_ai._spec import build_registry, build_schema_types, load_from_registry
 from pydantic_evals._utils import get_event_loop
 
 from ._utils import get_unwrapped_function_name, logfire_span, task_group_gather
@@ -1315,7 +1316,6 @@ def _get_evaluator_registry(
     label: str,
 ) -> Mapping[str, type[BaseEvalT]]:
     """Create a registry of evaluator types from default and custom types."""
-    from pydantic_ai._spec import build_registry
 
     def _validate_evaluator(cls: type[BaseEvalT]) -> None:
         if not issubclass(cls, base_class):
@@ -1342,8 +1342,6 @@ def _load_evaluator_from_registry(
     context: str | None = None,
 ) -> BaseEvalT:
     """Load an evaluator from the registry based on a specification."""
-    from pydantic_ai._spec import load_from_registry
-
     return load_from_registry(
         registry,
         spec,
@@ -1355,6 +1353,4 @@ def _load_evaluator_from_registry(
 
 def _build_evaluator_schema_types(registry: Mapping[str, type[Any]]) -> list[Any]:
     """Build a list of schema types for evaluators from a registry."""
-    from pydantic_ai._spec import build_schema_types
-
     return build_schema_types(registry)
