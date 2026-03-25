@@ -933,6 +933,34 @@ class GoogleModel(Model):
         return response_schema
 
 
+def _resolve_thought_signature(part: Part, pending: str | None) -> tuple[dict[str, Any] | None, str | None, bool]:
+    """Resolve the thought_signature for a Google API response part.
+
+    When Gemini streams an empty thinking part carrying only a thought_signature before a
+    function call, the signature must be forwarded to the next real part so it survives replay.
+
+    Per https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#thought-signatures:
+    - Always send the thought_signature back to the model inside its original Part.
+    - Don't merge a Part containing a signature with one that does not.
+    - Don't combine two Parts that both contain signatures.
+
+    Returns:
+        (provider_details, updated_pending, skip_part)
+    """
+    # Empty thinking part with a signature: absorb the signature, skip the part.
+    if part.text is not None and part.thought and len(part.text) == 0:
+        if part.thought_signature:
+            pending = base64.b64encode(part.thought_signature).decode('utf-8')
+        return None, pending, True
+
+    # Use the part's own signature if present, otherwise fall back to the pending one.
+    signature = base64.b64encode(part.thought_signature).decode('utf-8') if part.thought_signature else pending
+
+    if signature is not None:
+        return {'thought_signature': signature}, None, False
+    return None, None, False
+
+
 @dataclass
 class GeminiStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for the Gemini model."""
@@ -946,6 +974,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _file_search_tool_call_id: str | None = field(default=None, init=False)
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
     _has_content_filter: bool = field(default=False, init=False)
+    _pending_thought_signature: str | None = field(default=None, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         if self._provider_timestamp is not None:
@@ -1019,14 +1048,11 @@ class GeminiStreamedResponse(StreamedResponse):
                     continue  # pragma: no cover
 
                 for part in parts:
-                    provider_details: dict[str, Any] | None = None
-                    if part.thought_signature:
-                        # Per https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#thought-signatures:
-                        # - Always send the thought_signature back to the model inside its original Part.
-                        # - Don't merge a Part containing a signature with one that does not. This breaks the positional context of the thought.
-                        # - Don't combine two Parts that both contain signatures, as the signature strings cannot be merged.
-                        thought_signature = base64.b64encode(part.thought_signature).decode('utf-8')
-                        provider_details = {'thought_signature': thought_signature}
+                    provider_details, self._pending_thought_signature, skip_part = _resolve_thought_signature(
+                        part, self._pending_thought_signature
+                    )
+                    if skip_part:
+                        continue
 
                     if part.text is not None:
                         if len(part.text) == 0 and not provider_details:
@@ -1093,6 +1119,7 @@ class GeminiStreamedResponse(StreamedResponse):
                 file_search_part = self._handle_file_search_grounding_metadata_streaming(candidate.grounding_metadata)
                 if file_search_part is not None:
                     yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=file_search_part)
+
         except errors.APIError as e:
             if (status_code := e.code) >= 400:
                 raise ModelHTTPError(
@@ -1258,22 +1285,16 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
 
 
 def _process_part(
-    part: Part, code_execution_tool_call_id: str | None, provider_name: str
+    part: Part,
+    code_execution_tool_call_id: str | None,
+    provider_name: str,
+    provider_details: dict[str, Any] | None,
 ) -> tuple[ModelResponsePart | None, str | None]:
     """Process a Google Part and return the corresponding ModelResponsePart.
 
     Returns:
         A tuple of (item, code_execution_tool_call_id). Returns (None, id) if the part should be skipped.
     """
-    provider_details: dict[str, Any] | None = None
-    if part.thought_signature:
-        # Per https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#thought-signatures:
-        # - Always send the thought_signature back to the model inside its original Part.
-        # - Don't merge a Part containing a signature with one that does not. This breaks the positional context of the thought.
-        # - Don't combine two Parts that both contain signatures, as the signature strings cannot be merged.
-        thought_signature = base64.b64encode(part.thought_signature).decode('utf-8')
-        provider_details = {'thought_signature': thought_signature}
-
     if part.executable_code is not None:
         code_execution_tool_call_id = _utils.generate_tool_call_id()
         item = _map_executable_code(part.executable_code, provider_name, code_execution_tool_call_id)
@@ -1292,7 +1313,7 @@ def _process_part(
         assert part.function_call.name is not None
         item = ToolCallPart(tool_name=part.function_call.name, args=part.function_call.args)
         if part.function_call.id is not None:
-            item.tool_call_id = part.function_call.id  # pragma: no cover
+            item.tool_call_id = part.function_call.id
     elif inline_data := part.inline_data:
         data = inline_data.data
         mime_type = inline_data.mime_type
@@ -1337,10 +1358,19 @@ def _process_response_from_parts(
         items.append(web_fetch_call)
         items.append(web_fetch_return)
 
+    pending_thought_signature: str | None = None
     item: ModelResponsePart | None = None
     code_execution_tool_call_id: str | None = None
     for part in parts:
-        item, code_execution_tool_call_id = _process_part(part, code_execution_tool_call_id, provider_name)
+        provider_details, pending_thought_signature, skip_part = _resolve_thought_signature(
+            part, pending_thought_signature
+        )
+        if skip_part:
+            continue
+
+        item, code_execution_tool_call_id = _process_part(
+            part, code_execution_tool_call_id, provider_name, provider_details
+        )
         if item is not None:
             items.append(item)
 

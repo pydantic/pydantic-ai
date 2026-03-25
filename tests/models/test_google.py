@@ -83,8 +83,12 @@ from ..parts_from_messages import part_types_from_messages
 with try_import() as imports_successful:
     from google.genai import errors
     from google.genai.types import (
+        Blob,
         BlockedReason,
+        Candidate,
+        Content,
         FinishReason as GoogleFinishReason,
+        FunctionCall,
         GenerateContentResponse,
         GenerateContentResponsePromptFeedback,
         GenerateContentResponseUsageMetadata,
@@ -96,6 +100,7 @@ with try_import() as imports_successful:
         LogprobsResultTopCandidates,
         MediaModality,
         ModalityTokenCount,
+        Part,
         SafetyRating,
     )
 
@@ -105,6 +110,7 @@ with try_import() as imports_successful:
         GoogleModelSettings,
         _content_model_response,  # pyright: ignore[reportPrivateUsage]
         _metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
+        _process_response_from_parts,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.google import GoogleProvider
@@ -5570,6 +5576,311 @@ def test_google_missing_tool_call_thought_signature():
             ],
         }
     )
+
+
+def test_google_empty_thought_signature_roundtrip_on_tool_call():
+    signature = base64.b64encode(b'real-signature').decode('utf-8')
+    response = _process_response_from_parts(
+        parts=[
+            Part(text='', thought=True, thought_signature=b'real-signature'),
+            Part(function_call=FunctionCall(name='get_country', args={}, id='call_1')),
+        ],
+        grounding_metadata=None,
+        model_name='gemini-3-pro-preview',
+        provider_name='google-gla',
+        provider_url='https://generativelanguage.googleapis.com/',
+        usage=RequestUsage(),
+        vendor_id='resp_1',
+    )
+
+    assert response.parts == [
+        ToolCallPart(
+            tool_name='get_country',
+            args={},
+            tool_call_id='call_1',
+            provider_name='google-gla',
+            provider_details={'thought_signature': signature},
+        )
+    ]
+    # The replayed content must carry the *real* signature on the function_call,
+    # not the dummy 'skip_thought_signature_validator'.
+    assert _content_model_response(response, 'google-gla') == snapshot(
+        {
+            'role': 'model',
+            'parts': [
+                {
+                    'function_call': {'name': 'get_country', 'args': {}, 'id': 'call_1'},
+                    'thought_signature': b'real-signature',
+                },
+            ],
+        }
+    )
+
+
+def test_google_empty_thought_signature_is_replayed_on_text_part():
+    signature = base64.b64encode(b'real-signature').decode('utf-8')
+    response = _process_response_from_parts(
+        parts=[
+            Part(text='', thought=True, thought_signature=b'real-signature'),
+            Part(text='The capital of Mexico is Mexico City.'),
+        ],
+        grounding_metadata=None,
+        model_name='gemini-3-pro-preview',
+        provider_name='google-gla',
+        provider_url='https://generativelanguage.googleapis.com/',
+        usage=RequestUsage(),
+        vendor_id='resp_1',
+    )
+
+    assert response.parts == [
+        TextPart(
+            content='The capital of Mexico is Mexico City.',
+            provider_name='google-gla',
+            provider_details={'thought_signature': signature},
+        )
+    ]
+    assert _content_model_response(response, 'google-gla') == snapshot(
+        {
+            'role': 'model',
+            'parts': [{'thought_signature': b'real-signature', 'text': 'The capital of Mexico is Mexico City.'}],
+        }
+    )
+
+
+def test_google_empty_thought_signature_is_replayed_on_inline_data_part():
+    signature = base64.b64encode(b'real-signature').decode('utf-8')
+    response = _process_response_from_parts(
+        parts=[
+            Part(text='', thought=True, thought_signature=b'real-signature'),
+            Part(inline_data=Blob(data=b'abc', mime_type='image/png')),
+        ],
+        grounding_metadata=None,
+        model_name='gemini-3-pro-preview',
+        provider_name='google-gla',
+        provider_url='https://generativelanguage.googleapis.com/',
+        usage=RequestUsage(),
+        vendor_id='resp_1',
+    )
+
+    [file_part] = response.parts
+    assert isinstance(file_part, FilePart)
+    assert file_part.provider_name == 'google-gla'
+    assert file_part.provider_details == {'thought_signature': signature}
+    assert file_part.content.data == b'abc'
+    assert file_part.content.media_type == 'image/png'
+    assert _content_model_response(response, 'google-gla') == snapshot(
+        {
+            'role': 'model',
+            'parts': [
+                {'thought_signature': b'real-signature', 'inline_data': {'data': b'abc', 'mime_type': 'image/png'}}
+            ],
+        }
+    )
+
+
+def test_google_empty_thought_without_signature_is_skipped():
+    response = _process_response_from_parts(
+        parts=[
+            Part(text='', thought=True),
+            Part(text='The capital of Mexico is Mexico City.'),
+        ],
+        grounding_metadata=None,
+        model_name='gemini-3-pro-preview',
+        provider_name='google-gla',
+        provider_url='https://generativelanguage.googleapis.com/',
+        usage=RequestUsage(),
+        vendor_id='resp_1',
+    )
+
+    assert response.parts == [TextPart(content='The capital of Mexico is Mexico City.')]
+    assert _content_model_response(response, 'google-gla') == snapshot(
+        {'role': 'model', 'parts': [{'text': 'The capital of Mexico is Mexico City.'}]}
+    )
+
+
+def test_google_consecutive_empty_thought_signatures_use_latest_signature():
+    latest_signature = base64.b64encode(b'sig2').decode('utf-8')
+    response = _process_response_from_parts(
+        parts=[
+            Part(text='', thought=True, thought_signature=b'sig1'),
+            Part(text='', thought=True, thought_signature=b'sig2'),
+            Part(text='The capital of Mexico is Mexico City.'),
+        ],
+        grounding_metadata=None,
+        model_name='gemini-3-pro-preview',
+        provider_name='google-gla',
+        provider_url='https://generativelanguage.googleapis.com/',
+        usage=RequestUsage(),
+        vendor_id='resp_1',
+    )
+
+    assert response.parts == [
+        TextPart(
+            content='The capital of Mexico is Mexico City.',
+            provider_name='google-gla',
+            provider_details={'thought_signature': latest_signature},
+        )
+    ]
+    assert _content_model_response(response, 'google-gla') == snapshot(
+        {
+            'role': 'model',
+            'parts': [{'thought_signature': b'sig2', 'text': 'The capital of Mexico is Mexico City.'}],
+        }
+    )
+
+
+async def test_google_streaming_empty_thought_signature_is_replayed_on_tool_call(
+    allow_model_requests: None,
+    google_provider: GoogleProvider,
+    mocker: MockerFixture,
+):
+    model_name = 'gemini-3-pro-preview'
+    model = GoogleModel(model_name, provider=google_provider)
+    agent = Agent(model=model)
+
+    @agent.tool_plain
+    def get_country() -> str:
+        return 'Mexico'
+
+    def stream_part(
+        *,
+        text: str | None = None,
+        thought: bool = False,
+        thought_signature: bytes | None = None,
+        function_call: FunctionCall | None = None,
+    ) -> Part:
+        return Part(
+            text=text,
+            thought=thought,
+            thought_signature=thought_signature,
+            function_call=function_call,
+        )
+
+    def function_call() -> FunctionCall:
+        return FunctionCall(name='get_country', args={}, id='call_1')
+
+    def stream_chunk(
+        *parts: Part,
+        finish_reason: GoogleFinishReason | None = None,
+        response_id: str = 'resp_1',
+    ) -> GenerateContentResponse:
+        return GenerateContentResponse(
+            candidates=[Candidate(content=Content(parts=list(parts)), finish_reason=finish_reason)],
+            model_version=model_name,
+            usage_metadata=None,
+            create_time=datetime.datetime.now(),
+            response_id=response_id,
+        )
+
+    async def first_stream() -> AsyncIterator[GenerateContentResponse]:
+        yield stream_chunk(stream_part(text='', thought=True, thought_signature=b'real-signature'))
+        yield stream_chunk(stream_part(function_call=function_call()), finish_reason=GoogleFinishReason.STOP)
+
+    async def second_stream() -> AsyncIterator[GenerateContentResponse]:
+        yield stream_chunk(
+            stream_part(text='The capital of Mexico is Mexico City.'),
+            finish_reason=GoogleFinishReason.STOP,
+            response_id='resp_2',
+        )
+
+    mocker.patch.object(
+        model.client.aio.models, 'generate_content_stream', side_effect=[first_stream(), second_stream()]
+    )
+
+    events: list[AgentStreamEvent] = []
+    result: AgentRunResult | None = None
+    async for event in agent.run_stream_events('What is the capital of the user country? Call the tool'):
+        if isinstance(event, AgentRunResultEvent):
+            result = event.result
+        else:
+            events.append(event)
+
+    assert result is not None
+    assert result.output == 'The capital of Mexico is Mexico City.'
+    part_events = [
+        event for event in events if isinstance(event, (PartStartEvent, PartEndEvent, FunctionToolCallEvent))
+    ]
+    assert all(not isinstance(event.part, ThinkingPart) for event in part_events)
+    first_response = result.all_messages()[1]
+    assert isinstance(first_response, ModelResponse)
+    assert first_response.parts == [
+        ToolCallPart(
+            tool_name='get_country',
+            args={},
+            tool_call_id='call_1',
+            provider_name='google-gla',
+            provider_details={'thought_signature': base64.b64encode(b'real-signature').decode('utf-8')},
+        )
+    ]
+
+
+async def test_google_non_streaming_empty_thought_signature_is_replayed_on_tool_call(
+    allow_model_requests: None,
+    google_provider: GoogleProvider,
+    mocker: MockerFixture,
+):
+    model_name = 'gemini-3-pro-preview'
+    model = GoogleModel(model_name, provider=google_provider)
+    agent = Agent(model=model)
+
+    @agent.tool_plain
+    def get_country() -> str:
+        return 'Mexico'
+
+    def response_part(
+        *,
+        text: str | None = None,
+        thought: bool = False,
+        thought_signature: bytes | None = None,
+        function_call: FunctionCall | None = None,
+    ) -> Part:
+        return Part(
+            text=text,
+            thought=thought,
+            thought_signature=thought_signature,
+            function_call=function_call,
+        )
+
+    def function_call() -> FunctionCall:
+        return FunctionCall(name='get_country', args={}, id='call_1')
+
+    def response_obj(*parts: Part, response_id: str) -> GenerateContentResponse:
+        return GenerateContentResponse(
+            candidates=[Candidate(content=Content(parts=list(parts)), finish_reason=GoogleFinishReason.STOP)],
+            prompt_feedback=None,
+            response_id=response_id,
+            model_version=model_name,
+            create_time=datetime.datetime.now(),
+            usage_metadata=None,
+        )
+
+    mocker.patch.object(
+        model.client.aio.models,
+        'generate_content',
+        side_effect=[
+            response_obj(
+                response_part(text='', thought=True, thought_signature=b'real-signature'),
+                response_part(function_call=function_call()),
+                response_id='resp_1',
+            ),
+            response_obj(response_part(text='The capital of Mexico is Mexico City.'), response_id='resp_2'),
+        ],
+    )
+
+    result = await agent.run('What is the capital of the user country? Call the tool')
+
+    assert result.output == 'The capital of Mexico is Mexico City.'
+    first_response = result.all_messages()[1]
+    assert isinstance(first_response, ModelResponse)
+    assert first_response.parts == [
+        ToolCallPart(
+            tool_name='get_country',
+            args={},
+            tool_call_id='call_1',
+            provider_name='google-gla',
+            provider_details={'thought_signature': base64.b64encode(b'real-signature').decode('utf-8')},
+        )
+    ]
 
 
 async def test_google_streaming_tool_call_thought_signature(
