@@ -3,7 +3,7 @@ from __future__ import annotations
 from genai_prices import UpdatePrices
 
 
-def update_prices() -> None:
+def update_in_background() -> None:
     """Start fetching the latest model pricing data from GitHub in the background.
 
     Uses [`genai-prices`](https://github.com/pydantic/genai-prices)' `UpdatePrices` to download
@@ -18,7 +18,7 @@ def update_prices() -> None:
     ```python {test="skip"}
     import pydantic_ai
 
-    pydantic_ai.update_prices()
+    pydantic_ai.prices.update_in_background()
 
     agent = pydantic_ai.Agent('openai:gpt-5.2')
     ```
