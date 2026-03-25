@@ -507,9 +507,7 @@ class TestGroqThinkingTranslation:
         assert result == 'parsed'
 
     def test_thinking_false(self):
-        """thinking=False -> NOT_GIVEN (Groq treats False as 'do not send')."""
-        from groq import NOT_GIVEN
-
+        """thinking=False -> 'hidden' (Groq has no true disable; 'hidden' suppresses output)."""
         from pydantic_ai.models.groq import GroqModel
 
         params = ModelRequestParameters(thinking=False)
@@ -517,7 +515,7 @@ class TestGroqThinkingTranslation:
 
         model = FunctionModel(_echo)
         result = GroqModel._get_reasoning_format(model, settings, params)
-        assert result is NOT_GIVEN
+        assert result == 'hidden'
 
     def test_thinking_none(self):
         from groq import NOT_GIVEN
