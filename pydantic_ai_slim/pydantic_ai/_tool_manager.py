@@ -544,6 +544,18 @@ class ToolManager(Generic[AgentDepsT]):
         ) as span:
             try:
                 tool_result = await self._execute_tool_call_impl(validated, usage=usage)
+            except (CallDeferred, ApprovalRequired) as e:
+                # Control flow exceptions — record as span attributes, not errors.
+                # Without this catch, OpenTelemetry auto-records them as exceptions
+                # (red in Logfire UI), but they're intentional control flow.
+                if span.is_recording():
+                    span.set_attribute('pydantic-ai.tool.control_flow', type(e).__name__)
+                    if e.metadata:
+                        span.set_attribute(
+                            'pydantic-ai.tool.control_flow_metadata',
+                            json.dumps(e.metadata),
+                        )
+                raise
             except ToolRetryError as e:
                 part = e.tool_retry
                 if include_content and span.is_recording():
