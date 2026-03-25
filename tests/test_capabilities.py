@@ -2567,7 +2567,7 @@ class TestMCPCapability:
 
     def test_mcp_url_required(self):
         """MCP without url raises TypeError."""
-        with pytest.raises(TypeError, match="missing 1 required keyword-only argument: 'url'"):
+        with pytest.raises(TypeError, match="missing 1 required positional argument: 'url'"):
             MCP()  # type: ignore[call-arg]
 
 
