@@ -1382,6 +1382,7 @@ class GeminiStreamedResponse(StreamedResponse):
                         yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_response_part)
                     elif part.executable_code is not None:
                         part_obj = self._handle_executable_code_streaming(part.executable_code)
+                        assert not isinstance(part_obj, UploadedFile)
                         part_obj.provider_details = provider_details
                         yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=part_obj)
                     elif part.code_execution_result is not None:
@@ -1538,6 +1539,9 @@ def _content_model_response(
         elif isinstance(item, FilePart):
             inline_data_dict: BlobDict = {'data': item.content.data, 'mime_type': item.content.media_type}
             part = _attach_signature({'inline_data': inline_data_dict}, item_signature)
+        elif isinstance(item, UploadedFile):  # pragma: no cover
+            # UploadedFile references in responses are not sent back to models that don't generate them.
+            part = None
         elif isinstance(item, CompactionPart):  # pragma: no cover
             # Compaction parts are not sent back to models that don't support compaction.
             part = None
@@ -1558,12 +1562,15 @@ def _decode_inline_thought_signature(item: ModelResponsePart, m: ModelResponse, 
     Returns the raw signature bytes ready to embed in a `PartDict`, or `None` if no signature
     applies (either missing, or the response originated from a different provider).
     """
-    if not item.provider_details:
+    provider_details_value = getattr(item, 'provider_details', None)
+    if not isinstance(provider_details_value, dict):
         return None
-    if m.provider_name != provider_name and item.provider_name != provider_name:
+    provider_details = cast(dict[str, Any], provider_details_value)
+    item_provider_name = getattr(item, 'provider_name', None)
+    if m.provider_name != provider_name and item_provider_name != provider_name:
         return None  # pragma: no cover
-    raw = item.provider_details.get('thought_signature')
-    if not raw:
+    raw = provider_details.get('thought_signature')
+    if not isinstance(raw, (str, bytes)):
         return None  # pragma: no cover
     return base64.b64decode(raw)
 

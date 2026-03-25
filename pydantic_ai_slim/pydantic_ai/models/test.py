@@ -30,6 +30,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..native_tools._tool_search import ToolSearchTool
@@ -359,9 +360,9 @@ class TestStreamedResponse(StreamedResponse):
             elif isinstance(part, ThinkingPart):  # pragma: no cover
                 # NOTE: There's no way to reach this part of the code, since we don't generate ThinkingPart on TestModel.
                 assert False, "This should be unreachable — we don't generate ThinkingPart on TestModel."
-            elif isinstance(part, FilePart):  # pragma: no cover
-                # NOTE: There's no way to reach this part of the code, since we don't generate FilePart on TestModel.
-                assert False, "This should be unreachable — we don't generate FilePart on TestModel."
+            elif isinstance(part, FilePart | UploadedFile):  # pragma: no cover
+                # NOTE: There's no way to reach this part of the code, since we don't generate FilePart/UploadedFile on TestModel.
+                assert False, "This should be unreachable — we don't generate FilePart/UploadedFile on TestModel."
             elif isinstance(part, CompactionPart):  # pragma: no cover
                 # NOTE: There's no way to reach this part of the code, since we don't generate CompactionPart on TestModel.
                 assert False, "This should be unreachable — we don't generate CompactionPart on TestModel."

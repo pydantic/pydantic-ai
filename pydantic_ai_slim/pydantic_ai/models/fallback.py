@@ -344,7 +344,8 @@ class FallbackModel(Model):
         return model_settings, model_request_parameters
 
     def prepare_messages(self, messages: list[ModelMessage]) -> list[ModelMessage]:
-        # `FallbackModel` doesn't have its own profile; dispatch applies each inner model's profile instead.
+        # `FallbackModel` doesn't have its own profile — defer per-model `prepare_messages`
+        # to each inner model's `request` call so the right profile gates the transformation.
         return messages
 
     def _get_continuation_model(self, messages: list[ModelMessage]) -> Model | None:
