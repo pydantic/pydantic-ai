@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 import pytest
-from dirty_equals import IsInt, IsJson, IsList
+from dirty_equals import IsJson, IsList
 from pydantic import BaseModel
 from typing_extensions import NotRequired, Self, TypedDict
 
@@ -23,7 +23,7 @@ from pydantic_ai.toolsets.wrapper import WrapperToolset
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsStr
+from .conftest import IsDatetime, IsInt, IsStr
 
 try:
     import logfire
@@ -110,7 +110,7 @@ def test_logfire(
 
     toolset = FunctionToolset()
 
-    @toolset.tool
+    @toolset.tool_plain
     async def my_ret(x: int) -> str:
         return str(x + 1)
 
@@ -513,6 +513,7 @@ def test_logfire(
                                 'kind': 'function',
                                 'metadata': None,
                                 'timeout': None,
+                                'prefer_builtin': None,
                             }
                         ],
                         'builtin_tools': [],
@@ -522,6 +523,7 @@ def test_logfire(
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'thinking': None,
                     }
                 )
             ),
@@ -997,11 +999,13 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                                 'kind': 'output',
                                 'metadata': None,
                                 'timeout': None,
+                                'prefer_builtin': None,
                             }
                         ],
                         'prompted_output_template': None,
                         'allow_text_output': False,
                         'allow_image_output': False,
+                        'thinking': None,
                     }
                 )
             ),
@@ -1160,6 +1164,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'thinking': None,
                     },
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat test',
