@@ -15,7 +15,6 @@ from typing_extensions import deprecated
 from . import messages as _messages
 from ._instrumentation import InstrumentationNames
 from ._run_context import AgentDepsT, RunContext
-from .exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolRetryError, UnexpectedModelBehavior
 from .exceptions import (
     ApprovalRequired,
     CallDeferred,
