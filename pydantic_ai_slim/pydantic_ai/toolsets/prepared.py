@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from dataclasses import dataclass, replace
 
 from .._run_context import AgentDepsT, RunContext
@@ -21,9 +20,7 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         original_tools = await super().get_tools(ctx)
-        # Provide per-run copies so agent/toolset-level prepare functions can safely mutate ToolDefinition objects
-        # in place without affecting future runs.
-        original_tool_defs = [deepcopy(tool.tool_def) for tool in original_tools.values()]
+        original_tool_defs = [tool.tool_def for tool in original_tools.values()]
         prepared_tool_defs_by_name = {
             tool_def.name: tool_def for tool_def in (await self.prepare_func(ctx, original_tool_defs) or [])
         }
