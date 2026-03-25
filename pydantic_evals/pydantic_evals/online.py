@@ -38,7 +38,7 @@ from collections.abc import Awaitable, Callable, Coroutine, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 import anyio
 import sniffio
@@ -51,11 +51,26 @@ from .evaluators.context import EvaluatorContext
 from .evaluators.evaluator import EvaluationResult, Evaluator, EvaluatorFailure
 from .otel._context_subtree import context_subtree
 
+OnErrorLocation = Literal['gate', 'sink', 'on_max_concurrency']
+"""The location within the online evaluation pipeline where an error occurred."""
+
+OnErrorCallback = Callable[
+    [Exception, EvaluatorContext, Evaluator, OnErrorLocation],
+    Any,
+]
+"""Callback invoked when an exception occurs in the online evaluation pipeline.
+
+Receives the exception, the evaluator context, the evaluator instance, and a
+location string indicating where the error occurred. Can be sync or async.
+"""
+
 __all__ = (
     'CallbackSink',
     'DEFAULT_CONFIG',
     'EvaluationSink',
     'EvaluatorContextSource',
+    'OnErrorCallback',
+    'OnErrorLocation',
     'OnlineEvalConfig',
     'OnlineEvaluator',
     'SinkCallback',
@@ -263,6 +278,10 @@ class OnlineEvaluator:
         on_max_concurrency: Optional callback invoked when an evaluation is dropped because
             `max_concurrency` was reached. Receives the `EvaluatorContext` that would have been
             evaluated. Can be sync or async. If None, dropped evaluations are silently ignored.
+        on_error: Optional callback invoked when an exception occurs in the gate, sink, or
+            on_max_concurrency callback. Receives the exception, context, evaluator, and a
+            location string. Can be sync or async. If None, uses the config's default. If
+            neither is set, exceptions are silently suppressed.
     """
 
     evaluator: Evaluator
@@ -275,6 +294,14 @@ class OnlineEvaluator:
 
     Receives the `EvaluatorContext` that would have been evaluated. Can be sync or async.
     If `None` (the default), dropped evaluations are silently ignored.
+    """
+    on_error: OnErrorCallback | None = None
+    """Called when an exception occurs in the gate, sink, or on_max_concurrency callback.
+
+    Receives the exception, evaluator context, evaluator instance, and a location string
+    (`'gate'`, `'sink'`, or `'on_max_concurrency'`). Can be sync or async.
+    If `None`, uses the config's `on_error` default. If neither is set, exceptions are
+    silently suppressed — background evaluation never crashes the user's function.
     """
     semaphore: threading.Semaphore = field(init=False, repr=False)
     """Thread-safe semaphore for per-evaluator concurrency limiting.
@@ -432,28 +459,72 @@ def _normalize_single_sink(sink: EvaluationSink | SinkCallback) -> EvaluationSin
     return CallbackSink(sink)
 
 
+async def _call_on_error(
+    on_error: OnErrorCallback | None,
+    exc: Exception,
+    context: EvaluatorContext,
+    evaluator: Evaluator,
+    location: OnErrorLocation,
+) -> None:
+    """Invoke the on_error callback, suppressing any exception it raises."""
+    if on_error is None:
+        return
+    try:
+        result = on_error(exc, context, evaluator, location)
+        if inspect.isawaitable(result):
+            await result
+    except Exception:
+        pass  # Handler itself failed — suppress to protect sibling evaluators
+
+
+async def _submit_to_sink(
+    sink: EvaluationSink,
+    results: Sequence[EvaluationResult],
+    failures: Sequence[EvaluatorFailure],
+    context: EvaluatorContext,
+    span_reference: SpanReference | None,
+    on_error: OnErrorCallback | None,
+    evaluator: Evaluator,
+) -> None:
+    """Submit results to a single sink, routing exceptions to on_error."""
+    try:
+        await sink.submit(results=results, failures=failures, context=context, span_reference=span_reference)
+    except Exception as exc:
+        await _call_on_error(on_error, exc, context, evaluator, 'sink')
+
+
 async def _dispatch_single_evaluator(
     online_eval: OnlineEvaluator,
     context: EvaluatorContext,
     span_reference: SpanReference | None,
     sinks: list[EvaluationSink],
     on_max_concurrency: Callable[[EvaluatorContext], Any] | None,
+    on_error: OnErrorCallback | None,
 ) -> None:
     """Run a single evaluator's gate check, evaluation, and sink submission."""
+    evaluator = online_eval.evaluator
+
     # Check gate in the background — never blocks the caller
     if online_eval.gate is not None:
-        if not await _check_gate(online_eval.gate, context):
+        try:
+            if not await _check_gate(online_eval.gate, context):
+                return
+        except Exception as exc:
+            await _call_on_error(on_error, exc, context, evaluator, 'gate')
             return
 
     if not online_eval.semaphore.acquire(blocking=False):
         if on_max_concurrency is not None:
-            result = on_max_concurrency(context)
-            if inspect.isawaitable(result):
-                await result
+            try:
+                result = on_max_concurrency(context)
+                if inspect.isawaitable(result):
+                    await result
+            except Exception as exc:
+                await _call_on_error(on_error, exc, context, evaluator, 'on_max_concurrency')
         return
 
     try:
-        raw_result = await run_evaluator(online_eval.evaluator, context)
+        raw_result = await run_evaluator(evaluator, context)
 
         if isinstance(raw_result, EvaluatorFailure):
             results: Sequence[EvaluationResult] = []
@@ -462,17 +533,9 @@ async def _dispatch_single_evaluator(
             results = raw_result
             failures = []
 
-        await asyncio.gather(
-            *(
-                sink.submit(
-                    results=results,
-                    failures=failures,
-                    context=context,
-                    span_reference=span_reference,
-                )
-                for sink in sinks
-            )
-        )
+        async with anyio.create_task_group() as tg:
+            for sink in sinks:
+                tg.start_soon(_submit_to_sink, sink, results, failures, context, span_reference, on_error, evaluator)
 
     finally:
         online_eval.semaphore.release()
@@ -497,6 +560,9 @@ async def _dispatch_evaluators(
             on_max_concurrency = online_eval.on_max_concurrency
             if on_max_concurrency is None:
                 on_max_concurrency = config.on_max_concurrency
+            on_error = online_eval.on_error
+            if on_error is None:
+                on_error = config.on_error
             tg.start_soon(
                 _dispatch_single_evaluator,
                 online_eval,
@@ -504,6 +570,7 @@ async def _dispatch_evaluators(
                 span_reference,
                 sinks,
                 on_max_concurrency,
+                on_error,
             )
 
 
@@ -536,6 +603,14 @@ class OnlineEvalConfig:
     Receives the `EvaluatorContext` that would have been evaluated. Can be sync or async.
     If `None` (the default), dropped evaluations are silently ignored.
     Per-evaluator `OnlineEvaluator.on_max_concurrency` overrides this default.
+    """
+    on_error: OnErrorCallback | None = None
+    """Default handler called when an exception occurs in a gate, sink, or on_max_concurrency callback.
+
+    Receives the exception, evaluator context, evaluator instance, and a location string
+    (`'gate'`, `'sink'`, or `'on_max_concurrency'`). Can be sync or async.
+    If `None` (the default), exceptions are silently suppressed.
+    Per-evaluator `OnlineEvaluator.on_error` overrides this default.
     """
 
     def evaluate(
@@ -753,11 +828,12 @@ def configure(
     enabled: bool | Unset = UNSET,
     metadata: dict[str, Any] | None | Unset = UNSET,
     on_max_concurrency: Callable[[EvaluatorContext], Any] | None | Unset = UNSET,
+    on_error: OnErrorCallback | None | Unset = UNSET,
 ) -> None:
     """Configure the global default `OnlineEvalConfig`.
 
     Only provided values are updated; unset arguments are ignored.
-    Pass `None` explicitly to clear `default_sink`, `metadata`, or `on_max_concurrency`.
+    Pass `None` explicitly to clear `default_sink`, `metadata`, `on_max_concurrency`, or `on_error`.
 
     Args:
         default_sink: Default sink(s) for evaluators. Pass `None` to clear.
@@ -765,6 +841,7 @@ def configure(
         enabled: Whether online evaluation is enabled.
         metadata: Metadata to include in evaluator contexts. Pass `None` to clear.
         on_max_concurrency: Default handler for dropped evaluations. Pass `None` to clear.
+        on_error: Default handler for pipeline exceptions. Pass `None` to clear.
     """
     if not isinstance(default_sink, Unset):
         DEFAULT_CONFIG.default_sink = default_sink
@@ -776,6 +853,8 @@ def configure(
         DEFAULT_CONFIG.metadata = metadata
     if not isinstance(on_max_concurrency, Unset):
         DEFAULT_CONFIG.on_max_concurrency = on_max_concurrency
+    if not isinstance(on_error, Unset):
+        DEFAULT_CONFIG.on_error = on_error
 
 
 async def wait_for_evaluations(*, timeout: float = 30.0) -> None:

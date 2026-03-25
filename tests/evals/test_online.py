@@ -17,6 +17,7 @@ with try_import() as imports_successful:
     from pydantic_evals.online import (
         DEFAULT_CONFIG,
         CallbackSink,
+        OnErrorLocation,
         OnlineEvalConfig,
         OnlineEvaluator,
         SpanReference,
@@ -1317,3 +1318,275 @@ async def test_on_max_concurrency_evaluator_overrides_config():
     assert len(config_drops) == 0
     assert len(evaluator_drops) > 0
     assert len(evaluator_drops) + len(collector.calls) == 5
+
+
+# --- on_error tests ---
+
+
+@pytest.mark.anyio
+async def test_on_error_gate_exception():
+    """on_error is called with 'gate' location when gate raises."""
+    errors: list[tuple[Exception, OnErrorLocation]] = []
+
+    def on_error(
+        exc: Exception,
+        ctx: EvaluatorContext[Any, Any, Any],
+        evaluator: Evaluator,
+        location: OnErrorLocation,
+    ) -> None:
+        errors.append((exc, location))
+
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector, on_error=on_error)
+
+    def bad_gate(ctx: EvaluatorContext[Any, Any, Any]) -> bool:
+        raise ValueError('gate boom')
+
+    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), gate=bad_gate))
+    async def my_func(x: int) -> int:
+        return x
+
+    result = await my_func(42)
+    assert result == 42
+
+    await wait_for_evaluations()
+
+    assert len(errors) == 1
+    assert isinstance(errors[0][0], ValueError)
+    assert str(errors[0][0]) == 'gate boom'
+    assert errors[0][1] == 'gate'
+    # Evaluator should not have run
+    assert len(collector.calls) == 0
+
+
+@pytest.mark.anyio
+async def test_on_error_sink_exception():
+    """on_error is called with 'sink' location when sink raises."""
+    errors: list[tuple[Exception, OnErrorLocation]] = []
+
+    def on_error(
+        exc: Exception,
+        ctx: EvaluatorContext[Any, Any, Any],
+        evaluator: Evaluator,
+        location: OnErrorLocation,
+    ) -> None:
+        errors.append((exc, location))
+
+    class FailingSink:
+        async def submit(self, **kwargs: Any) -> None:
+            raise ValueError('sink boom')
+
+    good_collector = Collector()
+    config = OnlineEvalConfig(default_sink=[FailingSink(), CallbackSink(good_collector)], on_error=on_error)
+
+    @config.evaluate(AlwaysTrue())
+    async def my_func(x: int) -> int:
+        return x
+
+    await my_func(42)
+    await wait_for_evaluations()
+
+    assert len(errors) == 1
+    assert errors[0][1] == 'sink'
+    # The other sink should still have received results
+    assert len(good_collector.calls) == 1
+
+
+@pytest.mark.anyio
+async def test_on_error_on_max_concurrency_exception():
+    """on_error is called with 'on_max_concurrency' when on_max_concurrency callback raises."""
+    errors: list[tuple[Exception, OnErrorLocation]] = []
+
+    def on_error(
+        exc: Exception,
+        ctx: EvaluatorContext[Any, Any, Any],
+        evaluator: Evaluator,
+        location: OnErrorLocation,
+    ) -> None:
+        errors.append((exc, location))
+
+    def bad_callback(ctx: EvaluatorContext[Any, Any, Any]) -> None:
+        raise ValueError('callback boom')
+
+    @dataclass
+    class SlowEvaluator(Evaluator):
+        async def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
+            await asyncio.sleep(0.1)
+            return True
+
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector, on_error=on_error)
+
+    @config.evaluate(
+        OnlineEvaluator(
+            evaluator=SlowEvaluator(),
+            max_concurrency=1,
+            sample_rate=1.0,
+            on_max_concurrency=bad_callback,
+        )
+    )
+    async def my_func(x: int) -> int:
+        return x
+
+    tasks = [my_func(i) for i in range(5)]
+    await asyncio.gather(*tasks)
+    await wait_for_evaluations()
+
+    # At least some should have been dropped and triggered the bad callback
+    assert len(errors) > 0
+    assert all(loc == 'on_max_concurrency' for _, loc in errors)
+
+
+@pytest.mark.anyio
+async def test_on_error_handler_exception_suppressed():
+    """on_error handler that raises is silently suppressed."""
+    collector = Collector()
+
+    def bad_on_error(
+        exc: Exception,
+        ctx: EvaluatorContext[Any, Any, Any],
+        evaluator: Evaluator,
+        location: OnErrorLocation,
+    ) -> None:
+        raise RuntimeError('handler boom')
+
+    def bad_gate(ctx: EvaluatorContext[Any, Any, Any]) -> bool:
+        raise ValueError('gate boom')
+
+    config = OnlineEvalConfig(default_sink=collector, on_error=bad_on_error)
+
+    @config.evaluate(
+        AlwaysTrue(),  # this one should still run
+        OnlineEvaluator(evaluator=AlwaysFalse(), gate=bad_gate),  # gate fails, on_error fails
+    )
+    async def my_func(x: int) -> int:
+        return x
+
+    result = await my_func(42)
+    assert result == 42
+
+    await wait_for_evaluations()
+
+    # AlwaysTrue should still have run despite the other evaluator's error chain
+    assert len(collector.calls) >= 1
+
+
+@pytest.mark.anyio
+async def test_on_error_per_evaluator_overrides_config():
+    """Per-evaluator on_error overrides the config default."""
+    config_errors: list[OnErrorLocation] = []
+    evaluator_errors: list[OnErrorLocation] = []
+
+    def config_on_error(
+        exc: Exception,
+        ctx: EvaluatorContext[Any, Any, Any],
+        evaluator: Evaluator,
+        location: OnErrorLocation,
+    ) -> None:
+        config_errors.append(location)
+
+    def evaluator_on_error(
+        exc: Exception,
+        ctx: EvaluatorContext[Any, Any, Any],
+        evaluator: Evaluator,
+        location: OnErrorLocation,
+    ) -> None:
+        evaluator_errors.append(location)
+
+    def bad_gate(ctx: EvaluatorContext[Any, Any, Any]) -> bool:
+        raise ValueError('gate boom')
+
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector, on_error=config_on_error)
+
+    @config.evaluate(
+        OnlineEvaluator(evaluator=AlwaysTrue(), gate=bad_gate, on_error=evaluator_on_error),
+    )
+    async def my_func(x: int) -> int:
+        return x
+
+    await my_func(42)
+    await wait_for_evaluations()
+
+    assert len(config_errors) == 0
+    assert len(evaluator_errors) == 1
+    assert evaluator_errors[0] == 'gate'
+
+
+@pytest.mark.anyio
+async def test_on_error_async_callback():
+    """Async on_error callback works."""
+    errors: list[OnErrorLocation] = []
+
+    async def async_on_error(
+        exc: Exception,
+        ctx: EvaluatorContext[Any, Any, Any],
+        evaluator: Evaluator,
+        location: OnErrorLocation,
+    ) -> None:
+        await asyncio.sleep(0)
+        errors.append(location)
+
+    def bad_gate(ctx: EvaluatorContext[Any, Any, Any]) -> bool:
+        raise ValueError('gate boom')
+
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector, on_error=async_on_error)
+
+    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), gate=bad_gate))
+    async def my_func(x: int) -> int:
+        return x
+
+    await my_func(42)
+    await wait_for_evaluations()
+
+    assert len(errors) == 1
+    assert errors[0] == 'gate'
+
+
+@pytest.mark.anyio
+async def test_gate_exception_does_not_cancel_sibling_evaluators():
+    """A gate exception in one evaluator doesn't prevent siblings from running."""
+    collector = Collector()
+
+    def bad_gate(ctx: EvaluatorContext[Any, Any, Any]) -> bool:
+        raise ValueError('gate boom')
+
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(
+        OnlineEvaluator(evaluator=AlwaysFalse(), gate=bad_gate),  # gate will fail
+        AlwaysTrue(),  # should still run
+    )
+    async def my_func(x: int) -> int:
+        return x
+
+    await my_func(42)
+    await wait_for_evaluations()
+
+    # AlwaysTrue should have run despite the sibling's gate failure
+    assert len(collector.calls) >= 1
+    assert any(r.value is True for results, _, _ in collector.calls for r in results)
+
+
+@pytest.mark.anyio
+async def test_configure_on_error():
+    """configure() can set on_error on DEFAULT_CONFIG."""
+    original = DEFAULT_CONFIG.on_error
+    try:
+
+        def handler(
+            exc: Exception,
+            ctx: EvaluatorContext[Any, Any, Any],
+            evaluator: Evaluator,
+            location: OnErrorLocation,
+        ) -> None:
+            pass
+
+        configure(on_error=handler)
+        assert DEFAULT_CONFIG.on_error is handler
+
+        configure(on_error=None)
+        assert DEFAULT_CONFIG.on_error is None
+    finally:
+        DEFAULT_CONFIG.on_error = original
