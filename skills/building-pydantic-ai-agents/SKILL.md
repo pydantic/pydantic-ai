@@ -9,7 +9,7 @@ metadata:
   author: pydantic
 ---
 
-# PydanticAI Skill
+# Pydantic AI Skill
 
 PydanticAI is a Python agent framework for building production-grade Generative AI applications.
 This skill provides patterns, architecture guidance, and tested code examples for building applications with PydanticAI.
