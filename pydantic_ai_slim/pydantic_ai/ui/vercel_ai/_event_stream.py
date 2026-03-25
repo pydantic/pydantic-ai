@@ -278,7 +278,10 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         if self.sdk_version >= 6 and isinstance(part, ToolReturnPart) and part.outcome == 'denied':
             yield ToolOutputDeniedChunk(tool_call_id=tool_call_id)
         elif isinstance(part, RetryPromptPart):
-            yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=part.model_response())
+            # Use raw content for string errors to avoid model_response() appending
+            # "Fix the errors and try again." — consistent with dump path in _adapter.py.
+            error_text = part.content if isinstance(part.content, str) else part.model_response()
+            yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=error_text)
         elif isinstance(part, ToolReturnPart) and part.outcome == 'failed':
             yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=part.model_response_str())
         else:
