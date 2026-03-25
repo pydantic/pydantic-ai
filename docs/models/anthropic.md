@@ -569,3 +569,11 @@ agent = Agent(
 ```
 
 Pydantic AI raises a [`UserError`][pydantic_ai.exceptions.UserError] if you explicitly select a tool version that the model does not support.
+
+## Pause Turn Handling
+
+When using native tools like [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] or Anthropic skills, Anthropic may pause mid-turn if operations take a long time (for example, performing many web searches in sequence). This is indicated by the [`pause_turn` stop reason](https://docs.anthropic.com/en/api/handling-stop-reasons#3-implement-retry-logic-for-pause-turn).
+
+Pydantic AI handles this automatically by continuing the conversation with a follow-up request. No user action is required. Continuations are capped internally at a high default to prevent unbounded requests.
+
+This also works correctly with [`FallbackModel`](../multi-model-agents.md#fallback-model) — when a model pauses mid-turn, continuation requests are pinned to the same model rather than restarting the fallback chain.

@@ -50,7 +50,7 @@ from ..messages import (
     ToolCallPart,
     VideoUrl,
 )
-from ..native_tools import AbstractNativeTool
+from ..native_tools import AbstractNativeTool, ShellTool
 from ..native_tools._tool_search import ToolSearchTool
 from ..output import OutputMode, StructuredOutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
@@ -65,6 +65,22 @@ DEFAULT_HTTP_TIMEOUT: int = 600
 This matches the default timeout used by OpenAI's Python client.
 See https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9
 """
+
+NATIVE_TOOL_FALLBACK_WARNED: set[tuple[str, str]] = set()
+
+
+def warn_native_tool_fallback(kind: str, provider: str) -> None:
+    """Emit a one-time warning when a native tool falls back to function tool format."""
+    key = (kind, provider)
+    if key not in NATIVE_TOOL_FALLBACK_WARNED:
+        NATIVE_TOOL_FALLBACK_WARNED.add(key)
+        warnings.warn(
+            f'Native `{kind}` tool: falling back to function tool format on {provider}'
+            ' — model performance may be degraded.',
+            UserWarning,
+            stacklevel=4,
+        )
+
 
 KnownModelName = TypeAliasType(
     'KnownModelName',
@@ -958,7 +974,17 @@ class Model(ABC, Generic[InterfaceClient]):
             for t in supported_natives
             if not (isinstance(t, ToolSearchTool) and t.optional) or t.unique_id in remaining_corpus_ids
         ]
-        return replace(params, native_tools=supported_natives, function_tools=function_tools)
+        params = replace(params, native_tools=supported_natives, function_tools=function_tools)
+
+        if not self.profile.supports_shell_network_policy:
+            for tool in params.native_tools:
+                if isinstance(tool, ShellTool) and tool.network_policy is not None:
+                    raise UserError(
+                        '`ShellTool.network_policy` is not supported by this model. '
+                        'Only OpenAI Responses models support network policies on hosted shell containers.'
+                    )
+
+        return params
 
     @property
     @abstractmethod

@@ -1,0 +1,128 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '430'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Create a CSV file with 3 rows of sample data (name, age) and save it as output.csv
+          type: text
+        role: user
+      model: claude-sonnet-4-6
+      stream: false
+      system: Always use code execution. Create a small CSV file and save it. Keep responses brief.
+      tool_choice:
+        type: auto
+      tools:
+      - name: code_execution
+        type: code_execution_20250522
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1804'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - proxy;dur=9775
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      container:
+        expires_at: '2026-03-16T21:31:48.115351Z'
+        id: container_011CZ7PqUnZg5WnavEVpYfJh
+      content:
+      - caller:
+          type: direct
+        id: srvtoolu_01MPynSy3MSoN6WDASu5FAod
+        input:
+          code: |2
+
+            import pandas as pd
+            import os
+
+            df = pd.DataFrame({
+                "name": ["Alice", "Bob", "Charlie"],
+                "age": [28, 34, 22]
+            })
+
+            output_path = os.path.join(os.environ.get("OUTPUT_DIR", "."), "output.csv")
+            df.to_csv(output_path, index=False)
+            print(df.to_string(index=False))
+            print(f"\nFile saved to: {output_path}")
+        name: code_execution
+        type: server_tool_use
+      - content:
+          abort_reason: null
+          content:
+          - file_id: file_011CZ7Pqy5uTyY2Kj86yXfCK
+            type: code_execution_output
+          return_code: 0
+          stderr: ''
+          stdout: |2-
+               name  age
+              Alice   28
+                Bob   34
+            Charlie   22
+
+            File saved to: /files/output/8235bf1e4a358cc6/output.csv
+          type: code_execution_result
+        tool_use_id: srvtoolu_01MPynSy3MSoN6WDASu5FAod
+        type: code_execution_tool_result
+      - text: |-
+          The file **output.csv** has been created and saved! Here's a summary of its contents:
+
+          | name    | age |
+          |---------|-----|
+          | Alice   | 28  |
+          | Bob     | 34  |
+          | Charlie | 22  |
+
+          The CSV includes:
+          - **2 columns:** `name` and `age`
+          - **3 rows** of sample data
+        type: text
+      id: msg_01NsMuQXDt1YrY5HcJT15FRH
+      model: claude-sonnet-4-6
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 2170
+        output_tokens: 262
+        server_tool_use:
+          web_fetch_requests: 0
+          web_search_requests: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

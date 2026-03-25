@@ -80,6 +80,7 @@ def test_model_request_parameters_are_serializable():
                     'tool_kind': None,
                     'return_schema': None,
                     'include_return_schema': None,
+                    'native_definition': None,
                 }
             ],
             'native_tools': [
@@ -92,7 +93,7 @@ def test_model_request_parameters_are_serializable():
                     'allowed_domains': None,
                     'max_uses': None,
                 },
-                {'kind': 'code_execution', 'optional': False},
+                {'kind': 'code_execution', 'optional': False, 'network_policy': None},
                 {
                     'kind': 'web_fetch',
                     'optional': False,
@@ -158,6 +159,7 @@ def test_model_request_parameters_are_serializable():
                     'tool_kind': None,
                     'return_schema': None,
                     'include_return_schema': None,
+                    'native_definition': None,
                 }
             ],
             'prompted_output_template': None,

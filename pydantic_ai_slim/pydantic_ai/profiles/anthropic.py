@@ -7,6 +7,7 @@ from ..native_tools import (
     CodeExecutionTool,
     MCPServerTool,
     MemoryTool,
+    ShellTool,
     WebFetchTool,
     WebSearchTool,
 )
@@ -15,8 +16,8 @@ from ..settings import ThinkingLevel
 from . import ModelProfile
 
 _ANTHROPIC_BASE_BUILTINS = frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
-"""Builtin tool types Anthropic generally supports across the model line. Mirrors
-`AnthropicModel.supported_builtin_tools()` minus `ToolSearchTool`, which is gated
+"""Native tool types Anthropic generally supports across the model line. Mirrors
+`AnthropicModel.supported_native_tools()` minus `ToolSearchTool` and `ShellTool`, which are gated
 per-model in the profile below."""
 
 AnthropicCodeExecutionToolVersion: TypeAlias = Literal['20250825', '20260120']
@@ -150,6 +151,8 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     supported_native_tools = (
         _ANTHROPIC_BASE_BUILTINS | {ToolSearchTool} if supports_tool_search else _ANTHROPIC_BASE_BUILTINS
     )
+    if '20260120' in supported_code_execution_tool_versions:
+        supported_native_tools |= {ShellTool}
 
     return AnthropicModelProfile(
         thinking_tags=('<thinking>', '</thinking>'),
@@ -165,6 +168,8 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_supported_code_execution_tool_versions=supported_code_execution_tool_versions,
         anthropic_supports_task_budgets=supports_task_budgets,
         supported_native_tools=supported_native_tools,
+        supports_native_shell_tool=True,
+        supports_native_text_editor_tool=True,
     )
 
 
