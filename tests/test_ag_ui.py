@@ -7,7 +7,7 @@ import uuid
 from collections.abc import AsyncIterator, MutableMapping
 from dataclasses import dataclass
 from http import HTTPStatus
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 import pytest
@@ -157,10 +157,11 @@ async def run_and_collect_events(
     *run_inputs: RunAgentInput,
     deps: AgentDepsT = None,
     on_complete: OnCompleteFunc[BaseEvent] | None = None,
+    ag_ui_version: Literal['0.1.10', '0.1.13'] = '0.1.10',
 ) -> list[dict[str, Any]]:
     events = list[dict[str, Any]]()
     for run_input in run_inputs:
-        async for event in run_ag_ui(agent, run_input, deps=deps, on_complete=on_complete):
+        async for event in run_ag_ui(agent, run_input, ag_ui_version=ag_ui_version, deps=deps, on_complete=on_complete):
             events.append(json.loads(event.removeprefix('data: ')))
     return events
 
@@ -1092,55 +1093,29 @@ async def test_thinking() -> None:
             },
             {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
             # Part 1: "Thinking about the weather"
-            {'type': 'REASONING_START', 'timestamp': IsInt(), 'messageId': (r1 := IsSameStr())},
-            {
-                'type': 'REASONING_MESSAGE_START',
-                'timestamp': IsInt(),
-                'messageId': r1,
-                'role': 'assistant',
-            },
-            {'type': 'REASONING_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': r1, 'delta': 'Thinking '},
-            {
-                'type': 'REASONING_MESSAGE_CONTENT',
-                'timestamp': IsInt(),
-                'messageId': r1,
-                'delta': 'about the weather',
-            },
-            {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': r1},
-            {'type': 'REASONING_END', 'timestamp': IsInt(), 'messageId': r1},
+            {'type': 'THINKING_START', 'timestamp': IsInt()},
+            {'type': 'THINKING_TEXT_MESSAGE_START', 'timestamp': IsInt()},
+            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'delta': 'Thinking '},
+            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'delta': 'about the weather'},
+            {'type': 'THINKING_TEXT_MESSAGE_END', 'timestamp': IsInt()},
+            {'type': 'THINKING_END', 'timestamp': IsInt()},
             # Part 2: empty thinking — skipped (no content, no metadata)
             # Part 3: "Thinking about the meaning of life"
-            {'type': 'REASONING_START', 'timestamp': IsInt(), 'messageId': (r3 := IsSameStr())},
+            {'type': 'THINKING_START', 'timestamp': IsInt()},
+            {'type': 'THINKING_TEXT_MESSAGE_START', 'timestamp': IsInt()},
             {
-                'type': 'REASONING_MESSAGE_START',
+                'type': 'THINKING_TEXT_MESSAGE_CONTENT',
                 'timestamp': IsInt(),
-                'messageId': r3,
-                'role': 'assistant',
-            },
-            {
-                'type': 'REASONING_MESSAGE_CONTENT',
-                'timestamp': IsInt(),
-                'messageId': r3,
                 'delta': 'Thinking about the meaning of life',
             },
-            {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': r3},
-            {'type': 'REASONING_END', 'timestamp': IsInt(), 'messageId': r3},
+            {'type': 'THINKING_TEXT_MESSAGE_END', 'timestamp': IsInt()},
+            {'type': 'THINKING_END', 'timestamp': IsInt()},
             # Part 4: "Thinking about the universe"
-            {'type': 'REASONING_START', 'timestamp': IsInt(), 'messageId': (r4 := IsSameStr())},
-            {
-                'type': 'REASONING_MESSAGE_START',
-                'timestamp': IsInt(),
-                'messageId': r4,
-                'role': 'assistant',
-            },
-            {
-                'type': 'REASONING_MESSAGE_CONTENT',
-                'timestamp': IsInt(),
-                'messageId': r4,
-                'delta': 'Thinking about the universe',
-            },
-            {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': r4},
-            {'type': 'REASONING_END', 'timestamp': IsInt(), 'messageId': r4},
+            {'type': 'THINKING_START', 'timestamp': IsInt()},
+            {'type': 'THINKING_TEXT_MESSAGE_START', 'timestamp': IsInt()},
+            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'delta': 'Thinking about the universe'},
+            {'type': 'THINKING_TEXT_MESSAGE_END', 'timestamp': IsInt()},
+            {'type': 'THINKING_END', 'timestamp': IsInt()},
             {
                 'type': 'RUN_FINISHED',
                 'timestamp': IsInt(),
@@ -1166,7 +1141,7 @@ async def test_thinking_with_signature() -> None:
         UserMessage(id='msg_1', content='Think about something'),
     )
 
-    events = await run_and_collect_events(agent, run_input)
+    events = await run_and_collect_events(agent, run_input, ag_ui_version='0.1.13')
 
     assert events == snapshot(
         [
@@ -1233,7 +1208,7 @@ async def test_thinking_consecutive_signatures() -> None:
         UserMessage(id='msg_1', content='Think deeply'),
     )
 
-    events = await run_and_collect_events(agent, run_input)
+    events = await run_and_collect_events(agent, run_input, ag_ui_version='0.1.13')
 
     assert events == snapshot(
         [
@@ -1358,7 +1333,7 @@ def test_reasoning_message_thinking_roundtrip() -> None:
 async def test_reasoning_events_with_all_metadata() -> None:
     """Test that REASONING_* events emit encryptedValue with all metadata fields."""
     run_input = create_input(UserMessage(id='msg_1', content='test'))
-    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE)
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.13')
 
     part = ThinkingPart(
         content='Thinking content',
@@ -1446,7 +1421,7 @@ def test_activity_message_file_part_missing_url() -> None:
                     content={'url': '', 'media_type': 'image/png'},
                 ),
             ],
-            include_file_parts=True,
+            preserve_file_data=True,
         )
 
 
@@ -1506,7 +1481,7 @@ def test_dump_load_roundtrip_thinking() -> None:
         ),
     ]
 
-    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13')
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
     _sync_timestamps(original, reloaded)
 
@@ -1542,7 +1517,7 @@ def test_dump_load_roundtrip_multiple_thinking_parts() -> None:
         ),
     ]
 
-    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13')
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
     _sync_timestamps(original, reloaded)
 
@@ -1594,8 +1569,8 @@ def test_dump_load_roundtrip_file_part() -> None:
         ),
     ]
 
-    ag_ui_msgs = AGUIAdapter.dump_messages(original, include_file_parts=True)
-    reloaded = AGUIAdapter.load_messages(ag_ui_msgs, include_file_parts=True)
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=True)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs, preserve_file_data=True)
     _sync_timestamps(original, reloaded)
 
     assert reloaded == original
@@ -1773,8 +1748,8 @@ def test_dump_load_roundtrip_file_part_minimal() -> None:
         ),
     ]
 
-    ag_ui_msgs = AGUIAdapter.dump_messages(original, include_file_parts=True)
-    reloaded = AGUIAdapter.load_messages(ag_ui_msgs, include_file_parts=True)
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=True)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs, preserve_file_data=True)
     _sync_timestamps(original, reloaded)
 
     assert reloaded == original
@@ -1788,8 +1763,8 @@ def test_dump_load_roundtrip_file_part_only() -> None:
         ModelResponse(parts=[FilePart(content=BinaryImage(data=file_data, media_type='image/png'))]),
     ]
 
-    ag_ui_msgs = AGUIAdapter.dump_messages(original, include_file_parts=True)
-    reloaded = AGUIAdapter.load_messages(ag_ui_msgs, include_file_parts=True)
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=True)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs, preserve_file_data=True)
     _sync_timestamps(original, reloaded)
 
     assert reloaded == original
@@ -1816,7 +1791,7 @@ def test_file_part_dropped_by_default() -> None:
     assert not any(isinstance(m, ActivityMessage) and m.activity_type == 'pydantic_ai_file' for m in ag_ui_msgs)
 
     # load_messages ignores ActivityMessage(pydantic_ai_file) by default
-    ag_ui_msgs_with_activity = AGUIAdapter.dump_messages(messages_with_file, include_file_parts=True)
+    ag_ui_msgs_with_activity = AGUIAdapter.dump_messages(messages_with_file, preserve_file_data=True)
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs_with_activity)
     assert not any(isinstance(part, FilePart) for msg in reloaded for part in msg.parts)
 
@@ -1886,7 +1861,7 @@ async def test_reasoning_events_empty_content_with_metadata() -> None:
     (no content was streamed) but encrypted metadata is present — e.g. redacted thinking.
     """
     run_input = create_input(UserMessage(id='msg_1', content='test'))
-    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE)
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.13')
 
     part = ThinkingPart(
         content='',
@@ -1923,7 +1898,7 @@ async def test_thinking_roundtrip_anthropic(allow_model_requests: None, anthropi
     result = await agent.run('What is 1+1? Reply in one word.')
     original = result.all_messages()
 
-    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13')
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
     _sync_timestamps(original, reloaded)
 
@@ -3409,3 +3384,123 @@ async def test_handle_ag_ui_request():
             {'type': 'http.response.body', 'body': b'', 'more_body': False},
         ]
     )
+
+
+async def test_stray_tool_call_delta_after_end() -> None:
+    """Test that TOOL_CALL_ARGS events are suppressed after TOOL_CALL_END for the same tool call."""
+    run_input = create_input(UserMessage(id='msg_1', content='test'))
+    event_stream = AGUIEventStream(run_input=run_input)
+
+    part = BuiltinToolCallPart(
+        tool_name='web_search',
+        tool_call_id='call_123',
+        args='{"query": "test"}',
+        provider_name='anthropic',
+    )
+
+    events: list[BaseEvent] = []
+    async for e in event_stream.handle_builtin_tool_call_start(part):
+        events.append(e)
+    async for e in event_stream.handle_builtin_tool_call_end(part):
+        events.append(e)
+
+    stray_delta = ToolCallPartDelta(tool_call_id='call_123', args_delta='{"extra": true}')
+    async for e in event_stream.handle_tool_call_delta(stray_delta):
+        events.append(e)
+
+    event_types = [e.type.value for e in events]
+    assert 'TOOL_CALL_START' in event_types
+    assert 'TOOL_CALL_END' in event_types
+    # No TOOL_CALL_ARGS after TOOL_CALL_END
+    end_idx = event_types.index('TOOL_CALL_END')
+    assert 'TOOL_CALL_ARGS' not in event_types[end_idx + 1 :]
+
+
+def test_dump_load_roundtrip_uploaded_file_preserved() -> None:
+    """Test UploadedFile round-trips via ActivityMessage when preserve_file_data=True."""
+    original: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Describe this file',
+                        UploadedFile(
+                            file_id='file-abc123',
+                            provider_name='anthropic',
+                            media_type='application/pdf',
+                            vendor_metadata={'source': 'upload'},
+                            identifier='my-doc.pdf',
+                        ),
+                    ]
+                ),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='I see a PDF.')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=True)
+
+    # Verify ActivityMessage was emitted
+    activity_msgs = [m for m in ag_ui_msgs if isinstance(m, ActivityMessage)]
+    assert len(activity_msgs) == 1
+    assert activity_msgs[0].activity_type == 'pydantic_ai_uploaded_file'
+    assert activity_msgs[0].content['file_id'] == 'file-abc123'
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs, preserve_file_data=True)
+
+    # The text and UploadedFile come back as separate UserPromptParts
+    request_parts = [p for msg in reloaded if isinstance(msg, ModelRequest) for p in msg.parts]
+    user_parts = [p for p in request_parts if isinstance(p, UserPromptPart)]
+    assert len(user_parts) == 2
+
+    # First UserPromptPart has the text
+    assert user_parts[0].content == 'Describe this file'
+
+    # Second UserPromptPart has the UploadedFile
+    assert isinstance(user_parts[1].content, list)
+    uploaded = user_parts[1].content[0]
+    assert isinstance(uploaded, UploadedFile)
+    assert uploaded.file_id == 'file-abc123'
+    assert uploaded.provider_name == 'anthropic'
+    assert uploaded.media_type == 'application/pdf'
+    assert uploaded.vendor_metadata == {'source': 'upload'}
+    assert uploaded.identifier == 'my-doc.pdf'
+
+
+def test_dump_messages_v010_drops_thinking() -> None:
+    """Test that dump_messages with ag_ui_version='0.1.10' drops ThinkingPart."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Think about this')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='Deep thoughts...', signature='sig_xyz'),
+                TextPart(content='Conclusion'),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(messages)  # default 0.1.10
+    # No ReasoningMessage in output
+    assert not any(isinstance(m, ReasoningMessage) for m in ag_ui_msgs)
+    # Text still present
+    assert any(isinstance(m, AssistantMessage) and m.content == 'Conclusion' for m in ag_ui_msgs)
+
+
+def test_dump_messages_v013_includes_reasoning() -> None:
+    """Test that dump_messages with ag_ui_version='0.1.13' includes ThinkingPart as ReasoningMessage."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Think about this')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='Deep thoughts...', signature='sig_xyz'),
+                TextPart(content='Conclusion'),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.13')
+    reasoning_msgs = [m for m in ag_ui_msgs if isinstance(m, ReasoningMessage)]
+    assert len(reasoning_msgs) == 1
+    assert reasoning_msgs[0].content == 'Deep thoughts...'
+    assert reasoning_msgs[0].encrypted_value is not None
+    assert 'sig_xyz' in reasoning_msgs[0].encrypted_value

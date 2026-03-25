@@ -1,9 +1,10 @@
 """AG-UI protocol integration for Pydantic AI agents."""
 
 from ._adapter import AGUIAdapter
-from ._event_stream import AGUIEventStream
+from ._event_stream import AGUIEventStream, AGUIVersion
 
 __all__ = [
     'AGUIAdapter',
     'AGUIEventStream',
+    'AGUIVersion',
 ]

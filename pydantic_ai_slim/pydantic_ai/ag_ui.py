@@ -29,7 +29,7 @@ try:
     from starlette.responses import Response
 
     from .ui import SSE_CONTENT_TYPE, OnCompleteFunc, StateDeps, StateHandler
-    from .ui.ag_ui import AGUIAdapter
+    from .ui.ag_ui import AGUIAdapter, AGUIVersion
     from .ui.ag_ui.app import AGUIApp
 except ImportError as e:  # pragma: no cover
     raise ImportError(
@@ -114,6 +114,7 @@ def run_ag_ui(
     run_input: RunAgentInput,
     accept: str = SSE_CONTENT_TYPE,
     *,
+    ag_ui_version: AGUIVersion = '0.1.10',
     output_type: OutputSpec[Any] | None = None,
     message_history: Sequence[ModelMessage] | None = None,
     deferred_tool_results: DeferredToolResults | None = None,
@@ -133,6 +134,7 @@ def run_ag_ui(
         agent: The agent to run.
         run_input: The AG-UI run input containing thread_id, run_id, messages, etc.
         accept: The accept header value for the run.
+        ag_ui_version: AG-UI protocol version controlling thinking/reasoning event format.
 
         output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
             output validators since output validators would expect an argument that matches the agent's output type.
@@ -153,7 +155,7 @@ def run_ag_ui(
     Yields:
         Streaming event chunks encoded as strings according to the accept header value.
     """
-    adapter = AGUIAdapter(agent=agent, run_input=run_input, accept=accept)
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, accept=accept, ag_ui_version=ag_ui_version)
     return adapter.encode_stream(
         adapter.run_stream(
             output_type=output_type,

@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
-from typing import Any, Final
+from typing import Any, Final, Literal
 from uuid import uuid4
 
 from ..._utils import now_utc
@@ -47,6 +47,11 @@ try:
         TextMessageContentEvent,
         TextMessageEndEvent,
         TextMessageStartEvent,
+        ThinkingEndEvent,
+        ThinkingStartEvent,
+        ThinkingTextMessageContentEvent,
+        ThinkingTextMessageEndEvent,
+        ThinkingTextMessageStartEvent,
         ToolCallArgsEvent,
         ToolCallEndEvent,
         ToolCallResultEvent,
@@ -60,8 +65,12 @@ except ImportError as e:  # pragma: no cover
         'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
     ) from e
 
+AGUIVersion = Literal['0.1.10', '0.1.13']
+"""Supported AG-UI protocol versions for thinking/reasoning event emission."""
+
 __all__ = [
     'AGUIEventStream',
+    'AGUIVersion',
     'RunAgentInput',
     'RunStartedEvent',
     'RunFinishedEvent',
@@ -88,10 +97,13 @@ def thinking_encrypted_metadata(part: ThinkingPart) -> dict[str, Any]:
 class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]):
     """UI event stream transformer for the Agent-User Interaction (AG-UI) protocol."""
 
+    ag_ui_version: AGUIVersion = '0.1.10'
+
     _reasoning_message_id: str | None = None
     _reasoning_started: bool = False
     _reasoning_text: bool = False
     _builtin_tool_call_ids: dict[str, str] = field(default_factory=dict[str, str])
+    _ended_tool_call_ids: set[str] = field(default_factory=set[str])
     _error: bool = False
 
     @property
@@ -166,56 +178,95 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         self._reasoning_message_id = str(uuid4())
         self._reasoning_started = False
 
-        if part.content:
-            yield ReasoningStartEvent(message_id=self._reasoning_message_id)
-            self._reasoning_started = True
-            yield ReasoningMessageStartEvent(message_id=self._reasoning_message_id, role='assistant')
-            yield ReasoningMessageContentEvent(message_id=self._reasoning_message_id, delta=part.content)
-            self._reasoning_text = True
+        if self.ag_ui_version == '0.1.10':
+            if part.content:
+                yield ThinkingStartEvent()
+                self._reasoning_started = True
+                yield ThinkingTextMessageStartEvent()
+                yield ThinkingTextMessageContentEvent(delta=part.content)
+                self._reasoning_text = True
+        else:
+            if part.content:
+                yield ReasoningStartEvent(message_id=self._reasoning_message_id)
+                self._reasoning_started = True
+                yield ReasoningMessageStartEvent(message_id=self._reasoning_message_id, role='assistant')
+                yield ReasoningMessageContentEvent(message_id=self._reasoning_message_id, delta=part.content)
+                self._reasoning_text = True
 
     async def handle_thinking_delta(self, delta: ThinkingPartDelta) -> AsyncIterator[BaseEvent]:
         if not delta.content_delta:
             return  # pragma: no cover
 
-        message_id = self._reasoning_message_id or ''
+        assert self._reasoning_message_id is not None, (
+            'handle_thinking_start must be called before handle_thinking_delta'
+        )
 
-        if not self._reasoning_started:
-            yield ReasoningStartEvent(message_id=message_id)
-            self._reasoning_started = True
+        if self.ag_ui_version == '0.1.10':
+            if not self._reasoning_started:
+                yield ThinkingStartEvent()
+                self._reasoning_started = True
 
-        if not self._reasoning_text:
-            yield ReasoningMessageStartEvent(message_id=message_id, role='assistant')
-            self._reasoning_text = True
+            if not self._reasoning_text:
+                yield ThinkingTextMessageStartEvent()
+                self._reasoning_text = True
 
-        yield ReasoningMessageContentEvent(message_id=message_id, delta=delta.content_delta)
+            yield ThinkingTextMessageContentEvent(delta=delta.content_delta)
+        else:
+            message_id = self._reasoning_message_id
+
+            if not self._reasoning_started:
+                yield ReasoningStartEvent(message_id=message_id)
+                self._reasoning_started = True
+
+            if not self._reasoning_text:
+                yield ReasoningMessageStartEvent(message_id=message_id, role='assistant')
+                self._reasoning_text = True
+
+            yield ReasoningMessageContentEvent(message_id=message_id, delta=delta.content_delta)
 
     async def handle_thinking_end(
         self, part: ThinkingPart, followed_by_thinking: bool = False
     ) -> AsyncIterator[BaseEvent]:
-        message_id = self._reasoning_message_id or ''
+        assert self._reasoning_message_id is not None, 'handle_thinking_start must be called before handle_thinking_end'
 
-        encrypted = thinking_encrypted_metadata(part)
+        if self.ag_ui_version == '0.1.10':
+            if not self._reasoning_started and not part.content:
+                self._reasoning_message_id = None
+                return
 
-        if not self._reasoning_started and not encrypted:
+            if not self._reasoning_started:
+                yield ThinkingStartEvent()
+
+            if self._reasoning_text:
+                yield ThinkingTextMessageEndEvent()
+                self._reasoning_text = False
+
+            yield ThinkingEndEvent()
             self._reasoning_message_id = None
-            return
+        else:
+            message_id = self._reasoning_message_id
+            encrypted = thinking_encrypted_metadata(part)
 
-        if not self._reasoning_started:
-            yield ReasoningStartEvent(message_id=message_id)
+            if not self._reasoning_started and not encrypted:
+                self._reasoning_message_id = None
+                return
 
-        if self._reasoning_text:
-            yield ReasoningMessageEndEvent(message_id=message_id)
-            self._reasoning_text = False
+            if not self._reasoning_started:
+                yield ReasoningStartEvent(message_id=message_id)
 
-        if encrypted:
-            yield ReasoningEncryptedValueEvent(
-                subtype='message',
-                entity_id=message_id,
-                encrypted_value=json.dumps(encrypted),
-            )
+            if self._reasoning_text:
+                yield ReasoningMessageEndEvent(message_id=message_id)
+                self._reasoning_text = False
 
-        yield ReasoningEndEvent(message_id=message_id)
-        self._reasoning_message_id = None
+            if encrypted:
+                yield ReasoningEncryptedValueEvent(
+                    subtype='message',
+                    entity_id=message_id,
+                    encrypted_value=json.dumps(encrypted),
+                )
+
+            yield ReasoningEndEvent(message_id=message_id)
+            self._reasoning_message_id = None
 
     def handle_tool_call_start(self, part: ToolCallPart | BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
         return self._handle_tool_call_start(part)
@@ -245,16 +296,21 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         assert tool_call_id, '`ToolCallPartDelta.tool_call_id` must be set'
         if tool_call_id in self._builtin_tool_call_ids:
             tool_call_id = self._builtin_tool_call_ids[tool_call_id]
+        if tool_call_id in self._ended_tool_call_ids:
+            return
         yield ToolCallArgsEvent(
             tool_call_id=tool_call_id,
             delta=delta.args_delta if isinstance(delta.args_delta, str) else json.dumps(delta.args_delta),
         )
 
     async def handle_tool_call_end(self, part: ToolCallPart) -> AsyncIterator[BaseEvent]:
+        self._ended_tool_call_ids.add(part.tool_call_id)
         yield ToolCallEndEvent(tool_call_id=part.tool_call_id)
 
     async def handle_builtin_tool_call_end(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
-        yield ToolCallEndEvent(tool_call_id=self._builtin_tool_call_ids[part.tool_call_id])
+        builtin_id = self._builtin_tool_call_ids[part.tool_call_id]
+        self._ended_tool_call_ids.add(builtin_id)
+        yield ToolCallEndEvent(tool_call_id=builtin_id)
 
     async def handle_builtin_tool_return(self, part: BuiltinToolReturnPart) -> AsyncIterator[BaseEvent]:
         tool_call_id = self._builtin_tool_call_ids[part.tool_call_id]
