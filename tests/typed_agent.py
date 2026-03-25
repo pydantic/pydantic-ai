@@ -431,6 +431,7 @@ Agent('test', capabilities=[Thinking(effort='high')])
 Agent('test', deps_type=MyDeps, capabilities=[WebSearch()])
 Agent('test', capabilities=[WebSearch()])
 
+
 # WebSearch with a deps-typed local Tool constrains AgentDepsT
 def my_search(ctx: RunContext[MyDeps], query: str) -> str:
     return f'{ctx.deps} {query}'
