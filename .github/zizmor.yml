@@ -1,0 +1,18 @@
+rules:
+  # setup-uv and setup-node caching uses integrity-checked package registries (PyPI, npm).
+  # Cache poisoning via these is impractical given lockfile hash-based cache keys.
+  cache-poisoning:
+    ignore:
+      - after-ci.yml
+      - ci.yml
+      - manually-deploy-docs.yml
+
+  # Secrets passed via `with:` to action inputs are the standard GitHub Actions pattern.
+  # These are not exposed to shell interpolation. Using `environment:` protection is applied
+  # where deployment secrets are involved.
+  secrets-outside-env:
+    ignore:
+      - after-ci.yml
+      - at-claude.yml
+      - bots.yml
+      - ci.yml
