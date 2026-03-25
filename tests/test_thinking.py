@@ -1098,6 +1098,10 @@ class TestGoogleBudgetApiConstraints:
     Gemini 2.5 Pro:   thinking_budget range [128, 32768]
     """
 
+    @pytest.fixture(autouse=True)
+    def _require_google(self):
+        pytest.importorskip('google.genai', reason='google-genai not installed')
+
     def test_all_budgets_within_flash_range(self):
         """Every effort budget must be within Gemini 2.5 Flash's [0, 24576] range."""
         from pydantic_ai.models.google import GoogleModel
@@ -1235,6 +1239,9 @@ class TestCrossProviderPortability:
     def test_same_settings_all_main_providers(self):
         """The same thinking=True + effort='high' should produce non-None results
         on supported models across all providers."""
+        pytest.importorskip('anthropic', reason='anthropic not installed')
+        pytest.importorskip('openai', reason='openai not installed')
+        pytest.importorskip('groq', reason='groq not installed')
         from pydantic_ai.models.anthropic import AnthropicModel
         from pydantic_ai.models.groq import GroqModel
         from pydantic_ai.models.openai import OpenAIChatModel
