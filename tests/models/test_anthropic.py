@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from functools import cached_property
-from typing import Annotated, Any, TypeVar, cast
+from typing import Annotated, Any, Literal, TypeVar, cast
 
 import httpx
 import pytest
@@ -486,6 +486,24 @@ def test_build_cache_control_bedrock_includes_ttl():
 
     cache_control_1h = m._build_cache_control('1h')  # pyright: ignore[reportPrivateUsage]
     assert cache_control_1h == {'type': 'ephemeral', 'ttl': '1h'}
+
+
+async def test_automatic_caching_ignored_on_bedrock(allow_model_requests: None):
+    """Test that automatic caching is silently ignored for Bedrock clients.
+
+    Bedrock does not support the top-level cache_control parameter (automatic caching).
+    See https://github.com/anthropics/anthropic-sdk-python/issues/939
+    """
+    from unittest.mock import MagicMock
+
+    from anthropic import AsyncAnthropicBedrock
+
+    mock_bedrock_client = MagicMock(spec=AsyncAnthropicBedrock)
+    mock_bedrock_client.base_url = 'https://bedrock.amazonaws.com'
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_bedrock_client))
+
+    settings = AnthropicModelSettings(anthropic_automatic_caching=True)
+    assert model._build_automatic_cache_control(settings) is None  # pyright: ignore[reportPrivateUsage]
 
 
 def test_build_cache_control_standard_client_includes_ttl():
@@ -1290,6 +1308,120 @@ async def test_limit_cache_points_all_settings(allow_model_requests: None):
     # Should have exactly 2 cache points in messages
     # (4 total - 1 system - 1 tool = 2 available for messages)
     assert cache_count == 2
+
+
+@pytest.mark.parametrize(
+    'setting,expected_ttl',
+    [
+        pytest.param(True, '5m', id='default-5m'),
+        pytest.param('5m', '5m', id='explicit-5m'),
+        pytest.param('1h', '1h', id='custom-1h'),
+    ],
+)
+async def test_anthropic_automatic_caching(
+    allow_model_requests: None, setting: bool | Literal['5m', '1h'], expected_ttl: str
+):
+    """Test that anthropic_automatic_caching passes top-level cache_control with the correct TTL."""
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        model,
+        system_prompt='System instructions.',
+        model_settings=AnthropicModelSettings(anthropic_automatic_caching=setting),
+    )
+
+    await agent.run('User message')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['cache_control'] == {'type': 'ephemeral', 'ttl': expected_ttl}
+
+    # System prompt should remain a plain string (no per-block cache_control added)
+    assert completion_kwargs['system'] == 'System instructions.'
+
+
+async def test_anthropic_automatic_caching_with_explicit_breakpoints(allow_model_requests: None):
+    """Test combining automatic caching with explicit cache breakpoints."""
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        model,
+        system_prompt='System instructions.',
+        model_settings=AnthropicModelSettings(
+            anthropic_automatic_caching=True,
+            anthropic_cache_instructions=True,
+            anthropic_cache_tool_definitions=True,
+        ),
+    )
+
+    @agent.tool_plain
+    def my_tool() -> str:  # pragma: no cover
+        return 'result'
+
+    await agent.run('User message')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+
+    # Top-level cache_control for automatic caching
+    assert completion_kwargs['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '5m'})
+
+    # Explicit breakpoints on system and tools should also be present
+    assert completion_kwargs['system'] == snapshot(
+        [{'type': 'text', 'text': 'System instructions.', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}]
+    )
+    tools = completion_kwargs['tools']
+    assert tools[-1]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '5m'})
+
+
+async def test_limit_cache_points_with_automatic_caching(allow_model_requests: None):
+    """Test that automatic caching reduces explicit cache point budget from 4 to 3."""
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        model,
+        system_prompt='System instructions.',
+        model_settings=AnthropicModelSettings(
+            anthropic_automatic_caching=True,
+        ),
+    )
+
+    # Add 4 CachePoint markers; with automatic caching, budget is 3, so 1 should be removed
+    await agent.run(
+        [
+            'Context 1',
+            CachePoint(),  # Oldest, should be removed
+            'Context 2',
+            CachePoint(),  # Should be kept
+            'Context 3',
+            CachePoint(),  # Should be kept
+            'Context 4',
+            CachePoint(),  # Should be kept (newest, but auto caching targets this block server-side)
+            'Question',
+        ]
+    )
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    messages = completion_kwargs['messages']
+
+    cache_count = 0
+    for msg in messages:
+        for block in msg['content']:
+            if 'cache_control' in block:
+                cache_count += 1
+
+    # Budget is 3 (4 - 1 reserved for automatic caching), so only 3 explicit points kept
+    assert cache_count == 3
 
 
 async def test_async_request_text_response(allow_model_requests: None):
@@ -8782,6 +8914,94 @@ async def test_anthropic_cache_messages_real_api(allow_model_requests: None, ant
     assert usage2.cache_read_tokens > 0
     assert usage2.cache_write_tokens > 0
     assert usage2.output_tokens > 0
+
+
+@pytest.mark.vcr()
+async def test_anthropic_automatic_caching_real_api(allow_model_requests: None, anthropic_api_key: str):
+    """Test that anthropic_automatic_caching passes top-level cache_control and produces cache usage.
+
+    This test uses a cassette to verify the automatic caching behavior.
+    When run with real API credentials, it demonstrates that:
+    1. The first call with a long context creates a cache (cache_write_tokens > 0)
+    2. Follow-up messages in the same conversation read from that cache (cache_read_tokens > 0)
+    """
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        system_prompt='You are a helpful assistant.',
+        model_settings=AnthropicModelSettings(
+            anthropic_automatic_caching=True,
+        ),
+    )
+
+    result1 = await agent.run('Please explain what Python is and its main use cases. ' * 100)
+    assert result1.usage() == snapshot(
+        RunUsage(
+            input_tokens=1114,
+            cache_write_tokens=1111,
+            output_tokens=397,
+            details={
+                'cache_creation_input_tokens': 1111,
+                'cache_read_input_tokens': 0,
+                'input_tokens': 3,
+                'output_tokens': 397,
+            },
+            requests=1,
+        )
+    )
+
+    result2 = await agent.run('Can you summarize that in one sentence?', message_history=result1.all_messages())
+    assert result2.usage() == snapshot(
+        RunUsage(
+            input_tokens=1523,
+            cache_read_tokens=1111,
+            cache_write_tokens=409,
+            output_tokens=33,
+            details={
+                'cache_creation_input_tokens': 409,
+                'cache_read_input_tokens': 1111,
+                'input_tokens': 3,
+                'output_tokens': 33,
+            },
+            requests=1,
+        )
+    )
+
+
+@pytest.mark.vcr()
+async def test_anthropic_automatic_caching_count_tokens(allow_model_requests: None, anthropic_api_key: str):
+    """Test that count_tokens endpoint accepts the top-level cache_control parameter.
+
+    The Anthropic count_tokens API supports cache_control:
+    https://docs.anthropic.com/en/api/messages-count-tokens
+    """
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        system_prompt='You are a helpful assistant.',
+        model_settings=AnthropicModelSettings(
+            anthropic_automatic_caching=True,
+        ),
+    )
+
+    result = await agent.run(
+        'Please explain what Python is and its main use cases. ' * 100,
+        usage_limits=UsageLimits(input_tokens_limit=5000, count_tokens_before_request=True),
+    )
+    assert result.usage() == snapshot(
+        RunUsage(
+            input_tokens=1114,
+            cache_write_tokens=1111,
+            output_tokens=407,
+            details={
+                'cache_creation_input_tokens': 1111,
+                'cache_read_input_tokens': 0,
+                'input_tokens': 3,
+                'output_tokens': 407,
+            },
+            requests=1,
+        )
+    )
 
 
 async def test_anthropic_container_setting_explicit(allow_model_requests: None):
