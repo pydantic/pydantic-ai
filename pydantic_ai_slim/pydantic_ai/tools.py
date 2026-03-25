@@ -612,6 +612,15 @@ class ToolDefinition:
             return_schema=(self.metadata or {}).get('output_schema'),
         )
 
+    def __deepcopy__(self, memo: dict[int, Any]) -> ToolDefinition:
+        """Clear cached `python_signature` so it recomputes from the copy's (possibly mutated) fields."""
+        clone = self.__class__.__new__(self.__class__)
+        memo[id(self)] = clone
+        for k, v in self.__dict__.items():
+            if k != 'python_signature':
+                clone.__dict__[k] = deepcopy(v, memo)
+        return clone
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 

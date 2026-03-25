@@ -290,6 +290,13 @@ def _collect_referenced_types(
                 _build_and_register_type(type_name, schema, schema_defs, referenced_types, tool_name, path)
         return
 
+    # Handle Python 3.10+ union syntax (X | Y creates types.UnionType)
+    # where get_origin() returns None but __args__ is still present
+    if isinstance(annotation, types.UnionType):
+        for arg in annotation.__args__:
+            _collect_referenced_types(arg, referenced_types, tool_name, path, mode=mode)
+        return
+
     origin = get_origin(annotation)
     args = getattr(annotation, '__args__', None)
     if origin is not None and args:
