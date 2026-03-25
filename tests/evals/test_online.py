@@ -1011,6 +1011,25 @@ async def test_span_reference_with_configured_logfire(capfire: Any):
 
 
 @pytest.mark.anyio
+async def test_span_reference_none_for_zero_ids():
+    """_extract_span_reference returns None when span context has zero trace/span IDs."""
+    import importlib
+
+    mod = importlib.import_module('pydantic_evals.online')
+    extract = getattr(mod, '_extract_span_reference')
+
+    class ZeroContext:
+        trace_id = 0
+        span_id = 0
+
+    class FakeSpan:
+        def get_span_context(self) -> ZeroContext:
+            return ZeroContext()
+
+    assert extract(FakeSpan()) is None
+
+
+@pytest.mark.anyio
 async def test_sync_decorated_function_dispatch():
     """Sync decorated function dispatches evaluators when called from async context."""
     collector = Collector()
