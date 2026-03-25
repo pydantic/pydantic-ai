@@ -1036,6 +1036,18 @@ def test_uploaded_file_custom_identifier_and_media_type_roundtrip():
     assert deserialized == messages
 
 
+def test_uploaded_file_target_field():
+    """Verify the `target` field on UploadedFile defaults to 'message' and accepts 'container' / 'both'."""
+    default = UploadedFile(file_id='file-456', provider_name='openai')
+    assert default.target == 'message'
+
+    container = UploadedFile(file_id='file-123', provider_name='anthropic', target='container')
+    assert container.target == 'container'
+
+    both = UploadedFile(file_id='file-789', provider_name='anthropic', target='both')
+    assert both.target == 'both'
+
+
 def test_tool_return_content_with_url_field_not_coerced_to_image_url():
     """Test that dicts with 'url' keys are not incorrectly coerced to ImageUrl.
 

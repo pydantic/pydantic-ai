@@ -641,6 +641,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 ui_parts.extend(cls._dump_tool_call_part(part, tool_results, sdk_version))
             elif isinstance(part, CompactionPart):  # pragma: no cover
                 pass  # Compaction parts are not rendered in the UI
+            elif isinstance(part, UploadedFile):  # pragma: no cover
+                # UploadedFile references in responses are not sent back to models that don't generate them.
+                pass
             else:
                 assert_never(part)
 

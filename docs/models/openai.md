@@ -150,11 +150,12 @@ The Responses API has built-in tools that you can use instead of building your o
 
 - [Web search](https://platform.openai.com/docs/guides/tools-web-search): allow models to search the web for the latest information before generating a response.
 - [Code interpreter](https://platform.openai.com/docs/guides/tools-code-interpreter): allow models to write and run Python code in a sandboxed environment before generating a response.
+- [Shell](https://platform.openai.com/docs/guides/tools-shell): allow models to execute code in a hosted container with bash and a text editor.
 - [Image generation](https://platform.openai.com/docs/guides/tools-image-generation): allow models to generate images based on a text prompt.
 - [File search](https://platform.openai.com/docs/guides/tools-file-search): allow models to search your files for relevant information before generating a response.
 - [Computer use](https://platform.openai.com/docs/guides/tools-computer-use): allow models to use a computer to perform tasks on your behalf.
 
-Web search, Code interpreter, Image generation, and File search are natively supported through the [Built-in tools](../builtin-tools.md) feature.
+Web search, Code interpreter, Shell, Image generation, and File search are natively supported through the [Built-in tools](../builtin-tools.md) feature.
 
 Computer use can be enabled by passing an [`openai.types.responses.ComputerToolParam`](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/computer_tool_param.py) in the `openai_builtin_tools` setting on [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]. It doesn't currently generate [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] or [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] parts in the message history, or streamed events; please submit an issue if you need native support for this built-in tool.
 
@@ -275,6 +276,32 @@ The mode is inferred from which parameters you pass: supplying `message_count_th
     Stateful compaction pairs especially well with [`openai_previous_response_id='auto'`](#referencing-earlier-responses). Both rely on OpenAI's server-side conversation state, so OpenAI can use a previously compacted context as the starting point for the next turn without you having to resend it.
 
 For lower-level use cases, you can call [`compact_messages`][pydantic_ai.models.openai.OpenAIResponsesModel.compact_messages] directly on the model.
+
+## Background Mode
+
+The [OpenAI Responses API](https://platform.openai.com/docs/guides/background) supports running requests in the background for long-running tasks. When enabled, the API may return a response with status `'queued'` or `'in_progress'` before the model has finished generating.
+
+Pydantic AI handles this automatically — when a background response is not yet complete, it polls via `retrieve()` until the response is finished. You can enable this with the [`openai_background`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_background] model setting:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+
+model = OpenAIResponsesModel('gpt-5.2')
+agent = Agent(model=model)
+
+result = agent.run_sync(
+    'Perform a complex analysis...',
+    model_settings=OpenAIResponsesModelSettings(openai_background=True),
+)
+print(result.output)
+```
+
+Polling uses a fixed interval (default: `1.0` second) and is bounded by the agent continuation limit to prevent unbounded requests. You can configure the interval via the [`openai_background_poll_interval`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_background_poll_interval] model setting.
+
+For long-running background tasks, consider increasing `openai_background_poll_interval` to reduce `retrieve()` call volume and avoid hitting the continuation limit too quickly.
+
+This also works correctly with [`FallbackModel`](../multi-model-agents.md#fallback-model) — continuation requests are pinned to the same model rather than restarting the fallback chain.
 
 ## OpenAI-compatible Models
 

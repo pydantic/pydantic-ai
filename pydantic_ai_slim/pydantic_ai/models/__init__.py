@@ -26,7 +26,7 @@ from .._json_schema import JsonSchemaTransformer
 from .._output import OutputObjectDefinition, StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
-from ..builtin_tools import AbstractBuiltinTool
+from ..builtin_tools import AbstractBuiltinTool, ShellTool
 from ..exceptions import UserError
 from ..messages import (
     BaseToolCallPart,
@@ -62,6 +62,22 @@ DEFAULT_HTTP_TIMEOUT: int = 600
 This matches the default timeout used by OpenAI's Python client.
 See https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9
 """
+
+NATIVE_TOOL_FALLBACK_WARNED: set[tuple[str, str]] = set()
+
+
+def warn_native_tool_fallback(kind: str, provider: str) -> None:
+    """Emit a one-time warning when a native tool falls back to function tool format."""
+    key = (kind, provider)
+    if key not in NATIVE_TOOL_FALLBACK_WARNED:
+        NATIVE_TOOL_FALLBACK_WARNED.add(key)
+        warnings.warn(
+            f'Native `{kind}` tool: falling back to function tool format on {provider}'
+            ' — model performance may be degraded.',
+            UserWarning,
+            stacklevel=4,
+        )
+
 
 KnownModelName = TypeAliasType(
     'KnownModelName',
@@ -757,36 +773,51 @@ class Model(ABC, Generic[InterfaceClient]):
 
         # Check builtin tools and handle fallback swap
         if params.builtin_tools or any(t.prefer_builtin for t in params.function_tools):
-            supported_types = self.profile.supported_builtin_tools
-
-            supported_builtins = [t for t in params.builtin_tools if isinstance(t, tuple(supported_types))]
-            unsupported_builtins = [t for t in params.builtin_tools if not isinstance(t, tuple(supported_types))]
-
-            supported_ids = {t.unique_id for t in supported_builtins}
-            unsupported_ids = {t.unique_id for t in unsupported_builtins}
-            fallback_ids = {t.prefer_builtin for t in params.function_tools if t.prefer_builtin}
-
-            # Error only for unsupported builtins that have no local fallback
-            without_fallback = unsupported_ids - fallback_ids
-            if without_fallback:
-                unsupported_names = [type(t).__name__ for t in unsupported_builtins if t.unique_id in without_fallback]
-                supported_names = [t.__name__ for t in supported_types]
-                raise UserError(
-                    f'Builtin tool(s) {unsupported_names} not supported by this model. '
-                    f'Supported: {supported_names}. '
-                    f'To use these tools with this model, provide a local fallback via '
-                    f'BuiltinOrLocalTool(builtin=..., local=...) or the `local` parameter '
-                    f'of the capability (e.g. ImageGeneration(local=my_func)).'
-                )
-
-            # Remove local fallback tools whose preferred builtin IS supported (model handles natively)
-            # Remove unsupported builtins (their local fallbacks stay)
-            function_tools = [
-                t for t in params.function_tools if not t.prefer_builtin or t.prefer_builtin not in supported_ids
-            ]
-            params = replace(params, builtin_tools=supported_builtins, function_tools=function_tools)
+            params = self._resolve_builtin_tools(params)
 
         return model_settings, params
+
+    def _resolve_builtin_tools(self, params: ModelRequestParameters) -> ModelRequestParameters:
+        """Resolve builtin tools: validate support, swap fallbacks, and check constraints."""
+        supported_types = self.profile.supported_builtin_tools
+
+        supported_builtins = [t for t in params.builtin_tools if isinstance(t, tuple(supported_types))]
+        unsupported_builtins = [t for t in params.builtin_tools if not isinstance(t, tuple(supported_types))]
+
+        supported_ids = {t.unique_id for t in supported_builtins}
+        unsupported_ids = {t.unique_id for t in unsupported_builtins}
+        fallback_ids = {t.prefer_builtin for t in params.function_tools if t.prefer_builtin}
+
+        # Error only for unsupported builtins that have no local fallback
+        without_fallback = unsupported_ids - fallback_ids
+        if without_fallback:
+            unsupported_names = [type(t).__name__ for t in unsupported_builtins if t.unique_id in without_fallback]
+            supported_names = [t.__name__ for t in supported_types]
+            raise UserError(
+                f'Builtin tool(s) {unsupported_names} not supported by this model. '
+                f'Supported: {supported_names}. '
+                f'To use these tools with this model, provide a local fallback via '
+                f'BuiltinOrLocalTool(builtin=..., local=...) or the `local` parameter '
+                f'of the capability (e.g. ImageGeneration(local=my_func)).'
+            )
+
+        # Remove local fallback tools whose preferred builtin IS supported (model handles natively)
+        # Remove unsupported builtins (their local fallbacks stay)
+        function_tools = [
+            t for t in params.function_tools if not t.prefer_builtin or t.prefer_builtin not in supported_ids
+        ]
+        params = replace(params, builtin_tools=supported_builtins, function_tools=function_tools)
+
+        # Check if ShellTool.network_policy is supported by this model
+        if not self.profile.supports_shell_network_policy:
+            for tool in params.builtin_tools:
+                if isinstance(tool, ShellTool) and tool.network_policy is not None:
+                    raise UserError(
+                        '`ShellTool.network_policy` is not supported by this model. '
+                        'Only OpenAI Responses models support network policies on hosted shell containers.'
+                    )
+
+        return params
 
     @property
     @abstractmethod

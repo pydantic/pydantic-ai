@@ -519,3 +519,14 @@ result = agent.run_sync(
 
 !!! note
     Compaction blocks returned by Anthropic contain readable text summaries. They are automatically round-tripped in subsequent requests when included in the message history.
+
+## Pause Turn Handling
+
+When using server-side tools like [`WebSearchTool`](../builtin-tools.md#web-search-tool) or skills, Anthropic may pause
+mid-turn if operations take a long time (e.g. performing many web searches in sequence). This is indicated by the
+[`pause_turn` stop reason](https://docs.anthropic.com/en/api/handling-stop-reasons#3-implement-retry-logic-for-pause-turn).
+
+Pydantic AI handles this automatically by continuing the conversation with a follow-up request. No user action
+is required. Continuations are capped internally at a high default to prevent unbounded requests.
+
+This also works correctly with [`FallbackModel`](../multi-model-agents.md#fallback-model) — when a model pauses mid-turn, continuation requests are pinned to the same model rather than restarting the fallback chain.

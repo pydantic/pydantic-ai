@@ -100,7 +100,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         # if the message currently has any parts with content, yield before streaming
         msg = self.response
         for part in msg.parts:
-            if part.has_content():
+            if isinstance(part, _messages.UploadedFile) or part.has_content():
                 yield msg
                 break
 
