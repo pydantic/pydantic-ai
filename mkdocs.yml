@@ -98,6 +98,7 @@ nav:
 
   - Integrations:
       - Debugging & Monitoring with Pydantic Logfire: logfire.md
+      - Agent Skills: skills.md
       - Durable Execution:
           - Overview: durable_execution/overview.md
           - Temporal: durable_execution/temporal.md
@@ -413,6 +414,8 @@ plugins:
           - mcp/*.md
         UI Event Streams:
           - ui/*.md
+        Integrations:
+          - skills.md
         Optional:
           - testing.md
           - cli.md
