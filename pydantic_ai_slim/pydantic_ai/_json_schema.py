@@ -114,6 +114,8 @@ class JsonSchemaTransformer(ABC):
 
         # Guard: _handle_union may return a bool (e.g., from {'oneOf': [True]})
         if isinstance(schema, bool):
+            if nested_refs > 0:
+                self.refs_stack = self.refs_stack[:-nested_refs]
             return schema
 
         # Apply the base transform
