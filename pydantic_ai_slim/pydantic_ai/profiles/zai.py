@@ -20,6 +20,7 @@ def zai_model_profile(model_name: str) -> ModelProfile | None:
         return None
     if model_lower.startswith(thinking_prefixes):
         return OpenAIModelProfile(
+            supports_thinking=True,
             openai_chat_thinking_field='reasoning_content',
             openai_chat_send_back_thinking_parts='field',
         )
