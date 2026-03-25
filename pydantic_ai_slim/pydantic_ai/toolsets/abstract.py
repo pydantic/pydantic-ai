@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol
 from pydantic_core import SchemaValidator
 from typing_extensions import Self
 
+from .._python_signature import FunctionSignature
 from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition, ToolsPrepareFunc
 
@@ -66,6 +67,15 @@ class ToolsetTool(Generic[AgentDepsT]):
     Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on failure, return `None` on success.
     """
 
+    @property
+    def python_signature(self) -> FunctionSignature:
+        """Generate a Python function signature for this tool.
+
+        Delegates to the cached `python_signature` on the underlying `ToolDefinition`,
+        so that repeated access (e.g. on every agent step) reuses the same result.
+        """
+        return self.tool_def.python_signature
+
 
 class AbstractToolset(ABC, Generic[AgentDepsT]):
     """A toolset is a collection of tools that can be used by an agent.
@@ -102,6 +112,24 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
     def tool_name_conflict_hint(self) -> str:
         """A hint for how to avoid name conflicts with other toolsets for use in error messages."""
         return 'Rename the tool or wrap the toolset in a `PrefixedToolset` to avoid name conflicts.'
+
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        """Return the toolset to use for this agent run.
+
+        Called once per run, before `__aenter__`. Override this to return a fresh instance
+        for per-run state isolation. Default: return `self` (shared across runs).
+        """
+        return self
+
+    async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        """Return the toolset to use for this run step.
+
+        Called at the start of each run step. Override this to return a modified
+        instance for per-step state transitions. If returning a new instance,
+        you are responsible for managing any lifecycle transitions (exiting old
+        inner toolsets, entering new ones). Default: return `self` (no per-step changes).
+        """
+        return self
 
     async def __aenter__(self) -> Self:
         """Enter the toolset context.

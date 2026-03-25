@@ -45,9 +45,11 @@ from pydantic_ai.builtin_tools import AbstractBuiltinTool, CodeExecutionTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.messages import UploadedFile, is_multi_modal_content
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
+from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP
+from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.tools import ToolDefinition
 
 if TYPE_CHECKING:
@@ -563,6 +565,43 @@ class BedrockConverseModel(Model):
             provider_details=provider_details,
         )
 
+    def _get_thinking_fields(
+        self,
+        model_settings: BedrockModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> dict[str, Any] | None:
+        """Build thinking-related additionalModelRequestFields, using unified thinking as fallback."""
+        existing = dict(model_settings.get('bedrock_additional_model_requests_fields') or {})
+        thinking = model_request_parameters.thinking
+        if thinking is None:
+            return existing or None
+
+        profile = BedrockModelProfile.from_profile(self.profile)
+        variant = profile.bedrock_thinking_variant
+
+        if variant == 'anthropic' and 'thinking' not in existing:
+            if thinking is False:
+                existing['thinking'] = {'type': 'disabled'}
+            else:
+                existing['thinking'] = {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
+        elif variant == 'openai' and 'reasoning_effort' not in existing:
+            if thinking is not False:  # Bedrock doesn't accept reasoning_effort='none'
+                existing['reasoning_effort'] = OPENAI_REASONING_EFFORT_MAP[thinking]
+        elif variant == 'qwen' and 'reasoning_config' not in existing:
+            if thinking is not False:
+                # Qwen only supports low/high; map others to closest
+                level_map: dict[ThinkingLevel, str] = {
+                    True: 'high',
+                    'minimal': 'low',
+                    'low': 'low',
+                    'medium': 'high',
+                    'high': 'high',
+                    'xhigh': 'high',
+                }
+                existing['reasoning_config'] = level_map[thinking]
+
+        return existing or None
+
     @overload
     async def _messages_create(
         self,
@@ -620,7 +659,7 @@ class BedrockConverseModel(Model):
                 'bedrock_additional_model_response_fields_paths', None
             ):
                 params['additionalModelResponseFieldPaths'] = additional_model_response_fields_paths
-            if additional_model_requests_fields := model_settings.get('bedrock_additional_model_requests_fields', None):
+            if additional_model_requests_fields := self._get_thinking_fields(model_settings, model_request_parameters):
                 params['additionalModelRequestFields'] = additional_model_requests_fields
             if prompt_variables := model_settings.get('bedrock_prompt_variables', None):
                 params['promptVariables'] = prompt_variables
