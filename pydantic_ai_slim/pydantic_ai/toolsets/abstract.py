@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol
 from pydantic_core import SchemaValidator
 from typing_extensions import Self
 
-from .._python_signature import FunctionSignature
 from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition, ToolsPrepareFunc
 
@@ -66,15 +65,6 @@ class ToolsetTool(Generic[AgentDepsT]):
     with `RunContext` as the first argument.
     Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on failure, return `None` on success.
     """
-
-    @property
-    def python_signature(self) -> FunctionSignature:
-        """Generate a Python function signature for this tool.
-
-        Delegates to the cached `python_signature` on the underlying `ToolDefinition`,
-        so that repeated access (e.g. on every agent step) reuses the same result.
-        """
-        return self.tool_def.python_signature
 
 
 class AbstractToolset(ABC, Generic[AgentDepsT]):
