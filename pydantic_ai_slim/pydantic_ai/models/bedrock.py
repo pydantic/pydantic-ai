@@ -661,12 +661,16 @@ class BedrockConverseModel(Model):
                 'bedrock_additional_model_response_fields_paths', None
             ):
                 params['additionalModelResponseFieldPaths'] = additional_model_response_fields_paths
-            if additional_model_requests_fields := self._translate_thinking(model_settings, model_request_parameters):
-                params['additionalModelRequestFields'] = additional_model_requests_fields
             if prompt_variables := model_settings.get('bedrock_prompt_variables', None):
                 params['promptVariables'] = prompt_variables
             if service_tier := model_settings.get('bedrock_service_tier', None):
                 params['serviceTier'] = service_tier
+
+        # Thinking translation must run outside the model_settings guard because
+        # prepare_request() strips 'thinking' from model_settings, which can leave
+        # it as an empty dict (falsy) even when thinking was requested.
+        if additional_model_requests_fields := self._translate_thinking(settings, model_request_parameters):
+            params['additionalModelRequestFields'] = additional_model_requests_fields
 
         try:
             if stream:

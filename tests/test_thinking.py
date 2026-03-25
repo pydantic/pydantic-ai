@@ -993,10 +993,19 @@ class TestThinkingIntegration:
     async def test_thinking_stripped_from_model_settings(self):
         """After prepare_request(), returned model_settings should not contain 'thinking'."""
         model = _make_model(supports_thinking=True)
-        settings = ModelSettings(thinking='high')
+        settings: ModelSettings = {'thinking': 'high', 'max_tokens': 500}
         returned_settings, resolved_params = model.prepare_request(settings, ModelRequestParameters())
         assert returned_settings is not None
         assert 'thinking' not in returned_settings
+        assert returned_settings.get('max_tokens') == 500
+        assert resolved_params.thinking == 'high'
+
+    async def test_thinking_only_setting_returns_none(self):
+        """When thinking is the only model setting, stripping it should return None."""
+        model = _make_model(supports_thinking=True)
+        settings: ModelSettings = {'thinking': 'high'}
+        returned_settings, resolved_params = model.prepare_request(settings, ModelRequestParameters())
+        assert returned_settings is None
         assert resolved_params.thinking == 'high'
 
 

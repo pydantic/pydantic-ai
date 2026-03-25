@@ -780,7 +780,8 @@ class Model(ABC):
             if self.profile.supports_thinking or self.profile.thinking_always_enabled:
                 if not (thinking_value is False and self.profile.thinking_always_enabled):
                     params = replace(params, thinking=thinking_value)
-            model_settings = cast(ModelSettings, {k: v for k, v in model_settings.items() if k != 'thinking'})
+            stripped = {k: v for k, v in model_settings.items() if k != 'thinking'}
+            model_settings = cast(ModelSettings, stripped) if stripped else None
 
         if builtin_tools := params.builtin_tools:
             # Deduplicate builtin tools
