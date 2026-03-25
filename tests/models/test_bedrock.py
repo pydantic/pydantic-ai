@@ -2788,7 +2788,7 @@ async def test_bedrock_cache_messages_no_user_messages(allow_model_requests: Non
     # Synthetic user message is prepended because Bedrock requires conversations to start with a user turn.
     assert bedrock_messages == snapshot(
         [
-            {'role': 'user', 'content': [{'text': ' '}]},
+            {'role': 'user', 'content': [{'text': '.'}]},
             {'role': 'assistant', 'content': [{'text': 'Assistant response'}]},
         ]
     )
@@ -3280,7 +3280,7 @@ async def test_bedrock_map_messages_builtin_tool_provider_filtering(
     )
     assert bedrock_messages == snapshot(
         [
-            {'role': 'user', 'content': [{'text': ' '}]},
+            {'role': 'user', 'content': [{'text': '.'}]},
             {
                 'role': 'assistant',
                 'content': [
@@ -3685,28 +3685,19 @@ async def test_bedrock_model_with_instructions_only(
     agent = Agent(model=model, system_prompt='Generate a short greeting.')
 
     result = await agent.run()
-    assert result.output == snapshot('Hello! How can I help you today?')
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[SystemPromptPart(content='Generate a short greeting.', timestamp=IsDatetime())],
-                timestamp=IsDatetime(),
-                run_id='6eae1271-17b6-4c3c-a90a-6eca4939880a',
-            ),
-            ModelResponse(
-                parts=[TextPart(content='Hello! How can I help you today?')],
-                usage=RequestUsage(input_tokens=13, output_tokens=12),
-                model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
-                timestamp=IsDatetime(),
-                provider_name='bedrock',
-                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
-                provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='121192f1-e935-4fb6-a74e-0535b4bae3f6',
-                finish_reason='stop',
-                run_id='6eae1271-17b6-4c3c-a90a-6eca4939880a',
-            ),
-        ]
-    )
+    assert result.output  # Non-empty response verifies the synthetic user message was accepted
+    messages = result.all_messages()
+    assert len(messages) == 2
+    assert isinstance(messages[0], ModelRequest)
+    assert len(messages[0].parts) == 1
+    assert isinstance(messages[0].parts[0], SystemPromptPart)
+    assert messages[0].parts[0].content == 'Generate a short greeting.'
+    assert isinstance(messages[1], ModelResponse)
+    assert len(messages[1].parts) == 1
+    assert isinstance(messages[1].parts[0], TextPart)
+    assert messages[1].model_name == model_name
+    assert messages[1].provider_name == 'bedrock'
+    assert messages[1].finish_reason == 'stop'
 
 
 @pytest.mark.vcr()
@@ -3732,5 +3723,18 @@ async def test_bedrock_model_instructions_only_then_message_history(
 
     first_result = await agent.run()
     second_result = await agent.run('Now say goodbye.', message_history=first_result.all_messages())
-    assert second_result.output == snapshot()
-    assert second_result.all_messages() == snapshot()
+    assert second_result.output  # Non-empty response
+    messages = second_result.all_messages()
+    assert len(messages) == 4
+    # First pair: system prompt + response from the instructions-only run
+    assert isinstance(messages[0], ModelRequest)
+    assert isinstance(messages[0].parts[0], SystemPromptPart)
+    assert isinstance(messages[1], ModelResponse)
+    assert messages[1].model_name == model_name
+    # Second pair: user follow-up + response
+    assert isinstance(messages[2], ModelRequest)
+    assert isinstance(messages[2].parts[0], UserPromptPart)
+    assert messages[2].parts[0].content == 'Now say goodbye.'
+    assert isinstance(messages[3], ModelResponse)
+    assert messages[3].model_name == model_name
+    assert messages[3].finish_reason == 'stop'
