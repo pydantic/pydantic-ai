@@ -313,8 +313,6 @@ def _build_function_params(
 
         if annotation is not None:
             _collect_referenced_types(annotation, referenced_types, tool_name, param_name)
-
-        if annotation is not None:
             type_expr = _annotation_to_type_expr(annotation, referenced_types)
         else:
             type_expr = 'Any'

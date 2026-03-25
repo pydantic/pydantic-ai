@@ -640,12 +640,7 @@ class _FunctionToolDefinition(ToolDefinition):
                 name=self.name,
                 description=self.description,
             )
-        return schema_to_signature(
-            name=self.name,
-            parameters_schema=self.parameters_json_schema,
-            description=self.description,
-            return_schema=(self.metadata or {}).get('output_schema'),
-        )
+        return super().python_signature
 
     def __repr__(self) -> str:
         # Use ToolDefinition's repr so this subclass is invisible to users
