@@ -80,13 +80,13 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
         if not self.per_run_step:
             return self
 
-        new_toolset = await self._evaluate_factory(ctx)
-        if new_toolset is self._toolset:
-            return self
-
-        # Manage the transition in-place
+        # Exit the old toolset before calling the factory, so it's cleaned up
+        # even if the factory or the new toolset's __aenter__ raises.
         if self._toolset is not None:
             await self._toolset.__aexit__(None, None, None)
+            self._toolset = None
+
+        new_toolset = await self._evaluate_factory(ctx)
         self._toolset = new_toolset
         if self._toolset is not None:
             await self._toolset.__aenter__()
