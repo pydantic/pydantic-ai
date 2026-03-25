@@ -2,7 +2,8 @@
 name: building-pydantic-ai-agents
 description: |
   Python agent framework for building LLM-powered applications. Use for creating
-  agents, adding tools, structured output, streaming, testing, and multi-agent systems.
+  agents, adding tools, capabilities (hooks, thinking, web search), structured output,
+  agent specs (YAML/JSON), streaming, testing, and multi-agent systems.
 license: MIT
 metadata:
   version: "1.0.0"
@@ -136,14 +137,77 @@ async def test_my_agent():
     assert m.last_model_request_parameters.function_tools == []
 ```
 
+### Use Capabilities
+
+Capabilities are reusable, composable units of agent behavior — bundling tools, hooks, instructions, and model settings.
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Thinking, WebSearch
+
+agent = Agent(
+    'anthropic:claude-opus-4-6',
+    instructions='You are a research assistant. Be thorough and cite sources.',
+    capabilities=[
+        Thinking(effort='high'),
+        WebSearch(),
+    ],
+)
+```
+
+### Add Lifecycle Hooks
+
+Use `Hooks` to intercept model requests, tool calls, and runs with decorators — no subclassing needed.
+
+```python {test="skip" lint="skip"}
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities.hooks import Hooks
+from pydantic_ai.models import ModelRequestContext
+
+hooks = Hooks()
+
+
+@hooks.on.before_model_request
+async def log_request(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
+    print(f'Sending {len(request_context.messages)} messages')
+    return request_context
+
+
+agent = Agent('openai:gpt-5.2', capabilities=[hooks])
+```
+
+### Define Agent from YAML Spec
+
+Use `Agent.from_file` to load agents from YAML or JSON — no Python agent construction code needed.
+
+```python {test="skip"}
+from pydantic_ai import Agent
+
+# agent.yaml:
+# model: anthropic:claude-opus-4-6
+# instructions: You are a helpful research assistant.
+# capabilities:
+#   - WebSearch
+#   - Thinking:
+#       effort: high
+
+agent = Agent.from_file('agent.yaml')
+```
+
 ## Task Routing Table
 
 | I want to... | Documentation |
 |---|---|
 | Create or configure agents | [Agents](https://ai.pydantic.dev/agents/) |
+| Bundle reusable behavior (tools, hooks, instructions) | [Capabilities](https://ai.pydantic.dev/capabilities/) |
+| Intercept model requests, tool calls, or runs | [Hooks](https://ai.pydantic.dev/hooks/) |
+| Define agents in YAML/JSON without Python code | [Agent Specs](https://ai.pydantic.dev/agent-spec/) |
+| Use template strings in agent instructions | [Template Strings](https://ai.pydantic.dev/agent-spec/#template-strings) |
 | Let my agent call external APIs or functions | [Tools](https://ai.pydantic.dev/tools/) |
 | Organize or restrict which tools an agent can use | [Toolsets](https://ai.pydantic.dev/toolsets/) |
-| Give my agent web search or code execution | [Built-in Tools](https://ai.pydantic.dev/builtin-tools/) |
+| Give my agent web search with automatic provider fallback | [WebSearch Capability](https://ai.pydantic.dev/capabilities/#web-search) |
+| Give my agent URL fetching with automatic provider fallback | [WebFetch Capability](https://ai.pydantic.dev/capabilities/#web-fetch) |
+| Give my agent web search or code execution (builtin tools) | [Built-in Tools](https://ai.pydantic.dev/builtin-tools/) |
 | Search with DuckDuckGo/Tavily/Exa | [Common Tools](https://ai.pydantic.dev/common-tools/) |
 | Ensure my agent returns data in a specific format | [Structured Output](https://github.com/pydantic/pydantic-ai/blob/main/docs/output.md#structured-output) |
 | Pass database connections, API clients, or config to tools | [Dependencies](https://ai.pydantic.dev/dependencies/) |
@@ -160,7 +224,7 @@ async def test_my_agent():
 | Make my agent resilient to temporary failures | [Retries](https://ai.pydantic.dev/retries/) |
 | Understand why my agent made specific decisions | [Using Logfire](https://github.com/pydantic/pydantic-ai/blob/main/docs/logfire.md#using-logfire) |
 | Write deterministic tests for my agent | [Unit testing with TestModel](https://github.com/pydantic/pydantic-ai/blob/main/docs/testing.md#unit-testing-with-testmodel) |
-| Enable extended thinking | [Thinking](https://ai.pydantic.dev/thinking/) |
+| Enable thinking/reasoning across any provider | [Thinking](https://ai.pydantic.dev/thinking/) · [Thinking Capability](https://ai.pydantic.dev/capabilities/#thinking) |
 | Systematically verify my agent works correctly | [Evals](https://ai.pydantic.dev/evals/) |
 | Use embeddings for RAG | [Embeddings](https://ai.pydantic.dev/embeddings/) |
 | Use durable execution | [Durable Execution](https://ai.pydantic.dev/durable-execution/) |
@@ -174,12 +238,12 @@ async def test_my_agent():
 | Expose agents as HTTP servers (A2A) | [A2A](https://ai.pydantic.dev/a2a/) |
 | Handle network errors and rate limiting automatically | [Retries](https://ai.pydantic.dev/retries/) |
 | Use LangChain or ACI.dev tools | [Third-Party Tools](https://ai.pydantic.dev/third-party-tools/) |
+| Publish reusable agent extensions as packages | [Extensibility](https://ai.pydantic.dev/extensibility/) |
+| Build custom toolsets, models, or agents | [Extensibility](https://ai.pydantic.dev/extensibility/) |
 | Debug common issues | [Troubleshooting](https://ai.pydantic.dev/troubleshooting/) |
 | Migrate from deprecated APIs | [Upgrade Guide](https://ai.pydantic.dev/upgrade-guide/) |
 | See advanced real-world examples | [Examples](https://ai.pydantic.dev/examples/) |
 | Look up an import path | [API Reference](https://ai.pydantic.dev/api/) |
-| Extend framework behavior | [Toolsets](https://ai.pydantic.dev/toolsets/) |
-| Build custom toolsets or models | [Toolsets](https://ai.pydantic.dev/toolsets/) |
 
 ## Decision Trees
 
@@ -225,6 +289,39 @@ Child agent returns result to parent?
         ├── Yes → Use programmatic hand-off
         └── Complex state machine?
             └── Yes → Use Graph-based control
+```
+
+### Choosing How to Extend Agent Behavior
+
+```
+Need reusable behavior across agents (tools + hooks + instructions)?
+├── Yes → Build a custom capability (subclass AbstractCapability)
+└── No → Just intercepting lifecycle events?
+    ├── Yes → Complex interception needing tools/instructions too?
+    │   ├── Yes → Subclass AbstractCapability
+    │   └── No → Use Hooks capability with decorators
+    └── No → Defining agents from config files?
+        ├── Yes → Use Agent.from_file() with YAML/JSON specs
+        └── No → Just adding tools?
+            ├── Yes → Use @agent.tool or Toolset
+            └── Pass args directly to Agent constructor
+```
+
+### Choosing a Capability
+
+```
+Need model thinking/reasoning?
+├── Yes → Use Thinking(effort='high')
+└── Need web search?
+    ├── Yes → Use WebSearch() (auto-fallback to local)
+    └── Need URL fetching?
+        ├── Yes → Use WebFetch()
+        └── Need MCP servers?
+            ├── Yes → Use MCP()
+            └── Need lifecycle hooks only?
+                ├── Yes → Use Hooks()
+                └── Need to filter/modify tool defs per step?
+                    └── Yes → Use PrepareTools()
 ```
 
 ### Choosing a Testing Approach
@@ -276,6 +373,22 @@ Need deterministic, fast tests?
 | Pure function, no agent context needed | `@agent.tool_plain` |
 | Tools defined in a separate module or shared across agents | `Tool(fn)` — pass to agent constructor via `tools=[...]` |
 
+### Built-in Capabilities
+
+| Capability | What it provides | Usable in YAML Specs |
+|---|---|:---:|
+| `Thinking` | Model thinking/reasoning at configurable effort | Yes |
+| `Hooks` | Decorator-based lifecycle hook registration | No |
+| `WebSearch` | Web search — builtin when supported, local fallback | Yes |
+| `WebFetch` | URL fetching — builtin when supported, custom fallback | Yes |
+| `ImageGeneration` | Image generation — builtin when supported, custom fallback | Yes |
+| `MCP` | MCP server — builtin when supported, direct connection | Yes |
+| `PrepareTools` | Filters or modifies tool definitions per step | No |
+| `PrefixTools` | Wraps a capability and prefixes its tool names | Yes |
+| `BuiltinTool` | Registers a builtin tool with the agent | Yes |
+| `Toolset` | Wraps an `AbstractToolset` | No |
+| `HistoryProcessor` | Wraps a history processor function | No |
+
 ### When to Use Each Agent Method
 
 | Scenario | Method |
@@ -297,6 +410,16 @@ See [Streaming All Events](https://ai.pydantic.dev/agents/#streaming-all-events)
 
 - `Agent[AgentDepsT, OutputDataT]` — dependency type + output type
 - `RunContext[AgentDepsT]` — available in tools and system prompts
+- `AbstractCapability[AgentDepsT]` — base class for reusable behavior bundles
+
+**Agent construction:**
+
+- **Python:** `Agent(model, instructions=..., tools=..., capabilities=...)`
+- **Declarative:** `Agent.from_file('agent.yaml')` or `Agent.from_spec({...})`
+
+**Capabilities** are the primary extension point — they bundle tools, lifecycle hooks, instructions, and model settings into reusable units. Built-in capabilities include `Thinking`, `WebSearch`, `WebFetch`, `Hooks`, `MCP`, and more.
+
+**Lifecycle hooks** (via `Hooks` or `AbstractCapability`) intercept every stage: `before_run` → `before_model_request` → `before_tool_execute` → `after_tool_execute` → `after_model_request` → `after_run`
 
 **Model string format:** `"provider:model-name"` (e.g., `"openai:gpt-5.2"`, `"anthropic:claude-sonnet-4-6"`, `"google-gla:gemini-3-pro-preview"`)
 
@@ -315,152 +438,17 @@ See [Streaming All Events](https://ai.pydantic.dev/agents/#streaming-all-events)
 
 ## Common Tasks
 
-### Manage Context Size
+Load [Common Tasks Reference](./reference/COMMON-TASKS.md) for detailed implementation guidance with code examples:
 
-Use `history_processors` to trim or filter messages before each model request.
-
-```python
-from pydantic_ai import Agent, ModelMessage
-
-
-async def keep_recent(messages: list[ModelMessage]) -> list[ModelMessage]:
-    return messages[-10:] if len(messages) > 10 else messages
-
-
-agent = Agent('openai:gpt-5.2', history_processors=[keep_recent])
-```
-
-**Also use for:** Privacy filtering (remove PII), summarizing old messages, role-based access.
-
-**Docs:** [Processing Message History](https://github.com/pydantic/pydantic-ai/blob/main/docs/message-history.md#processing-message-history) · [Summarize Old Messages](https://github.com/pydantic/pydantic-ai/blob/main/docs/message-history.md#summarize-old-messages)
-
----
-
-### Show Real-Time Progress
-
-Use `event_stream_handler` with `run()` or `run_stream()` to receive events as they happen.
-
-```python {test="skip"}
-from collections.abc import AsyncIterable
-
-from pydantic_ai import Agent, AgentStreamEvent, FunctionToolCallEvent, RunContext
-
-agent = Agent('openai:gpt-5.2')
-
-
-async def stream_handler(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]):
-    async for event in events:
-        if isinstance(event, FunctionToolCallEvent):
-            print(f'Calling {event.part.tool_name}...')
-
-
-async def main():
-    await agent.run('Do the task', event_stream_handler=stream_handler)
-```
-
-**Also use for:** Logging, analytics, debugging, progress bars in UIs.
-
-**Docs:** [Streaming Events and Final Output](https://github.com/pydantic/pydantic-ai/blob/main/docs/agents.md#streaming-events-and-final-output) · [Streaming All Events](https://github.com/pydantic/pydantic-ai/blob/main/docs/agents.md#streaming-all-events)
-
----
-
-### Handle Provider Failures
-
-Use `FallbackModel` to automatically switch providers on 4xx/5xx errors.
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai.models.anthropic import AnthropicModel
-from pydantic_ai.models.fallback import FallbackModel
-from pydantic_ai.models.openai import OpenAIChatModel
-
-fallback = FallbackModel(
-    OpenAIChatModel('gpt-5.2'),
-    AnthropicModel('claude-sonnet-4-6'),
-)
-agent = Agent(fallback)
-```
-
-**Also use for:** Cost optimization (expensive → cheap), rate limit handling, regional failover.
-
-**Docs:** [Fallback Model](https://github.com/pydantic/pydantic-ai/blob/main/docs/models/overview.md#fallback-model) · [Per-Model Settings](https://github.com/pydantic/pydantic-ai/blob/main/docs/models/overview.md#per-model-settings)
-
----
-
-### Test Agent Behavior
-
-Use `TestModel` for fast deterministic tests; `FunctionModel` for custom response logic.
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai.models.test import TestModel
-
-agent = Agent('openai:gpt-5.2')
-
-# TestModel: fast, auto-generates valid responses based on schema
-with agent.override(model=TestModel()):
-    result = agent.run_sync('test prompt')
-    assert result.output == 'success (no tool calls)'
-```
-
-```python
-from pydantic_ai import Agent, ModelResponse, TextPart
-from pydantic_ai.models.function import FunctionModel
-
-agent = Agent('openai:gpt-5.2')
-
-
-# FunctionModel: capture requests, return custom responses
-def custom_model(messages, info):
-    return ModelResponse(parts=[TextPart(content='mocked response')])
-
-
-with agent.override(model=FunctionModel(custom_model)):
-    result = agent.run_sync('test prompt')
-```
-
-**Also use for:** Capturing requests for assertions, simulating errors, testing retries.
-
-**Docs:** [Unit testing with TestModel](https://github.com/pydantic/pydantic-ai/blob/main/docs/testing.md#unit-testing-with-testmodel) · [Unit testing with FunctionModel](https://github.com/pydantic/pydantic-ai/blob/main/docs/testing.md#unit-testing-with-functionmodel)
-
----
-
-### Coordinate Multiple Agents
-
-Use **agent delegation** (via tools) when a child returns results to parent; **output functions** for permanent hand-offs.
-
-```python
-from pydantic_ai import Agent, RunContext
-
-parent = Agent('openai:gpt-5.2')
-researcher = Agent('openai:gpt-5.2', output_type=str)
-
-@parent.tool
-async def research(ctx: RunContext, topic: str) -> str:
-    """Delegate research to specialist."""
-    result = await researcher.run(f'Research: {topic}', usage=ctx.usage)
-    return result.output
-```
-
-**Also use for:** Triage/routing, specialist hand-off, graph-based workflows.
-
-**Docs:** [Agent Delegation](https://github.com/pydantic/pydantic-ai/blob/main/docs/multi-agent-applications.md#agent-delegation) · [Programmatic Agent Hand-off](https://github.com/pydantic/pydantic-ai/blob/main/docs/multi-agent-applications.md#programmatic-agent-hand-off)
-
----
-
-### Debug and Validate Agent Behavior
-
-Instrument with Logfire to see exact model requests, tool calls, and validate LLM outputs.
-
-```python
-import logfire
-
-logfire.configure()
-logfire.instrument_pydantic_ai()
-
-# All agent runs now traced — see tool calls, model requests, and outputs in Logfire dashboard
-```
-
-**Use for:** Debugging unexpected behavior, validating tool schemas, understanding what's sent to providers, production monitoring.
-
-**Docs:** [Using Logfire](https://github.com/pydantic/pydantic-ai/blob/main/docs/logfire.md#using-logfire) · [Monitoring HTTP Requests](https://github.com/pydantic/pydantic-ai/blob/main/docs/logfire.md#monitoring-http-requests)
+| Task | Section |
+|---|---|
+| Add capabilities (Thinking, WebSearch, etc.) | Add Capabilities to an Agent |
+| Intercept model requests and tool calls | Intercept Agent Lifecycle with Hooks |
+| Define agents from YAML/JSON config files | Define Agents Declaratively with Specs |
+| Enable thinking/reasoning across providers | Enable Thinking Across Providers |
+| Trim or filter conversation history | Manage Context Size |
+| Stream events and show real-time progress | Show Real-Time Progress |
+| Auto-switch providers on failure | Handle Provider Failures |
+| Write deterministic tests | Test Agent Behavior |
+| Delegate tasks between agents | Coordinate Multiple Agents |
+| Instrument with Logfire for debugging | Debug and Validate Agent Behavior |
