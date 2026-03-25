@@ -784,7 +784,7 @@ def _extract_span_reference(span: Any) -> SpanReference | None:
             trace_id=format(ctx.trace_id, '032x'),
             span_id=format(ctx.span_id, '016x'),
         )
-    return None
+    return None  # pragma: lax no cover
 
 
 DEFAULT_CONFIG = OnlineEvalConfig()
