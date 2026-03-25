@@ -112,6 +112,10 @@ class JsonSchemaTransformer(ABC):
             schema = self._handle_union(schema, 'anyOf')
             schema = self._handle_union(schema, 'oneOf')
 
+        # Guard: _handle_union may return a bool (e.g., from {'oneOf': [True]})
+        if isinstance(schema, bool):
+            return schema
+
         # Apply the base transform
         schema = self.transform(schema)
 
