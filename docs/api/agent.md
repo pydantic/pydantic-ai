@@ -13,6 +13,7 @@
             - capture_run_messages
             - InstrumentationSettings
             - EventStreamHandler
+            - AgentInstructions
             - AgentModelSettings
             - CallToolsNode
             - ModelRequestNode
