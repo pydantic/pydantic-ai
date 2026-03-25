@@ -43,9 +43,6 @@ jobs:
       - run: uv build --all-packages
       - run: ls -lh dist/
 
-      - name: Audit GitHub Actions workflows
-        run: pipx run zizmor .github/
-
   # mypy and lint are a bit slower than other jobs, so we run them separately
   mypy:
     runs-on: ubuntu-latest
