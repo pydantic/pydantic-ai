@@ -1153,6 +1153,10 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     elif isinstance(part, _messages.CompactionPart):
                         if part.content:
                             compaction_text += part.content
+                    elif isinstance(part, _messages.UploadedFile):
+                        # File references are exposed in history/streams, but final result handling only knows
+                        # how to work with inline binary files.
+                        pass
                     else:
                         assert_never(part)
 

@@ -28,6 +28,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
 )
 from ..profiles import ModelProfileSpec
@@ -251,7 +252,7 @@ class CohereModel(Model[AsyncClientV2]):
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     elif isinstance(
-                        item, BuiltinToolCallPart | BuiltinToolReturnPart | FilePart | CompactionPart
+                        item, BuiltinToolCallPart | BuiltinToolReturnPart | FilePart | UploadedFile | CompactionPart
                     ):  # pragma: no cover
                         pass
                     else:

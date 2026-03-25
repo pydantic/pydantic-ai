@@ -1,0 +1,188 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Create a file at /tmp/hello.py containing print("hello world")
+        role: user
+      instructions: Always use the apply_patch tool. Keep responses brief.
+      model: gpt-5.4
+      stream: false
+      tool_choice: auto
+      tools:
+      - type: apply_patch
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-organization:
+      - test-org
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      completed_at: 1773212932
+      created_at: 1773212916
+      error: null
+      frequency_penalty: 0.0
+      id: resp_02704c300bf09b0b0169b1acb1ec1081989ddf87710887e3cb
+      incomplete_details: null
+      instructions: Always use the apply_patch tool. Keep responses brief.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.4-2026-03-05
+      object: response
+      output:
+      - call_id: call_K9NB2l9lgPvMNYprN7kjMlab
+        id: apc_02704c300bf09b0b0169b1acb28cac8198891299c496597ca2
+        operation:
+          diff: |
+            +print("hello world")
+          type: create_file
+          path: /tmp/hello.py
+        status: completed
+        type: apply_patch_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      reasoning:
+        effort: none
+        summary: null
+      status: completed
+      temperature: 1.0
+      text:
+        format:
+          type: text
+      tool_choice: auto
+      tools:
+      - type: apply_patch
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 659
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 35
+        output_tokens_details:
+          reasoning_tokens: 0
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - call_id: call_K9NB2l9lgPvMNYprN7kjMlab
+        output: '{"status": "completed", "output": "Patch applied successfully"}'
+        status: completed
+        type: apply_patch_call_output
+      instructions: Always use the apply_patch tool. Keep responses brief.
+      model: gpt-5.4
+      previous_response_id: resp_02704c300bf09b0b0169b1acb1ec1081989ddf87710887e3cb
+      stream: false
+      tool_choice: auto
+      tools:
+      - type: apply_patch
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-organization:
+      - test-org
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      completed_at: 1773212945
+      created_at: 1773212940
+      error: null
+      frequency_penalty: 0.0
+      id: resp_02704c300bf09b0b0169b1acb2eecc8198895ef5b8a7c0fb29
+      incomplete_details: null
+      instructions: Always use the apply_patch tool. Keep responses brief.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.4-2026-03-05
+      object: response
+      output:
+      - content:
+        - annotations: []
+          text: Done.
+          type: output_text
+        id: msg_02704c300bf09b0b0169b1acb425b88198ae7053d483d3581b
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      reasoning:
+        effort: none
+        summary: null
+      status: completed
+      temperature: 1.0
+      text:
+        format:
+          type: text
+      tool_choice: auto
+      tools:
+      - type: apply_patch
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 749
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 6
+        output_tokens_details:
+          reasoning_tokens: 0
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import re
 import sys
 from collections import defaultdict
@@ -35,6 +37,9 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets.apply_patch import ApplyPatchOutput, ApplyPatchToolset
+from pydantic_ai.toolsets.shell import ShellToolset
+from pydantic_ai.toolsets.text_editor import TextEditorOutput, TextEditorToolset
 from pydantic_ai.usage import RunUsage
 
 from ._inline_snapshot import snapshot
@@ -2162,3 +2167,132 @@ async def test_toolset_empty_instructions_filtered():
     result = await agent.run('Hello')
     first_message = result.all_messages()[0]
     assert first_message.instructions == 'valid instruction\n\nanother valid'  # type: ignore[union-attr]
+
+
+# ── ShellToolset tests ─────────────────────────────────────────────────────────
+
+
+async def _shell_call(toolset: ShellToolset[None], args: dict[str, Any]) -> dict[str, Any]:
+    """Helper: call the shell tool and return parsed JSON output."""
+    ctx = build_run_context(None)
+    tools = await toolset.get_tools(ctx)
+    tool = tools['shell']
+    result = await toolset.call_tool('shell', args, ctx, tool)
+    return json.loads(result)
+
+
+async def test_shell_toolset_execute():
+    """Test basic command execution through the public ShellToolset API."""
+    toolset = ShellToolset.local()
+    try:
+        parsed = await _shell_call(toolset, {'command': 'echo hello'})
+        assert 'hello' in parsed['output']
+        assert parsed['exit_code'] == 0
+    finally:
+        await toolset.executor.close()
+
+
+async def test_shell_toolset_nonzero_exit():
+    toolset = ShellToolset.local()
+    try:
+        parsed = await _shell_call(toolset, {'command': 'exit 42'})
+        assert parsed['exit_code'] == 42
+    finally:
+        await toolset.executor.close()
+
+
+async def test_shell_toolset_state_persists():
+    """Shell state persists across calls within the same toolset."""
+    toolset = ShellToolset.local()
+    try:
+        await _shell_call(toolset, {'command': 'export MY_VAR=hello'})
+        parsed = await _shell_call(toolset, {'command': 'echo $MY_VAR'})
+        assert 'hello' in parsed['output']
+        assert parsed['exit_code'] == 0
+    finally:
+        await toolset.executor.close()
+
+
+async def test_shell_toolset_restart():
+    toolset = ShellToolset.local()
+    try:
+        parsed = await _shell_call(toolset, {'restart': True})
+        assert parsed['output'] == 'Shell session restarted.'
+        assert parsed['exit_code'] == 0
+
+        # Verify the new session works
+        parsed2 = await _shell_call(toolset, {'command': 'echo ok'})
+        assert parsed2['exit_code'] == 0
+    finally:
+        await toolset.executor.close()
+
+
+async def test_shell_toolset_id_property():
+    toolset = ShellToolset.local()
+    assert toolset.id is None
+
+
+async def test_shell_toolset_missing_args():
+    toolset = ShellToolset.local()
+    try:
+        ctx = build_run_context(None)
+        tools = await toolset.get_tools(ctx)
+        tool = tools['shell']
+        with pytest.raises(ModelRetry, match='Either `command` or `restart` must be provided'):
+            await toolset.call_tool('shell', {}, ctx, tool)
+    finally:
+        await toolset.executor.close()
+
+
+async def test_shell_toolset_output_truncation():
+    toolset = ShellToolset.local(max_output_chars=20)
+    try:
+        parsed = await _shell_call(toolset, {'command': 'echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'})
+        assert '[output truncated' in parsed['output']
+        assert len(parsed['output'].split('\n')[0]) == 20
+    finally:
+        await toolset.executor.close()
+
+
+async def test_shell_toolset_timeout():
+    from pydantic_ai.toolsets.shell import ShellExecutor, ShellOutput
+
+    class SlowExecutor(ShellExecutor):
+        async def execute(self, command: str) -> ShellOutput:
+            await asyncio.sleep(10)
+            return ShellOutput(output='', exit_code=0)  # pragma: no cover
+
+        async def restart(self) -> ShellOutput:
+            return ShellOutput(output='Restarted.', exit_code=0)
+
+        async def close(self) -> None:
+            pass
+
+    toolset = ShellToolset(executor=SlowExecutor(), timeout=0.1)
+    ctx = build_run_context(None)
+    tools = await toolset.get_tools(ctx)
+    tool = tools['shell']
+    with pytest.raises(ModelRetry, match='Command timed out'):
+        await toolset.call_tool('shell', {'command': 'anything'}, ctx, tool)
+
+
+# ── ApplyPatchToolset tests ───────────────────────────────────────────────────
+
+
+async def test_apply_patch_toolset_id_property():
+    async def noop(op: Any) -> ApplyPatchOutput:
+        return ApplyPatchOutput(status='completed')  # pragma: no cover
+
+    toolset = ApplyPatchToolset(execute=noop)
+    assert toolset.id is None
+
+
+# ── TextEditorToolset tests ───────────────────────────────────────────────────
+
+
+async def test_text_editor_toolset_id_property():
+    async def noop(cmd: Any) -> TextEditorOutput:
+        return TextEditorOutput(output='')  # pragma: no cover
+
+    toolset = TextEditorToolset(execute=noop)
+    assert toolset.id is None

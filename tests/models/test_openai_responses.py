@@ -10353,6 +10353,23 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
     assert not (text_part2.provider_details or {}).get('annotations')
 
 
+def _text_response(text: str, *, status: ResponseStatus = 'completed') -> resp.Response:
+    """Create a Response with a single text output message."""
+    r = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text=text, type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    r.status = status
+    return r
+
+
 async def test_openai_responses_refusal_non_streaming(allow_model_requests: None):
     """Test that ResponseOutputRefusal in content triggers ContentFilterError."""
     c = response_message(
@@ -10641,7 +10658,8 @@ async def test_openai_responses_text_content_input(allow_model_requests: None, o
     """Test that text content in ModelRequest is correctly mapped to OpenAI messages."""
     model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
     m = await model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
-        part=UserPromptPart(content=['test', TextContent(content='test2', metadata={'key': 'value'})])
+        part=UserPromptPart(content=['test', TextContent(content='test2', metadata={'key': 'value'})]),
+        has_shell_tool=False,
     )
     assert m == snapshot(
         {'role': 'user', 'content': [{'text': 'test', 'type': 'input_text'}, {'text': 'test2', 'type': 'input_text'}]}
@@ -10937,23 +10955,6 @@ async def test_openai_responses_compact_stateful_mode(allow_model_requests: None
     assert compaction.provider_name == 'openai'
     assert compaction.provider_details is not None
     assert 'encrypted_content' in compaction.provider_details
-
-
-def _text_response(text: str, *, status: ResponseStatus = 'completed') -> resp.Response:
-    """Create a Response with a single text output message."""
-    r = response_message(
-        [
-            ResponseOutputMessage(
-                id='output-1',
-                content=cast(list[Content], [ResponseOutputText(text=text, type='output_text', annotations=[])]),
-                role='assistant',
-                status='completed',
-                type='message',
-            )
-        ]
-    )
-    r.status = status
-    return r
 
 
 @pytest.mark.vcr()
