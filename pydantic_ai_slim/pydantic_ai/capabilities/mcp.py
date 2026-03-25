@@ -65,6 +65,19 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
         self.description = description
         self.__post_init__()
 
+    @classmethod
+    def from_spec(cls, url: str | None = None, **kwargs: Any) -> MCP[Any]:
+        """Create from spec.
+
+        Supports both shorthand and full forms:
+
+        - `{MCP: "https://url"}` — URL as a string value
+        - `{MCP: {url: "https://url", allowed_tools: [...]}}` — full kwargs
+        """
+        if url is not None:
+            return cls(url=url, **kwargs)
+        return cls(**kwargs)
+
     @cached_property
     def _resolved_id(self) -> str:
         if self.id:
