@@ -48,7 +48,7 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
         *,
         url: str,
         builtin: MCPServerTool | AgentBuiltinTool[AgentDepsT] | bool = True,
-        local: MCPServer | FastMCPToolset[Any] | Callable[..., Any] | Literal[False] | None = None,
+        local: MCPServer | FastMCPToolset[AgentDepsT] | Callable[..., Any] | Literal[False] | None = None,
         id: str | None = None,
         authorization_token: str | None = None,
         headers: dict[str, str] | None = None,
@@ -89,7 +89,7 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
     def _builtin_unique_id(self) -> str:
         return f'mcp_server:{self._resolved_id}'
 
-    def _default_local(self) -> Tool[Any] | AbstractToolset[Any] | None:
+    def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
         # Merge authorization_token into headers for local connection
         local_headers = dict(self.headers or {})
         if self.authorization_token:
