@@ -2,15 +2,19 @@ from __future__ import annotations as _annotations
 
 import inspect
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import KW_ONLY, dataclass, field
+from copy import deepcopy
+from dataclasses import KW_ONLY, dataclass, field, fields as dataclass_fields
+from functools import cached_property
 from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, Union, cast
 
-from pydantic import Discriminator, Tag
+from pydantic import ConfigDict, Discriminator, Field, Tag
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import ParamSpec, Self, TypeVar
 
 from . import _function_schema, _utils
+from ._python_signature import FunctionSignature, function_to_signature, schema_to_signature
 from ._run_context import AgentDepsT, RunContext
 from .builtin_tools import AbstractBuiltinTool
 from .exceptions import ModelRetry
@@ -403,6 +407,7 @@ class Tool(Generic[ToolAgentDepsT]):
         self.requires_approval = requires_approval
         self.metadata = metadata
         self.timeout = timeout
+        self._original_func: Callable[..., Any] | None = self.function_schema.function
 
     @classmethod
     def from_schema(
@@ -448,7 +453,7 @@ class Tool(Generic[ToolAgentDepsT]):
             is_async=_utils.is_async_callable(function),
         )
 
-        return cls(
+        tool = cls(
             function,
             takes_ctx=takes_ctx,
             name=name,
@@ -457,10 +462,14 @@ class Tool(Generic[ToolAgentDepsT]):
             sequential=sequential,
             args_validator=args_validator,
         )
+        # Schema-based tools use proxy functions (e.g. def proxy(*args, **kwargs))
+        # whose signatures are not meaningful — force schema-based signature generation.
+        tool._original_func = None
+        return tool
 
-    @property
-    def tool_def(self):
-        return ToolDefinition(
+    @cached_property
+    def tool_def(self) -> ToolDefinition:
+        return _FunctionToolDefinition(
             name=self.name,
             description=self.description,
             parameters_json_schema=self.function_schema.json_schema,
@@ -469,6 +478,7 @@ class Tool(Generic[ToolAgentDepsT]):
             metadata=self.metadata,
             timeout=self.timeout,
             kind='unapproved' if self.requires_approval else 'function',
+            original_func=self._original_func,
         )
 
     async def prepare_tool_def(self, ctx: RunContext[ToolAgentDepsT]) -> ToolDefinition | None:
@@ -480,10 +490,17 @@ class Tool(Generic[ToolAgentDepsT]):
         Returns:
             return a `ToolDefinition` or `None` if the tools should not be registered for this run.
         """
+        # `self.tool_def` is cached and reused across runs. Hand a per-run deep copy to prepare callbacks
+        # so in-place mutations don't leak.
+        #
+        # Example of mutation we intentionally isolate per run:
+        # `tool_def.parameters_json_schema['properties']['name']['description'] = 'Name of the human to greet.'`
+        #
+        # Without this copy, that description could accidentally persist into later runs with different deps.
         base_tool_def = self.tool_def
 
         if self.prepare is not None:
-            result = self.prepare(ctx, base_tool_def)
+            result = self.prepare(ctx, deepcopy(base_tool_def))
             if inspect.isawaitable(result):
                 return await result
             return result
@@ -580,4 +597,61 @@ class ToolDefinition:
         """
         return self.kind in ('external', 'unapproved')
 
+    @cached_property
+    def python_signature(self) -> FunctionSignature:
+        """Generate a Python function signature from this tool's JSON schema.
+
+        The result is cached so that repeated access (e.g. on every agent step)
+        does not re-traverse the schema. A new instance created via
+        `dataclasses.replace()` gets a fresh cache automatically.
+        """
+        return schema_to_signature(
+            name=self.name,
+            parameters_schema=self.parameters_json_schema,
+            description=self.description,
+            return_schema=(self.metadata or {}).get('output_schema'),
+        )
+
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@pydantic_dataclass(repr=False, kw_only=True, eq=False, config=ConfigDict(arbitrary_types_allowed=True))
+class _FunctionToolDefinition(ToolDefinition):
+    """A tool definition that retains a reference to the original Python function for richer signature generation.
+
+    When `original_func` is available, `python_signature` uses `inspect.signature()` and
+    `get_type_hints()` for richer type information (e.g. TypedDict fields, union types).
+    Falls back to the schema-based approach when `original_func` is lost (e.g. after
+    deserialization roundtrip).
+    """
+
+    original_func: Callable[..., Any] | None = Field(default=None, exclude=True, repr=False)
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, ToolDefinition):
+            return NotImplemented
+        return all(getattr(self, f.name) == getattr(other, f.name) for f in dataclass_fields(ToolDefinition))
+
+    @cached_property
+    def python_signature(self) -> FunctionSignature:
+        if self.original_func is not None:
+            return function_to_signature(
+                self.original_func,
+                name=self.name,
+                description=self.description,
+            )
+        return schema_to_signature(
+            name=self.name,
+            parameters_schema=self.parameters_json_schema,
+            description=self.description,
+            return_schema=(self.metadata or {}).get('output_schema'),
+        )
+
+    def __repr__(self) -> str:
+        # Use ToolDefinition's repr so this subclass is invisible to users
+        kv_pairs = (
+            f'{f.name}={getattr(self, f.name)!r}'
+            for f in dataclass_fields(ToolDefinition)
+            if f.repr and getattr(self, f.name) != f.default
+        )
+        return f'ToolDefinition({", ".join(kv_pairs)})'
