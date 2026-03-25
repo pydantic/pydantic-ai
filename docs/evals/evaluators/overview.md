@@ -430,9 +430,42 @@ Failures appear in `report.cases[i].evaluator_failures` with:
 
 Use retry configuration to handle transient failures (see [Retry Strategies](../how-to/retry-strategies.md)).
 
+## Report Evaluators (Experiment-Wide)
+
+All the evaluators above run once per case. **Report evaluators** are different: they run once per
+experiment after all cases have been evaluated, and analyze the full set of results together.
+
+Use report evaluators for experiment-wide statistics like:
+
+- **Confusion matrices** — visualize classification accuracy across classes
+- **Precision-recall curves** — assess ranking quality with AUC scores
+- **Scalar metrics** — overall accuracy, F1, BLEU, or any single number
+- **Summary tables** — per-class breakdowns, error category summaries
+
+```python
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import ConfusionMatrixEvaluator
+
+dataset = Dataset(
+    cases=[
+        Case(inputs='meow', expected_output='cat'),
+        Case(inputs='woof', expected_output='dog'),
+    ],
+    report_evaluators=[
+        ConfusionMatrixEvaluator(
+            predicted_from='output',
+            expected_from='expected_output',
+        ),
+    ],
+)
+```
+
+**See:** [Report Evaluators](report-evaluators.md) for the full guide, including built-in report evaluators and how to write custom ones.
+
 ## Next Steps
 
 - **[Built-in Evaluators](built-in.md)** - Complete reference of all provided evaluators
 - **[LLM Judge](llm-judge.md)** - Deep dive on LLM-as-a-Judge evaluation
 - **[Custom Evaluators](custom.md)** - Write your own evaluation logic
+- **[Report Evaluators](report-evaluators.md)** - Experiment-wide analyses
 - **[Span-Based Evaluation](span-based.md)** - Evaluate using OpenTelemetry spans

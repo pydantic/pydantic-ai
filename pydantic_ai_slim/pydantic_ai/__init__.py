@@ -1,7 +1,9 @@
 from importlib.metadata import version as _metadata_version
 
+from ._template import TemplateStr
 from .agent import (
     Agent,
+    AgentModelSettings,
     CallToolsNode,
     EndStrategy,
     InstrumentationSettings,
@@ -20,6 +22,12 @@ from .builtin_tools import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from .concurrency import (
+    AbstractConcurrencyLimiter,
+    AnyConcurrencyLimit,
+    ConcurrencyLimit,
+    ConcurrencyLimiter,
+)
 from .embeddings import (
     Embedder,
     EmbeddingModel,
@@ -30,11 +38,15 @@ from .exceptions import (
     AgentRunError,
     ApprovalRequired,
     CallDeferred,
+    ConcurrencyLimitExceeded,
     FallbackExceptionGroup,
     IncompleteToolCall,
     ModelAPIError,
     ModelHTTPError,
     ModelRetry,
+    SkipModelRequest,
+    SkipToolExecution,
+    SkipToolValidation,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
@@ -87,12 +99,14 @@ from .messages import (
     ToolCallPartDelta,
     ToolReturn,
     ToolReturnPart,
+    UploadedFile,
     UserContent,
     UserPromptPart,
     VideoFormat,
     VideoMediaType,
     VideoUrl,
 )
+from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
 from .output import NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
 from .profiles import (
     DEFAULT_PROFILE,
@@ -103,9 +117,19 @@ from .profiles import (
 )
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
 from .settings import ModelSettings
-from .tools import DeferredToolRequests, DeferredToolResults, RunContext, Tool, ToolApproved, ToolDefinition, ToolDenied
+from .tools import (
+    AgentBuiltinTool,
+    DeferredToolRequests,
+    DeferredToolResults,
+    RunContext,
+    Tool,
+    ToolApproved,
+    ToolDefinition,
+    ToolDenied,
+)
 from .toolsets import (
     AbstractToolset,
+    AgentToolset,
     ApprovalRequiredToolset,
     CombinedToolset,
     ExternalToolset,
@@ -124,6 +148,7 @@ __all__ = (
     '__version__',
     # agent
     'Agent',
+    'AgentModelSettings',
     'EndStrategy',
     'CallToolsNode',
     'ModelRequestNode',
@@ -135,15 +160,26 @@ __all__ = (
     'EmbeddingModel',
     'EmbeddingSettings',
     'EmbeddingResult',
+    # concurrency
+    'AbstractConcurrencyLimiter',
+    'AnyConcurrencyLimit',
+    'ConcurrencyLimit',
+    'ConcurrencyLimitedModel',
+    'ConcurrencyLimiter',
+    'limit_model_concurrency',
     # exceptions
     'AgentRunError',
     'CallDeferred',
     'ApprovalRequired',
+    'ConcurrencyLimitExceeded',
     'ModelRetry',
     'ModelAPIError',
     'ModelHTTPError',
     'FallbackExceptionGroup',
     'IncompleteToolCall',
+    'SkipModelRequest',
+    'SkipToolExecution',
+    'SkipToolValidation',
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
     'UserError',
@@ -194,6 +230,7 @@ __all__ = (
     'ToolCallPartDelta',
     'ToolReturn',
     'ToolReturnPart',
+    'UploadedFile',
     'UserContent',
     'UserPromptPart',
     'VideoFormat',
@@ -206,6 +243,7 @@ __all__ = (
     'InlineDefsJsonSchemaTransformer',
     'JsonSchemaTransformer',
     # tools
+    'AgentBuiltinTool',
     'Tool',
     'ToolDefinition',
     'RunContext',
@@ -215,6 +253,7 @@ __all__ = (
     'ToolDenied',
     # toolsets
     'AbstractToolset',
+    'AgentToolset',
     'ApprovalRequiredToolset',
     'CombinedToolset',
     'ExternalToolset',
@@ -242,6 +281,8 @@ __all__ = (
     'PromptedOutput',
     'TextOutput',
     'StructuredDict',
+    # template
+    'TemplateStr',
     # format_prompt
     'format_as_xml',
     # settings

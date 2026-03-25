@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import re
 from datetime import timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from inline_snapshot import snapshot
 
 from pydantic_ai import (
     BinaryContent,
@@ -30,20 +30,12 @@ from pydantic_ai.exceptions import (
     UnexpectedModelBehavior,
     UserError,
 )
-from pydantic_ai.mcp import (
-    MCPError,
-    MCPServerStreamableHTTP,
-    Resource,
-    ResourceAnnotations,
-    ResourceTemplate,
-    ServerCapabilities,
-    load_mcp_servers,
-)
 from pydantic_ai.models import Model, cached_async_http_client
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
 
+from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
@@ -61,7 +53,19 @@ with try_import() as imports_successful:
     )
 
     from pydantic_ai._mcp import map_from_mcp_params, map_from_model_response, map_from_pai_messages
-    from pydantic_ai.mcp import CallToolFunc, MCPServerSSE, MCPServerStdio, ToolResult
+    from pydantic_ai.mcp import (
+        CallToolFunc,
+        MCPError,
+        MCPServerSSE,
+        MCPServerStdio,
+        MCPServerStreamableHTTP,
+        Resource,
+        ResourceAnnotations,
+        ResourceTemplate,
+        ServerCapabilities,
+        ToolResult,
+        load_mcp_servers,
+    )
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.google import GoogleProvider
@@ -140,6 +144,49 @@ async def test_aexit_called_more_times_than_aenter():
 
     with pytest.raises(ValueError, match='MCPServer.__aexit__ called more times than __aenter__'):
         await server.__aexit__(None, None, None)
+
+
+async def test_aexit_concurrent_does_not_corrupt_running_count():
+    """Regression test: concurrent __aexit__ calls must not corrupt _running_count.
+
+    Injects a yield point before real lock acquisition so both tasks pass the
+    pre-lock guard simultaneously — the exact interleaving the TOCTOU race required.
+
+    Old code (guard outside lock):
+      Task A reads _running_count == 1, passes guard, yields.
+      Task B reads _running_count == 1, passes guard, yields.
+      Task A acquires lock, decrements to 0.
+      Task B acquires lock, decrements to -1.  ← bug: count corrupted, no ValueError
+
+    New code (guard inside lock):
+      Task A acquires lock, reads 1, decrements to 0, releases.
+      Task B acquires lock, reads 0, raises ValueError correctly.  ← fix verified
+    """
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+
+    # One active entry — the race only matters when both tasks see count > 0.
+    server._running_count = 1  # pyright: ignore[reportPrivateUsage]
+
+    # Replace the real lock with one that yields before acquiring,
+    # opening the interleaving window the old code left unprotected.
+    class InterleavingLock(asyncio.Lock):
+        async def acquire(self) -> Literal[True]:
+            await asyncio.sleep(0)  # yield — lets the other task reach the same point
+            return await super().acquire()
+
+    server._enter_lock = InterleavingLock()  # pyright: ignore[reportPrivateUsage]
+
+    results = await asyncio.gather(
+        server.__aexit__(None, None, None),
+        server.__aexit__(None, None, None),
+        return_exceptions=True,
+    )
+
+    # Exactly one exit must succeed and one must raise ValueError (not silently
+    # corrupt the count). With the old code both would succeed and count == -1.
+    errors = [r for r in results if isinstance(r, ValueError)]
+    assert len(errors) == 1, f'Expected 1 ValueError, got {len(errors)}: {results}'
+    assert server._running_count == 0  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_stdio_server_with_tool_prefix(run_context: RunContext[int]):
@@ -708,11 +755,10 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                     parts=[
                         ToolReturnPart(
                             tool_name='get_image_resource',
-                            content='See file 241a70',
+                            content=IsInstance(BinaryImage),
                             tool_call_id='call_nFsDHYDZigO0rOHqmChZ3pmt',
                             timestamp=IsDatetime(),
-                        ),
-                        UserPromptPart(content=['This is file 241a70:', image_content], timestamp=IsDatetime()),
+                        )
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -803,11 +849,10 @@ async def test_tool_returning_image_resource_link(
                     parts=[
                         ToolReturnPart(
                             tool_name='get_image_resource_link',
-                            content='See file 241a70',
+                            content=IsInstance(BinaryImage),
                             tool_call_id='call_eVFgn54V9Nuh8Y4zvuzkYjUp',
                             timestamp=IsDatetime(),
-                        ),
-                        UserPromptPart(content=['This is file 241a70:', image_content], timestamp=IsDatetime()),
+                        )
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -876,11 +921,10 @@ async def test_tool_returning_audio_resource(
                     parts=[
                         ToolReturnPart(
                             tool_name='get_audio_resource',
-                            content='See file 2d36ae',
+                            content=IsInstance(BinaryContent),
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
-                        ),
-                        UserPromptPart(content=['This is file 2d36ae:', audio_content], timestamp=IsDatetime()),
+                        )
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -951,17 +995,10 @@ async def test_tool_returning_audio_resource_link(
                     parts=[
                         ToolReturnPart(
                             tool_name='get_audio_resource_link',
-                            content='See file 2d36ae',
+                            content=IsInstance(BinaryContent),
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
-                        ),
-                        UserPromptPart(
-                            content=[
-                                'This is file 2d36ae:',
-                                audio_content,
-                            ],
-                            timestamp=IsDatetime(),
-                        ),
+                        )
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -1039,14 +1076,10 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                     parts=[
                         ToolReturnPart(
                             tool_name='get_image_resource',
-                            content='See file 241a70',
+                            content=IsInstance(BinaryImage),
                             tool_call_id='call_KL2BXptkWmKifse91X727M7y',
                             timestamp=IsDatetime(),
-                        ),
-                        UserPromptPart(
-                            content=['This is file 241a70:', IsInstance(BinaryImage)],
-                            timestamp=IsDatetime(),
-                        ),
+                        )
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -1517,14 +1550,11 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                                 'This is a string',
                                 'Another string',
                                 {'foo': 'bar', 'baz': 123},
-                                'See file 241a70',
+                                IsInstance(BinaryImage),
                             ],
                             tool_call_id='call_pyHWn85cReaMKhKpY5J4cGev',
                             timestamp=IsDatetime(),
-                        ),
-                        UserPromptPart(
-                            content=['This is file 241a70:', IsInstance(BinaryImage)], timestamp=IsDatetime()
-                        ),
+                        )
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -1634,7 +1664,7 @@ def test_map_from_mcp_params_model_request():
                 parts=[
                     UserPromptPart(content='xx', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(
-                        content=[BinaryContent(data=b'img', media_type='image/png', identifier='978ea7')],
+                        content=[BinaryContent(data=b'img', media_type='image/png')],
                         timestamp=IsNow(tz=timezone.utc),
                     ),
                 ]

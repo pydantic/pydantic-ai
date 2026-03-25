@@ -10,6 +10,7 @@ import json
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
 from typing import Final
+from uuid import uuid4
 
 from ..._utils import now_utc
 from ...messages import (
@@ -28,6 +29,7 @@ from ...messages import (
 from ...output import OutputDataT
 from ...tools import AgentDepsT
 from .. import SSE_CONTENT_TYPE, NativeEvent, UIEventStream
+from .._event_stream import describe_file
 
 try:
     from ag_ui.core import (
@@ -214,17 +216,23 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
     async def handle_builtin_tool_return(self, part: BuiltinToolReturnPart) -> AsyncIterator[BaseEvent]:
         tool_call_id = self._builtin_tool_call_ids[part.tool_call_id]
+        # Use a one-off message ID instead of `self.new_message_id()` to avoid
+        # mutating `self.message_id`, which is used as `parent_message_id` for
+        # subsequent tool calls in the same response.
         yield ToolCallResultEvent(
-            message_id=self.new_message_id(),
+            message_id=str(uuid4()),
             type=EventType.TOOL_CALL_RESULT,
             role='tool',
             tool_call_id=tool_call_id,
-            content=part.model_response_str(),
+            content=_tool_return_content(part),
         )
 
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseEvent]:
         result = event.result
-        output = result.model_response() if isinstance(result, RetryPromptPart) else result.model_response_str()
+        if isinstance(result, RetryPromptPart):
+            output = result.model_response()
+        else:
+            output = _tool_return_content(result)
 
         yield ToolCallResultEvent(
             message_id=self.new_message_id(),
@@ -248,3 +256,15 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
                 for item in possible_event:  # type: ignore[reportUnknownMemberType]
                     if isinstance(item, BaseEvent):  # pragma: no branch
                         yield item
+
+
+def _tool_return_content(part: BuiltinToolReturnPart | ToolReturnPart) -> str:
+    """Return tool output string with file descriptions if present."""
+    output = part.model_response_str()
+    if file_descriptions := [describe_file(f) for f in part.files]:
+        if output:
+            return output + '\n' + '\n'.join(file_descriptions)
+        else:
+            return '\n'.join(file_descriptions)
+    else:
+        return output

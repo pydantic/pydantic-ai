@@ -7,8 +7,6 @@ from decimal import Decimal
 
 import pytest
 from genai_prices import Usage as GenaiPricesUsage, calc_price
-from inline_snapshot import snapshot
-from inline_snapshot.extra import warns
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -16,7 +14,9 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryPromptPart,
     RunContext,
+    TextPart,
     ToolCallPart,
     ToolReturnPart,
     UsageLimitExceeded,
@@ -28,7 +28,8 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
-from .conftest import IsNow, IsStr
+from ._inline_snapshot import snapshot, warns
+from .conftest import IsDatetime, IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
 
@@ -175,6 +176,47 @@ async def test_multi_agent_usage_no_incr():
     assert result1.output == snapshot('{"delegate_to_other_agent1":0}')
     run_1_usages.append(result1.usage())
     assert result1.usage() == snapshot(RunUsage(requests=2, input_tokens=103, output_tokens=13, tool_calls=1))
+    assert result1.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='foobar', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='delegate_to_other_agent1',
+                        args={'sentence': 'a'},
+                        tool_call_id='pyd_ai_tool_call_id__delegate_to_other_agent1',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=5),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='delegate_to_other_agent1',
+                        content=0,
+                        tool_call_id='pyd_ai_tool_call_id__delegate_to_other_agent1',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"delegate_to_other_agent1":0}')],
+                usage=RequestUsage(input_tokens=52, output_tokens=8),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
     controller_agent2 = Agent(TestModel())
 
@@ -188,6 +230,47 @@ async def test_multi_agent_usage_no_incr():
     result2 = await controller_agent2.run('foobar')
     assert result2.output == snapshot('{"delegate_to_other_agent2":0}')
     assert result2.usage() == snapshot(RunUsage(requests=3, input_tokens=154, output_tokens=17, tool_calls=1))
+    assert result2.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='foobar', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='delegate_to_other_agent2',
+                        args={'sentence': 'a'},
+                        tool_call_id='pyd_ai_tool_call_id__delegate_to_other_agent2',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=5),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='delegate_to_other_agent2',
+                        content=0,
+                        tool_call_id='pyd_ai_tool_call_id__delegate_to_other_agent2',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"delegate_to_other_agent2":0}')],
+                usage=RequestUsage(input_tokens=52, output_tokens=8),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
     # confirm the usage from result2 is the sum of the usage from result1
     assert result2.usage() == functools.reduce(operator.add, run_1_usages)
@@ -215,6 +298,47 @@ async def test_multi_agent_usage_sync():
     result = await controller_agent.run('foobar')
     assert result.output == snapshot('{"delegate_to_other_agent":0}')
     assert result.usage() == snapshot(RunUsage(requests=7, input_tokens=105, output_tokens=16, tool_calls=1))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='foobar', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='delegate_to_other_agent',
+                        args={'sentence': 'a'},
+                        tool_call_id='pyd_ai_tool_call_id__delegate_to_other_agent',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=5),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='delegate_to_other_agent',
+                        content=0,
+                        tool_call_id='pyd_ai_tool_call_id__delegate_to_other_agent',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"delegate_to_other_agent":0}')],
+                usage=RequestUsage(input_tokens=52, output_tokens=8),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 def test_request_usage_basics():
@@ -255,6 +379,80 @@ def test_add_usages():
     assert RunUsage() + RunUsage() == RunUsage()
 
 
+def test_add_usages_with_none_detail_value():
+    """Test that None values in details are skipped when incrementing usage."""
+    usage = RunUsage(
+        requests=1,
+        input_tokens=10,
+        output_tokens=20,
+        details={'reasoning_tokens': 5},
+    )
+
+    # Create a usage with None in details (simulating model response with missing detail)
+    incr_usage = RunUsage(
+        requests=1,
+        input_tokens=5,
+        output_tokens=10,
+    )
+    # Manually set a None value in details to simulate edge case from model responses
+    incr_usage.details = {'reasoning_tokens': None, 'other_tokens': 10}  # type: ignore[dict-item]
+
+    result = usage + incr_usage
+    assert result == snapshot(
+        RunUsage(
+            requests=2,
+            input_tokens=15,
+            output_tokens=30,
+            details={'reasoning_tokens': 5, 'other_tokens': 10},
+        )
+    )
+
+
+def test_add_request_usages_does_not_mutate_original():
+    """Test that __add__ does not mutate the original object's details dict (issue #4605)."""
+    u1 = RequestUsage(input_tokens=10, details={'reasoning_tokens': 5})
+    u2 = RequestUsage(input_tokens=20, details={'reasoning_tokens': 3})
+
+    result = u1 + u2
+
+    # The result should have the summed details
+    assert result.details == {'reasoning_tokens': 8}
+    # The original must NOT be mutated
+    assert u1.details == {'reasoning_tokens': 5}
+    # They must be independent dict objects
+    assert u1.details is not result.details
+
+
+def test_add_run_usages_does_not_mutate_original():
+    """Test that __add__ does not mutate the original object's details dict (issue #4605)."""
+    r1 = RunUsage(requests=1, input_tokens=10, details={'reasoning_tokens': 50})
+    r2 = RunUsage(requests=1, input_tokens=20, details={'reasoning_tokens': 30})
+
+    result = r1 + r2
+
+    assert result.details == {'reasoning_tokens': 80}
+    assert r1.details == {'reasoning_tokens': 50}
+    assert r1.details is not result.details
+
+
+def test_add_usage_repeated_calls_stable():
+    """Test that repeated __add__ calls return consistent results (issue #4605).
+
+    This simulates AgentStream.usage() at result.py:169 being called multiple times:
+        return self._initial_run_ctx_usage + self._raw_stream_response.usage()
+    """
+    initial = RunUsage(requests=1, input_tokens=500, details={})
+    stream = RequestUsage(input_tokens=500, output_tokens=200, details={'reasoning_tokens': 150})
+
+    results = [initial + stream for _ in range(3)]
+
+    # All calls must return the same values
+    for r in results:
+        assert r.details == {'reasoning_tokens': 150}
+    # The initial usage must remain unchanged
+    assert initial.details == {}
+
+
 async def test_tool_call_limit() -> None:
     test_agent = Agent(TestModel())
 
@@ -270,6 +468,41 @@ async def test_tool_call_limit() -> None:
 
     result = await test_agent.run('Hello', usage_limits=UsageLimits(tool_calls_limit=1))
     assert result.usage() == snapshot(RunUsage(requests=2, input_tokens=103, output_tokens=14, tool_calls=1))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a')],
+                usage=RequestUsage(input_tokens=51, output_tokens=5),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='ret_a',
+                        content='a-apple',
+                        tool_call_id='pyd_ai_tool_call_id__ret_a',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"ret_a":"a-apple"}')],
+                usage=RequestUsage(input_tokens=52, output_tokens=9),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_output_tool_not_counted() -> None:
@@ -285,6 +518,45 @@ async def test_output_tool_not_counted() -> None:
 
     result_regular = await test_agent.run('test')
     assert result_regular.usage() == snapshot(RunUsage(requests=2, input_tokens=103, output_tokens=14, tool_calls=1))
+    assert result_regular.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='test', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='regular_tool', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__regular_tool'
+                    )
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=5),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='regular_tool',
+                        content='a-processed',
+                        tool_call_id='pyd_ai_tool_call_id__regular_tool',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"regular_tool":"a-processed"}')],
+                usage=RequestUsage(input_tokens=52, output_tokens=9),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
     test_agent_with_output = Agent(TestModel(), output_type=ToolOutput(MyOutput))
 
@@ -295,6 +567,63 @@ async def test_output_tool_not_counted() -> None:
     result_output = await test_agent_with_output.run('test')
 
     assert result_output.usage() == snapshot(RunUsage(requests=2, input_tokens=103, output_tokens=15, tool_calls=1))
+    assert result_output.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='test', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='another_regular_tool',
+                        args={'x': 'a'},
+                        tool_call_id='pyd_ai_tool_call_id__another_regular_tool',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=5),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='another_regular_tool',
+                        content='a-processed',
+                        tool_call_id='pyd_ai_tool_call_id__another_regular_tool',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result', args={'result': 'a'}, tool_call_id='pyd_ai_tool_call_id__final_result'
+                    )
+                ],
+                usage=RequestUsage(input_tokens=52, output_tokens=10),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_output_tool_allowed_at_limit() -> None:
@@ -329,6 +658,53 @@ async def test_output_tool_allowed_at_limit() -> None:
 
     assert result.output.result == 'success'
     assert result.usage() == snapshot(RunUsage(requests=2, input_tokens=20, output_tokens=10, tool_calls=1))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='test', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='regular_tool', args={'x': 'test'}, tool_call_id='call_1')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:call_output_after_regular:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='regular_tool',
+                        content='test-processed',
+                        tool_call_id='call_1',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'result': 'success'}, tool_call_id='call_2')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:call_output_after_regular:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='call_2',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_failed_tool_calls_not_counted() -> None:
@@ -348,6 +724,64 @@ async def test_failed_tool_calls_not_counted() -> None:
     result = await test_agent.run('test', usage_limits=UsageLimits(tool_calls_limit=1))
     assert call_count == 2
     assert result.usage() == snapshot(RunUsage(requests=3, input_tokens=176, output_tokens=29, tool_calls=1))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='test', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='flaky_tool', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__flaky_tool'
+                    )
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=5),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Temporary failure, please retry',
+                        tool_name='flaky_tool',
+                        tool_call_id='pyd_ai_tool_call_id__flaky_tool',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='flaky_tool', args={'x': 'a'}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=62, output_tokens=10),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='flaky_tool',
+                        content='a-success',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"flaky_tool":"a-success"}')],
+                usage=RequestUsage(input_tokens=63, output_tokens=14),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 def test_deprecated_usage_limits():
@@ -428,3 +862,30 @@ async def test_parallel_tool_calls_limit_enforced():
 
 def test_usage_unknown_provider():
     assert RequestUsage.extract({}, provider='unknown', provider_url='', provider_fallback='') == RequestUsage()
+
+
+def test_usage_limits_preserves_explicit_zero():
+    """Test that explicit 0 token limits are preserved and not replaced by deprecated fallbacks."""
+    # When input_tokens_limit=0 and deprecated request_tokens_limit is also set,
+    # the explicit 0 should be preserved (not overwritten by the deprecated fallback).
+    # We ignore type errors below because overloads don't allow mixing current and deprecated args.
+    limits = UsageLimits(input_tokens_limit=0, request_tokens_limit=123)  # pyright: ignore[reportCallIssue]
+    assert limits.input_tokens_limit == 0
+
+    limits = UsageLimits(output_tokens_limit=0, response_tokens_limit=456)  # pyright: ignore[reportCallIssue]
+    assert limits.output_tokens_limit == 0
+
+    # When only deprecated arg is passed, should use it as fallback
+    limits = UsageLimits(request_tokens_limit=123)  # pyright: ignore[reportDeprecated]
+    assert limits.input_tokens_limit == 123
+
+    limits = UsageLimits(response_tokens_limit=456)  # pyright: ignore[reportDeprecated]
+    assert limits.output_tokens_limit == 456
+
+    # When neither is passed, should be None
+    limits = UsageLimits()
+    assert limits.input_tokens_limit is None
+
+    # When only current arg is set, should use it
+    limits = UsageLimits(input_tokens_limit=100)
+    assert limits.input_tokens_limit == 100

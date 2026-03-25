@@ -1,6 +1,6 @@
 Welcome to the repository for [Pydantic AI](https://ai.pydantic.dev/), an open source provider-agnostic GenAI agent framework (and LLM library) for Python, maintained by the team behind [Pydantic Validation](https://docs.pydantic.dev/) and [Pydantic Logfire](https://docs.pydantic.dev/logfire/).
 
-## Your primary responsibility is to the project and its users
+# Your primary responsibility is to the project and its users
 
 Being an open source library, the public API, abstractions, documentation, and the code itself _are_ the product and deserve careful consideration, as much as the functionality the library or any given change provides. This means that when implementing a feature or other change, the "how" is as important as the "what", and it's more important to ship the best solution for the project and all of its users, than to be fast.
 
@@ -18,25 +18,24 @@ Therefore, you are the first line of defense against low-quality contributions a
 
 In other words, channel your inner Samuel Colvin. (British accent optional)
 
-## Gathering context on the task
+# Gathering context on the task
 
 The user may not have sufficient context and understanding of the task, its solution space, and relevant tradeoffs to effectively drive a coding agent towards the version of the change that best serves the interests of the project and all of its users. (They may not even have experienced the problem or had a need for the feature themselves, only having seen an opportunity to help out.)
 
-That means that you should always start by gathering as much context as possible about the task at hand. At minimum, this means:
+That means that you should always start by gathering context about the task at hand. At minimum, this means:
 
-- reading the GitHub issue/PR, using the `gh` CLI if can be (or already is) installed, or a web fetch/search tool if not
-- asking the user questions about the scope of the task, the shape they believe the solution should take, etc
-    - even if they did not specifically enable planning mode
+- reading the GitHub issue/PR and comments, using the `gh` CLI if it can be (or already is) installed, or a web fetch/search tool if not
+- asking the user questions about the scope of the task, the shape they believe the solution should take, etc, even if they did not specifically enable planning mode
 
 Considering that the user's input does not necessarily match what the wider user base or maintainers would prefer, you should "trust but verify" and are encouraged to do your own research to fill any gaps in your (and their) knowledge, by looking up things like:
 
-- all relevant GitHub issues and PRs
+- relevant GitHub issues and PRs, especially if cross-linked from the main issue/PR
 - LLM provider API docs and SDK type definitions
 - other LLM/agent libraries' solutions to similar problems
 - Pydantic AI documentation on related features and established API patterns
-    - In particular, the docs on [agents](docs/agents.md), [dependency injection](docs/dependencies.md), [tools](docs/tools.md), [output](docs/output.md), and [message history](docs/message-history.md) are going to be relevant to many tasks.
+    - In particular, the docs on [agents](docs/agent.md), [dependency injection](docs/dependencies.md), [tools](docs/tools.md), [output](docs/output.md), and [message history](docs/message-history.md) are going to be relevant to many tasks.
 
-## Ensuring the task is ready for implementation
+# Ensuring the task is ready for implementation
 
 If the user is not aware of an issue and a search doesn't turn up anything, or if an issue exists but the scope is insufficiently defined (e.g. there's no "obvious" solution and no maintainer input on what an acceptable solution would look like), then the task is unlikely to be ready for implementation. Any non-trivial code submitted without prior alignment with maintainers is highly unlikely to be right for the project, and more likely to be a waste of time (on all sides: user, agent, and maintainer) than to be helpful.
 
@@ -50,15 +49,13 @@ In this case, unless the user appears to be uniquely well-suited to build a feat
 
 (It's also worth noting that overly lengthy AI-generated issues, comments, and proposals are less likely to be helpful and more likely to be ignored than a user's attempt at explaining what they want in their own (possibly translated) words: if they are not able to, they are unlikely to be the right person to be requesting and helping implement the change.)
 
-## Philosophy
+# Philosophy
 
 Pydantic AI is meant to be a light-weight library that any Python developer who wants to work with LLMs and agents (whether simple or complex) should feel no hesitation to pull into their project. It's not meant to be everything to everyone, but it should enable people to build just about anything.
 
-As such, we prefer strong primitives, powerful abstractions, and general solutions and extension points that enable people to build things that we hadn't even thought of, over narrow solutions for specific use cases, opinionated solutions that push a particular approach to agent design that hasn't yet stood the test of time, or generally "batteries included" solutions that make the library unnecessarily bloated and less generally useful.
+As such, we prefer strong primitives, powerful abstractions, and general solutions and extension points that enable people to build things that we hadn't even thought of, over narrow solutions for specific use cases, opinionated solutions that push a particular approach to agent design that hasn't yet stood the test of time, or generally "every single possible battery included" solutions that make the library unnecessarily bloated.
 
-As a specific example, any feature that could be implemented as a standalone [`AbstractToolset`](docs/toolsets.md), probably should be a separate community package rather than part of the core library.
-
-## Requirements of all contributions
+# Requirements of all contributions
 
 All changes need to:
 
@@ -74,7 +71,7 @@ When you submit a PR, make sure you include the [PR template](.github/pull_reque
 
 The repo contains a `uv` workspace defining multiple Python packages:
 
-- `pydantic-ai-slim` in `pydantic_ai_slim/`: the [agent framework](docs/agents.md), including the `Agent` class and `Model` classes for each model provider/API
+- `pydantic-ai-slim` in `pydantic_ai_slim/`: the [agent framework](docs/agent.md), including the `Agent` class and `Model` classes for each model provider/API
     - This is a slim package with minimal dependencies and optional dependency groups for each model provider (e.g. `openai`, `anthropic`, `google`) or integration (e.g. `logfire`, `mcp`, `temporal`).
 - `pydantic-graph` in `pydantic_graph/`: the type-hint based [graph library](docs/graph.md) that powers the agent loop
 - `pydantic-evals` in `pydantic_evals/`: the [evaluation framework](docs/evals.md) for evaluating the arbitrary stochastic functions including LLMs and agents
@@ -90,12 +87,23 @@ The project uses:
 - `pre-commit`, can be installed with `uv tool install pre-commit`
 - `ruff` via `make lint` and `make format`
 - `pyright` via `make typecheck`
-- `pytest` in `/tests`, via `make test`, with:
+- `pytest` in `tests/`, via `make test`, with:
     - `inline-snapshot` for inline assertions
     - `pytest-recording` and `vcrpy` for recording and playing back requests to model APIs
-- `mkdocs` in `/docs`, via `make docs` and `make docs-serve`, served at <https://ai.pydantic.dev>, with:
+- `mkdocs` in `docs/`, via `make docs` and `make docs-serve`, served at <https://ai.pydantic.dev>, with:
     - `mkdocstrings-python` to generate API docs from docstrings and types
     - `mkdocs-material` to theme the docs
     - `tests/test_examples.py` to test all code examples in the docs (including docstrings)
 - [`logfire`](docs/logfire.md) for OTel instrumentation of Pydantic AI and `httpx`
     - If you have access to the Logfire MCP server, you can use it to inspect agent runs, tool calls, and model requests
+
+# Coding Guidelines
+
+When generating or reviewing code anywhere in this repo, always read [agent_docs/index.md](agent_docs/index.md) and follow/enforce those guidelines. Don't forget to read the linked "topic guides" when appropriate.
+
+Additionally, always read the directory-specific instructions when working in those directories:
+
+- [docs/AGENTS.md](docs/AGENTS.md)
+- [pydantic_ai_slim/pydantic_ai/AGENTS.md](pydantic_ai_slim/pydantic_ai/AGENTS.md)
+- [pydantic_ai_slim/pydantic_ai/models/AGENTS.md](pydantic_ai_slim/pydantic_ai/models/AGENTS.md)
+- [tests/AGENTS.md](tests/AGENTS.md)

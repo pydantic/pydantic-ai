@@ -31,7 +31,7 @@ You can then use `BedrockConverseModel` by name:
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('bedrock:anthropic.claude-3-sonnet-20240229-v1:0')
+agent = Agent('bedrock:anthropic.claude-sonnet-4-5-20250929-v1:0')
 ...
 ```
 
@@ -41,7 +41,7 @@ Or initialize the model directly with just the model name:
 from pydantic_ai import Agent
 from pydantic_ai.models.bedrock import BedrockConverseModel
 
-model = BedrockConverseModel('anthropic.claude-3-sonnet-20240229-v1:0')
+model = BedrockConverseModel('anthropic.claude-sonnet-4-5-20250929-v1:0')
 agent = Agent(model)
 ...
 ```
@@ -254,7 +254,7 @@ from pydantic_ai.providers.bedrock import BedrockProvider
 
 # Using AWS credentials directly
 model = BedrockConverseModel(
-    'anthropic.claude-3-sonnet-20240229-v1:0',
+    'anthropic.claude-sonnet-4-5-20250929-v1:0',
     provider=BedrockProvider(
         region_name='us-east-1',
         aws_access_key_id='your-access-key',
@@ -277,7 +277,7 @@ from pydantic_ai.providers.bedrock import BedrockProvider
 # Using a pre-configured boto3 client
 bedrock_client = boto3.client('bedrock-runtime', region_name='us-east-1')
 model = BedrockConverseModel(
-    'anthropic.claude-3-sonnet-20240229-v1:0',
+    'anthropic.claude-sonnet-4-5-20250929-v1:0',
     provider=BedrockProvider(bedrock_client=bedrock_client),
 )
 agent = Agent(model)
@@ -286,29 +286,21 @@ agent = Agent(model)
 
 ## Using AWS Application Inference Profiles
 
-AWS Bedrock supports [custom application inference profiles](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-create.html) for cost tracking and resource management. When using these profiles, you should specify a [model profile](https://ai.pydantic.dev/models/overview/#models-and-providers) to ensure Pydantic AI can correctly identify model capabilities (streaming, tool use, caching, etc.) while still using the custom inference profile for cost tracking.
-
-Without explicit configuration, an inference profile ARN like `arn:aws:bedrock:us-east-2:*****:application-inference-profile/****` doesn't contain enough information for Pydantic AI to determine the underlying model. You can work around this by:
-
-1. Passing the inference profile ARN as the model name to [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel]
-2. Using the `profile` parameter to specify the logical model name for feature detection
+AWS Bedrock supports [custom application inference profiles](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-create.html) for cost tracking and resource management. Set [`bedrock_inference_profile`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_inference_profile] to route requests through an inference profile while keeping the base model name for detecting model capabilities:
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.bedrock import BedrockConverseModel
 from pydantic_ai.providers.bedrock import BedrockProvider
 
-# Create provider with your AWS configuration
 provider = BedrockProvider(region_name='us-east-2')
 
-# Create a profile with the logical model name for feature detection
-profile = provider.model_profile('us.anthropic.claude-opus-4-5-20251101-v1:0')
-
-# Pass the inference profile ARN as the model name
 model = BedrockConverseModel(
-    'arn:aws:bedrock:us-east-2:123456789012:application-inference-profile/my-profile',
+    'us.anthropic.claude-opus-4-5-20251101-v1:0',
     provider=provider,
-    profile=profile,  # Provides the logical model name for feature detection
+    settings={
+        'bedrock_inference_profile': 'arn:aws:bedrock:us-east-2:123456789012:application-inference-profile/my-profile',
+    },
 )
 
 agent = Agent(model)

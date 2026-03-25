@@ -9,34 +9,33 @@ pytestmark = [pytest.mark.anyio]
 
 
 @pytest.mark.parametrize(
-    'url',
+    ('url', 'protocol'),
     (
-        pytest.param(AudioUrl(url='gs://pydantic-ai-dev/openai-alloy.wav')),
-        pytest.param(DocumentUrl(url='gs://pydantic-ai-dev/Gemini_1_5_Pro_Technical_Report_Arxiv_1805.pdf')),
-        pytest.param(ImageUrl(url='gs://pydantic-ai-dev/wikipedia_screenshot.png')),
-        pytest.param(VideoUrl(url='gs://pydantic-ai-dev/grepit-tiny-video.mp4')),
+        pytest.param(AudioUrl(url='gs://pydantic-ai-dev/openai-alloy.wav', force_download=True), 'gs', id='gs-audio'),
+        pytest.param(
+            DocumentUrl(url='gs://pydantic-ai-dev/Gemini_1_5_Pro_Technical_Report_Arxiv_1805.pdf', force_download=True),
+            'gs',
+            id='gs-document',
+        ),
+        pytest.param(
+            ImageUrl(url='gs://pydantic-ai-dev/wikipedia_screenshot.png', force_download=True), 'gs', id='gs-image'
+        ),
+        pytest.param(
+            VideoUrl(url='gs://pydantic-ai-dev/grepit-tiny-video.mp4', force_download=True), 'gs', id='gs-video'
+        ),
+        pytest.param(AudioUrl(url='s3://my-bucket/audio.wav', force_download=True), 's3', id='s3-audio'),
+        pytest.param(DocumentUrl(url='s3://my-bucket/document.pdf', force_download=True), 's3', id='s3-document'),
+        pytest.param(ImageUrl(url='s3://my-bucket/image.png', force_download=True), 's3', id='s3-image'),
+        pytest.param(VideoUrl(url='s3://my-bucket/video.mp4', force_download=True), 's3', id='s3-video'),
+        pytest.param(DocumentUrl(url='file:///etc/passwd', force_download=True), 'file', id='file-document'),
+        pytest.param(ImageUrl(url='ftp://ftp.example.com/image.png', force_download=True), 'ftp', id='ftp-image'),
     ),
 )
-async def test_download_item_raises_user_error_with_gs_uri(
+async def test_download_item_raises_user_error_with_unsupported_protocol(
     url: AudioUrl | DocumentUrl | ImageUrl | VideoUrl,
+    protocol: str,
 ) -> None:
-    with pytest.raises(UserError, match='Downloading from protocol "gs://" is not supported.'):
-        _ = await download_item(url, data_format='bytes')
-
-
-@pytest.mark.parametrize(
-    'url',
-    (
-        pytest.param(AudioUrl(url='s3://my-bucket/audio.wav')),
-        pytest.param(DocumentUrl(url='s3://my-bucket/document.pdf')),
-        pytest.param(ImageUrl(url='s3://my-bucket/image.png')),
-        pytest.param(VideoUrl(url='s3://my-bucket/video.mp4')),
-    ),
-)
-async def test_download_item_raises_user_error_with_s3_uri(
-    url: AudioUrl | DocumentUrl | ImageUrl | VideoUrl,
-) -> None:
-    with pytest.raises(UserError, match='Downloading from protocol "s3://" is not supported.'):
+    with pytest.raises(ValueError, match=f'URL protocol "{protocol}" is not allowed'):
         _ = await download_item(url, data_format='bytes')
 
 
@@ -46,7 +45,7 @@ async def test_download_item_raises_user_error_with_youtube_url() -> None:
 
 
 @pytest.mark.vcr()
-async def test_download_item_application_octet_stream() -> None:
+async def test_download_item_application_octet_stream(disable_ssrf_protection_for_vcr: None) -> None:
     downloaded_item = await download_item(
         VideoUrl(
             url='https://raw.githubusercontent.com/pydantic/pydantic-ai/refs/heads/main/tests/assets/small_video.mp4'
@@ -58,7 +57,7 @@ async def test_download_item_application_octet_stream() -> None:
 
 
 @pytest.mark.vcr()
-async def test_download_item_audio_mpeg() -> None:
+async def test_download_item_audio_mpeg(disable_ssrf_protection_for_vcr: None) -> None:
     downloaded_item = await download_item(
         AudioUrl(url='https://smokeshow.helpmanual.io/4l1l1s0s6q4741012x1w/common_voice_en_537507.mp3'),
         data_format='bytes',
@@ -68,7 +67,7 @@ async def test_download_item_audio_mpeg() -> None:
 
 
 @pytest.mark.vcr()
-async def test_download_item_no_content_type() -> None:
+async def test_download_item_no_content_type(disable_ssrf_protection_for_vcr: None) -> None:
     downloaded_item = await download_item(
         DocumentUrl(url='https://raw.githubusercontent.com/pydantic/pydantic-ai/refs/heads/main/docs/help.md'),
         data_format='text',

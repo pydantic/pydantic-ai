@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from base64 import b64decode
 from collections.abc import Mapping, Sequence
 from functools import cached_property
@@ -165,7 +166,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 case _:  # pragma: no cover
                                     raise ValueError(f'Unsupported user message part type: {type(part)}')
 
-                        if user_prompt_content:  # pragma: no branch
+                        if user_prompt_content:
                             content_to_add = (
                                 user_prompt_content[0]
                                 if len(user_prompt_content) == 1 and isinstance(user_prompt_content[0], str)
@@ -211,10 +212,16 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
                     if tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX):
                         _, provider_name, original_id = tool_call_id.split('|', 2)
+                        content: Any = tool_msg.content
+                        if isinstance(content, str):
+                            try:
+                                content = json.loads(content)
+                            except (json.JSONDecodeError, ValueError):
+                                pass
                         builder.add(
                             BuiltinToolReturnPart(
                                 tool_name=tool_name,
-                                content=tool_msg.content,
+                                content=content,
                                 tool_call_id=original_id,
                                 provider_name=provider_name,
                             )

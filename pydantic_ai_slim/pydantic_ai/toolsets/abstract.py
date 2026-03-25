@@ -57,6 +57,14 @@ class ToolsetTool(Generic[AgentDepsT]):
 
     For example, a [`pydantic.TypeAdapter(...).validator`](https://docs.pydantic.dev/latest/concepts/type_adapter/) or [`pydantic_core.SchemaValidator`](https://docs.pydantic.dev/latest/api/pydantic_core/#pydantic_core.SchemaValidator).
     """
+    args_validator_func: Callable[..., Any] | None = None
+    """Custom args validator function that runs after schema validation but before tool execution.
+
+    Called on every tool call, receiving the schema-validated arguments as keyword args.
+    The function should have the same typed parameters as the tool function,
+    with `RunContext` as the first argument.
+    Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on failure, return `None` on success.
+    """
 
 
 class AbstractToolset(ABC, Generic[AgentDepsT]):
@@ -94,6 +102,24 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
     def tool_name_conflict_hint(self) -> str:
         """A hint for how to avoid name conflicts with other toolsets for use in error messages."""
         return 'Rename the tool or wrap the toolset in a `PrefixedToolset` to avoid name conflicts.'
+
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        """Return the toolset to use for this agent run.
+
+        Called once per run, before `__aenter__`. Override this to return a fresh instance
+        for per-run state isolation. Default: return `self` (shared across runs).
+        """
+        return self
+
+    async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        """Return the toolset to use for this run step.
+
+        Called at the start of each run step. Override this to return a modified
+        instance for per-step state transitions. If returning a new instance,
+        you are responsible for managing any lifecycle transitions (exiting old
+        inner toolsets, entering new ones). Default: return `self` (no per-step changes).
+        """
+        return self
 
     async def __aenter__(self) -> Self:
         """Enter the toolset context.

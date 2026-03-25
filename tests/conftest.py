@@ -7,25 +7,41 @@ import os
 import re
 import secrets
 import sys
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, cast, overload
 
 import httpx
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
-from inline_snapshot import customize_repr  # pyright: ignore[reportUnknownVariableType]
 from pytest_mock import MockerFixture
 from vcr import VCR, request as vcr_request
 
 import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
+from pydantic_ai.messages import (
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
+    FilePart,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,
+    SystemPromptPart,
+    TextPart,
+    ThinkingPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models import Model
+
+from ._inline_snapshot import customize_repr  # pyright: ignore[reportUnknownVariableType]
 
 __all__ = (
     'IsDatetime',
@@ -49,6 +65,8 @@ __all__ = (
 logging.getLogger('vcr.cassette').setLevel(logging.WARNING)
 
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
+
+os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
 
 if TYPE_CHECKING:
     from typing import TypeVar
@@ -124,6 +142,7 @@ def sanitize_filename(name: str, max_len: int) -> str:
     return re.sub('[' + re.escape('<>:"/\\|?*') + ']', '-', name)[:max_len]
 
 
+# Only runs locally when creating snapshots (customize_repr is stubbed in CI)
 @customize_repr
 def _(value: bytes):  # pragma: no cover
     """Use IsBytes() for large byte sequences in snapshots."""
@@ -292,6 +311,10 @@ def raise_if_exception(e: Any) -> None:
         raise e
 
 
+_AWS_ACCOUNT_ID_IN_ARN = re.compile(r'(arn(?:%3A|:)aws(?:%3A|:)bedrock(?:%3A|:)[^:%]*(?:%3A|:))\d{12}((?:%3A|:))')
+_SCRUBBED_AWS_ACCOUNT_ID = r'\g<1>123456789012\2'
+
+
 def pytest_recording_configure(config: Any, vcr: VCR):
     from . import json_body_serializer
 
@@ -301,7 +324,21 @@ def pytest_recording_configure(config: Any, vcr: VCR):
         if r1.method.upper() != r2.method.upper():
             raise AssertionError(f'{r1.method} != {r2.method}')
 
+    def path_matcher(r1: vcr_request.Request, r2: vcr_request.Request) -> None:
+        """Match URL paths after scrubbing AWS account IDs from ARNs."""
+        path1 = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, r1.path)
+        path2 = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, r2.path)
+        if path1 != path2:
+            raise AssertionError(f'{path1} != {path2}')
+
     vcr.register_matcher('method', method_matcher)
+    vcr.register_matcher('path', path_matcher)
+
+    def scrub_aws_account_id(request: vcr_request.Request) -> vcr_request.Request:
+        request.uri = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, request.uri)
+        return request
+
+    vcr.before_record_request = scrub_aws_account_id
 
 
 def pytest_addoption(parser: Any) -> None:
@@ -368,6 +405,35 @@ async def close_cached_httpx_client(anyio_backend: str, monkeypatch: pytest.Monk
 
     # Ensure no stale cached clients persist between tests (new event loop per test)
     original_cached_func.cache_clear()
+
+
+@pytest.fixture(autouse=True, scope='session')
+def patch_google_genai_gc_crash():
+    """Work around google-genai BaseApiClient GC crash.
+
+    BaseApiClient.__del__ schedules aclose() during GC, which crashes when the
+    object was only partially initialized (_async_httpx_client never set).
+    Remove when https://github.com/googleapis/python-genai/issues/2023 closes.
+    """
+    try:
+        from google.genai._api_client import BaseApiClient
+    except ImportError:
+        yield
+        return
+
+    original_aclose = BaseApiClient.aclose
+
+    async def safe_aclose(self: BaseApiClient) -> None:
+        if hasattr(self, '_async_httpx_client'):
+            await original_aclose(self)
+        else:  # pragma: lax no cover
+            # In some test runs, the `if` above will always run, so we get an `if -> exit` branch coverage miss.
+            # This is a workaround to specify that the `else` branch may not be hit (as we don't have `lax no branch`)
+            pass
+
+    BaseApiClient.aclose = safe_aclose
+    yield
+    BaseApiClient.aclose = original_aclose
 
 
 @pytest.fixture(scope='session')
@@ -456,6 +522,35 @@ def huggingface_api_key() -> str:
     return os.getenv('HF_TOKEN', 'hf_token')
 
 
+@pytest.fixture(autouse=True, scope='session')
+def _patch_hf_provider_mappings():
+    """Populate the SDK's hardcoded model mappings to avoid sync HTTP calls during VCR tests.
+
+    The HuggingFace SDK makes a synchronous HTTP call to resolve provider mappings at request time,
+    which is incompatible with VCR's async test infrastructure.
+    """
+    try:
+        from huggingface_hub.hf_api import InferenceProviderMapping
+        from huggingface_hub.inference._providers._common import HARDCODED_MODEL_INFERENCE_MAPPING
+    except ImportError:
+        return
+
+    models: list[tuple[str, str, str]] = [
+        ('together', 'deepseek-ai/DeepSeek-R1', 'conversational'),
+        ('nebius', 'Qwen/Qwen2.5-VL-72B-Instruct', 'conversational'),
+        ('nebius', 'Qwen/Qwen2.5-72B-Instruct', 'conversational'),
+    ]
+
+    for provider, model_id, task in models:
+        HARDCODED_MODEL_INFERENCE_MAPPING[provider][model_id] = InferenceProviderMapping(
+            provider=provider,
+            hf_model_id=model_id,
+            providerId=model_id,
+            status='live',
+            task=task,
+        )
+
+
 @pytest.fixture(scope='session')
 def heroku_inference_key() -> str:
     return os.getenv('HEROKU_INFERENCE_KEY', 'mock-api-key')
@@ -471,12 +566,21 @@ def xai_api_key() -> str:
     return os.getenv('XAI_API_KEY', 'mock-api-key')
 
 
+@pytest.fixture(scope='session')
+def tavily_api_key() -> str:
+    return os.getenv('TAVILY_API_KEY', 'mock-api-key')
+
+
 @pytest.fixture(scope='function')  # Needs to be function scoped to get the request node name
-def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider]:
+def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider | None]:
     """xAI provider fixture backed by protobuf cassettes.
 
     Mirrors the `bedrock_provider` pattern: yields a provider, and callers can use `provider.client`.
+    Returns None for non-xAI tests to avoid loading cassettes unnecessarily.
     """
+    if 'xai' not in request.node.name:
+        yield None
+        return
 
     try:
         from pydantic_ai.providers.xai import XaiProvider
@@ -485,7 +589,8 @@ def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider]:
         pytest.skip('xai_sdk not installed')
 
     cassette_name = sanitize_filename(request.node.name, 240)
-    cassette_path = Path(__file__).parent / 'models' / 'cassettes' / 'test_xai' / f'{cassette_name}.xai.yaml'
+    test_module = cast(str, request.node.fspath.basename.replace('.py', ''))
+    cassette_path = Path(__file__).parent / 'models' / 'cassettes' / test_module / f'{cassette_name}.xai.yaml'
     record_mode: str | None
     try:
         # Provided by `pytest-recording` as `--record-mode=...` (dest is typically `record_mode`).
@@ -521,13 +626,21 @@ def bedrock_provider():
             yield provider
             provider.client.close()
         else:  # pragma: lax no cover
-            bedrock_client = boto3.client(
-                'bedrock-runtime',
-                region_name=os.getenv('AWS_REGION', 'us-east-1'),
-                aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID', 'AKIA6666666666666666'),
-                aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY', '6666666666666666666666666666666666666666'),
-                aws_session_token=os.getenv('AWS_SESSION_TOKEN', None),
-            )
+            if os.getenv('AWS_PROFILE'):
+                bedrock_client = boto3.client(
+                    'bedrock-runtime',
+                    region_name=os.getenv('AWS_REGION', 'us-east-1'),
+                )
+            else:
+                bedrock_client = boto3.client(
+                    'bedrock-runtime',
+                    region_name=os.getenv('AWS_REGION', 'us-east-1'),
+                    aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID', 'AKIA6666666666666666'),
+                    aws_secret_access_key=os.getenv(
+                        'AWS_SECRET_ACCESS_KEY', '6666666666666666666666666666666666666666'
+                    ),
+                    aws_session_token=os.getenv('AWS_SESSION_TOKEN', None),
+                )
             yield BedrockProvider(bedrock_client=bedrock_client)
             bedrock_client.close()
     except ImportError:  # pragma: lax no cover
@@ -648,8 +761,8 @@ def model(
 
             return OutlinesModel(
                 from_transformers(
-                    AutoModelForCausalLM.from_pretrained('erwanf/gpt2-mini'),
-                    AutoTokenizer.from_pretrained('erwanf/gpt2-mini'),
+                    AutoModelForCausalLM.from_pretrained('hf-internal-testing/tiny-random-gpt2'),
+                    AutoTokenizer.from_pretrained('hf-internal-testing/tiny-random-gpt2'),
                 )
             )
         else:
@@ -668,3 +781,66 @@ def mock_snapshot_id(mocker: MockerFixture):
         return f'{node_id}:{i}'
 
     return mocker.patch('pydantic_graph.nodes.generate_snapshot_id', side_effect=generate_snapshot_id)
+
+
+@pytest.fixture
+def disable_ssrf_protection_for_vcr():
+    """Disable SSRF protection for VCR compatibility.
+
+    VCR cassettes record requests with the original hostname. Since SSRF protection
+    resolves hostnames to IPs before making requests, we need to disable the validation
+    for VCR tests to match the pre-recorded cassettes.
+
+    This fixture patches validate_and_resolve_url to return the hostname in place
+    of the resolved IP, allowing the request URL to use the original hostname.
+    """
+    from unittest.mock import patch
+
+    from pydantic_ai._ssrf import ResolvedUrl, extract_host_and_port
+
+    async def mock_validate_and_resolve(url: str, allow_local: bool) -> ResolvedUrl:
+        hostname, path, port, is_https = extract_host_and_port(url)
+        # Return hostname in place of resolved IP - this allows VCR matching
+        return ResolvedUrl(resolved_ip=hostname, hostname=hostname, port=port, is_https=is_https, path=path)
+
+    with patch('pydantic_ai._ssrf.validate_and_resolve_url', mock_validate_and_resolve):
+        yield
+
+
+_RequestPartT = TypeVar('_RequestPartT', bound=SystemPromptPart | UserPromptPart | ToolReturnPart | RetryPromptPart)
+_ResponsePartT = TypeVar(
+    '_ResponsePartT',
+    bound=TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart | FilePart,
+)
+
+
+@overload
+def iter_message_parts(
+    messages: Sequence[ModelMessage],
+    message_type: type[ModelRequest],
+    part_type: type[_RequestPartT],
+) -> Iterator[_RequestPartT]: ...
+
+
+@overload
+def iter_message_parts(
+    messages: Sequence[ModelMessage],
+    message_type: type[ModelResponse],
+    part_type: type[_ResponsePartT],
+) -> Iterator[_ResponsePartT]: ...
+
+
+def iter_message_parts(
+    messages: Sequence[ModelMessage],
+    message_type: type[ModelRequest] | type[ModelResponse],
+    part_type: type[_RequestPartT] | type[_ResponsePartT],
+) -> Iterator[_RequestPartT | _ResponsePartT]:
+    """Iterate over all parts of a given type in messages of a given type."""
+    for msg in messages:  # pragma: no branch
+        if isinstance(msg, message_type):
+            for part in msg.parts:
+                if isinstance(part, part_type):
+                    yield part
+
+
+# endregion
