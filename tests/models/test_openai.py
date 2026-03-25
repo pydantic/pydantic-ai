@@ -4228,6 +4228,42 @@ async def test_openai_chat_instructions_after_system_prompts(allow_model_request
     )
 
 
+async def test_openai_chat_instructions_do_not_split_tool_call_history(allow_model_requests: None):
+    """Test that instructions are inserted before tool-call history when a later system prompt exists."""
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call_abc123')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='my_tool', content='result', tool_call_id='call_abc123')]),
+        ModelResponse(parts=[TextPart('Done.')]),
+        ModelRequest(parts=[UserPromptPart(content='Next question?')]),
+        ModelResponse(parts=[TextPart('Answer.')]),
+        ModelRequest(parts=[SystemPromptPart(content='CONVERSATION SUMMARY:\n...')]),
+        ModelRequest(
+            parts=[UserPromptPart(content='New user message')],
+            instructions='You are a helpful assistant.',
+        ),
+    ]
+
+    openai_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert [message['role'] for message in openai_messages] == [
+        'system',
+        'assistant',
+        'tool',
+        'assistant',
+        'user',
+        'assistant',
+        'system',
+        'user',
+    ]
+    assert openai_messages[0] == {'role': 'system', 'content': 'You are a helpful assistant.'}
+    assert openai_messages[1]['tool_calls'][0]['id'] == 'call_abc123'  # pyright: ignore[reportGeneralTypeIssues]
+    assert openai_messages[2]['tool_call_id'] == 'call_abc123'  # pyright: ignore[reportGeneralTypeIssues]
+    assert openai_messages[6] == {'role': 'system', 'content': 'CONVERSATION SUMMARY:\n...'}
+
+
 def test_openai_chat_audio_default_base64(allow_model_requests: None):
     c = completion_message(ChatCompletionMessage(content='success', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
