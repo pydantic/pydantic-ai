@@ -3685,19 +3685,27 @@ async def test_bedrock_model_with_instructions_only(
     agent = Agent(model=model, system_prompt='Generate a short greeting.')
 
     result = await agent.run()
-    assert result.output  # Non-empty response verifies the synthetic user message was accepted
-    messages = result.all_messages()
-    assert len(messages) == 2
-    assert isinstance(messages[0], ModelRequest)
-    assert len(messages[0].parts) == 1
-    assert isinstance(messages[0].parts[0], SystemPromptPart)
-    assert messages[0].parts[0].content == 'Generate a short greeting.'
-    assert isinstance(messages[1], ModelResponse)
-    assert len(messages[1].parts) == 1
-    assert isinstance(messages[1].parts[0], TextPart)
-    assert messages[1].model_name == model_name
-    assert messages[1].provider_name == 'bedrock'
-    assert messages[1].finish_reason == 'stop'
+    assert result.output
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[SystemPromptPart(content='Generate a short greeting.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())],
+                usage=IsInstance(RequestUsage),
+                model_name=model_name,
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 @pytest.mark.vcr()
@@ -3723,18 +3731,40 @@ async def test_bedrock_model_instructions_only_then_message_history(
 
     first_result = await agent.run()
     second_result = await agent.run('Now say goodbye.', message_history=first_result.all_messages())
-    assert second_result.output  # Non-empty response
-    messages = second_result.all_messages()
-    assert len(messages) == 4
-    # First pair: system prompt + response from the instructions-only run
-    assert isinstance(messages[0], ModelRequest)
-    assert isinstance(messages[0].parts[0], SystemPromptPart)
-    assert isinstance(messages[1], ModelResponse)
-    assert messages[1].model_name == model_name
-    # Second pair: user follow-up + response
-    assert isinstance(messages[2], ModelRequest)
-    assert isinstance(messages[2].parts[0], UserPromptPart)
-    assert messages[2].parts[0].content == 'Now say goodbye.'
-    assert isinstance(messages[3], ModelResponse)
-    assert messages[3].model_name == model_name
-    assert messages[3].finish_reason == 'stop'
+    assert second_result.output
+    assert second_result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[SystemPromptPart(content='Generate a short greeting.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())],
+                usage=IsInstance(RequestUsage),
+                model_name=model_name,
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='Now say goodbye.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())],
+                usage=IsInstance(RequestUsage),
+                model_name=model_name,
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
