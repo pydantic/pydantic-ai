@@ -1,7 +1,9 @@
 from importlib.metadata import version as _metadata_version
 
+from ._template import TemplateStr
 from .agent import (
     Agent,
+    AgentModelSettings,
     CallToolsNode,
     EndStrategy,
     InstrumentationSettings,
@@ -42,6 +44,9 @@ from .exceptions import (
     ModelAPIError,
     ModelHTTPError,
     ModelRetry,
+    SkipModelRequest,
+    SkipToolExecution,
+    SkipToolValidation,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
@@ -112,9 +117,19 @@ from .profiles import (
 )
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
 from .settings import ModelSettings
-from .tools import DeferredToolRequests, DeferredToolResults, RunContext, Tool, ToolApproved, ToolDefinition, ToolDenied
+from .tools import (
+    AgentBuiltinTool,
+    DeferredToolRequests,
+    DeferredToolResults,
+    RunContext,
+    Tool,
+    ToolApproved,
+    ToolDefinition,
+    ToolDenied,
+)
 from .toolsets import (
     AbstractToolset,
+    AgentToolset,
     ApprovalRequiredToolset,
     CombinedToolset,
     DeferredLoadingToolset,
@@ -134,6 +149,7 @@ __all__ = (
     '__version__',
     # agent
     'Agent',
+    'AgentModelSettings',
     'EndStrategy',
     'CallToolsNode',
     'ModelRequestNode',
@@ -162,6 +178,9 @@ __all__ = (
     'ModelHTTPError',
     'FallbackExceptionGroup',
     'IncompleteToolCall',
+    'SkipModelRequest',
+    'SkipToolExecution',
+    'SkipToolValidation',
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
     'UserError',
@@ -225,6 +244,7 @@ __all__ = (
     'InlineDefsJsonSchemaTransformer',
     'JsonSchemaTransformer',
     # tools
+    'AgentBuiltinTool',
     'Tool',
     'ToolDefinition',
     'RunContext',
@@ -234,6 +254,7 @@ __all__ = (
     'ToolDenied',
     # toolsets
     'AbstractToolset',
+    'AgentToolset',
     'ApprovalRequiredToolset',
     'CombinedToolset',
     'DeferredLoadingToolset',
@@ -262,6 +283,8 @@ __all__ = (
     'PromptedOutput',
     'TextOutput',
     'StructuredDict',
+    # template
+    'TemplateStr',
     # format_prompt
     'format_as_xml',
     # settings
