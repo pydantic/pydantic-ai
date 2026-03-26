@@ -2012,8 +2012,8 @@ class TestUnionOutputWithHooks:
             async def after_output_execute(
                 self, ctx: RunContext[Any], *, validated_output: Any, output: Any, output_context: OutputContext
             ) -> Any:
-                if isinstance(output, TypeA):
-                    output.value *= 2
+                assert isinstance(output, TypeA)
+                output.value *= 2
                 return output
 
         agent = Agent(
