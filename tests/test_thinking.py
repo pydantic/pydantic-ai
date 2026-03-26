@@ -195,7 +195,6 @@ class TestAnthropicThinkingTranslation:
 
     def test_effort_level_on_output_config(self):
         """thinking='high' sets effort on output_config when model supports it."""
-        pytest.importorskip('anthropic')
         from pydantic_ai.models.anthropic import AnthropicModel
         from pydantic_ai.profiles.anthropic import AnthropicModelProfile
 
@@ -212,7 +211,6 @@ class TestAnthropicThinkingTranslation:
 
     def test_output_config_no_effort_for_bool(self):
         """thinking=True does NOT set effort on output_config (only str values do)."""
-        pytest.importorskip('anthropic')
         from pydantic_ai.models.anthropic import AnthropicModel
         from pydantic_ai.profiles.anthropic import AnthropicModelProfile
 
@@ -569,7 +567,7 @@ class TestAnthropicUnifiedThinkingConflict:
 
     def test_unified_thinking_with_output_tools_auto_mode(self):
         """thinking='high' (unified) + output tools + auto mode -> switches to native."""
-        pytest.importorskip('anthropic')
+        pytest.importorskip('anthropic', reason='anthropic not installed')
         from pydantic_ai.models.anthropic import AnthropicModel
         from pydantic_ai.output import OutputObjectDefinition
         from pydantic_ai.profiles.anthropic import AnthropicModelProfile
@@ -601,8 +599,11 @@ class TestAnthropicUnifiedThinkingConflict:
 class TestBedrockThinkingTranslation:
     """Test Bedrock _translate_thinking translation for each variant."""
 
+    @pytest.fixture(autouse=True)
+    def _require_boto3(self):
+        pytest.importorskip('boto3', reason='boto3 not installed')
+
     def test_anthropic_variant_thinking_true(self):
-        pytest.importorskip('boto3')
         from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
         from pydantic_ai.providers.bedrock import BedrockModelProfile
 
@@ -618,7 +619,6 @@ class TestBedrockThinkingTranslation:
         assert result == {'thinking': {'type': 'enabled', 'budget_tokens': 10000}}
 
     def test_anthropic_variant_thinking_false(self):
-        pytest.importorskip('boto3')
         from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
         from pydantic_ai.providers.bedrock import BedrockModelProfile
 
@@ -635,7 +635,6 @@ class TestBedrockThinkingTranslation:
 
     def test_openai_variant_thinking_false(self):
         """thinking=False on OpenAI Bedrock variant is a no-op (Bedrock rejects 'none')."""
-        pytest.importorskip('boto3')
         from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
         from pydantic_ai.providers.bedrock import BedrockModelProfile
 
@@ -651,7 +650,6 @@ class TestBedrockThinkingTranslation:
         assert result is None
 
     def test_openai_variant_thinking_high(self):
-        pytest.importorskip('boto3')
         from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
         from pydantic_ai.providers.bedrock import BedrockModelProfile
 
@@ -667,7 +665,6 @@ class TestBedrockThinkingTranslation:
         assert result == {'reasoning_effort': 'high'}
 
     def test_qwen_variant_thinking_true(self):
-        pytest.importorskip('boto3')
         from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
         from pydantic_ai.providers.bedrock import BedrockModelProfile
 
@@ -684,7 +681,6 @@ class TestBedrockThinkingTranslation:
 
     def test_qwen_variant_thinking_false(self):
         """thinking=False on Qwen variant is a no-op (Qwen has no disable mechanism)."""
-        pytest.importorskip('boto3')
         from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
         from pydantic_ai.providers.bedrock import BedrockModelProfile
 
@@ -701,7 +697,6 @@ class TestBedrockThinkingTranslation:
 
     def test_no_variant_thinking_passthrough(self):
         """When bedrock_thinking_variant is None, unified thinking is a no-op."""
-        pytest.importorskip('boto3')
         from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
         from pydantic_ai.providers.bedrock import BedrockModelProfile
 
@@ -714,7 +709,6 @@ class TestBedrockThinkingTranslation:
         assert result is None
 
     def test_thinking_none_returns_existing(self):
-        pytest.importorskip('boto3')
         from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
         from pydantic_ai.providers.bedrock import BedrockModelProfile
 
@@ -730,8 +724,11 @@ class TestBedrockThinkingTranslation:
 class TestOpenRouterThinkingTranslation:
     """Test OpenRouter unified thinking fallback in _openrouter_settings_to_openai_settings."""
 
+    @pytest.fixture(autouse=True)
+    def _require_openai(self):
+        pytest.importorskip('openai', reason='openai not installed')
+
     def test_thinking_true(self):
-        pytest.importorskip('openai')
         from pydantic_ai.models.openrouter import OpenRouterModelSettings, _openrouter_settings_to_openai_settings
 
         settings = OpenRouterModelSettings()
@@ -741,7 +738,6 @@ class TestOpenRouterThinkingTranslation:
         assert extra_body.get('reasoning') == {'effort': 'medium'}
 
     def test_thinking_high(self):
-        pytest.importorskip('openai')
         from pydantic_ai.models.openrouter import OpenRouterModelSettings, _openrouter_settings_to_openai_settings
 
         settings = OpenRouterModelSettings()
@@ -751,7 +747,6 @@ class TestOpenRouterThinkingTranslation:
         assert extra_body.get('reasoning') == {'effort': 'high'}
 
     def test_thinking_false_no_reasoning(self):
-        pytest.importorskip('openai')
         from pydantic_ai.models.openrouter import OpenRouterModelSettings, _openrouter_settings_to_openai_settings
 
         settings = OpenRouterModelSettings()
@@ -762,7 +757,6 @@ class TestOpenRouterThinkingTranslation:
 
     def test_openai_reasoning_effort_passthrough(self):
         """Explicit openai_reasoning_effort on OpenRouter is passed through."""
-        pytest.importorskip('openai')
         from pydantic_ai.models.openrouter import OpenRouterModel
 
         model = OpenRouterModel.__new__(OpenRouterModel)
@@ -778,8 +772,11 @@ class TestOpenRouterThinkingTranslation:
 class TestCerebrasThinkingTranslation:
     """Test Cerebras unified thinking fallback."""
 
+    @pytest.fixture(autouse=True)
+    def _require_openai(self):
+        pytest.importorskip('openai', reason='openai not installed')
+
     def test_thinking_false_sets_disable_reasoning(self):
-        pytest.importorskip('openai')
         from pydantic_ai.models.cerebras import CerebrasModelSettings, _cerebras_settings_to_openai_settings
 
         settings = CerebrasModelSettings()
@@ -789,7 +786,6 @@ class TestCerebrasThinkingTranslation:
         assert extra_body.get('disable_reasoning') is True
 
     def test_thinking_true_sets_disable_reasoning_false(self):
-        pytest.importorskip('openai')
         from pydantic_ai.models.cerebras import CerebrasModelSettings, _cerebras_settings_to_openai_settings
 
         settings = CerebrasModelSettings()
@@ -799,7 +795,6 @@ class TestCerebrasThinkingTranslation:
         assert extra_body.get('disable_reasoning') is False
 
     def test_thinking_effort_sets_disable_reasoning_false(self):
-        pytest.importorskip('openai')
         from pydantic_ai.models.cerebras import CerebrasModelSettings, _cerebras_settings_to_openai_settings
 
         settings = CerebrasModelSettings()
@@ -809,7 +804,6 @@ class TestCerebrasThinkingTranslation:
         assert extra_body.get('disable_reasoning') is False
 
     def test_explicit_cerebras_disable_takes_precedence(self):
-        pytest.importorskip('openai')
         from pydantic_ai.models.cerebras import CerebrasModelSettings, _cerebras_settings_to_openai_settings
 
         settings = CerebrasModelSettings(cerebras_disable_reasoning=True)
@@ -820,7 +814,6 @@ class TestCerebrasThinkingTranslation:
 
     def test_explicit_openai_reasoning_effort_passthrough(self):
         """Explicit openai_reasoning_effort on Cerebras is passed through."""
-        pytest.importorskip('openai')
         from pydantic_ai.models.cerebras import CerebrasModel
 
         model = CerebrasModel.__new__(CerebrasModel)
@@ -836,8 +829,11 @@ class TestCerebrasThinkingTranslation:
 class TestXaiThinkingTranslation:
     """Test xAI unified thinking fallback."""
 
+    @pytest.fixture(autouse=True)
+    def _require_xai_sdk(self):
+        pytest.importorskip('xai_sdk', reason='xai_sdk not installed')
+
     def test_thinking_high(self):
-        pytest.importorskip('xai_sdk')
         from pydantic_ai.models.xai import XaiModel, XaiModelSettings
 
         model = XaiModel.__new__(XaiModel)
@@ -850,7 +846,6 @@ class TestXaiThinkingTranslation:
         assert resolved_params.thinking == 'high'
 
     def test_thinking_true(self):
-        pytest.importorskip('xai_sdk')
         from pydantic_ai.models.xai import XaiModel, XaiModelSettings
 
         model = XaiModel.__new__(XaiModel)
@@ -866,8 +861,11 @@ class TestXaiThinkingTranslation:
 class TestXaiEffortMap:
     """Test xAI effort mapping values — xAI only supports 'low' and 'high'."""
 
+    @pytest.fixture(autouse=True)
+    def _require_xai_sdk(self):
+        pytest.importorskip('xai_sdk', reason='xai_sdk not installed')
+
     def test_effort_map_values(self):
-        pytest.importorskip('xai_sdk')
         from pydantic_ai.models.xai import XAI_EFFORT_MAP
 
         assert XAI_EFFORT_MAP[True] == 'high'
@@ -879,7 +877,6 @@ class TestXaiEffortMap:
 
     def test_only_low_and_high_values(self):
         """xAI only supports two effort levels; all map values must be one of them."""
-        pytest.importorskip('xai_sdk')
         from pydantic_ai.models.xai import XAI_EFFORT_MAP
 
         assert set(XAI_EFFORT_MAP.values()) == {'low', 'high'}

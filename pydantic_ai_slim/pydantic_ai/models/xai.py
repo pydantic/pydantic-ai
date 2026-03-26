@@ -55,7 +55,7 @@ from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ThinkingLevel
 from ..usage import RequestUsage
 
-XAI_EFFORT_MAP: dict[ThinkingLevel, str] = {
+XAI_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'high']] = {
     True: 'high',
     'minimal': 'low',
     'low': 'low',
