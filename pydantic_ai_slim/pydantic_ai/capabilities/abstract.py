@@ -15,10 +15,10 @@ from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
-    from pydantic_ai._output import OutputContext
     from pydantic_ai.agent.abstract import AgentModelSettings
     from pydantic_ai.capabilities.prefix_tools import PrefixTools
     from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
     from pydantic_graph import End
@@ -59,7 +59,7 @@ RawOutput: TypeAlias = 'str | dict[str, Any]'
 WrapOutputValidateHandler: TypeAlias = 'Callable[[str | dict[str, Any]], Awaitable[str | dict[str, Any]]]'
 """Handler type for wrap_output_validate."""
 
-WrapOutputExecuteHandler: TypeAlias = 'Callable[[str | dict[str, Any]], Awaitable[Any]]'
+WrapOutputExecuteHandler: TypeAlias = 'Callable[[Any], Awaitable[Any]]'
 """Handler type for wrap_output_execute."""
 
 
@@ -570,9 +570,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        output: RawOutput,
+        output: Any,
         output_context: OutputContext,
-    ) -> RawOutput:
+    ) -> Any:
         """Modify validated output before execution (extraction + function call)."""
         return output
 
@@ -580,7 +580,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        validated_output: RawOutput,
+        validated_output: Any,
         output: Any,
         output_context: OutputContext,
     ) -> Any:
@@ -591,7 +591,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        output: RawOutput,
+        output: Any,
         output_context: OutputContext,
         handler: WrapOutputExecuteHandler,
     ) -> Any:
@@ -602,7 +602,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        output: RawOutput,
+        output: Any,
         output_context: OutputContext,
         error: Exception,
     ) -> Any:

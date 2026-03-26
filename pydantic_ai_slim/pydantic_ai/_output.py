@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
 from pydantic import Json, TypeAdapter, ValidationError
 from pydantic_core import SchemaValidator, to_json
-from typing_extensions import Self, TypedDict, TypeVar, assert_never
+from typing_extensions import Self, TypedDict, TypeVar
 
 from pydantic_ai._instrumentation import InstrumentationNames
 from pydantic_ai._utils import get_function_type_hints
@@ -20,6 +20,7 @@ from .exceptions import ModelRetry, ToolRetryError, UserError
 from .output import (
     DeferredToolRequests,
     NativeOutput,
+    OutputContext,
     OutputDataT,
     OutputMode,
     OutputObjectDefinition,
@@ -72,26 +73,9 @@ DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
 DEFAULT_OUTPUT_TOOL_DESCRIPTION = 'The final response which ends this conversation'
 
 
-@dataclass
-class OutputContext:
-    """Context about the output being processed, passed to output hooks."""
-
-    mode: OutputMode
-    """The output mode ('text', 'native', 'prompted', 'tool', 'auto')."""
-    output_type: type[Any] | None
-    """The resolved output type (e.g. MyModel, str). For output functions, the return type."""
-    object_def: OutputObjectDefinition | None
-    """The output object definition (schema, name, description), if structured output."""
-    has_function: bool
-    """Whether there's an output function to call in the execute step."""
-    tool_call: _messages.ToolCallPart | None = None
-    """The tool call part, for tool-based output. None for text output."""
-    tool_def: ToolDefinition | None = None
-    """The tool definition, for tool-based output. None for text output."""
-
-
 def _build_output_handlers(
     processor: BaseOutputProcessor[OutputDataT],
+    *,
     run_context: RunContext[AgentDepsT],
     allow_partial: bool,
     wrap_validation_errors: bool,
@@ -99,64 +83,25 @@ def _build_output_handlers(
     Callable[[str | dict[str, Any]], Awaitable[str | dict[str, Any]]],
     Callable[[str | dict[str, Any]], Awaitable[Any]],
 ]:
-    """Build validate and execute handler functions based on processor type."""
-    if isinstance(processor, TextFunctionOutputProcessor):
-        # Text function output: validate=identity, execute=function call
-        async def do_validate(data: str | dict[str, Any]) -> str | dict[str, Any]:
-            return data
+    """Build validate and execute handler functions using processor's validate/call methods."""
 
-        async def do_execute(output: str | dict[str, Any]) -> Any:
-            assert isinstance(output, str)
-            return await processor.process(
-                output,
-                run_context=run_context,
-                allow_partial=allow_partial,
-                wrap_validation_errors=wrap_validation_errors,
-            )
+    async def do_validate(data: str | dict[str, Any]) -> str | dict[str, Any]:
+        return processor.validate(
+            data,
+            allow_partial=allow_partial,
+            wrap_validation_errors=wrap_validation_errors,
+            validation_context=run_context.validation_context,
+        )
 
-    elif isinstance(processor, ObjectOutputProcessor):
-        # Structured output: validate=Pydantic validation, execute=extraction+function
-        async def do_validate(data: str | dict[str, Any]) -> str | dict[str, Any]:
-            if isinstance(data, str):
-                data = _utils.strip_markdown_fences(data)
-            return processor.validate(
-                data, allow_partial=allow_partial, validation_context=run_context.validation_context
-            )
-
-        async def do_execute(output: str | dict[str, Any]) -> Any:
-            return await processor.call(output, run_context, wrap_validation_errors)  # type: ignore[arg-type]
-
-    elif isinstance(processor, TextOutputProcessor):
-        # Plain text output: identity for both phases
-        async def do_validate(data: str | dict[str, Any]) -> str | dict[str, Any]:
-            return data
-
-        async def do_execute(output: str | dict[str, Any]) -> Any:
-            return output
-
-    elif isinstance(processor, UnionOutputProcessor):
-        # UnionOutputProcessor: full process() in validate, identity execute.
-        async def do_validate(data: str | dict[str, Any]) -> str | dict[str, Any]:
-            assert isinstance(data, str)
-            result = await processor.process(
-                data,
-                run_context=run_context,
-                allow_partial=allow_partial,
-                wrap_validation_errors=wrap_validation_errors,
-            )
-            return result  # type: ignore[return-value]
-
-        async def do_execute(output: str | dict[str, Any]) -> Any:
-            return output
-
-    else:
-        assert_never(processor)  # pyright: ignore[reportArgumentType]
+    async def do_execute(output: str | dict[str, Any]) -> Any:
+        return await processor.call(output, run_context, wrap_validation_errors)
 
     return do_validate, do_execute
 
 
 async def run_output_validate_hooks(
     capability: AbstractCapability[AgentDepsT],
+    *,
     run_context: RunContext[AgentDepsT],
     output_context: OutputContext,
     raw_output: str | dict[str, Any],
@@ -201,10 +146,11 @@ async def run_output_validate_hooks(
 
 async def run_output_execute_hooks(
     capability: AbstractCapability[AgentDepsT],
+    *,
     run_context: RunContext[AgentDepsT],
     output_context: OutputContext,
-    validated: str | dict[str, Any],
-    do_execute: Callable[[str | dict[str, Any]], Awaitable[Any]],
+    validated: Any,
+    do_execute: Callable[[Any], Awaitable[Any]],
 ) -> Any:
     """Run the output execute hooks around do_execute."""
     validated = await capability.before_output_execute(run_context, output=validated, output_context=output_context)
@@ -245,12 +191,26 @@ async def run_output_with_hooks(
         )
 
     output_context = processor.get_output_context(output_mode)
-    do_validate, do_execute = _build_output_handlers(processor, run_context, allow_partial, wrap_validation_errors)
+    do_validate, do_execute = _build_output_handlers(
+        processor, run_context=run_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
+    )
 
     validated = await run_output_validate_hooks(
-        capability, run_context, output_context, text, do_validate, allow_partial, wrap_validation_errors
+        capability,
+        run_context=run_context,
+        output_context=output_context,
+        raw_output=text,
+        do_validate=do_validate,
+        allow_partial=allow_partial,
+        wrap_validation_errors=wrap_validation_errors,
     )
-    result = await run_output_execute_hooks(capability, run_context, output_context, validated, do_execute)
+    result = await run_output_execute_hooks(
+        capability,
+        run_context=run_context,
+        output_context=output_context,
+        validated=validated,
+        do_execute=do_execute,
+    )
 
     return cast(OutputDataT, result)
 
@@ -703,6 +663,26 @@ class BaseOutputProcessor(ABC, Generic[OutputDataT]):
         """Process an output message, performing validation and (if necessary) calling the output function."""
         raise NotImplementedError()
 
+    def validate(
+        self,
+        data: str | dict[str, Any] | None,
+        *,
+        allow_partial: bool = False,
+        wrap_validation_errors: bool = True,
+        validation_context: Any | None = None,
+    ) -> Any:
+        """Validate/parse raw output. Default: identity (returns data as-is)."""
+        return data
+
+    async def call(
+        self,
+        output: Any,
+        run_context: RunContext[AgentDepsT],
+        wrap_validation_errors: bool = True,
+    ) -> Any:
+        """Execute output function on validated output. Default: identity (returns output as-is)."""
+        return output
+
     def get_output_context(
         self,
         mode: OutputMode,
@@ -742,9 +722,12 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             json_schema = self._function_schema.json_schema
             json_schema['description'] = self._function_schema.description
 
-            # Extract return type from function signature for output_type
+            # Extract the function's input type (what the model produces) for output_type
             type_hints = _utils.get_function_type_hints(output)
-            self._output_type = type_hints.get('return', None)
+            for hint_name, hint_type in type_hints.items():
+                if hint_name != 'return' and hint_type is not RunContext:
+                    self._output_type = hint_type
+                    break
         else:
             self._output_type = cast(type[Any], output)
             json_schema_type_adapter: TypeAdapter[Any]
@@ -817,12 +800,14 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         Returns:
             Either the validated output data (left) or a retry message (right).
         """
-        if isinstance(data, str):
-            data = _utils.strip_markdown_fences(data)
-
         try:
-            output = self.validate(data, allow_partial=allow_partial, validation_context=run_context.validation_context)
-        except ValidationError as e:  # pragma: no cover — error handling now in run_output_with_hooks; only reachable via UnionOutputProcessor.process() or capability=None
+            output = self.validate(
+                data,
+                allow_partial=allow_partial,
+                wrap_validation_errors=wrap_validation_errors,
+                validation_context=run_context.validation_context,
+            )
+        except ValidationError as e:
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(
                     content=e.errors(include_url=False),
@@ -840,8 +825,11 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         data: str | dict[str, Any] | None,
         *,
         allow_partial: bool = False,
+        wrap_validation_errors: bool = True,
         validation_context: Any | None = None,
     ) -> dict[str, Any]:
+        if isinstance(data, str):
+            data = _utils.strip_markdown_fences(data)
         pyd_allow_partial: Literal['off', 'trailing-strings'] = 'trailing-strings' if allow_partial else 'off'
         if isinstance(data, str):
             return self.validator.validate_json(
@@ -899,6 +887,7 @@ class UnionOutputModel:
 class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
     _union_processor: ObjectOutputProcessor[UnionOutputModel]
     _processors: dict[str, ObjectOutputProcessor[OutputDataT]]
+    _resolved_processor: ObjectOutputProcessor[OutputDataT] | None
 
     def __init__(
         self,
@@ -908,6 +897,7 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         description: str | None = None,
         strict: bool | None = None,
     ):
+        self._resolved_processor = None
         self._union_processor = ObjectOutputProcessor(output=UnionOutputModel)
 
         json_schemas: list[ObjectJsonSchema] = []
@@ -981,6 +971,48 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             )
         )
 
+    def validate(
+        self,
+        data: str | dict[str, Any] | None,
+        *,
+        allow_partial: bool = False,
+        wrap_validation_errors: bool = True,
+        validation_context: Any | None = None,
+    ) -> Any:
+        """Validate union envelope, resolve kind, and validate inner type."""
+        union_validated: UnionOutputModel = self._union_processor.validate(  # pyright: ignore[reportAssignmentType]
+            data, allow_partial=allow_partial, validation_context=validation_context
+        )
+
+        result = union_validated.result
+        kind: str = result.kind
+        inner_data: dict[str, Any] = result.data
+
+        try:
+            processor = self._processors[kind]
+        except KeyError as e:
+            if wrap_validation_errors:
+                m = _messages.RetryPromptPart(content=f'Invalid kind: {kind}')
+                raise ToolRetryError(m) from e
+            else:
+                raise
+
+        # Store resolved processor for call() phase
+        self._resolved_processor = processor
+
+        # Validate inner data
+        return processor.validate(inner_data, allow_partial=allow_partial, validation_context=validation_context)
+
+    async def call(
+        self,
+        output: Any,
+        run_context: RunContext[AgentDepsT],
+        wrap_validation_errors: bool = True,
+    ) -> Any:
+        """Delegate to the resolved inner processor for execution."""
+        assert self._resolved_processor is not None, 'validate() must be called before call()'
+        return await self._resolved_processor.call(output, run_context, wrap_validation_errors)
+
     async def process(
         self,
         data: str,
@@ -989,30 +1021,37 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
-        union_object = await self._union_processor.process(
-            data,
-            run_context=run_context,
-            allow_partial=allow_partial,
-            wrap_validation_errors=wrap_validation_errors,
-        )
-
-        result = union_object.result
-        kind = result.kind
-        inner_data = result.data
         try:
-            processor = self._processors[kind]
-        except KeyError as e:  # pragma: no cover
+            output = self.validate(
+                data,
+                allow_partial=allow_partial,
+                wrap_validation_errors=wrap_validation_errors,
+                validation_context=run_context.validation_context,
+            )
+        except ValidationError as e:
             if wrap_validation_errors:
-                m = _messages.RetryPromptPart(content=f'Invalid kind: {kind}')
+                m = _messages.RetryPromptPart(
+                    content=e.errors(include_url=False),
+                )
                 raise ToolRetryError(m) from e
             else:
                 raise
 
-        return await processor.process(
-            inner_data,
-            run_context=run_context,
-            allow_partial=allow_partial,
-            wrap_validation_errors=wrap_validation_errors,
+        return await self.call(output, run_context, wrap_validation_errors)
+
+    def get_output_context(
+        self,
+        mode: OutputMode,
+        tool_call: _messages.ToolCallPart | None = None,
+        tool_def: ToolDefinition | None = None,
+    ) -> OutputContext:
+        return OutputContext(
+            mode=mode,
+            output_type=None,
+            object_def=self.object_def,
+            has_function=any(p._function_schema is not None for p in self._processors.values()),  # pyright: ignore[reportPrivateUsage]
+            tool_call=tool_call,
+            tool_def=tool_def,
         )
 
 
@@ -1060,8 +1099,15 @@ class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
 
         self._str_argument_name = argument_name
 
-        type_hints = _utils.get_function_type_hints(output_function)
-        self._output_type: type[Any] | None = type_hints.get('return', None)
+    async def call(
+        self,
+        output: Any,
+        run_context: RunContext[AgentDepsT],
+        wrap_validation_errors: bool = True,
+    ) -> Any:
+        """Execute the text output function."""
+        args = {self._str_argument_name: output}
+        return await execute_traced_output_function(self._function_schema, run_context, args, wrap_validation_errors)
 
     async def process(
         self,
@@ -1072,16 +1118,9 @@ class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
-        args = {self._str_argument_name: data}
-        data = await execute_traced_output_function(self._function_schema, run_context, args, wrap_validation_errors)
-
-        return await super().process(
-            data,
-            run_context=run_context,
-            validation_context=validation_context,
-            allow_partial=allow_partial,
-            wrap_validation_errors=wrap_validation_errors,
-        )
+        validated = self.validate(data)
+        result = await self.call(validated, run_context, wrap_validation_errors)
+        return cast(OutputDataT, result)
 
     def get_output_context(
         self,
@@ -1091,7 +1130,7 @@ class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
     ) -> OutputContext:
         return OutputContext(
             mode=mode,
-            output_type=self._output_type,
+            output_type=str,
             object_def=None,
             has_function=True,
             tool_call=tool_call,

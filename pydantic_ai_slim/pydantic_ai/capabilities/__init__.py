@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic_ai._output import OutputContext
+from pydantic_ai.output import OutputContext
 
 from .abstract import (
     AbstractCapability,

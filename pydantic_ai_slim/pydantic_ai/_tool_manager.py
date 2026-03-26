@@ -14,6 +14,7 @@ from typing_extensions import deprecated
 
 from . import messages as _messages
 from ._instrumentation import InstrumentationNames
+from ._output import OutputToolset, run_output_execute_hooks, run_output_validate_hooks
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import (
     ApprovalRequired,
@@ -506,12 +507,6 @@ class ToolManager(Generic[AgentDepsT]):
         validated: ValidatedToolCall[AgentDepsT],
     ) -> Any:
         """Execute an output tool call with output hooks."""
-        from ._output import (
-            OutputToolset,
-            run_output_execute_hooks,
-            run_output_validate_hooks,
-        )
-
         assert validated.tool is not None
         assert validated.validated_args is not None
         assert self.root_capability is not None
@@ -535,18 +530,18 @@ class ToolManager(Generic[AgentDepsT]):
 
         validated_output = await run_output_validate_hooks(
             cap,
-            ctx,
-            output_context,
-            validated.validated_args,
-            do_validate,
+            run_context=ctx,
+            output_context=output_context,
+            raw_output=validated.validated_args,
+            do_validate=do_validate,
             allow_partial=False,
             wrap_validation_errors=False,
         )
 
         # --- Output execute phase (wraps processor.call + output validators) ---
-        async def do_execute(output: str | dict[str, Any]) -> Any:
+        async def do_execute(output: Any) -> Any:
             try:
-                result = await processor.call(output, ctx, wrap_validation_errors=False)  # type: ignore[arg-type]
+                result = await processor.call(output, ctx, wrap_validation_errors=False)
                 for validator in toolset.output_validators:
                     result = await validator.validate(result, ctx, wrap_validation_errors=False)
                 return result
@@ -555,7 +550,13 @@ class ToolManager(Generic[AgentDepsT]):
                 self.failed_tools.add(name)
                 raise self._wrap_error_as_retry(name, validated.call, e) from e
 
-        return await run_output_execute_hooks(cap, ctx, output_context, validated_output, do_execute)
+        return await run_output_execute_hooks(
+            cap,
+            run_context=ctx,
+            output_context=output_context,
+            validated=validated_output,
+            do_execute=do_execute,
+        )
 
     async def _execute_function_tool_call(
         self,

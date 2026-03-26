@@ -8,7 +8,6 @@ from typing import Any
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from pydantic_ai._output import OutputContext
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -21,7 +20,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.output import PromptedOutput, TextOutput
+from pydantic_ai.output import OutputContext, PromptedOutput, TextOutput
 from pydantic_ai.tools import ToolDefinition
 
 pytestmark = [

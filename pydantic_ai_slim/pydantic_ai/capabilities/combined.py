@@ -20,8 +20,8 @@ from .abstract import AbstractCapability, RawOutput, WrapOutputExecuteHandler, W
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
-    from pydantic_ai._output import OutputContext
     from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
     from pydantic_graph import End
@@ -462,9 +462,9 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        output: RawOutput,
+        output: Any,
         output_context: OutputContext,
-    ) -> RawOutput:
+    ) -> Any:
         for capability in self.capabilities:
             output = await capability.before_output_execute(ctx, output=output, output_context=output_context)
         return output
@@ -473,7 +473,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        validated_output: RawOutput,
+        validated_output: Any,
         output: Any,
         output_context: OutputContext,
     ) -> Any:
@@ -487,7 +487,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        output: RawOutput,
+        output: Any,
         output_context: OutputContext,
         handler: WrapOutputExecuteHandler,
     ) -> Any:
@@ -500,7 +500,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        output: RawOutput,
+        output: Any,
         output_context: OutputContext,
         error: Exception,
     ) -> Any:
@@ -606,9 +606,9 @@ def _make_output_execute_wrap(
     cap: AbstractCapability[AgentDepsT],
     ctx: RunContext[AgentDepsT],
     output_context: OutputContext,
-    inner: Callable[[RawOutput], Awaitable[Any]],
-) -> Callable[[RawOutput], Awaitable[Any]]:
-    async def wrapped(output: RawOutput) -> Any:
+    inner: Callable[[Any], Awaitable[Any]],
+) -> Callable[[Any], Awaitable[Any]]:
+    async def wrapped(output: Any) -> Any:
         return await cap.wrap_output_execute(ctx, output=output, output_context=output_context, handler=inner)
 
     return wrapped

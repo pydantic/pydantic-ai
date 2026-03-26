@@ -48,8 +48,8 @@ from .abstract import (
 )
 
 if TYPE_CHECKING:
-    from pydantic_ai._output import OutputContext
     from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.output import OutputContext
     from pydantic_ai.run import AgentRunResult
 
 _FuncT = TypeVar('_FuncT', bound=Callable[..., Any])
@@ -202,19 +202,19 @@ class OnOutputValidateErrorHookFunc(Protocol):
 
 class BeforeOutputExecuteHookFunc(Protocol):
     """Protocol for :meth:`~AbstractCapability.before_output_execute` hook functions."""
-    def __call__(self, ctx: RunContext[Any], /, *, output: RawOutput, output_context: OutputContext) -> RawOutput | Awaitable[RawOutput]: ...
+    def __call__(self, ctx: RunContext[Any], /, *, output: Any, output_context: OutputContext) -> Any | Awaitable[Any]: ...
 
 class AfterOutputExecuteHookFunc(Protocol):
     """Protocol for :meth:`~AbstractCapability.after_output_execute` hook functions."""
-    def __call__(self, ctx: RunContext[Any], /, *, validated_output: RawOutput, output: Any, output_context: OutputContext) -> Any | Awaitable[Any]: ...
+    def __call__(self, ctx: RunContext[Any], /, *, validated_output: Any, output: Any, output_context: OutputContext) -> Any | Awaitable[Any]: ...
 
 class WrapOutputExecuteHookFunc(Protocol):
     """Protocol for :meth:`~AbstractCapability.wrap_output_execute` hook functions."""
-    def __call__(self, ctx: RunContext[Any], /, *, output: RawOutput, output_context: OutputContext, handler: WrapOutputExecuteHandler) -> Any | Awaitable[Any]: ...
+    def __call__(self, ctx: RunContext[Any], /, *, output: Any, output_context: OutputContext, handler: WrapOutputExecuteHandler) -> Any | Awaitable[Any]: ...
 
 class OnOutputExecuteErrorHookFunc(Protocol):
     """Protocol for :meth:`~AbstractCapability.on_output_execute_error` hook functions."""
-    def __call__(self, ctx: RunContext[Any], /, *, output: RawOutput, output_context: OutputContext, error: Exception) -> Any | Awaitable[Any]: ...
+    def __call__(self, ctx: RunContext[Any], /, *, output: Any, output_context: OutputContext, error: Exception) -> Any | Awaitable[Any]: ...
 # fmt: on
 
 
@@ -1114,8 +1114,8 @@ class Hooks(AbstractCapability[AgentDepsT]):
         raise error
 
     async def before_output_execute(
-        self, ctx: RunContext[AgentDepsT], *, output: RawOutput, output_context: OutputContext
-    ) -> RawOutput:
+        self, ctx: RunContext[AgentDepsT], *, output: Any, output_context: OutputContext
+    ) -> Any:
         for entry in self._get('before_output_execute'):
             output = await _call_entry(
                 entry, 'before_output_execute', ctx, output=output, output_context=output_context
@@ -1123,7 +1123,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
         return output
 
     async def after_output_execute(
-        self, ctx: RunContext[AgentDepsT], *, validated_output: RawOutput, output: Any, output_context: OutputContext
+        self, ctx: RunContext[AgentDepsT], *, validated_output: Any, output: Any, output_context: OutputContext
     ) -> Any:
         for entry in self._get('after_output_execute'):
             output = await _call_entry(
@@ -1140,7 +1140,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        output: RawOutput,
+        output: Any,
         output_context: OutputContext,
         handler: WrapOutputExecuteHandler,
     ) -> Any:
@@ -1158,7 +1158,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        output: RawOutput,
+        output: Any,
         output_context: OutputContext,
         error: Exception,
     ) -> Any:

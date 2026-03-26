@@ -29,9 +29,9 @@ from .abstract import (
 )
 
 if TYPE_CHECKING:
-    from pydantic_ai._output import OutputContext
     from pydantic_ai.agent.abstract import AgentModelSettings
     from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.output import OutputContext
     from pydantic_ai.run import AgentRunResult
 
 
@@ -338,16 +338,16 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        output: RawOutput,
+        output: Any,
         output_context: OutputContext,
-    ) -> RawOutput:
+    ) -> Any:
         return await self.wrapped.before_output_execute(ctx, output=output, output_context=output_context)
 
     async def after_output_execute(
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        validated_output: RawOutput,
+        validated_output: Any,
         output: Any,
         output_context: OutputContext,
     ) -> Any:
@@ -359,7 +359,7 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        output: RawOutput,
+        output: Any,
         output_context: OutputContext,
         handler: WrapOutputExecuteHandler,
     ) -> Any:
@@ -371,7 +371,7 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        output: RawOutput,
+        output: Any,
         output_context: OutputContext,
         error: Exception,
     ) -> Any:

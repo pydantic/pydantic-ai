@@ -23,6 +23,7 @@ __all__ = (
     'TextOutput',
     'StructuredDict',
     'OutputObjectDefinition',
+    'OutputContext',
     # types
     'OutputDataT',
     'OutputMode',
@@ -266,6 +267,24 @@ class OutputObjectDefinition:
     name: str | None = None
     description: str | None = None
     strict: bool | None = None
+
+
+@dataclass
+class OutputContext:
+    """Context about the output being processed, passed to output hooks."""
+
+    mode: OutputMode
+    """The output mode ('text', 'native', 'prompted', 'tool', 'auto')."""
+    output_type: type[Any] | None
+    """The resolved output type (e.g. MyModel, str). For output functions, the function's input type (what the model produces)."""
+    object_def: OutputObjectDefinition | None
+    """The output object definition (schema, name, description), if structured output."""
+    has_function: bool
+    """Whether there's an output function to call in the execute step."""
+    tool_call: ToolCallPart | None = None
+    """The tool call part, for tool-based output. None for text output."""
+    tool_def: ToolDefinition | None = None
+    """The tool definition, for tool-based output. None for text output."""
 
 
 @dataclass
