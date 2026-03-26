@@ -174,7 +174,7 @@ async def run_output_validate_hooks(
             run_context, raw_output=raw_output, output_context=output_context, handler=do_validate
         )
     except (ValidationError, ModelRetry) as e:
-        if allow_partial:  # pragma: no branch — partial validation errors are handled by stream_output callers
+        if allow_partial:  # pragma: no cover — partial validation errors during streaming are caught by stream_output
             if wrap_validation_errors and isinstance(e, ValidationError):
                 m = _messages.RetryPromptPart(content=e.errors(include_url=False))
                 raise ToolRetryError(m) from e
