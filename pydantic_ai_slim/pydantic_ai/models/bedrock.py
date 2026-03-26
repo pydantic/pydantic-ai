@@ -4,8 +4,6 @@ import functools
 import typing
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
-from collections.abc import AsyncIterator, Callable, Iterable, Iterator, Mapping, Sequence
-from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import count
@@ -395,7 +393,9 @@ class BedrockConverseModel(Model):
             provider = infer_provider('gateway/bedrock' if provider == 'gateway' else provider)
         self._provider = provider
         self.client = cast('BedrockRuntimeClient', provider.client)
-        self._extra_headers_lock = anyio.Lock()
+        if not hasattr(self.client, '_pydantic_ai_extra_headers_lock'):
+            self.client._pydantic_ai_extra_headers_lock = anyio.Lock()
+        self._extra_headers_lock = self.client._pydantic_ai_extra_headers_lock
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
 
@@ -538,8 +538,8 @@ class BedrockConverseModel(Model):
                                 tool_call_id=tool_use['toolUseId'],
                             ),
                         )
-                elif tool_result := item.get('toolResult'):
-                    if tool_result.get('type') == 'nova_code_interpreter_result':  # pragma: no branch
+                elif (tool_result := item.get('toolResult')) and tool_result.get(
+                            'type') == 'nova_code_interpreter_result':# pragma: no branch
                         items.append(
                             BuiltinToolReturnPart(
                                 provider_name=self.system,
@@ -623,7 +623,7 @@ class BedrockConverseModel(Model):
     ) -> ConverseStreamResponseTypeDef:
         pass
 
-    async def _call_bedrock(
+    async def _call_bedrock_unlocked(
         self,
         *,
         params: ConverseRequestTypeDef,
@@ -646,6 +646,15 @@ class BedrockConverseModel(Model):
                 message=str(e),
             ) from e
 
+    async def _call_bedrock(
+            self,
+            *,
+            params: ConverseRequestTypeDef,
+            stream: bool,
+    ) -> ConverseResponseTypeDef | ConverseStreamResponseTypeDef:
+        async with self._extra_headers_lock:
+            return await self._call_bedrock_unlocked(params=params, stream=stream)
+
     async def _call_with_extra_headers(
         self,
         *,
@@ -661,7 +670,7 @@ class BedrockConverseModel(Model):
             )
 
             try:
-                return await self._call_bedrock(params=params, stream=stream)
+                return await self._call_bedrock_unlocked(params=params, stream=stream)
             finally:
                 self._unregister_extra_headers(self.client, handler, events)
 
@@ -731,23 +740,18 @@ class BedrockConverseModel(Model):
                 stream=stream,
             )
 
-        with _map_api_errors(self.model_name):
-            try:
-                if stream:
-                    model_response = await anyio.to_thread.run_sync(
-                        functools.partial(self.client.converse_stream, **params)
-                    )
-                else:
-                    model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse, **params))
-            finally:
-                if handler is not None and events is not None:
-                    self._unregister_extra_headers(self.client, handler, events)
+        if extra_headers and isinstance(extra_headers, dict):
+            return await self._call_with_extra_headers(
+                params=params,
+                extra_headers=extra_headers,
+                stream=stream,
+            )
 
-        return model_response
+        return await self._call_bedrock(
+            params=params,
+            stream=stream,
+        )
 
-    @staticmethod
-    def _register_extra_headers(client, headers, *, stream: bool):
-        return await self._call_bedrock(params=params, stream=stream)
 
     @staticmethod
     def _register_extra_headers(
@@ -965,10 +969,9 @@ class BedrockConverseModel(Model):
                             content.append({'reasoningContent': reasoning_content})
                         else:
                             start_tag, end_tag = self.profile.thinking_tags
-                            content.append({'text': '\n'.join([start_tag, item.content, end_tag])})
+                            content.append({'text': f'{start_tag}\n{item.content}\n{end_tag}'})
                     elif isinstance(item, BuiltinToolCallPart):
-                        if item.provider_name == self.system:
-                            if item.tool_name == CodeExecutionTool.kind:
+                        if item.provider_name == self.system and item.tool_name == CodeExecutionTool.kind:
                                 server_tool_use_block_param: ToolUseBlockOutputTypeDef = {
                                     'toolUseId': _utils.guard_tool_call_id(t=item),
                                     'name': 'nova_code_interpreter',
@@ -977,8 +980,7 @@ class BedrockConverseModel(Model):
                                 }
                                 content.append({'toolUse': server_tool_use_block_param})
                     elif isinstance(item, BuiltinToolReturnPart):
-                        if item.provider_name == self.system:
-                            if item.tool_name == CodeExecutionTool.kind:
+                        if item.provider_name == self.system and item.tool_name == CodeExecutionTool.kind:
                                 result_content: list[ToolResultContentBlockOutputTypeDef] = [
                                     {'json': cast(dict[str, Any], item.content)}
                                 ]
@@ -1325,7 +1327,6 @@ class BedrockStreamedResponse(StreamedResponse):
                                 )
                                 builtin_tool_returns[index] = return_part
                                 # Don't yield anything yet - we wait for content block end
-
                     case {'contentBlockDelta': content_block_delta}:
                         index = content_block_delta['contentBlockIndex']
                         delta = content_block_delta['delta']
@@ -1360,23 +1361,17 @@ class BedrockStreamedResponse(StreamedResponse):
                             )
                             if maybe_event:  # pragma: no branch
                                 yield maybe_event
-                        if 'toolResult' in delta:  # pragma: no branch
-                            if (
-                                return_part := builtin_tool_returns.get(index)
-                            ) and return_part.tool_name == CodeExecutionTool.kind:  # pragma: no branch
-                                # For now, only process `contentBlockDelta.toolResult` for Code Exe tool.
-
-                                if tr_content := delta['toolResult']:  # pragma: no branch
-                                    # Goal here is to convert to object form.
-                                    # This assumes the first item is the relevant one.
-                                    return_part.content = tr_content[0].get('json')
-
-                                # Don't yield anything yet - we wait for content block end
+                        if (
+                            'toolResult' in delta
+                            and (return_part := builtin_tool_returns.get(index))
+                            and return_part.tool_name == CodeExecutionTool.kind
+                            and (tr_content := delta['toolResult'])
+                        ):
+                            return_part.content = tr_content[0].get('json')
 
                     case {'contentBlockStop': content_block_stop}:
                         index = content_block_stop['contentBlockIndex']
                         if return_part := builtin_tool_returns.get(index):
-                            # Emit the complete built-in tool return only once when the block closes.
                             yield self._parts_manager.handle_part(vendor_part_id=index, part=return_part)
                         tool_ids.pop(index, None)
                         builtin_tool_returns.pop(index, None)
@@ -1432,4 +1427,4 @@ class _AsyncIteratorWrapper(Generic[T]):
             if type(e.__cause__) is StopIteration:
                 raise StopAsyncIteration
             else:
-                raise e  # pragma: lax no cover
+                raise
