@@ -1780,3 +1780,168 @@ class TestErrorHookCoveragePaths:
         agent = Agent(FunctionModel(model_fn), output_type=failing_func, capabilities=[hooks])
         result = agent.run_sync('hello')
         assert result.output == 'recovered'
+
+
+class TestUnionOutputWithHooks:
+    """Tests for UnionOutputProcessor with output hooks — verifying clean validate/call decomposition."""
+
+    def test_union_output_hooks_fire_for_both_phases(self):
+        """Union output types properly split into validate (Pydantic) and execute (function call) phases."""
+
+        class TypeA(BaseModel):
+            kind: str = 'a'
+            value: int
+
+        class TypeB(BaseModel):
+            kind: str = 'b'
+            name: str
+
+        log: list[str] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='{"result": {"kind": "TypeA", "data": {"value": 42}}}')])
+
+        @dataclass
+        class LogCapability(AbstractCapability[Any]):
+            async def before_output_validate(
+                self, ctx: RunContext[Any], *, raw_output: str | dict[str, Any], output_context: OutputContext
+            ) -> str | dict[str, Any]:
+                log.append('before_validate')
+                return raw_output
+
+            async def after_output_validate(
+                self,
+                ctx: RunContext[Any],
+                *,
+                raw_output: str | dict[str, Any],
+                output: str | dict[str, Any],
+                output_context: OutputContext,
+            ) -> str | dict[str, Any]:
+                log.append('after_validate')
+                return output
+
+            async def before_output_execute(
+                self, ctx: RunContext[Any], *, output: Any, output_context: OutputContext
+            ) -> Any:
+                log.append('before_execute')
+                return output
+
+            async def after_output_execute(
+                self, ctx: RunContext[Any], *, validated_output: Any, output: Any, output_context: OutputContext
+            ) -> Any:
+                log.append('after_execute')
+                return output
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=PromptedOutput([TypeA, TypeB]),
+            capabilities=[LogCapability()],
+        )
+        result = agent.run_sync('hello')
+        assert isinstance(result.output, TypeA)
+        assert result.output.value == 42
+        # Both validate and execute hooks should fire
+        assert 'before_validate' in log
+        assert 'after_validate' in log
+        assert 'before_execute' in log
+        assert 'after_execute' in log
+
+    def test_union_output_execute_hook_transforms_result(self):
+        """Execute hooks can transform the result for union output types."""
+
+        class TypeA(BaseModel):
+            value: int
+
+        class TypeB(BaseModel):
+            name: str
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='{"result": {"kind": "TypeA", "data": {"value": 5}}}')])
+
+        @dataclass
+        class DoubleCapability(AbstractCapability[Any]):
+            async def after_output_execute(
+                self, ctx: RunContext[Any], *, validated_output: Any, output: Any, output_context: OutputContext
+            ) -> Any:
+                if isinstance(output, TypeA):
+                    output.value *= 2
+                return output
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=PromptedOutput([TypeA, TypeB]),
+            capabilities=[DoubleCapability()],
+        )
+        result = agent.run_sync('hello')
+        assert isinstance(result.output, TypeA)
+        assert result.output.value == 10
+
+    def test_union_on_output_validate_error_fires(self):
+        """on_output_validate_error fires for union output when validation fails."""
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ModelResponse(parts=[TextPart(content='not json')])
+            return ModelResponse(parts=[TextPart(content='{"result": {"kind": "MyOutput", "data": {"value": 1}}}')])
+
+        error_log: list[str] = []
+
+        @dataclass
+        class ErrorLogCap(AbstractCapability[Any]):
+            async def on_output_validate_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                raw_output: str | dict[str, Any],
+                output_context: OutputContext,
+                error: ValidationError | ModelRetry,
+            ) -> str | dict[str, Any]:
+                error_log.append('validate_error')
+                raise error
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=PromptedOutput([MyOutput, MyOutput]),
+            capabilities=[ErrorLogCap()],
+        )
+        result = agent.run_sync('hello')
+        assert isinstance(result.output, MyOutput)
+        assert call_count == 2
+        assert 'validate_error' in error_log
+
+
+class TestTextFunctionOutputCallHook:
+    """Tests that TextFunctionOutputProcessor.call() is exercised through execute hooks."""
+
+    def test_text_function_execute_hook_wraps_call(self):
+        """Execute hooks wrap the text function call (processor.call)."""
+
+        def uppercase(text: str) -> str:
+            return text.upper()
+
+        log: list[str] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='hello world')])
+
+        @dataclass
+        class ExecLogCap(AbstractCapability[Any]):
+            async def wrap_output_execute(
+                self, ctx: RunContext[Any], *, output: Any, output_context: OutputContext, handler: Any
+            ) -> Any:
+                log.append(f'input: {output}')
+                result = await handler(output)
+                log.append(f'output: {result}')
+                return result
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=TextOutput(uppercase),
+            capabilities=[ExecLogCap()],
+        )
+        result = agent.run_sync('hello')
+        assert result.output == 'HELLO WORLD'
+        assert log == ['input: hello world', 'output: HELLO WORLD']
