@@ -1128,12 +1128,9 @@ class OpenAIChatModel(Model):
             else:
                 assert_never(message)
         if instructions := self._get_instructions(messages, model_request_parameters):
-            # Keep instructions with the leading system prompts so we don't split tool-call/tool-result pairs later on.
-            system_prompt_count = 0
-            for mapped_message in openai_messages:
-                if mapped_message.get('role') != 'system':
-                    break
-                system_prompt_count += 1
+            system_prompt_count = self._count_leading_system_messages(
+                openai_messages, lambda mapped_message: mapped_message.get('role') == 'system'
+            )
             openai_messages.insert(
                 system_prompt_count, chat.ChatCompletionSystemMessageParam(content=instructions, role='system')
             )
@@ -1709,7 +1706,9 @@ class OpenAIResponsesModel(Model):
             # > Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'.
             # Apparently they're only checking input messages for "JSON", not instructions.
             assert isinstance(instructions, str)
-            system_prompt_count = sum(1 for m in openai_messages if m.get('role') == 'system')
+            system_prompt_count = self._count_leading_system_messages(
+                openai_messages, lambda mapped_message: mapped_message.get('role') == 'system'
+            )
             openai_messages.insert(
                 system_prompt_count, responses.EasyInputMessageParam(role='system', content=instructions)
             )

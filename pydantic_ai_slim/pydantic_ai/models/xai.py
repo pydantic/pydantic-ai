@@ -242,7 +242,10 @@ class XaiModel(Model):
 
         # Insert instructions as a system message after existing system messages if present
         if instructions := self._get_instructions(messages, model_request_parameters):
-            system_prompt_count = sum(1 for m in xai_messages if m.role == chat_types.chat_pb2.MessageRole.ROLE_SYSTEM)
+            system_prompt_count = self._count_leading_system_messages(
+                xai_messages,
+                lambda mapped_message: mapped_message.role == chat_types.chat_pb2.MessageRole.ROLE_SYSTEM,
+            )
             xai_messages.insert(system_prompt_count, system(instructions))
 
         return xai_messages

@@ -562,7 +562,9 @@ class MistralModel(Model):
             else:
                 assert_never(message)
         if instructions := self._get_instructions(messages, model_request_parameters):
-            system_prompt_count = sum(1 for m in mistral_messages if isinstance(m, MistralSystemMessage))
+            system_prompt_count = self._count_leading_system_messages(
+                mistral_messages, lambda mapped_message: isinstance(mapped_message, MistralSystemMessage)
+            )
             mistral_messages.insert(system_prompt_count, MistralSystemMessage(content=instructions))
 
         # Post-process messages to insert fake assistant message after tool message if followed by user message

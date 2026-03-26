@@ -1,6 +1,7 @@
 import os
 import warnings
 from importlib import import_module
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -383,3 +384,28 @@ def test_custom_provider_instance_method_model_profile():
     # Instance call should still work
     profile = provider.model_profile('some-model')
     assert isinstance(profile, ModelProfile)
+
+
+def test_count_leading_system_messages_stops_before_mid_history_system_message():
+    messages = [
+        {'role': 'system'},
+        {'role': 'system'},
+        {'role': 'assistant'},
+        {'role': 'system'},
+    ]
+
+    count = Model._count_leading_system_messages(messages, lambda message: message.get('role') == 'system')
+
+    assert count == 2
+
+
+def test_count_leading_system_messages_supports_object_messages():
+    messages = [
+        SimpleNamespace(role='system'),
+        SimpleNamespace(role='user'),
+        SimpleNamespace(role='system'),
+    ]
+
+    count = Model._count_leading_system_messages(messages, lambda message: message.role == 'system')
+
+    assert count == 1

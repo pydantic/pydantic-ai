@@ -450,7 +450,9 @@ class GroqModel(Model):
             else:
                 assert_never(message)
         if instructions := self._get_instructions(messages, model_request_parameters):
-            system_prompt_count = sum(1 for m in groq_messages if m.get('role') == 'system')
+            system_prompt_count = self._count_leading_system_messages(
+                groq_messages, lambda mapped_message: mapped_message.get('role') == 'system'
+            )
             groq_messages.insert(
                 system_prompt_count, chat.ChatCompletionSystemMessageParam(role='system', content=instructions)
             )
