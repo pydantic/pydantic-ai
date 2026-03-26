@@ -5682,7 +5682,7 @@ class TestModelRetryFromHooks:
             ) -> ModelResponse:
                 raise ModelRetry('retry please')
 
-            async def on_model_request_error(
+            async def on_model_request_error(  # pragma: no cover — verifying this is NOT called
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -5736,8 +5736,6 @@ class TestModelRetryFromHooks:
                 for part in msg.parts:
                     if isinstance(part, RetryPromptPart):
                         return make_text_response('got retry, returning text')
-                    if isinstance(part, ToolReturnPart):
-                        return make_text_response(f'got: {part.content}')
             if info.function_tools:
                 return ModelResponse(
                     parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
@@ -5843,7 +5841,7 @@ class TestModelRetryFromHooks:
             ) -> Any:
                 raise ModelRetry('Wrap says retry tool')
 
-            async def on_tool_execute_error(
+            async def on_tool_execute_error(  # pragma: no cover — verifying this is NOT called
                 self,
                 ctx: RunContext[Any],
                 *,
