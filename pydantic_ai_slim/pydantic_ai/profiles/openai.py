@@ -8,7 +8,19 @@ from typing import Any, Literal
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from ..exceptions import UserError
+from ..settings import ThinkingLevel
 from . import ModelProfile
+
+OPENAI_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
+    True: 'medium',
+    False: 'none',
+    'minimal': 'minimal',
+    'low': 'low',
+    'medium': 'medium',
+    'high': 'high',
+    'xhigh': 'xhigh',
+}
+"""Maps unified thinking values to OpenAI reasoning_effort strings."""
 
 SAMPLING_PARAMS = (
     'temperature',
@@ -75,7 +87,7 @@ class OpenAIModelProfile(ModelProfile):
     # safe to pass that value along.  Default is `True` to preserve existing
     # behaviour for OpenAI itself and most providers.
     openai_supports_tool_choice_required: bool = True
-    """Whether the provider accepts the value ``tool_choice='required'`` in the request payload."""
+    """Whether the provider accepts the value `tool_choice='required'` in the request payload."""
 
     openai_system_prompt_role: OpenAISystemPromptRole | None = None
     """The role to use for the system prompt message. If not provided, defaults to `'system'`."""
@@ -171,6 +183,8 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         supports_json_schema_output=True,
         supports_json_object_output=True,
         supports_image_output=supports_image_output,
+        supports_thinking=supports_reasoning,
+        thinking_always_enabled=thinking_always_enabled,
         openai_system_prompt_role=openai_system_prompt_role,
         openai_chat_supports_web_search=supports_web_search,
         openai_supports_encrypted_reasoning_content=supports_reasoning,

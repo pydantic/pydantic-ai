@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import os
 from datetime import date, datetime, timezone
 from types import SimpleNamespace
 from typing import Any
@@ -249,6 +250,71 @@ async def test_bedrock_count_tokens_non_http_error():
     assert exc_info.value.message == snapshot(
         'An error occurred (TestException) when calling the count_tokens operation: broken connection'
     )
+
+
+def _bedrock_arn(resource: str) -> str:
+    """Build a Bedrock ARN, using AWS_ACCOUNT_ID env var or a placeholder.
+
+    The placeholder works for VCR replay (the path matcher scrubs account IDs).
+    When re-recording, set AWS_ACCOUNT_ID to your real account ID:
+
+        AWS_ACCOUNT_ID=... uv run pytest ... --record-mode=new_episodes
+    """
+    account_id = os.getenv('AWS_ACCOUNT_ID', '123456789012')
+    region = os.getenv('AWS_REGION', 'us-east-1')
+    return f'arn:aws:bedrock:{region}:{account_id}:{resource}'
+
+
+async def test_bedrock_inference_profile_converse(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    inference_profile_arn = _bedrock_arn('application-inference-profile/mi1dadi0g15f')
+    settings: BedrockModelSettings = {'bedrock_inference_profile': inference_profile_arn}
+    model = BedrockConverseModel('amazon.nova-micro-v1:0', provider=bedrock_provider, settings=settings)
+    agent = Agent(model)
+
+    result = await agent.run('Say "hello" and nothing else.')
+    assert result.output == snapshot('Hello')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Say "hello" and nothing else.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Hello')],
+                usage=RequestUsage(input_tokens=8, output_tokens=2),
+                model_name='amazon.nova-micro-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_bedrock_inference_profile_count_tokens(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    # count_tokens only uses model_name (not the inference profile), so the ARN doesn't
+    # matter here. Claude Sonnet is used because it's one of the few Bedrock models that
+    # supports the count_tokens API.
+    inference_profile_arn = _bedrock_arn('application-inference-profile/mi1dadi0g15f')
+    settings: BedrockModelSettings = {'bedrock_inference_profile': inference_profile_arn}
+    model = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider, settings=settings
+    )
+    params = ModelRequestParameters()
+
+    result = await model.count_tokens([ModelRequest.user_text_prompt('Hello, world!')], settings, params)
+    assert result.input_tokens > 0
+    assert model.model_name == 'us.anthropic.claude-sonnet-4-20250514-v1:0'
 
 
 async def test_bedrock_stream_non_http_error():
@@ -1786,6 +1852,60 @@ async def test_bedrock_no_tool_choice(bedrock_provider: BedrockProvider):
     )
 
 
+async def test_bedrock_sanitize_tool_name_in_history(bedrock_provider: BedrockProvider):
+    """Hallucinated tool names with invalid chars (e.g. dots) are sanitized when replayed to Bedrock."""
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')], timestamp=IsDatetime()),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='search.evidence invalid', args={'q': 'x'}, tool_call_id='tooluse_123')]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='search.evidence invalid',
+                    content='not found',
+                    tool_call_id='tooluse_123',
+                    timestamp=datetime.now(),
+                ),
+            ],
+            timestamp=IsDatetime(),
+        ),
+    ]
+
+    _, bedrock_messages = await model._map_messages(messages, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'Hello'}]},
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'toolUse': {
+                            'toolUseId': 'tooluse_123',
+                            'name': 'search_evidence_invalid',
+                            'input': {'q': 'x'},
+                        }
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'toolResult': {
+                            'toolUseId': 'tooluse_123',
+                            'content': [{'text': 'not found'}],
+                            'status': 'success',
+                        }
+                    }
+                ],
+            },
+        ]
+    )
+
+
 async def test_bedrock_model_stream_empty_text_delta(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel(model_name='openai.gpt-oss-120b-1:0', provider=bedrock_provider)
     agent = Agent(model)
@@ -2668,13 +2788,15 @@ async def test_bedrock_cache_messages_with_binary_content(
     # Should not add cache point for document content
     assert bedrock_messages[0]['content'] == snapshot(
         [
+            {'text': 'See attached document(s).'},
+            {'cachePoint': {'type': 'default'}},
             {
                 'document': {
                     'name': 'Document 1',
                     'format': 'txt',
                     'source': {'bytes': b'Test document content'},
                 }
-            }
+            },
         ]
     )
 
@@ -2738,9 +2860,14 @@ async def test_bedrock_cache_messages_no_user_messages(allow_model_requests: Non
         ModelRequestParameters(),
         BedrockModelSettings(bedrock_cache_messages=True),
     )
-    # Should not crash, no cache point added since no user message
-    assert len(bedrock_messages) == 1
-    assert bedrock_messages[0]['role'] == 'assistant'
+    # Should not crash, no cache point added since no real user message.
+    # Synthetic user message is prepended because Bedrock requires conversations to start with a user turn.
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': '.'}]},
+            {'role': 'assistant', 'content': [{'text': 'Assistant response'}]},
+        ]
+    )
 
 
 async def test_get_last_user_message_content_non_dict_block(
@@ -3229,6 +3356,7 @@ async def test_bedrock_map_messages_builtin_tool_provider_filtering(
     )
     assert bedrock_messages == snapshot(
         [
+            {'role': 'user', 'content': [{'text': '.'}]},
             {
                 'role': 'assistant',
                 'content': [
@@ -3264,7 +3392,7 @@ async def test_bedrock_map_messages_builtin_tool_provider_filtering(
                         }
                     },
                 ],
-            }
+            },
         ]
     )
 
@@ -3610,3 +3738,109 @@ async def test_uploaded_file_audio_not_supported(allow_model_requests: None, bed
                 UploadedFile(file_id='s3://bucket/audio.wav', provider_name='bedrock', media_type='audio/wav'),
             ]
         )
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        pytest.param('us.anthropic.claude-sonnet-4-5-20250929-v1:0', id='claude-sonnet-4-5'),
+        pytest.param('us.amazon.nova-micro-v1:0', id='nova-micro'),
+    ],
+)
+async def test_bedrock_model_with_instructions_only(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, model_name: BedrockModelName
+):
+    """Test that agent.run() works without a user prompt, using only a system prompt.
+
+    Bedrock requires conversations to start with a user message. When called with only a
+    system prompt, the model layer synthesizes a placeholder user message automatically.
+    See: https://github.com/pydantic/pydantic-ai/issues/4495
+    """
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    agent = Agent(model=model, system_prompt='Generate a short greeting.')
+
+    result = await agent.run()
+    assert result.output
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[SystemPromptPart(content='Generate a short greeting.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())],
+                usage=IsInstance(RequestUsage),
+                model_name=model_name,
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        pytest.param('us.anthropic.claude-sonnet-4-5-20250929-v1:0', id='claude-sonnet-4-5'),
+        pytest.param('us.amazon.nova-micro-v1:0', id='nova-micro'),
+    ],
+)
+async def test_bedrock_model_instructions_only_then_message_history(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, model_name: BedrockModelName
+):
+    """Test that message_history from a system-prompt-only run works in a follow-up run.
+
+    Verifies the scenario where a first run with only instructions produces a history
+    starting with an assistant message (after system parts are extracted), and a second
+    run using that history doesn't fail.
+    See: https://github.com/pydantic/pydantic-ai/issues/4495
+    """
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    agent = Agent(model=model, system_prompt='Generate a short greeting.')
+
+    first_result = await agent.run()
+    second_result = await agent.run('Now say goodbye.', message_history=first_result.all_messages())
+    assert second_result.output
+    assert second_result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[SystemPromptPart(content='Generate a short greeting.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())],
+                usage=IsInstance(RequestUsage),
+                model_name=model_name,
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='Now say goodbye.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())],
+                usage=IsInstance(RequestUsage),
+                model_name=model_name,
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
