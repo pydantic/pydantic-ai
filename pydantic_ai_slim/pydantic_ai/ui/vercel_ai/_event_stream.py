@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import KW_ONLY, dataclass
 from typing import Any, Literal
-from uuid import uuid4
 
 from pydantic_core import to_json
 
@@ -128,7 +127,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         if self.sdk_version >= 6 and isinstance(output, DeferredToolRequests):
             for tool_call in output.approvals:
                 yield ToolApprovalRequestChunk(
-                    approval_id=str(uuid4()),
+                    approval_id=tool_call.tool_call_id,
                     tool_call_id=tool_call.tool_call_id,
                 )
             return
@@ -278,10 +277,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         if self.sdk_version >= 6 and isinstance(part, ToolReturnPart) and part.outcome == 'denied':
             yield ToolOutputDeniedChunk(tool_call_id=tool_call_id)
         elif isinstance(part, RetryPromptPart):
-            # Use raw content for string errors to avoid model_response() appending
-            # "Fix the errors and try again." — consistent with dump path in _adapter.py.
-            error_text = part.content if isinstance(part.content, str) else part.model_response()
-            yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=error_text)
+            yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=part.model_response())
         elif isinstance(part, ToolReturnPart) and part.outcome == 'failed':
             yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=part.model_response_str())
         else:

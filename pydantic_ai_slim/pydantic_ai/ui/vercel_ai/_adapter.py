@@ -64,7 +64,6 @@ from .request_types import (
     ToolApprovalRequested,
     ToolApprovalRequestedPart,
     ToolApprovalResponded,
-    ToolInputAvailablePart,
     ToolOutputAvailablePart,
     ToolOutputDeniedPart,
     ToolOutputErrorPart,
@@ -474,7 +473,6 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         cls,
         msg: ModelResponse,
         tool_results: dict[str, ToolReturnPart | RetryPromptPart],
-        deferred_tool_call_ids: frozenset[str] = frozenset(),
     ) -> list[UIMessagePart]:
         """Convert a ModelResponse into a UIMessage."""
         ui_parts: list[UIMessagePart] = []
@@ -585,31 +583,22 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     call_provider_metadata = dump_provider_metadata(
                         id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
                     )
-                    if part.tool_call_id in deferred_tool_call_ids:
-                        ui_parts.append(
-                            ToolApprovalRequestedPart(
-                                type=tool_name,
-                                tool_call_id=part.tool_call_id,
-                                input=part.args_as_dict(),
-                                provider_executed=True,
-                                call_provider_metadata=call_provider_metadata,
-                                # approval.id is not used for matching (tool_call_id is the match key),
-                                # so we use tool_call_id for a stable, deterministic value in dump output.
-                                approval=ToolApprovalRequested(id=part.tool_call_id),
-                            )
+                    # No result found → the tool call is deferred (awaiting approval or external result).
+                    # Emit approval-requested so the frontend renders approve/reject buttons on reload.
+                    # approval.id is not used for matching (tool_call_id is the match key),
+                    # so we use tool_call_id for a stable, deterministic value in dump output.
+                    ui_parts.append(
+                        ToolApprovalRequestedPart(
+                            type=tool_name,
+                            tool_call_id=part.tool_call_id,
+                            input=part.args_as_dict(),
+                            provider_executed=True,
+                            call_provider_metadata=call_provider_metadata,
+                            approval=ToolApprovalRequested(id=part.tool_call_id),
                         )
-                    else:
-                        ui_parts.append(
-                            ToolInputAvailablePart(
-                                type=tool_name,
-                                tool_call_id=part.tool_call_id,
-                                input=part.args_as_dict(),
-                                provider_executed=True,
-                                call_provider_metadata=call_provider_metadata,
-                            )
-                        )
+                    )
             elif isinstance(part, ToolCallPart):
-                ui_parts.extend(cls._dump_tool_call_part(part, tool_results, deferred_tool_call_ids))
+                ui_parts.extend(cls._dump_tool_call_part(part, tool_results))
             else:
                 assert_never(part)
 
@@ -619,7 +608,6 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     def _dump_tool_call_part(
         part: ToolCallPart,
         tool_results: dict[str, ToolReturnPart | RetryPromptPart],
-        deferred_tool_call_ids: frozenset[str] = frozenset(),
     ) -> list[UIMessagePart]:
         """Convert a ToolCallPart (with optional result) into UIMessageParts."""
         tool_result = tool_results.get(part.tool_call_id)
@@ -670,27 +658,21 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             # Check for Vercel AI chunks returned by tool calls via metadata.
             ui_parts.extend(_extract_metadata_ui_parts(tool_result))
         elif isinstance(tool_result, RetryPromptPart):
-            # Use the raw content string to avoid model_response() appending
-            # "Fix the errors and try again." — that suffix is intended for the
-            # model, not for UI display.  For structured validation errors (list
-            # of ErrorDetails), fall back to the formatted model_response().
-            if isinstance(tool_result.content, str):
-                error_text = tool_result.content
-            else:
-                error_text = tool_result.model_response()
             ui_parts.append(
                 ToolOutputErrorPart(
                     type=tool_type,
                     tool_call_id=part.tool_call_id,
                     input=part.args_as_dict(),
-                    error_text=error_text,
+                    error_text=tool_result.model_response(),
                     provider_executed=False,
                     call_provider_metadata=call_provider_metadata,
                 )
             )
-        elif part.tool_call_id in deferred_tool_call_ids:
-            # Deferred tool awaiting approval — emit approval-requested state
-            # so the frontend renders approve/reject buttons on reload.
+        else:
+            # No result found → the tool call is deferred (awaiting approval or external result).
+            # Emit approval-requested so the frontend renders approve/reject buttons on reload.
+            # approval.id is not used for matching (tool_call_id is the match key),
+            # so we use tool_call_id for a stable, deterministic value in dump output.
             ui_parts.append(
                 ToolApprovalRequestedPart(
                     type=tool_type,
@@ -698,19 +680,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     input=part.args_as_dict(),
                     provider_executed=False,
                     call_provider_metadata=call_provider_metadata,
-                    # approval.id is not used for matching (tool_call_id is the match key),
-                    # so we use tool_call_id for a stable, deterministic value in dump output.
                     approval=ToolApprovalRequested(id=part.tool_call_id),
-                )
-            )
-        else:
-            ui_parts.append(
-                ToolInputAvailablePart(
-                    type=tool_type,
-                    tool_call_id=part.tool_call_id,
-                    input=part.args_as_dict(),
-                    provider_executed=False,
-                    call_provider_metadata=call_provider_metadata,
                 )
             )
 
@@ -723,9 +693,12 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         *,
         generate_message_id: Callable[[ModelRequest | ModelResponse, Literal['system', 'user', 'assistant'], int], str]
         | None = None,
-        deferred_tool_call_ids: frozenset[str] | None = None,
     ) -> list[UIMessage]:
         """Transform Pydantic AI messages into Vercel AI messages.
+
+        Tool calls that have no corresponding result in the message history are automatically
+        detected as deferred and emitted with ``state='approval-requested'``, so the frontend
+        can render approve/reject buttons on reload.
 
         Args:
             messages: A sequence of ModelMessage objects to convert
@@ -734,15 +707,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 message index (incremented per UIMessage appended), and should return a unique
                 string ID. If not provided, uses `provider_response_id` for responses,
                 run_id-based IDs for messages with run_id, or a deterministic UUID5 fallback.
-            deferred_tool_call_ids: Optional set of tool call IDs that are deferred (awaiting
-                user approval). Tool calls with these IDs that have no result will be emitted
-                with ``state='approval-requested'`` and an ``approval`` field, so the frontend
-                can render approve/reject buttons on reload.
 
         Returns:
             A list of UIMessage objects in Vercel AI format
         """
-        _deferred = deferred_tool_call_ids or frozenset()
         tool_results: dict[str, ToolReturnPart | RetryPromptPart] = {}
 
         for msg in messages:
@@ -775,7 +743,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             elif isinstance(  # pragma: no branch
                 msg, ModelResponse
             ):
-                ui_parts: list[UIMessagePart] = cls._dump_response_message(msg, tool_results, _deferred)
+                ui_parts: list[UIMessagePart] = cls._dump_response_message(msg, tool_results)
                 if ui_parts:  # pragma: no branch
                     result.append(
                         UIMessage(id=id_generator(msg, 'assistant', message_index), role='assistant', parts=ui_parts)
