@@ -178,6 +178,7 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
 
 @pytest.mark.skip(reason='Requires VCR cassette re-record with AWS access')
 @pytest.mark.vcr()
+<<<<<<< HEAD
 async def test_bedrock_model_with_extra_headers(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,
@@ -196,6 +197,8 @@ async def test_bedrock_model_with_extra_headers(
 
 
 @pytest.mark.vcr()
+=======
+>>>>>>> 1c8fb670 (fix(bedrock): avoid serializing non-header requests by scoping lock to extra_headers path)
 async def test_bedrock_model_usage_limit_exceeded(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,
@@ -519,6 +522,7 @@ async def test_bedrock_model_stream(allow_model_requests: None, bedrock_provider
     )
     assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=13, output_tokens=82))
 
+<<<<<<< HEAD
 
 @pytest.mark.skip(reason='Requires VCR cassette re-record with AWS access')
 @pytest.mark.vcr()
@@ -544,6 +548,8 @@ async def test_bedrock_model_stream_with_extra_headers(
         'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, and it is a major center for culture, commerce, fashion, and international diplomacy. Known for its historical landmarks, such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral, Paris is often referred to as "The City of Light" or "The City of Love."'
     )
     assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=13, output_tokens=82))
+=======
+>>>>>>> 1c8fb670 (fix(bedrock): avoid serializing non-header requests by scoping lock to extra_headers path)
 
 
 async def test_bedrock_model_anthropic_model_with_tools(allow_model_requests: None, bedrock_provider: BedrockProvider):

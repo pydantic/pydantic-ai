@@ -722,8 +722,7 @@ class BedrockConverseModel(Model):
         params: ConverseRequestTypeDef,
         stream: bool,
     ) -> ConverseResponseTypeDef | ConverseStreamResponseTypeDef:
-        async with self._extra_headers_lock:
-            return await self._call_bedrock_unlocked(params=params, stream=stream)
+        return await self._call_bedrock_unlocked(params=params, stream=stream)
 
     async def _call_with_extra_headers(
         self,
@@ -1339,36 +1338,41 @@ class BedrockStreamedResponse(StreamedResponse):
                             else:
                                 signature = delta['reasoningContent'].get('signature')
                                 for event in self._parts_manager.handle_thinking_delta(
-                                    vendor_part_id=index,
-                                    content=delta['reasoningContent'].get('text'),
-                                    signature=signature,
-                                    provider_name=self.provider_name if signature else None,
+                                        vendor_part_id=index,
+                                        content=delta['reasoningContent'].get('text'),
+                                        signature=signature,
+                                        provider_name=self.provider_name if signature else None,
                                 ):
                                     yield event
-                        if text := delta.get('text'):
-                            for event in self._parts_manager.handle_text_delta(vendor_part_id=index, content=text):
-                                yield event
-                        if 'toolUse' in delta:
-                            tool_use = delta['toolUse']
-                            maybe_event = self._parts_manager.handle_tool_call_delta(
-                                vendor_part_id=index,
-                                tool_name=tool_use.get('name'),
-                                args=tool_use.get('input'),
-                                tool_call_id=tool_ids[index],
-                            )
-                            if maybe_event:  # pragma: no branch
-                                yield maybe_event
-                        if (
-                            'toolResult' in delta
-                            and (return_part := builtin_tool_returns.get(index))
-                            and return_part.tool_name == CodeExecutionTool.kind
-                            and (tr_content := delta['toolResult'])
-                        ):
-                            return_part.content = tr_content[0].get('json')
+
+                                if text := delta.get('text'):
+                                    for event in self._parts_manager.handle_text_delta(vendor_part_id=index,
+                                                                                       content=text):
+                                        yield event
+
+                                if 'toolUse' in delta:
+                                    tool_use = delta['toolUse']
+                                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                                        vendor_part_id=index,
+                                        tool_name=tool_use.get('name'),
+                                        args=tool_use.get('input'),
+                                        tool_call_id=tool_ids[index],
+                                    )
+                                    if maybe_event:  # pragma: no branch
+                                        yield maybe_event
+
+                                if (
+                                        'toolResult' in delta
+                                        and (return_part := builtin_tool_returns.get(index))
+                                        and return_part.tool_name == CodeExecutionTool.kind
+                                        and (tr_content := delta['toolResult'])
+                                ):
+                                    return_part.content = tr_content[0].get('json')
 
                     case {'contentBlockStop': content_block_stop}:
                         index = content_block_stop['contentBlockIndex']
                         if return_part := builtin_tool_returns.get(index):
+                            # Emit the complete built-in tool return only once when the block closes.
                             yield self._parts_manager.handle_part(vendor_part_id=index, part=return_part)
                         tool_ids.pop(index, None)
                         builtin_tool_returns.pop(index, None)
