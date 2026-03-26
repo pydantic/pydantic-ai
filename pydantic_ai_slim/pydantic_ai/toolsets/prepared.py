@@ -22,9 +22,14 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         original_tools = await super().get_tools(ctx)
-        # Provide per-run copies so agent/toolset-level prepare functions can safely mutate ToolDefinition objects
-        # in place without affecting future runs.
-        original_tool_defs = [deepcopy(tool.tool_def) for tool in original_tools.values()]
+        # Per-run copies so prepare functions can mutate in place (e.g.
+        # `tool_def.parameters_json_schema['properties'][...] = ...`) without
+        # leaking into future runs.  We deepcopy only the mutable schema dict
+        # because `original_func` may close over unpicklable objects.
+        original_tool_defs = [
+            replace(tool.tool_def, parameters_json_schema=deepcopy(tool.tool_def.parameters_json_schema))
+            for tool in original_tools.values()
+        ]
         result = self.prepare_func(ctx, original_tool_defs)
         if inspect.isawaitable(result):
             result = await result
