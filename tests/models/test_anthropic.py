@@ -8899,8 +8899,9 @@ async def test_anthropic_dynamic_filtering_auto_detection(env: TestEnv, allow_mo
     assert 'web_search_20260209' in tool_types
     assert 'web_fetch_20260209' in tool_types
     # 20260209 web search/fetch are GA — no web-fetch beta header needed
-    betas: list[str] = kwargs.get('betas', [])
-    assert 'web-fetch-2025-09-10' not in betas
+    betas = kwargs.get('betas')
+    betas_list: list[str] = list(betas) if isinstance(betas, list) else []  # pyright: ignore[reportUnknownArgumentType]
+    assert 'web-fetch-2025-09-10' not in betas_list
 
     # Sonnet 4-0 should use old versions
     mock_client2 = MockAnthropic.create_mock(c)
@@ -8912,8 +8913,9 @@ async def test_anthropic_dynamic_filtering_auto_detection(env: TestEnv, allow_mo
     tool_types2 = [t['type'] for t in kwargs2['tools']]
     assert 'web_search_20250305' in tool_types2
     assert 'web_fetch_20250910' in tool_types2
-    betas2: list[str] = kwargs2.get('betas', [])
-    assert 'web-fetch-2025-09-10' in betas2
+    betas2 = kwargs2.get('betas')
+    betas_list2: list[str] = list(betas2) if isinstance(betas2, list) else []  # pyright: ignore[reportUnknownArgumentType]
+    assert 'web-fetch-2025-09-10' in betas_list2
 
 
 async def test_anthropic_dynamic_filtering_explicit_override(env: TestEnv, allow_model_requests: None):
@@ -8961,6 +8963,7 @@ async def test_anthropic_code_execution_20250825_beta_header(env: TestEnv, allow
     tool_types = [t['type'] for t in kwargs['tools']]
     assert 'code_execution_20250825' in tool_types
     assert 'code_execution_20250522' not in tool_types
-    betas: list[str] = kwargs.get('betas', [])
-    assert 'code-execution-2025-08-25' in betas
-    assert 'code-execution-2025-05-22' not in betas
+    betas = kwargs.get('betas')
+    betas_list: list[str] = list(betas) if isinstance(betas, list) else []  # pyright: ignore[reportUnknownArgumentType]
+    assert 'code-execution-2025-08-25' in betas_list
+    assert 'code-execution-2025-05-22' not in betas_list
