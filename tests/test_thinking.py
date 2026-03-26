@@ -1087,8 +1087,8 @@ class TestGoogleBudgetApiConstraints:
             result = GoogleModel._translate_thinking(model, {}, params)
             assert result is not None
             budget = result.get('thinking_budget')
-            if budget is not None:
-                assert 0 <= budget <= 24576, f"effort='{effort}' budget={budget} exceeds Flash max 24576"
+            assert budget is not None, f"effort='{effort}' should produce a thinking_budget"
+            assert 0 <= budget <= 24576, f"effort='{effort}' budget={budget} exceeds Flash max 24576"
 
     def test_all_budgets_within_pro_range(self):
         """Every effort budget must be within Gemini 2.5 Pro's [128, 32768] range."""
@@ -1100,8 +1100,8 @@ class TestGoogleBudgetApiConstraints:
             result = GoogleModel._translate_thinking(model, {}, params)
             assert result is not None
             budget = result.get('thinking_budget')
-            if budget is not None:
-                assert 128 <= budget <= 32768, f"effort='{effort}' budget={budget} outside Pro range [128, 32768]"
+            assert budget is not None, f"effort='{effort}' should produce a thinking_budget"
+            assert 128 <= budget <= 32768, f"effort='{effort}' budget={budget} outside Pro range [128, 32768]"
 
     def test_budgets_are_monotonically_increasing(self):
         """low < medium < high — effort levels should map to increasing budgets."""
