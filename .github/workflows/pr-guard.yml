@@ -38,13 +38,6 @@ jobs:
             exit 0
           fi
 
-          # Fallback: check org membership via API in case author_association is unreliable
-          ORG="${REPO%%/*}"
-          if gh api "orgs/${ORG}/members/${PR_AUTHOR}" > /dev/null 2>&1; then
-            echo "Author is an org member (verified via API), skipping checks."
-            exit 0
-          fi
-
           # --- Check: PR must have the PR template ---
           # PRs created from the GitHub UI automatically include the template.
           # PRs created via `gh pr create`, API, or other tools typically don't.
