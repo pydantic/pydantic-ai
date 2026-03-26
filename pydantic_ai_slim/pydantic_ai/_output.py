@@ -108,7 +108,10 @@ def _build_output_handlers(
         async def do_execute(output: str | dict[str, Any]) -> Any:
             assert isinstance(output, str)
             return await processor.process(
-                output, run_context=run_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
+                output,
+                run_context=run_context,
+                allow_partial=allow_partial,
+                wrap_validation_errors=wrap_validation_errors,
             )
 
     elif isinstance(processor, ObjectOutputProcessor):
