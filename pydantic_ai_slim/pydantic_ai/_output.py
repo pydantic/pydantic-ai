@@ -813,7 +813,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
                     content=e.errors(include_url=False),
                 )
                 raise ToolRetryError(m) from e
-            else:
+            else:  # pragma: no cover — wrap_validation_errors is always True in process() callers
                 raise
 
         output = await self.call(output, run_context, wrap_validation_errors)
@@ -990,7 +990,7 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
         try:
             processor = self._processors[kind]
-        except KeyError as e:
+        except KeyError as e:  # pragma: no cover — Pydantic validation ensures kind is valid before this point
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(content=f'Invalid kind: {kind}')
                 raise ToolRetryError(m) from e
@@ -1034,7 +1034,7 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
                     content=e.errors(include_url=False),
                 )
                 raise ToolRetryError(m) from e
-            else:
+            else:  # pragma: no cover — wrap_validation_errors is always True in process() callers
                 raise
 
         return await self.call(output, run_context, wrap_validation_errors)
