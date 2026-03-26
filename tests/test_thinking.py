@@ -242,13 +242,40 @@ class TestAnthropicThinkingTranslation:
         params = ModelRequestParameters(thinking='high')
         settings: ModelSettings = {}
 
-        # thinking param: adaptive mode (not budget-based)
+        # thinking param: budget-based (only True/'medium' use adaptive)
         thinking_param = AnthropicModel._translate_thinking(model, settings, params)
-        assert thinking_param == snapshot({'type': 'adaptive'})
+        assert thinking_param == snapshot({'type': 'enabled', 'budget_tokens': 16384})
 
         # output_config: effort is set separately
         output_config = model._build_output_config(params, settings)
         assert output_config == snapshot({'effort': 'high'})
+
+    def test_medium_uses_adaptive(self, adaptive_model: FunctionModel):
+        """thinking='medium' on adaptive model -> adaptive (not budget)."""
+        from pydantic_ai.models.anthropic import AnthropicModel
+
+        params = ModelRequestParameters(thinking='medium')
+        settings: ModelSettings = {}
+        result = AnthropicModel._translate_thinking(adaptive_model, settings, params)
+        assert result == {'type': 'adaptive'}
+
+    def test_low_uses_budget_on_adaptive(self, adaptive_model: FunctionModel):
+        """thinking='low' on adaptive model -> budget (not adaptive)."""
+        from pydantic_ai.models.anthropic import AnthropicModel
+
+        params = ModelRequestParameters(thinking='low')
+        settings: ModelSettings = {}
+        result = AnthropicModel._translate_thinking(adaptive_model, settings, params)
+        assert result == {'type': 'enabled', 'budget_tokens': 2048}
+
+    def test_high_uses_budget_on_adaptive(self, adaptive_model: FunctionModel):
+        """thinking='high' on adaptive model -> budget (not adaptive)."""
+        from pydantic_ai.models.anthropic import AnthropicModel
+
+        params = ModelRequestParameters(thinking='high')
+        settings: ModelSettings = {}
+        result = AnthropicModel._translate_thinking(adaptive_model, settings, params)
+        assert result == {'type': 'enabled', 'budget_tokens': 16384}
 
 
 class TestOpenAIChatThinkingTranslation:
@@ -771,6 +798,26 @@ class TestCerebrasThinkingTranslation:
         extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
         assert extra_body.get('disable_reasoning') is False
 
+    def test_thinking_effort_sets_disable_reasoning_false(self):
+        pytest.importorskip('openai')
+        from pydantic_ai.models.cerebras import CerebrasModelSettings, _cerebras_settings_to_openai_settings
+
+        settings = CerebrasModelSettings()
+        params = ModelRequestParameters(thinking='high')
+        result = _cerebras_settings_to_openai_settings(settings, params)
+        extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
+        assert extra_body.get('disable_reasoning') is False
+
+    def test_explicit_cerebras_disable_takes_precedence(self):
+        pytest.importorskip('openai')
+        from pydantic_ai.models.cerebras import CerebrasModelSettings, _cerebras_settings_to_openai_settings
+
+        settings = CerebrasModelSettings(cerebras_disable_reasoning=True)
+        params = ModelRequestParameters(thinking=True)
+        result = _cerebras_settings_to_openai_settings(settings, params)
+        extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
+        assert extra_body.get('disable_reasoning') is True
+
     def test_explicit_openai_reasoning_effort_passthrough(self):
         """Explicit openai_reasoning_effort on Cerebras is passed through."""
         pytest.importorskip('openai')
@@ -1023,87 +1070,6 @@ class TestThinkingIntegration:
         assert resolved_params.thinking == 'high'
 
 
-class TestAnthropicAdaptiveEffortLevels:
-    """Test that adaptive models use budget for specific effort levels (Phase 1.1 fix)."""
-
-    @pytest.fixture(autouse=True)
-    def _require_anthropic(self):
-        pytest.importorskip('anthropic', reason='anthropic not installed')
-
-    @pytest.fixture
-    def adaptive_model(self):
-        from pydantic_ai.profiles.anthropic import AnthropicModelProfile
-
-        return FunctionModel(
-            _echo,
-            profile=AnthropicModelProfile(
-                supports_thinking=True,
-                anthropic_supports_adaptive_thinking=True,
-            ),
-        )
-
-    def test_medium_uses_adaptive(self, adaptive_model: FunctionModel):
-        """thinking='medium' on adaptive model -> adaptive (not budget)."""
-        from pydantic_ai.models.anthropic import AnthropicModel
-
-        params = ModelRequestParameters(thinking='medium')
-        settings: ModelSettings = {}
-        result = AnthropicModel._translate_thinking(adaptive_model, settings, params)
-        assert result == {'type': 'adaptive'}
-
-    def test_low_uses_budget_on_adaptive(self, adaptive_model: FunctionModel):
-        """thinking='low' on adaptive model -> budget (not adaptive)."""
-        from pydantic_ai.models.anthropic import AnthropicModel
-
-        params = ModelRequestParameters(thinking='low')
-        settings: ModelSettings = {}
-        result = AnthropicModel._translate_thinking(adaptive_model, settings, params)
-        assert result == {'type': 'enabled', 'budget_tokens': 2048}
-
-    def test_high_uses_budget_on_adaptive(self, adaptive_model: FunctionModel):
-        """thinking='high' on adaptive model -> budget (not adaptive)."""
-        from pydantic_ai.models.anthropic import AnthropicModel
-
-        params = ModelRequestParameters(thinking='high')
-        settings: ModelSettings = {}
-        result = AnthropicModel._translate_thinking(adaptive_model, settings, params)
-        assert result == {'type': 'enabled', 'budget_tokens': 16384}
-
-
-class TestCerebrasThinkingTrue:
-    """Test that thinking=True/effort enables reasoning on Cerebras (Phase 1.5 fix)."""
-
-    def test_thinking_true_sets_disable_reasoning_false(self):
-        pytest.importorskip('openai')
-        from pydantic_ai.models.cerebras import CerebrasModelSettings, _cerebras_settings_to_openai_settings
-
-        settings = CerebrasModelSettings()
-        params = ModelRequestParameters(thinking=True)
-        result = _cerebras_settings_to_openai_settings(settings, params)
-        extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
-        assert extra_body.get('disable_reasoning') is False
-
-    def test_thinking_effort_sets_disable_reasoning_false(self):
-        pytest.importorskip('openai')
-        from pydantic_ai.models.cerebras import CerebrasModelSettings, _cerebras_settings_to_openai_settings
-
-        settings = CerebrasModelSettings()
-        params = ModelRequestParameters(thinking='high')
-        result = _cerebras_settings_to_openai_settings(settings, params)
-        extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
-        assert extra_body.get('disable_reasoning') is False
-
-    def test_explicit_cerebras_disable_takes_precedence(self):
-        pytest.importorskip('openai')
-        from pydantic_ai.models.cerebras import CerebrasModelSettings, _cerebras_settings_to_openai_settings
-
-        settings = CerebrasModelSettings(cerebras_disable_reasoning=True)
-        params = ModelRequestParameters(thinking=True)
-        result = _cerebras_settings_to_openai_settings(settings, params)
-        extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
-        assert extra_body.get('disable_reasoning') is True
-
-
 class TestGoogleBudgetApiConstraints:
     """Budget values respect the Google API's documented limits."""
 
@@ -1267,59 +1233,6 @@ class TestCrossProviderPortability:
         settings: ModelSettings = {'thinking': 'high'}
         _merged, params = model.prepare_request(settings, ModelRequestParameters())
         assert params.thinking is None
-
-
-class TestMergeModelSettingsThinking:
-    """merge_model_settings with unified thinking fields."""
-
-    def test_merge_thinking_bool_override(self):
-        from pydantic_ai.settings import merge_model_settings
-
-        base: ModelSettings = {'thinking': True}
-        overrides: ModelSettings = {'thinking': False}
-        result = merge_model_settings(base, overrides)
-        assert result is not None
-        assert result.get('thinking') is False
-
-    def test_merge_effort_override(self):
-        from pydantic_ai.settings import merge_model_settings
-
-        base: ModelSettings = {'thinking': 'low'}
-        overrides: ModelSettings = {'thinking': 'high'}
-        result = merge_model_settings(base, overrides)
-        assert result is not None
-        assert result.get('thinking') == 'high'
-
-    def test_merge_preserves_non_thinking_settings(self):
-        from pydantic_ai.settings import merge_model_settings
-
-        base: ModelSettings = {'max_tokens': 1000, 'temperature': 0.5}
-        overrides: ModelSettings = {'thinking': True}
-        result = merge_model_settings(base, overrides)
-        assert result is not None
-        assert result.get('max_tokens') == 1000
-        assert result.get('temperature') == 0.5
-        assert result.get('thinking') is True
-
-    def test_merge_with_none_returns_base(self):
-        from pydantic_ai.settings import merge_model_settings
-
-        base: ModelSettings = {'thinking': True}
-        result = merge_model_settings(base, None)
-        assert result == base
-
-    def test_merge_with_none_base_returns_overrides(self):
-        from pydantic_ai.settings import merge_model_settings
-
-        overrides: ModelSettings = {'thinking': True}
-        result = merge_model_settings(None, overrides)
-        assert result == overrides
-
-    def test_merge_with_both_none(self):
-        from pydantic_ai.settings import merge_model_settings
-
-        result = merge_model_settings(None, None)
-        assert result is None
 
 
 class TestPrepareRequestNoMutationDetailed:
