@@ -22,7 +22,7 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
         self,
         *,
         builtin: ImageGenerationTool | AgentBuiltinTool[AgentDepsT] | bool = True,
-        local: Tool[Any] | Callable[..., Any] | Literal[False] | None = None,
+        local: Tool[AgentDepsT] | Callable[..., Any] | Literal[False] | None = None,
     ) -> None:
         self.builtin = builtin
         self.local = local

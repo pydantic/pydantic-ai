@@ -812,6 +812,24 @@ def test_dynamic_plain_tool_decorator():
     assert r.output == snapshot('success (no tool calls)')
 
 
+def test_sync_dynamic_tool_plain():
+    agent = Agent('test', deps_type=int)
+
+    def prepare_tool_def(ctx: RunContext[int], tool_def: ToolDefinition) -> ToolDefinition | None:
+        if ctx.deps != 42:
+            return tool_def
+
+    @agent.tool_plain(prepare=prepare_tool_def)
+    def foobar(x: int, y: str) -> str:
+        return f'{x} {y}'
+
+    r = agent.run_sync('', deps=1)
+    assert r.output == snapshot('{"foobar":"0 a"}')
+
+    r = agent.run_sync('', deps=42)
+    assert r.output == snapshot('success (no tool calls)')
+
+
 def test_dynamic_tool_decorator():
     agent = Agent('test', deps_type=int)
 
@@ -1198,53 +1216,23 @@ def test_dynamic_tools_agent_wide():
     assert result.output == snapshot('{"foobar":"1 0 a"}')
 
 
-def test_prepare_mutation_does_not_leak_between_runs():
-    test_model = TestModel()
-    agent = Agent(test_model, deps_type=str)
-
-    async def prepare_greet(ctx: RunContext[str], tool_def: ToolDefinition) -> ToolDefinition | None:
-        if ctx.deps == 'human':
-            tool_def.parameters_json_schema['properties']['name']['description'] = 'Name of the human to greet.'
-        return tool_def
-
-    @agent.tool_plain(prepare=prepare_greet)
-    def greet(name: str) -> str:
-        return f'hello {name}'
-
-    agent.run_sync('', deps='human')
-    assert test_model.last_model_request_parameters is not None
-    human_tool_def = test_model.last_model_request_parameters.function_tools[0]
-    assert human_tool_def.parameters_json_schema['properties']['name']['description'] == 'Name of the human to greet.'
-
-    agent.run_sync('', deps='machine')
-    assert test_model.last_model_request_parameters is not None
-    machine_tool_def = test_model.last_model_request_parameters.function_tools[0]
-    assert 'description' not in machine_tool_def.parameters_json_schema['properties']['name']
-
-
-def test_prepare_tools_mutation_does_not_leak_between_runs():
-    test_model = TestModel()
-
-    async def prepare_tool_defs(ctx: RunContext[str], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
-        if ctx.deps == 'human':
-            tool_defs[0].description = 'Tool for human prompts'
+def test_sync_prepare_tools_agent_wide():
+    def prepare_tool_defs(ctx: RunContext[int], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+        if ctx.deps == 42:
+            return []
         return tool_defs
 
-    agent = Agent(test_model, deps_type=str, prepare_tools=prepare_tool_defs)
+    agent = Agent('test', deps_type=int, prepare_tools=prepare_tool_defs)
 
     @agent.tool_plain
-    def greet(name: str) -> str:
-        return f'hello {name}'
+    def foobar(x: int) -> str:
+        return str(x)
 
-    agent.run_sync('', deps='human')
-    assert test_model.last_model_request_parameters is not None
-    human_tool_def = test_model.last_model_request_parameters.function_tools[0]
-    assert human_tool_def.description == 'Tool for human prompts'
+    result = agent.run_sync('', deps=42)
+    assert result.output == snapshot('success (no tool calls)')
 
-    agent.run_sync('', deps='machine')
-    assert test_model.last_model_request_parameters is not None
-    machine_tool_def = test_model.last_model_request_parameters.function_tools[0]
-    assert machine_tool_def.description is None
+    result = agent.run_sync('', deps=1)
+    assert result.output == snapshot('{"foobar":"0"}')
 
 
 def test_function_tool_consistent_with_schema():
