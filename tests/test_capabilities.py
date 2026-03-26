@@ -1476,6 +1476,38 @@ class TestModelRequestHooks:
         assert result.output == 'from swap model'
         assert call_log == ['swap_model']
 
+    async def test_after_model_request_sees_wrap_swap(self):
+        """after_model_request sees the model swapped during wrap_model_request."""
+        after_models: list[Any] = []
+
+        def swap_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('from swap model')
+
+        swap_target = FunctionModel(swap_model_fn)
+
+        @dataclass
+        class SwapInWrapAndObserveCap(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any
+            ) -> ModelResponse:
+                request_context.model = swap_target
+                return await handler(request_context)
+
+            async def after_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                response: ModelResponse,
+            ) -> ModelResponse:
+                after_models.append(request_context.model)
+                return response
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[SwapInWrapAndObserveCap()])
+        result = await agent.run('hello')
+        assert result.output == 'from swap model'
+        assert after_models[0] is swap_target
+
 
 class TestToolValidateHooks:
     async def test_tool_validate_hooks_fire(self):

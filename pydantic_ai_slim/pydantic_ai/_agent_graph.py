@@ -609,6 +609,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     model_response = await ctx.deps.root_capability.on_model_request_error(
                         run_context, request_context=wrap_request_context, error=e
                     )
+                self.last_request_context = wrap_request_context
                 await self._finish_handling(ctx, model_response)
                 assert self._result is not None
 
@@ -672,6 +673,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_response = await ctx.deps.root_capability.on_model_request_error(
                 run_context, request_context=request_context, error=e
             )
+        self.last_request_context = request_context
         ctx.state.usage.requests += 1
 
         return await self._finish_handling(ctx, model_response)
