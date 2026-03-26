@@ -1239,23 +1239,10 @@ async def _run_task_and_evaluators(
         )
 
     if lc is not None:
-        try:
-            await lc.teardown(result)
-        except Exception as teardown_exc:
-            # If teardown fails, convert a successful result into a failure
-            # so the error is visible, but never lose an already-computed result.
-            if isinstance(result, ReportCase):
-                result = ReportCaseFailure[InputsT, OutputT, MetadataT](
-                    name=report_case_name,
-                    inputs=case.inputs,
-                    metadata=case.metadata,
-                    expected_output=case.expected_output,
-                    error_message=f'{type(teardown_exc).__name__}: {teardown_exc}',
-                    error_stacktrace=traceback.format_exc(),
-                    source_case_name=source_case_name,
-                    trace_id=trace_id,
-                    span_id=span_id,
-                )
+        # Teardown exceptions are intentionally not caught here — they propagate
+        # to the caller. If your teardown may raise and you don't want it to crash
+        # the evaluation, handle exceptions within your teardown() implementation.
+        await lc.teardown(result)
 
     return result
 

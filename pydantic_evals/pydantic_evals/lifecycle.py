@@ -36,6 +36,10 @@ class CaseLifecycle(Generic[InputsT, OutputT, MetadataT]):
     4. Evaluators run
     5. `teardown()` — called after evaluators complete; receives the full result
 
+    Exceptions raised by any hook method will propagate and may abort the evaluation.
+    If your hook may raise and you don't want that to crash the evaluation run,
+    handle exceptions within the hook implementation itself.
+
     Args:
         case: The case being evaluated. Available as `self.case` in all hooks.
 

@@ -2152,27 +2152,18 @@ async def test_lifecycle_with_object_types():
     assert report.cases[0].metrics['generic'] == 1
 
 
-async def test_lifecycle_teardown_exception_does_not_crash_evaluation():
-    """Test that a teardown exception converts a successful result to failure without crashing."""
+async def test_lifecycle_teardown_exception_propagates():
+    """Test that a teardown exception propagates to the caller."""
     from pydantic_evals.lifecycle import CaseLifecycle
 
     class BrokenTeardown(CaseLifecycle[str, str, None]):
         async def teardown(self, result: ReportCase[str, str, None] | ReportCaseFailure[str, str, None]) -> None:
             raise RuntimeError('teardown exploded')
 
-    dataset = Dataset[str, str, None](
-        cases=[
-            Case(name='case1', inputs='hello'),
-            Case(name='case2', inputs='world'),
-        ]
-    )
+    dataset = Dataset[str, str, None](cases=[Case(name='case1', inputs='hello')])
 
     async def task(inputs: str) -> str:
         return inputs.upper()
 
-    report = await dataset.evaluate(task, max_concurrency=1, lifecycle=BrokenTeardown)
-
-    # Both cases should be failures (teardown converted them), not crash the whole evaluation
-    assert len(report.cases) == 0
-    assert len(report.failures) == 2
-    assert all('teardown exploded' in f.error_message for f in report.failures)
+    with pytest.raises(ExceptionGroup, match='unhandled errors in a TaskGroup'):
+        await dataset.evaluate(task, lifecycle=BrokenTeardown)
