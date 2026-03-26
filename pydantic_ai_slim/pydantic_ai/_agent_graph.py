@@ -579,10 +579,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             except exceptions.ModelRetry as e:
                 self._did_stream = True
                 ctx.state.usage.requests += 1
-                ctx.state.increment_retries(ctx.deps.max_result_retries, error=e)
-                m = _messages.RetryPromptPart(content=e.message)
-                instructions = await ctx.deps.get_instructions(run_context)
-                self._result = ModelRequestNode(_messages.ModelRequest(parts=[m], instructions=instructions))
+                run_context = build_run_context(ctx)
+                await self._build_retry_node(ctx, run_context, e)
+                # Must still yield from @asynccontextmanager — yield an empty stream
+                dummy_sr = _SkipStreamedResponse(
+                    model_request_parameters=model_request_parameters,
+                    _response=_messages.ModelResponse(parts=[]),
+                )
+                yield self._build_agent_stream(ctx, dummy_sr, model_request_parameters)
                 return
             self._did_stream = True
             ctx.state.usage.requests += 1
@@ -624,10 +628,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         )
                 except exceptions.ModelRetry as e:
                     ctx.state.usage.requests += 1
-                    ctx.state.increment_retries(ctx.deps.max_result_retries, error=e)
-                    m = _messages.RetryPromptPart(content=e.message)
-                    instructions = await ctx.deps.get_instructions(run_context)
-                    self._result = ModelRequestNode(_messages.ModelRequest(parts=[m], instructions=instructions))
+                    await self._build_retry_node(ctx, run_context, e)
                     return
                 await self._finish_handling(ctx, model_response)
                 assert self._result is not None
@@ -696,14 +697,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # ModelRetry from wrap_model_request or on_model_request_error — retry the model request.
             # No model response to append (handler may not have been called).
             ctx.state.usage.requests += 1
-            ctx.state.increment_retries(ctx.deps.max_result_retries, error=e)
-            m = _messages.RetryPromptPart(content=e.message)
-            instructions = await ctx.deps.get_instructions(run_context)
-            retry_node = ModelRequestNode[DepsT, NodeRunEndT](
-                _messages.ModelRequest(parts=[m], instructions=instructions)
-            )
-            self._result = retry_node
-            return retry_node
+            return await self._build_retry_node(ctx, run_context, e)
         ctx.state.usage.requests += 1
 
         return await self._finish_handling(ctx, model_response)
@@ -803,14 +797,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             if ctx.deps.usage_limits:  # pragma: no branch
                 ctx.deps.usage_limits.check_tokens(ctx.state.usage)
             ctx.state.message_history.append(response)
-            ctx.state.increment_retries(ctx.deps.max_result_retries, error=e)
-            m = _messages.RetryPromptPart(content=e.message)
-            instructions = await ctx.deps.get_instructions(run_context)
-            retry_node = ModelRequestNode[DepsT, NodeRunEndT](
-                _messages.ModelRequest(parts=[m], instructions=instructions)
-            )
-            self._result = retry_node
-            return retry_node
+            return await self._build_retry_node(ctx, run_context, e)
 
         # Update usage
         ctx.state.usage.incr(response.usage)
@@ -824,6 +811,23 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self._result = CallToolsNode(response)
 
         return self._result
+
+    async def _build_retry_node(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        run_context: RunContext[DepsT],
+        error: exceptions.ModelRetry,
+    ) -> ModelRequestNode[DepsT, NodeRunEndT]:
+        """Build a retry ModelRequestNode from a ModelRetry exception.
+
+        Increments the retry counter and creates a new request with a RetryPromptPart.
+        """
+        ctx.state.increment_retries(ctx.deps.max_result_retries, error=error)
+        m = _messages.RetryPromptPart(content=error.message)
+        instructions = await ctx.deps.get_instructions(run_context)
+        retry_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[m], instructions=instructions))
+        self._result = retry_node
+        return retry_node
 
     __repr__ = dataclasses_no_defaults_repr
 

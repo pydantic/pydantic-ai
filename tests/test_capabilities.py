@@ -5514,16 +5514,21 @@ class TestModelRetryFromHooks:
         with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries'):
             await agent.run('hello')
 
-    async def test_after_model_request_model_retry_non_streaming(self):
-        """after_model_request raises ModelRetry with agent.run() — works with both streaming and non-streaming models."""
+    async def test_after_model_request_model_retry_streaming(self):
+        """after_model_request raises ModelRetry during streaming with tool calls — model is called again."""
         call_count = 0
 
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return make_text_response('bad response')
-            return make_text_response('good response')
+                # First call: return a tool call that after_model_request will reject
+                yield {0: DeltaToolCall(name='my_tool', json_args='{}', tool_call_id='call-1')}
+            elif call_count == 2:
+                # Second call (after retry): return text
+                yield 'good response'
+            else:
+                yield 'unexpected'  # pragma: no cover
 
         @dataclass
         class RetryCap(AbstractCapability[Any]):
@@ -5542,18 +5547,19 @@ class TestModelRetryFromHooks:
                 return response
 
         cap = RetryCap()
-        agent = Agent(FunctionModel(model_fn), capabilities=[cap])
-        result = await agent.run('hello')
-        assert result.output == 'good response'
-        assert call_count == 2
-        # Verify model response is in history before the retry
-        messages = result.all_messages()
-        has_bad_response = any(
-            isinstance(msg, ModelResponse)
-            and any(isinstance(p, TextPart) and p.content == 'bad response' for p in msg.parts)
-            for msg in messages
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=stream_fn),
+            capabilities=[cap],
         )
-        assert has_bad_response
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'  # pragma: no cover
+
+        async with agent.run_stream('hello') as streamed:
+            result = await streamed.get_output()
+        assert result == 'good response'
+        assert call_count == 2
 
     async def test_wrap_model_request_model_retry(self):
         """wrap_model_request raises ModelRetry after calling handler — triggers retry."""
