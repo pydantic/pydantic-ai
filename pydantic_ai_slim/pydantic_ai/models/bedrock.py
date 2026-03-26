@@ -49,7 +49,7 @@ from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP
 from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.tools import ToolDefinition
 
 if TYPE_CHECKING:
@@ -590,8 +590,6 @@ class BedrockConverseModel(Model):
         elif variant == 'qwen' and 'reasoning_config' not in existing:
             if thinking is not False:
                 # Qwen only supports low/high; map others to closest
-                from ..settings import ThinkingLevel
-
                 level_map: dict[ThinkingLevel, str] = {
                     True: 'high',
                     'minimal': 'low',
@@ -935,6 +933,14 @@ class BedrockConverseModel(Model):
             if last_user_content is not None:
                 # Note: _get_last_user_message_content ensures content doesn't already end with a cachePoint.
                 _insert_cache_point_before_trailing_documents(last_user_content)
+
+        # Bedrock requires conversations to start with a user message.
+        # This can happen when there are no messages at all (only system prompt/instructions),
+        # or when message_history starts with an assistant response (e.g. from a previous
+        # system-prompt-only run). Prepend a synthetic user message in either case.
+        # Note: Anthropic models on Bedrock reject whitespace-only text, so we use a period.
+        if not processed_messages or processed_messages[0]['role'] != 'user':
+            processed_messages.insert(0, {'role': 'user', 'content': [{'text': '.'}]})
 
         return system_prompt, processed_messages
 

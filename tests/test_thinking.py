@@ -249,6 +249,29 @@ class TestAnthropicThinkingTranslation:
         result = model._build_output_config(params, settings)
         assert result is None
 
+    def test_adaptive_model_with_effort_level(self):
+        """thinking='high' on adaptive+effort model sets both thinking type AND output_config effort."""
+        from pydantic_ai.models.anthropic import AnthropicModel
+        from pydantic_ai.profiles.anthropic import AnthropicModelProfile
+
+        model = AnthropicModel.__new__(AnthropicModel)
+        model._profile = AnthropicModelProfile(
+            supports_thinking=True,
+            anthropic_supports_adaptive_thinking=True,
+            anthropic_supports_effort=True,
+        )
+
+        params = ModelRequestParameters(thinking='high')
+        settings: ModelSettings = {}
+
+        # thinking param: adaptive mode (not budget-based)
+        thinking_param = AnthropicModel._get_thinking_param(model, settings, params)
+        assert thinking_param == snapshot({'type': 'adaptive'})
+
+        # output_config: effort is set separately
+        output_config = model._build_output_config(params, settings)
+        assert output_config == snapshot({'effort': 'high'})
+
 
 class TestOpenAIChatThinkingTranslation:
     """Test OpenAI Chat model _get_reasoning_effort translation."""
@@ -507,9 +530,7 @@ class TestGroqThinkingTranslation:
         assert result == 'parsed'
 
     def test_thinking_false(self):
-        """thinking=False -> NOT_GIVEN (Groq treats False as 'do not send')."""
-        from groq import NOT_GIVEN
-
+        """thinking=False -> 'hidden' (Groq has no true disable; 'hidden' suppresses output)."""
         from pydantic_ai.models.groq import GroqModel
 
         params = ModelRequestParameters(thinking=False)
@@ -517,7 +538,7 @@ class TestGroqThinkingTranslation:
 
         model = FunctionModel(_echo)
         result = GroqModel._get_reasoning_format(model, settings, params)
-        assert result is NOT_GIVEN
+        assert result == 'hidden'
 
     def test_thinking_none(self):
         from groq import NOT_GIVEN
@@ -768,6 +789,16 @@ class TestCerebrasThinkingTranslation:
         result = _cerebras_settings_to_openai_settings(settings, params)
         extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
         assert extra_body.get('disable_reasoning') is True
+
+    def test_thinking_true_sets_disable_reasoning_false(self):
+        pytest.importorskip('openai')
+        from pydantic_ai.models.cerebras import CerebrasModelSettings, _cerebras_settings_to_openai_settings
+
+        settings = CerebrasModelSettings()
+        params = ModelRequestParameters(thinking=True)
+        result = _cerebras_settings_to_openai_settings(settings, params)
+        extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
+        assert extra_body.get('disable_reasoning') is False
 
     def test_explicit_openai_reasoning_effort_passthrough(self):
         """Explicit openai_reasoning_effort on Cerebras is passed through."""
