@@ -36,6 +36,7 @@ def test_model_request_parameters_are_serializable():
             'prompted_output_template': None,
             'allow_text_output': True,
             'allow_image_output': False,
+            'thinking': None,
         }
     )
     assert ta.validate_python(dumped) == params
@@ -70,6 +71,7 @@ def test_model_request_parameters_are_serializable():
                     'kind': 'function',
                     'metadata': None,
                     'timeout': None,
+                    'prefer_builtin': None,
                 }
             ],
             'builtin_tools': [
@@ -135,11 +137,13 @@ def test_model_request_parameters_are_serializable():
                     'kind': 'function',
                     'metadata': None,
                     'timeout': None,
+                    'prefer_builtin': None,
                 }
             ],
             'prompted_output_template': None,
             'allow_text_output': True,
             'allow_image_output': False,
+            'thinking': None,
         }
     )
     assert ta.validate_python(dumped) == params

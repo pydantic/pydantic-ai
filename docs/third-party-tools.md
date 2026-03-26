@@ -1,6 +1,6 @@
 # Third-Party Tools
 
-Pydantic AI supports integration with various third-party tool libraries, allowing you to leverage existing tool ecosystems in your agents.
+Pydantic AI supports integration with various third-party tool libraries, allowing you to leverage existing tool ecosystems in your agents. Third-party tools are also available as [capabilities](capabilities.md#third-party-capabilities) — see [Extensibility](extensibility.md) for the full ecosystem.
 
 ## MCP Tools {#mcp-tools}
 
