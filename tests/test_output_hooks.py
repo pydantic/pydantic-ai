@@ -1474,3 +1474,176 @@ class TestOutputHookErrorPaths:
         assert result.output == MyOutput(value=5)
         assert 'inner_before_validate' in log
         assert 'inner_after_execute' in log
+
+
+class TestDefaultOutputErrorHooks:
+    """Test that default (no override) error hooks work correctly via retry."""
+
+    def test_default_on_output_validate_error_causes_retry(self):
+        """Default on_output_validate_error re-raises, triggering model retry."""
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ModelResponse(parts=[TextPart(content='not json')])
+            return ModelResponse(parts=[TextPart(content='{"value": 7}')])
+
+        # Hooks with only a before_output_validate hook (no error hook override).
+        # Default on_output_validate_error re-raises → ToolRetryError → model retry.
+        hooks = Hooks()
+
+        @hooks.on.before_output_validate
+        def noop(
+            ctx: RunContext[Any], *, raw_output: str | dict[str, Any], output_context: OutputContext
+        ) -> str | dict[str, Any]:
+            return raw_output
+
+        agent = Agent(FunctionModel(model_fn), output_type=PromptedOutput(MyOutput), capabilities=[hooks])
+        result = agent.run_sync('hello')
+        assert result.output == MyOutput(value=7)
+        assert call_count == 2
+
+    def test_default_on_output_execute_error_reraises(self):
+        """Default on_output_execute_error re-raises the error."""
+
+        def failing_func(value: int) -> str:
+            raise ValueError('intentional')
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"value": 1}')])
+
+        # Hooks with only a before_output_execute hook (no error hook override).
+        hooks = Hooks()
+
+        @hooks.on.before_output_execute
+        def noop(
+            ctx: RunContext[Any], *, output: str | dict[str, Any], output_context: OutputContext
+        ) -> str | dict[str, Any]:
+            return output
+
+        agent = Agent(FunctionModel(model_fn), output_type=failing_func, capabilities=[hooks])
+        with pytest.raises(ValueError, match='intentional'):
+            agent.run_sync('hello')
+
+
+class TestOutputHookEdgeCases:
+    """Tests for edge cases to ensure full coverage of output hook code paths."""
+
+    def test_before_output_validate_transforms_text_to_dict(self):
+        """before_output_validate can transform raw text to a pre-parsed dict."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='ignored raw text')])
+
+        @dataclass
+        class PreParseCapability(AbstractCapability[Any]):
+            async def before_output_validate(
+                self,
+                ctx: RunContext[Any],
+                *,
+                raw_output: str | dict[str, Any],
+                output_context: OutputContext,
+            ) -> str | dict[str, Any]:
+                # Transform text to a pre-parsed dict
+                return {'value': 99}
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=PromptedOutput(MyOutput),
+            capabilities=[PreParseCapability()],
+        )
+        result = agent.run_sync('hello')
+        assert result.output == MyOutput(value=99)
+
+    def test_streaming_output_hooks_fire_on_partial(self):
+        """Output hooks fire during streaming, including on partial validation."""
+        from pydantic_ai.models.function import FunctionModel
+
+        log: list[str] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='hello world')])
+
+        @dataclass
+        class StreamLogCapability(AbstractCapability[Any]):
+            async def before_output_validate(
+                self,
+                ctx: RunContext[Any],
+                *,
+                raw_output: str | dict[str, Any],
+                output_context: OutputContext,
+            ) -> str | dict[str, Any]:
+                log.append(f'before_validate partial={ctx.partial_output}')
+                return raw_output
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[StreamLogCapability()])
+        result = agent.run_sync('hello')
+        assert result.output == 'hello world'
+        assert any('before_validate' in entry for entry in log)
+
+    def test_no_capability_fast_path(self):
+        """When capability is None, run_output_with_hooks falls through to process()."""
+        import asyncio
+
+        from pydantic_ai._output import TextOutputProcessor, run_output_with_hooks
+        from pydantic_ai._run_context import RunContext
+
+        processor = TextOutputProcessor()
+
+        async def run():
+            ctx = RunContext(
+                deps=None,
+                model=None,  # type: ignore
+                usage=None,  # type: ignore
+                prompt='test',
+                run_step=0,
+                retry=0,
+                max_retries=3,
+                trace_include_content=False,
+                tracer=None,  # type: ignore
+                instrumentation_version=0,
+            )
+            return await run_output_with_hooks(
+                processor,
+                'hello',
+                run_context=ctx,
+                capability=None,
+                output_mode='text',
+            )
+
+        result = asyncio.get_event_loop().run_until_complete(run())
+        assert result == 'hello'
+
+    def test_hooks_on_output_execute_via_hooks_class(self):
+        """Test wrap_output_execute via Hooks decorator API."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='{"value": 10}')])
+
+        hooks = Hooks()
+        execute_log: list[str] = []
+
+        @hooks.on.output_execute
+        async def wrap_exec(
+            ctx: RunContext[Any],
+            *,
+            output: str | dict[str, Any],
+            output_context: OutputContext,
+            handler: Any,
+        ) -> Any:
+            execute_log.append('wrap_execute_before')
+            result = await handler(output)
+            execute_log.append('wrap_execute_after')
+            return result
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=PromptedOutput(MyOutput),
+            capabilities=[hooks],
+        )
+        result = agent.run_sync('hello')
+        assert result.output == MyOutput(value=10)
+        assert execute_log == ['wrap_execute_before', 'wrap_execute_after']

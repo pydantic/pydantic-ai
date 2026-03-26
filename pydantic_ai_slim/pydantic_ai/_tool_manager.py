@@ -506,7 +506,7 @@ class ToolManager(Generic[AgentDepsT]):
         validated: ValidatedToolCall[AgentDepsT],
     ) -> Any:
         """Execute an output tool call with output hooks."""
-        from ._output import (  # pyright: ignore[reportPrivateUsage]
+        from ._output import (
             OutputToolset,
             _run_output_execute_hooks,
             _run_output_validate_hooks,
