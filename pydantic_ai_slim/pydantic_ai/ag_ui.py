@@ -53,6 +53,7 @@ async def handle_ag_ui_request(
     agent: AbstractAgent[AgentDepsT, Any],
     request: Request,
     *,
+    ag_ui_version: AGUIVersion = '0.1.10',
     output_type: OutputSpec[Any] | None = None,
     message_history: Sequence[ModelMessage] | None = None,
     deferred_tool_results: DeferredToolResults | None = None,
@@ -71,6 +72,7 @@ async def handle_ag_ui_request(
     Args:
         agent: The agent to run.
         request: The Starlette request (e.g. from FastAPI) containing the AG-UI run input.
+        ag_ui_version: AG-UI protocol version controlling thinking/reasoning event format.
 
         output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
             output validators since output validators would expect an argument that matches the agent's output type.
@@ -94,6 +96,7 @@ async def handle_ag_ui_request(
     return await AGUIAdapter[AgentDepsT].dispatch_request(
         request,
         agent=agent,
+        ag_ui_version=ag_ui_version,
         deps=deps,
         output_type=output_type,
         message_history=message_history,
