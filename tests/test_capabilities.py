@@ -5561,6 +5561,78 @@ class TestModelRetryFromHooks:
         assert result == 'good response'
         assert call_count == 2
 
+    async def test_wrap_model_request_model_retry_streaming_short_circuit(self):
+        """wrap_model_request raises ModelRetry without calling handler during streaming."""
+
+        async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            yield 'good response'  # pragma: no cover
+
+        @dataclass
+        class ShortCircuitRetryCap(AbstractCapability[Any]):
+            call_count: int = 0
+
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: Any,
+            ) -> ModelResponse:
+                self.call_count += 1
+                if self.call_count == 1:
+                    # Short-circuit: don't call handler, raise ModelRetry
+                    raise ModelRetry('Short-circuit retry')
+                return await handler(request_context)
+
+        cap = ShortCircuitRetryCap()
+        agent = Agent(FunctionModel(simple_model_function, stream_function=stream_fn), capabilities=[cap])
+        async with agent.run_stream('hello') as streamed:
+            result = await streamed.get_output()
+        assert result == 'good response'
+        assert cap.call_count == 2
+
+    async def test_wrap_model_request_model_retry_streaming_after_handler(self):
+        """wrap_model_request raises ModelRetry after calling handler during streaming (tool call scenario)."""
+        call_count = 0
+
+        async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # First call: tool call that wrap hook will reject
+                yield {0: DeltaToolCall(name='my_tool', json_args='{}', tool_call_id='call-1')}
+            else:
+                yield 'good response'
+
+        @dataclass
+        class AfterHandlerRetryCap(AbstractCapability[Any]):
+            retried: bool = False
+
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: Any,
+            ) -> ModelResponse:
+                response = await handler(request_context)
+                if not self.retried:
+                    self.retried = True
+                    raise ModelRetry('Post-handler retry')
+                return response
+
+        cap = AfterHandlerRetryCap()
+        agent = Agent(FunctionModel(simple_model_function, stream_function=stream_fn), capabilities=[cap])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'  # pragma: no cover
+
+        async with agent.run_stream('hello') as streamed:
+            result = await streamed.get_output()
+        assert result == 'good response'
+        assert call_count == 2
+
     async def test_wrap_model_request_model_retry(self):
         """wrap_model_request raises ModelRetry after calling handler — triggers retry."""
         call_count = 0
