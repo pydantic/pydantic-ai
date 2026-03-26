@@ -957,9 +957,11 @@ def test_function_signature_nameerror_fallback():
 
 
 def test_schema_allows_null_anyof():
-    """_schema_allows_null detects null in anyOf."""
+    """_schema_allows_null detects null in anyOf and oneOf."""
     assert _schema_allows_null({'anyOf': [{'type': 'string'}, {'type': 'null'}]}) is True
     assert _schema_allows_null({'anyOf': [{'type': 'string'}]}) is False
+    assert _schema_allows_null({'oneOf': [{'type': 'string'}, {'type': 'null'}]}) is True
+    assert _schema_allows_null({'oneOf': [{'type': 'string'}]}) is False
 
 
 def test_schema_bare_object():
