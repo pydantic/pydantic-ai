@@ -96,6 +96,44 @@ def test_agent_from_spec_no_capabilities():
     assert agent.model is not None
 
 
+def test_agent_from_spec_image_generation():
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [{'ImageGeneration': {'local': False}}],
+        }
+    )
+    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
+    cap = next(c for c in children if isinstance(c, ImageGeneration))
+    assert cap.local is False
+
+
+def test_agent_from_spec_web_fetch():
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [{'WebFetch': {'allowed_domains': ['example.com'], 'max_uses': 5}}],
+        }
+    )
+    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
+    cap = next(c for c in children if isinstance(c, WebFetch))
+    assert cap.allowed_domains == ['example.com']
+    assert cap.max_uses == 5
+
+
+def test_agent_from_spec_mcp():
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [{'MCP': {'url': 'https://mcp.example.com/sse', 'allowed_tools': ['search']}}],
+        }
+    )
+    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
+    cap = next(c for c in children if isinstance(c, MCP))
+    assert cap.url == 'https://mcp.example.com/sse'
+    assert cap.allowed_tools == ['search']
+
+
 def test_agent_from_spec_unknown_capability():
     """Test Agent.from_spec with an unknown capability name."""
     with pytest.raises(ValueError, match="Capability 'Unknown' is not in the provided"):

@@ -54,6 +54,28 @@ class WebSearch(BuiltinOrLocalTool[AgentDepsT]):
         self.max_uses = max_uses
         self.__post_init__()
 
+    @classmethod
+    def from_spec(
+        cls,
+        *,
+        builtin: bool = True,
+        local: Literal[False] | None = None,
+        search_context_size: Literal['low', 'medium', 'high'] | None = None,
+        user_location: WebSearchUserLocation | None = None,
+        blocked_domains: list[str] | None = None,
+        allowed_domains: list[str] | None = None,
+        max_uses: int | None = None,
+    ) -> WebSearch[Any]:
+        return cls(
+            builtin=builtin,
+            local=local,
+            search_context_size=search_context_size,
+            user_location=user_location,
+            blocked_domains=blocked_domains,
+            allowed_domains=allowed_domains,
+            max_uses=max_uses,
+        )
+
     def _default_builtin(self) -> WebSearchTool:
         kwargs: dict[str, Any] = {}
         if self.search_context_size is not None:
@@ -78,28 +100,6 @@ class WebSearch(BuiltinOrLocalTool[AgentDepsT]):
             return duckduckgo_search_tool()
         except ImportError:
             return None
-
-    @classmethod
-    def from_spec(
-        cls,
-        *,
-        builtin: bool = True,
-        local: Literal[False] | None = None,
-        search_context_size: Literal['low', 'medium', 'high'] | None = None,
-        user_location: WebSearchUserLocation | None = None,
-        blocked_domains: list[str] | None = None,
-        allowed_domains: list[str] | None = None,
-        max_uses: int | None = None,
-    ) -> WebSearch[Any]:
-        return cls(
-            builtin=builtin,
-            local=local,
-            search_context_size=search_context_size,
-            user_location=user_location,
-            blocked_domains=blocked_domains,
-            allowed_domains=allowed_domains,
-            max_uses=max_uses,
-        )
 
     def _requires_builtin(self) -> bool:
         return self.blocked_domains is not None or self.allowed_domains is not None or self.max_uses is not None
