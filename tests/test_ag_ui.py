@@ -66,7 +66,7 @@ from pydantic_ai.output import OutputDataT
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
 
 from ._inline_snapshot import snapshot
-from .conftest import IsBytes, IsDatetime, IsInt, IsSameStr, IsStr, try_import
+from .conftest import IsDatetime, IsInt, IsSameStr, IsStr, try_import
 
 with try_import() as imports_successful:
     from ag_ui.core import (
@@ -2567,10 +2567,7 @@ async def test_messages(image_content: BinaryContent, document_content: BinaryCo
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content=[
-                            'this is an image:',
-                            BinaryImage(data=IsBytes(), media_type='image/jpeg', _identifier='241a70'),
-                        ],
+                        content=['this is an image:', image_content],
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
@@ -2590,7 +2587,7 @@ async def test_messages(image_content: BinaryContent, document_content: BinaryCo
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content=[BinaryContent(data=IsBytes(), media_type='application/pdf')],
+                        content=[document_content],
                         timestamp=IsDatetime(),
                     ),
                 ]
