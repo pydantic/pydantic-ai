@@ -659,7 +659,7 @@ class ModelRequestParameters:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass
+@dataclass(kw_only=True)
 class ModelRequestContext:
     """Context for model request hooks.
 

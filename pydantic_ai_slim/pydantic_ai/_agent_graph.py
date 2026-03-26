@@ -751,7 +751,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # Copy to avoid modifying the original usage object with the counted usage
             usage = deepcopy(usage)
 
-            counted_usage = await ctx.deps.model.count_tokens(messages, model_settings, model_request_parameters)
+            counted_usage = await model.count_tokens(messages, model_settings, model_request_parameters)
             usage.incr(counted_usage)
 
         ctx.deps.usage_limits.check_before_request(usage)
