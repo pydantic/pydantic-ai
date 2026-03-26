@@ -132,7 +132,6 @@ def _cerebras_settings_to_openai_settings(
     elif model_request_parameters.thinking is False:
         extra_body['disable_reasoning'] = True
     elif model_request_parameters.thinking is not None:
-        # thinking is True or an effort level string (False was caught above)
         extra_body['disable_reasoning'] = False
 
     if extra_body:

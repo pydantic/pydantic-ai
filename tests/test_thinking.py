@@ -1,8 +1,4 @@
-"""Tests for the unified thinking/reasoning feature.
-
-Tests the base Model.prepare_request() thinking resolution, per-provider translation,
-the Thinking capability, and end-to-end integration via FunctionModel.
-"""
+"""Tests for the unified thinking/reasoning feature."""
 
 # pyright: reportPrivateUsage=false, reportArgumentType=false
 from __future__ import annotations
@@ -26,13 +22,7 @@ pytestmark = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _echo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    """Shared echo function for FunctionModel instances."""
     return ModelResponse(parts=[TextPart(content='ok')])
 
 
@@ -41,7 +31,6 @@ def _make_model(
     supports_thinking: bool = False,
     thinking_always_enabled: bool = False,
 ) -> FunctionModel:
-    """Create a FunctionModel with a specific thinking profile."""
     return FunctionModel(
         _echo,
         profile=ModelProfile(
@@ -55,16 +44,10 @@ def _resolve_thinking(
     model: FunctionModel,
     thinking: ThinkingLevel | None = None,
 ) -> ThinkingLevel | None:
-    """Call prepare_request and return the resolved params.thinking value."""
     settings: ModelSettings | None = ModelSettings(thinking=thinking) if thinking is not None else None
     params = ModelRequestParameters()
     _settings, resolved = model.prepare_request(settings, params)
     return resolved.thinking
-
-
-# ---------------------------------------------------------------------------
-# 1. Base class thinking resolution tests (in prepare_request())
-# ---------------------------------------------------------------------------
 
 
 class TestPrepareRequestThinkingResolution:
@@ -110,11 +93,6 @@ class TestPrepareRequestThinkingResolution:
         """thinking=False on unsupported model -> silently ignored."""
         model = _make_model(supports_thinking=False)
         assert _resolve_thinking(model, thinking=False) is None
-
-
-# ---------------------------------------------------------------------------
-# 2. Per-provider translation tests
-# ---------------------------------------------------------------------------
 
 
 class TestAnthropicThinkingTranslation:
@@ -263,8 +241,6 @@ class TestOpenAIChatThinkingTranslation:
         params = ModelRequestParameters(thinking=True)
         settings: ModelSettings = {}
 
-        # We need a model-like object to call the method; use a FunctionModel with the right profile
-
         model = FunctionModel(_echo)
         result = OpenAIChatModel._translate_thinking(model, settings, params)
         assert result == 'medium'
@@ -348,8 +324,6 @@ class TestOpenAIResponsesThinkingTranslation:
 
         model = FunctionModel(_echo)
         result = OpenAIResponsesModel._translate_thinking(model, settings, params)
-        # 'none' is falsy for dict truthiness check, but the effort_map maps False -> 'none'
-        # which gets set as reasoning_effort. Then `if reasoning_effort:` is truthy for 'none'.
         assert result == snapshot({'effort': 'none'})
 
     def test_provider_specific_takes_precedence(self):
@@ -624,7 +598,6 @@ class TestBedrockThinkingTranslation:
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking=False)
         result = model._translate_thinking(settings, params)
-        # thinking=False: no reasoning_effort set, returns None
         assert result is None
 
     def test_openai_variant_thinking_high(self):
@@ -674,7 +647,6 @@ class TestBedrockThinkingTranslation:
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking=False)
         result = model._translate_thinking(settings, params)
-        # thinking=False on Qwen: no reasoning_config set, returns None (empty dict is falsy)
         assert result is None
 
     def test_no_variant_thinking_passthrough(self):
@@ -689,7 +661,6 @@ class TestBedrockThinkingTranslation:
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking='high')
         result = model._translate_thinking(settings, params)
-        # No variant set, so no thinking fields are added
         assert result is None
 
     def test_thinking_none_returns_existing(self):
@@ -795,7 +766,6 @@ class TestXaiThinkingTranslation:
 
         settings = XaiModelSettings()
         params = ModelRequestParameters(thinking='high')
-        # We can't call _create_chat directly, but we can verify prepare_request resolves
         _, resolved_params = model.prepare_request(settings, params)
         assert resolved_params.thinking == 'high'
 
@@ -813,9 +783,26 @@ class TestXaiThinkingTranslation:
         assert resolved_params.thinking is True
 
 
-# ---------------------------------------------------------------------------
-# 3. Thinking capability tests
-# ---------------------------------------------------------------------------
+class TestXaiEffortMap:
+    """Test xAI effort mapping values — xAI only supports 'low' and 'high', rounds down."""
+
+    def test_effort_map_values(self):
+        pytest.importorskip('xai_sdk')
+        from pydantic_ai.models.xai import XAI_EFFORT_MAP
+
+        assert XAI_EFFORT_MAP[True] == 'low'
+        assert XAI_EFFORT_MAP['minimal'] == 'low'
+        assert XAI_EFFORT_MAP['low'] == 'low'
+        assert XAI_EFFORT_MAP['medium'] == 'low'
+        assert XAI_EFFORT_MAP['high'] == 'high'
+        assert XAI_EFFORT_MAP['xhigh'] == 'high'
+
+    def test_only_low_and_high_values(self):
+        """xAI only supports two effort levels; all map values must be one of them."""
+        pytest.importorskip('xai_sdk')
+        from pydantic_ai.models.xai import XAI_EFFORT_MAP
+
+        assert set(XAI_EFFORT_MAP.values()) == {'low', 'high'}
 
 
 class TestThinkingCapability:
@@ -876,11 +863,6 @@ class TestThinkingCapability:
             }
         )
         assert agent.model is not None
-
-
-# ---------------------------------------------------------------------------
-# 4. Integration tests
-# ---------------------------------------------------------------------------
 
 
 class TestThinkingIntegration:
@@ -960,7 +942,6 @@ class TestThinkingIntegration:
         agent = Agent(model, capabilities=[Thinking(effort='low')])
         result = await agent.run('test', model_settings=ModelSettings(thinking='high'))
         assert result.output == 'done'
-        # Run-level settings override capability settings via merge_model_settings
         assert captured_params[0].thinking == 'high'
 
     async def test_thinking_false_capability_on_always_enabled(self):
@@ -1007,11 +988,6 @@ class TestThinkingIntegration:
         returned_settings, resolved_params = model.prepare_request(settings, ModelRequestParameters())
         assert returned_settings is None
         assert resolved_params.thinking == 'high'
-
-
-# ---------------------------------------------------------------------------
-# 5. Additional Phase 1 fix tests
-# ---------------------------------------------------------------------------
 
 
 class TestAnthropicAdaptiveEffortLevels:
@@ -1095,17 +1071,8 @@ class TestCerebrasThinkingTrue:
         assert extra_body.get('disable_reasoning') is True
 
 
-# ---------------------------------------------------------------------------
-# Ported from unified-thinking-settings branch: Google budget API constraints
-# ---------------------------------------------------------------------------
-
-
 class TestGoogleBudgetApiConstraints:
-    """Validate budget values respect the Google API's documented limits.
-
-    Gemini 2.5 Flash: thinking_budget range [0, 24576]
-    Gemini 2.5 Pro:   thinking_budget range [128, 32768]
-    """
+    """Budget values respect the Google API's documented limits."""
 
     @pytest.fixture(autouse=True)
     def _require_google(self):
@@ -1155,13 +1122,8 @@ class TestGoogleBudgetApiConstraints:
         assert budgets['low'] < budgets['medium'] < budgets['high']
 
 
-# ---------------------------------------------------------------------------
-# Ported from unified-thinking-settings branch: Profile thinking capabilities
-# ---------------------------------------------------------------------------
-
-
 class TestProfileThinkingCapabilities:
-    """Tests that model profile functions correctly detect thinking-capable models."""
+    """Model profiles correctly detect thinking-capable models."""
 
     def test_anthropic_profile_thinking_support(self):
         from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
@@ -1237,13 +1199,8 @@ class TestProfileThinkingCapabilities:
         assert profile.thinking_always_enabled is True
 
 
-# ---------------------------------------------------------------------------
-# Ported from unified-thinking-settings branch: Cross-provider portability
-# ---------------------------------------------------------------------------
-
-
 class TestCrossProviderPortability:
-    """Tests that the same unified settings produce sensible results across providers."""
+    """Same unified settings produce sensible results across providers."""
 
     def test_same_settings_all_main_providers(self):
         """The same thinking=True + effort='high' should produce non-None results
@@ -1279,13 +1236,8 @@ class TestCrossProviderPortability:
         assert params.thinking is None
 
 
-# ---------------------------------------------------------------------------
-# Ported from unified-thinking-settings branch: Merge model settings
-# ---------------------------------------------------------------------------
-
-
 class TestMergeModelSettingsThinking:
-    """Tests for merge_model_settings with unified thinking fields."""
+    """merge_model_settings with unified thinking fields."""
 
     def test_merge_thinking_bool_override(self):
         from pydantic_ai.settings import merge_model_settings
@@ -1337,13 +1289,8 @@ class TestMergeModelSettingsThinking:
         assert result is None
 
 
-# ---------------------------------------------------------------------------
-# Ported from unified-thinking-settings branch: Prepare request no-mutation
-# ---------------------------------------------------------------------------
-
-
 class TestPrepareRequestNoMutationDetailed:
-    """Tests that prepare_request doesn't leak state across sequential calls."""
+    """prepare_request doesn't leak state across sequential calls."""
 
     def test_sequential_calls_no_leakage(self):
         """Sequential prepare_request calls don't leak thinking into model._settings."""
