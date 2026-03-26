@@ -479,22 +479,102 @@ class ToolManager(Generic[AgentDepsT]):
         assert validated.validated_args is not None
 
         name = validated.call.tool_name
-        try:
-            tool_result = await self.toolset.call_tool(
-                name,
-                validated.validated_args,
-                validated.ctx,
-                validated.tool,
-            )
-        except ModelRetry as e:
-            self._check_max_retries(name, validated.tool.max_retries, e)
-            self.failed_tools.add(name)
-            raise self._wrap_error_as_retry(name, validated.call, e) from e
+
+        # For output tools, fire output hooks inside the tool execution
+        if validated.tool.tool_def.kind == 'output' and self.root_capability is not None:
+            tool_result = await self._raw_execute_output_tool(validated)
+        else:
+            try:
+                tool_result = await self.toolset.call_tool(
+                    name,
+                    validated.validated_args,
+                    validated.ctx,
+                    validated.tool,
+                )
+            except ModelRetry as e:
+                self._check_max_retries(name, validated.tool.max_retries, e)
+                self.failed_tools.add(name)
+                raise self._wrap_error_as_retry(name, validated.call, e) from e
 
         if usage is not None:
             usage.tool_calls += 1
 
         return tool_result
+
+    async def _raw_execute_output_tool(
+        self,
+        validated: ValidatedToolCall[AgentDepsT],
+    ) -> Any:
+        """Execute an output tool call with output hooks."""
+        from ._output import OutputToolset
+
+        assert validated.tool is not None
+        assert validated.validated_args is not None
+        assert self.root_capability is not None
+
+        cap = self.root_capability
+        ctx = validated.ctx
+        name = validated.call.tool_name
+        toolset = validated.tool.toolset
+
+        if not isinstance(toolset, OutputToolset):  # pragma: no cover
+            raise RuntimeError(f'Expected OutputToolset for output tool {name!r}')
+
+        processor = toolset.processors[name]
+        output_context = processor.get_output_context('tool')
+        output_context.tool_call = validated.call
+        output_context.tool_def = validated.tool.tool_def
+
+        # --- Output validate phase (identity — args already validated by tool_validate hooks) ---
+        raw_output: str | dict[str, Any] = validated.validated_args
+        raw_output = await cap.before_output_validate(ctx, raw_output=raw_output, output_context=output_context)
+
+        async def do_validate(data: str | dict[str, Any]) -> str | dict[str, Any]:
+            return data  # Identity: validation already done by tool hooks
+
+        try:
+            validated_output = await cap.wrap_output_validate(
+                ctx, raw_output=raw_output, output_context=output_context, handler=do_validate
+            )
+        except (ValidationError, ModelRetry) as e:
+            validated_output = await cap.on_output_validate_error(
+                ctx, raw_output=raw_output, output_context=output_context, error=e
+            )
+
+        validated_output = await cap.after_output_validate(
+            ctx, raw_output=raw_output, output=validated_output, output_context=output_context
+        )
+
+        # --- Output execute phase (wraps processor.call + output validators) ---
+        validated_output = await cap.before_output_execute(ctx, output=validated_output, output_context=output_context)
+
+        async def do_execute(output: str | dict[str, Any]) -> Any:
+            try:
+                result = await processor.call(output, ctx, wrap_validation_errors=False)  # type: ignore[arg-type]
+                for validator in toolset.output_validators:
+                    result = await validator.validate(result, ctx, wrap_validation_errors=False)
+                return result
+            except ModelRetry as e:
+                self._check_max_retries(name, validated.tool.max_retries, e)  # type: ignore[union-attr]
+                self.failed_tools.add(name)
+                raise self._wrap_error_as_retry(name, validated.call, e) from e
+
+        try:
+            result = await cap.wrap_output_execute(
+                ctx, output=validated_output, output_context=output_context, handler=do_execute
+            )
+        except ToolRetryError:
+            raise  # Control flow
+        except Exception as e:
+            result = await cap.on_output_execute_error(
+                ctx, output=validated_output, output_context=output_context, error=e
+            )
+
+        result = await cap.after_output_execute(
+            ctx, input=validated_output, output=result, output_context=output_context
+        )
+
+        return result
 
     async def _execute_function_tool_call(
         self,

@@ -35,16 +35,20 @@ from .abstract import (
     AbstractCapability,
     AgentNode,
     NodeResult,
+    RawOutput,
     RawToolArgs,
     ValidatedToolArgs,
     WrapModelRequestHandler,
     WrapNodeRunHandler,
+    WrapOutputExecuteHandler,
+    WrapOutputValidateHandler,
     WrapRunHandler,
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
 )
 
 if TYPE_CHECKING:
+    from pydantic_ai._output import OutputContext
     from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.run import AgentRunResult
 
@@ -179,6 +183,38 @@ class WrapToolExecuteHookFunc(Protocol):
 class OnToolExecuteErrorHookFunc(Protocol):
     """Protocol for :meth:`~AbstractCapability.on_tool_execute_error` hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs, error: Exception) -> Any | Awaitable[Any]: ...
+
+class BeforeOutputValidateHookFunc(Protocol):
+    """Protocol for :meth:`~AbstractCapability.before_output_validate` hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, raw_output: RawOutput, output_context: OutputContext) -> RawOutput | Awaitable[RawOutput]: ...
+
+class AfterOutputValidateHookFunc(Protocol):
+    """Protocol for :meth:`~AbstractCapability.after_output_validate` hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, raw_output: RawOutput, output: RawOutput, output_context: OutputContext) -> RawOutput | Awaitable[RawOutput]: ...
+
+class WrapOutputValidateHookFunc(Protocol):
+    """Protocol for :meth:`~AbstractCapability.wrap_output_validate` hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, raw_output: RawOutput, output_context: OutputContext, handler: WrapOutputValidateHandler) -> RawOutput | Awaitable[RawOutput]: ...
+
+class OnOutputValidateErrorHookFunc(Protocol):
+    """Protocol for :meth:`~AbstractCapability.on_output_validate_error` hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, raw_output: RawOutput, output_context: OutputContext, error: ValidationError | ModelRetry) -> RawOutput | Awaitable[RawOutput]: ...
+
+class BeforeOutputExecuteHookFunc(Protocol):
+    """Protocol for :meth:`~AbstractCapability.before_output_execute` hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, output: RawOutput, output_context: OutputContext) -> RawOutput | Awaitable[RawOutput]: ...
+
+class AfterOutputExecuteHookFunc(Protocol):
+    """Protocol for :meth:`~AbstractCapability.after_output_execute` hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, input: RawOutput, output: Any, output_context: OutputContext) -> Any | Awaitable[Any]: ...
+
+class WrapOutputExecuteHookFunc(Protocol):
+    """Protocol for :meth:`~AbstractCapability.wrap_output_execute` hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, output: RawOutput, output_context: OutputContext, handler: WrapOutputExecuteHandler) -> Any | Awaitable[Any]: ...
+
+class OnOutputExecuteErrorHookFunc(Protocol):
+    """Protocol for :meth:`~AbstractCapability.on_output_execute_error` hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, output: RawOutput, output_context: OutputContext, error: Exception) -> Any | Awaitable[Any]: ...
 # fmt: on
 
 
@@ -545,6 +581,94 @@ class _HookRegistration(Generic[AgentDepsT]):
     ) -> Any:
         return _tool_bare_or_parameterized(self._r, 'on_tool_execute_error', func, tools=tools, timeout=timeout)
 
+    # --- Output validation ---
+
+    @overload
+    def before_output_validate(self, func: BeforeOutputValidateHookFunc, /) -> BeforeOutputValidateHookFunc: ...
+    @overload
+    def before_output_validate(
+        self, *, timeout: float | None = None
+    ) -> Callable[[BeforeOutputValidateHookFunc], BeforeOutputValidateHookFunc]: ...
+    def before_output_validate(
+        self, func: BeforeOutputValidateHookFunc | None = None, *, timeout: float | None = None
+    ) -> Any:
+        return _bare_or_parameterized(self._r, 'before_output_validate', func, timeout=timeout)
+
+    @overload
+    def after_output_validate(self, func: AfterOutputValidateHookFunc, /) -> AfterOutputValidateHookFunc: ...
+    @overload
+    def after_output_validate(
+        self, *, timeout: float | None = None
+    ) -> Callable[[AfterOutputValidateHookFunc], AfterOutputValidateHookFunc]: ...
+    def after_output_validate(
+        self, func: AfterOutputValidateHookFunc | None = None, *, timeout: float | None = None
+    ) -> Any:
+        return _bare_or_parameterized(self._r, 'after_output_validate', func, timeout=timeout)
+
+    @overload
+    def output_validate(self, func: WrapOutputValidateHookFunc, /) -> WrapOutputValidateHookFunc: ...
+    @overload
+    def output_validate(
+        self, *, timeout: float | None = None
+    ) -> Callable[[WrapOutputValidateHookFunc], WrapOutputValidateHookFunc]: ...
+    def output_validate(self, func: WrapOutputValidateHookFunc | None = None, *, timeout: float | None = None) -> Any:
+        return _bare_or_parameterized(self._r, 'wrap_output_validate', func, timeout=timeout)
+
+    @overload
+    def output_validate_error(self, func: OnOutputValidateErrorHookFunc, /) -> OnOutputValidateErrorHookFunc: ...
+    @overload
+    def output_validate_error(
+        self, *, timeout: float | None = None
+    ) -> Callable[[OnOutputValidateErrorHookFunc], OnOutputValidateErrorHookFunc]: ...
+    def output_validate_error(
+        self, func: OnOutputValidateErrorHookFunc | None = None, *, timeout: float | None = None
+    ) -> Any:
+        return _bare_or_parameterized(self._r, 'on_output_validate_error', func, timeout=timeout)
+
+    # --- Output execution ---
+
+    @overload
+    def before_output_execute(self, func: BeforeOutputExecuteHookFunc, /) -> BeforeOutputExecuteHookFunc: ...
+    @overload
+    def before_output_execute(
+        self, *, timeout: float | None = None
+    ) -> Callable[[BeforeOutputExecuteHookFunc], BeforeOutputExecuteHookFunc]: ...
+    def before_output_execute(
+        self, func: BeforeOutputExecuteHookFunc | None = None, *, timeout: float | None = None
+    ) -> Any:
+        return _bare_or_parameterized(self._r, 'before_output_execute', func, timeout=timeout)
+
+    @overload
+    def after_output_execute(self, func: AfterOutputExecuteHookFunc, /) -> AfterOutputExecuteHookFunc: ...
+    @overload
+    def after_output_execute(
+        self, *, timeout: float | None = None
+    ) -> Callable[[AfterOutputExecuteHookFunc], AfterOutputExecuteHookFunc]: ...
+    def after_output_execute(
+        self, func: AfterOutputExecuteHookFunc | None = None, *, timeout: float | None = None
+    ) -> Any:
+        return _bare_or_parameterized(self._r, 'after_output_execute', func, timeout=timeout)
+
+    @overload
+    def output_execute(self, func: WrapOutputExecuteHookFunc, /) -> WrapOutputExecuteHookFunc: ...
+    @overload
+    def output_execute(
+        self, *, timeout: float | None = None
+    ) -> Callable[[WrapOutputExecuteHookFunc], WrapOutputExecuteHookFunc]: ...
+    def output_execute(self, func: WrapOutputExecuteHookFunc | None = None, *, timeout: float | None = None) -> Any:
+        return _bare_or_parameterized(self._r, 'wrap_output_execute', func, timeout=timeout)
+
+    @overload
+    def output_execute_error(self, func: OnOutputExecuteErrorHookFunc, /) -> OnOutputExecuteErrorHookFunc: ...
+    @overload
+    def output_execute_error(
+        self, *, timeout: float | None = None
+    ) -> Callable[[OnOutputExecuteErrorHookFunc], OnOutputExecuteErrorHookFunc]: ...
+    def output_execute_error(
+        self, func: OnOutputExecuteErrorHookFunc | None = None, *, timeout: float | None = None
+    ) -> Any:
+        return _bare_or_parameterized(self._r, 'on_output_execute_error', func, timeout=timeout)
+
 
 # --- The Hooks capability ---
 
@@ -609,6 +733,16 @@ class Hooks(AbstractCapability[AgentDepsT]):
         after_tool_execute: AfterToolExecuteHookFunc | None = None,
         tool_execute: WrapToolExecuteHookFunc | None = None,
         tool_execute_error: OnToolExecuteErrorHookFunc | None = None,
+        # Output validation
+        before_output_validate: BeforeOutputValidateHookFunc | None = None,
+        after_output_validate: AfterOutputValidateHookFunc | None = None,
+        output_validate: WrapOutputValidateHookFunc | None = None,
+        output_validate_error: OnOutputValidateErrorHookFunc | None = None,
+        # Output execution
+        before_output_execute: BeforeOutputExecuteHookFunc | None = None,
+        after_output_execute: AfterOutputExecuteHookFunc | None = None,
+        output_execute: WrapOutputExecuteHookFunc | None = None,
+        output_execute_error: OnOutputExecuteErrorHookFunc | None = None,
     ):
         self._registry = {}
         # Map constructor kwarg names to internal registry keys (AbstractCapability method names)
@@ -636,6 +770,14 @@ class Hooks(AbstractCapability[AgentDepsT]):
             'after_tool_execute': after_tool_execute,
             'wrap_tool_execute': tool_execute,
             'on_tool_execute_error': tool_execute_error,
+            'before_output_validate': before_output_validate,
+            'after_output_validate': after_output_validate,
+            'wrap_output_validate': output_validate,
+            'on_output_validate_error': output_validate_error,
+            'before_output_execute': before_output_execute,
+            'after_output_execute': after_output_execute,
+            'wrap_output_execute': output_execute,
+            'on_output_execute_error': output_execute_error,
         }
         for key, func in _kwargs.items():
             if func is not None:
@@ -903,6 +1045,122 @@ class Hooks(AbstractCapability[AgentDepsT]):
             try:
                 return await _call_entry(
                     entry, 'on_tool_execute_error', ctx, call=call, tool_def=tool_def, args=args, error=error
+                )
+            except Exception as new_error:
+                error = new_error
+        raise error
+
+    async def before_output_validate(
+        self, ctx: RunContext[AgentDepsT], *, raw_output: str | dict[str, Any], output_context: OutputContext
+    ) -> str | dict[str, Any]:
+        for entry in self._get('before_output_validate'):
+            raw_output = await _call_entry(
+                entry, 'before_output_validate', ctx, raw_output=raw_output, output_context=output_context
+            )
+        return raw_output
+
+    async def after_output_validate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        raw_output: str | dict[str, Any],
+        output: str | dict[str, Any],
+        output_context: OutputContext,
+    ) -> str | dict[str, Any]:
+        for entry in self._get('after_output_validate'):
+            output = await _call_entry(
+                entry, 'after_output_validate', ctx, raw_output=raw_output, output=output, output_context=output_context
+            )
+        return output
+
+    async def wrap_output_validate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        raw_output: str | dict[str, Any],
+        output_context: OutputContext,
+        handler: WrapOutputValidateHandler,
+    ) -> str | dict[str, Any]:
+        entries = self._get('wrap_output_validate')
+        if not entries:
+            return await handler(raw_output)
+        chain: Callable[..., Any] = handler
+        for entry in reversed(entries):
+            chain = _make_wrap_link(
+                entry, 'wrap_output_validate', ctx, {'output_context': output_context}, chain, 'raw_output'
+            )
+        return await chain(raw_output)
+
+    async def on_output_validate_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        raw_output: str | dict[str, Any],
+        output_context: OutputContext,
+        error: ValidationError | ModelRetry,
+    ) -> str | dict[str, Any]:
+        for entry in self._get('on_output_validate_error'):
+            try:
+                return await _call_entry(
+                    entry,
+                    'on_output_validate_error',
+                    ctx,
+                    raw_output=raw_output,
+                    output_context=output_context,
+                    error=error,
+                )
+            except (ValidationError, ModelRetry) as new_error:
+                error = new_error
+        raise error
+
+    async def before_output_execute(
+        self, ctx: RunContext[AgentDepsT], *, output: str | dict[str, Any], output_context: OutputContext
+    ) -> str | dict[str, Any]:
+        for entry in self._get('before_output_execute'):
+            output = await _call_entry(
+                entry, 'before_output_execute', ctx, output=output, output_context=output_context
+            )
+        return output
+
+    async def after_output_execute(
+        self, ctx: RunContext[AgentDepsT], *, input: str | dict[str, Any], output: Any, output_context: OutputContext
+    ) -> Any:
+        for entry in self._get('after_output_execute'):
+            output = await _call_entry(
+                entry, 'after_output_execute', ctx, input=input, output=output, output_context=output_context
+            )
+        return output
+
+    async def wrap_output_execute(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output: str | dict[str, Any],
+        output_context: OutputContext,
+        handler: WrapOutputExecuteHandler,
+    ) -> Any:
+        entries = self._get('wrap_output_execute')
+        if not entries:
+            return await handler(output)
+        chain: Callable[..., Any] = handler
+        for entry in reversed(entries):
+            chain = _make_wrap_link(
+                entry, 'wrap_output_execute', ctx, {'output_context': output_context}, chain, 'output'
+            )
+        return await chain(output)
+
+    async def on_output_execute_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output: str | dict[str, Any],
+        output_context: OutputContext,
+        error: Exception,
+    ) -> Any:
+        for entry in self._get('on_output_execute_error'):
+            try:
+                return await _call_entry(
+                    entry, 'on_output_execute_error', ctx, output=output, output_context=output_context, error=error
                 )
             except Exception as new_error:
                 error = new_error

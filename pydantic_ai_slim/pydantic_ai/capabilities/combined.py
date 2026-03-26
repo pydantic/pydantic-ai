@@ -16,10 +16,11 @@ from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, RunContext, ToolDefi
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
-from .abstract import AbstractCapability
+from .abstract import AbstractCapability, WrapOutputExecuteHandler, WrapOutputValidateHandler
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
+    from pydantic_ai._output import OutputContext
     from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
@@ -394,6 +395,124 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 error = new_error
         raise error
 
+    # --- Output validate lifecycle hooks ---
+
+    async def before_output_validate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        raw_output: str | dict[str, Any],
+        output_context: OutputContext,
+    ) -> str | dict[str, Any]:
+        for capability in self.capabilities:
+            raw_output = await capability.before_output_validate(
+                ctx, raw_output=raw_output, output_context=output_context
+            )
+        return raw_output
+
+    async def after_output_validate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        raw_output: str | dict[str, Any],
+        output: str | dict[str, Any],
+        output_context: OutputContext,
+    ) -> str | dict[str, Any]:
+        for capability in reversed(self.capabilities):
+            output = await capability.after_output_validate(
+                ctx, raw_output=raw_output, output=output, output_context=output_context
+            )
+        return output
+
+    async def wrap_output_validate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        raw_output: str | dict[str, Any],
+        output_context: OutputContext,
+        handler: WrapOutputValidateHandler,
+    ) -> str | dict[str, Any]:
+        chain = handler
+        for cap in reversed(self.capabilities):
+            chain = _make_output_validate_wrap(cap, ctx, output_context, chain)
+        return await chain(raw_output)
+
+    async def on_output_validate_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        raw_output: str | dict[str, Any],
+        output_context: OutputContext,
+        error: ValidationError | ModelRetry,
+    ) -> str | dict[str, Any]:
+        for capability in reversed(self.capabilities):
+            try:
+                return await capability.on_output_validate_error(
+                    ctx, raw_output=raw_output, output_context=output_context, error=error
+                )
+            except (ValidationError, ModelRetry) as new_error:
+                error = new_error
+            except Exception:  # pragma: no cover — defensive
+                raise
+        raise error
+
+    # --- Output execute lifecycle hooks ---
+
+    async def before_output_execute(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output: str | dict[str, Any],
+        output_context: OutputContext,
+    ) -> str | dict[str, Any]:
+        for capability in self.capabilities:
+            output = await capability.before_output_execute(ctx, output=output, output_context=output_context)
+        return output
+
+    async def after_output_execute(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        input: str | dict[str, Any],
+        output: Any,
+        output_context: OutputContext,
+    ) -> Any:
+        for capability in reversed(self.capabilities):
+            output = await capability.after_output_execute(
+                ctx, input=input, output=output, output_context=output_context
+            )
+        return output
+
+    async def wrap_output_execute(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output: str | dict[str, Any],
+        output_context: OutputContext,
+        handler: WrapOutputExecuteHandler,
+    ) -> Any:
+        chain = handler
+        for cap in reversed(self.capabilities):
+            chain = _make_output_execute_wrap(cap, ctx, output_context, chain)
+        return await chain(output)
+
+    async def on_output_execute_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output: str | dict[str, Any],
+        output_context: OutputContext,
+        error: Exception,
+    ) -> Any:
+        for capability in reversed(self.capabilities):
+            try:
+                return await capability.on_output_execute_error(
+                    ctx, output=output, output_context=output_context, error=error
+                )
+            except Exception as new_error:
+                error = new_error
+        raise error
+
 
 # --- Composition helpers ---
 # These create closures that bind the current capability and inner handler,
@@ -467,5 +586,29 @@ def _make_tool_execute_wrap(
 ) -> Callable[[dict[str, Any]], Awaitable[Any]]:
     async def wrapped(args: dict[str, Any]) -> Any:
         return await cap.wrap_tool_execute(ctx, call=call, tool_def=tool_def, args=args, handler=inner)
+
+    return wrapped
+
+
+def _make_output_validate_wrap(
+    cap: AbstractCapability[AgentDepsT],
+    ctx: RunContext[AgentDepsT],
+    output_context: OutputContext,
+    inner: Callable[[str | dict[str, Any]], Awaitable[str | dict[str, Any]]],
+) -> Callable[[str | dict[str, Any]], Awaitable[str | dict[str, Any]]]:
+    async def wrapped(raw_output: str | dict[str, Any]) -> str | dict[str, Any]:
+        return await cap.wrap_output_validate(ctx, raw_output=raw_output, output_context=output_context, handler=inner)
+
+    return wrapped
+
+
+def _make_output_execute_wrap(
+    cap: AbstractCapability[AgentDepsT],
+    ctx: RunContext[AgentDepsT],
+    output_context: OutputContext,
+    inner: Callable[[str | dict[str, Any]], Awaitable[Any]],
+) -> Callable[[str | dict[str, Any]], Awaitable[Any]]:
+    async def wrapped(output: str | dict[str, Any]) -> Any:
+        return await cap.wrap_output_execute(ctx, output=output, output_context=output_context, handler=inner)
 
     return wrapped

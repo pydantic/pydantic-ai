@@ -35,7 +35,7 @@ from .tools import GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
 if TYPE_CHECKING:
-    pass
+    from .capabilities.abstract import AbstractCapability
 
 T = TypeVar('T')
 """An invariant TypeVar."""
@@ -70,6 +70,184 @@ Usage `OutputValidatorFunc[AgentDepsT, T]`.
 
 DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
 DEFAULT_OUTPUT_TOOL_DESCRIPTION = 'The final response which ends this conversation'
+
+
+@dataclass
+class OutputContext:
+    """Context about the output being processed, passed to output hooks."""
+
+    mode: OutputMode
+    """The output mode ('text', 'native', 'prompted', 'tool', 'auto')."""
+    output_type: type[Any] | None
+    """The resolved output type (e.g. MyModel, str). For output functions, the return type."""
+    object_def: OutputObjectDefinition | None
+    """The output object definition (schema, name, description), if structured output."""
+    has_function: bool
+    """Whether there's an output function to call in the execute step."""
+    tool_call: _messages.ToolCallPart | None = None
+    """The tool call part, for tool-based output. None for text output."""
+    tool_def: ToolDefinition | None = None
+    """The tool definition, for tool-based output. None for text output."""
+
+
+def _build_output_handlers(
+    processor: BaseOutputProcessor[OutputDataT],
+    run_context: RunContext[AgentDepsT],
+    allow_partial: bool,
+    wrap_validation_errors: bool,
+) -> tuple[
+    Callable[[str | dict[str, Any]], Awaitable[str | dict[str, Any]]],
+    Callable[[str | dict[str, Any]], Awaitable[Any]],
+]:
+    """Build validate and execute handler functions based on processor type."""
+    if isinstance(processor, TextFunctionOutputProcessor):
+        # Text function output: validate=identity, execute=function call
+        async def do_validate(data: str | dict[str, Any]) -> str | dict[str, Any]:
+            return data
+
+        async def do_execute(output: str | dict[str, Any]) -> Any:
+            assert isinstance(output, str)
+            args = {processor._str_argument_name: output}
+            return await execute_traced_output_function(
+                processor._function_schema, run_context, args, wrap_validation_errors
+            )
+
+    elif isinstance(processor, ObjectOutputProcessor):
+        # Structured output: validate=Pydantic validation, execute=extraction+function
+        async def do_validate(data: str | dict[str, Any]) -> str | dict[str, Any]:
+            if isinstance(data, str):
+                data = _utils.strip_markdown_fences(data)
+            return processor.validate(
+                data, allow_partial=allow_partial, validation_context=run_context.validation_context
+            )
+
+        async def do_execute(output: str | dict[str, Any]) -> Any:
+            return await processor.call(output, run_context, wrap_validation_errors)  # type: ignore[arg-type]
+
+    elif isinstance(processor, TextOutputProcessor):
+        # Plain text output: identity for both phases
+        async def do_validate(data: str | dict[str, Any]) -> str | dict[str, Any]:
+            return data
+
+        async def do_execute(output: str | dict[str, Any]) -> Any:
+            return output
+
+    else:
+        # UnionOutputProcessor and others: full process() in validate, identity execute.
+        async def do_validate(data: str | dict[str, Any]) -> str | dict[str, Any]:
+            assert isinstance(data, str)
+            result = await processor.process(
+                data,
+                run_context=run_context,
+                allow_partial=allow_partial,
+                wrap_validation_errors=wrap_validation_errors,
+            )
+            return result  # type: ignore[return-value]
+
+        async def do_execute(output: str | dict[str, Any]) -> Any:
+            return output
+
+    return do_validate, do_execute
+
+
+async def _run_output_validate_hooks(
+    capability: AbstractCapability[AgentDepsT],
+    run_context: RunContext[AgentDepsT],
+    output_context: OutputContext,
+    raw_output: str | dict[str, Any],
+    do_validate: Callable[[str | dict[str, Any]], Awaitable[str | dict[str, Any]]],
+    allow_partial: bool,
+    wrap_validation_errors: bool,
+) -> str | dict[str, Any]:
+    """Run the output validate hooks around do_validate."""
+    raw_output = await capability.before_output_validate(
+        run_context, raw_output=raw_output, output_context=output_context
+    )
+
+    try:
+        validated = await capability.wrap_output_validate(
+            run_context, raw_output=raw_output, output_context=output_context, handler=do_validate
+        )
+    except (ValidationError, ModelRetry) as e:
+        if allow_partial:
+            if wrap_validation_errors and isinstance(e, ValidationError):
+                m = _messages.RetryPromptPart(content=e.errors(include_url=False))
+                raise ToolRetryError(m) from e
+            raise
+        try:
+            validated = await capability.on_output_validate_error(
+                run_context, raw_output=raw_output, output_context=output_context, error=e
+            )
+        except (ValidationError, ModelRetry) as hook_error:
+            if wrap_validation_errors:
+                if isinstance(hook_error, ValidationError):
+                    m = _messages.RetryPromptPart(content=hook_error.errors(include_url=False))
+                else:
+                    m = _messages.RetryPromptPart(content=hook_error.message, tool_name=run_context.tool_name)
+                    if run_context.tool_call_id:  # pragma: no cover
+                        m.tool_call_id = run_context.tool_call_id
+                raise ToolRetryError(m) from hook_error
+            raise
+
+    return await capability.after_output_validate(
+        run_context, raw_output=raw_output, output=validated, output_context=output_context
+    )
+
+
+async def _run_output_execute_hooks(
+    capability: AbstractCapability[AgentDepsT],
+    run_context: RunContext[AgentDepsT],
+    output_context: OutputContext,
+    validated: str | dict[str, Any],
+    do_execute: Callable[[str | dict[str, Any]], Awaitable[Any]],
+) -> Any:
+    """Run the output execute hooks around do_execute."""
+    validated = await capability.before_output_execute(run_context, output=validated, output_context=output_context)
+
+    try:
+        result = await capability.wrap_output_execute(
+            run_context, output=validated, output_context=output_context, handler=do_execute
+        )
+    except ToolRetryError:
+        raise  # Control flow, not error
+    except Exception as e:
+        result = await capability.on_output_execute_error(
+            run_context, output=validated, output_context=output_context, error=e
+        )
+
+    return await capability.after_output_execute(
+        run_context, input=validated, output=result, output_context=output_context
+    )
+
+
+async def run_output_with_hooks(
+    processor: BaseOutputProcessor[OutputDataT],
+    text: str,
+    *,
+    run_context: RunContext[AgentDepsT],
+    capability: AbstractCapability[AgentDepsT] | None,
+    output_mode: OutputMode,
+    allow_partial: bool = False,
+    wrap_validation_errors: bool = True,
+) -> OutputDataT:
+    """Process output text through the processor with capability output hooks.
+
+    Output validators (@agent.output_validator) are NOT run here — the caller is responsible.
+    """
+    if capability is None:
+        return await processor.process(
+            text, run_context=run_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
+        )
+
+    output_context = processor.get_output_context(output_mode)
+    do_validate, do_execute = _build_output_handlers(processor, run_context, allow_partial, wrap_validation_errors)
+
+    validated = await _run_output_validate_hooks(
+        capability, run_context, output_context, text, do_validate, allow_partial, wrap_validation_errors
+    )
+    result = await _run_output_execute_hooks(capability, run_context, output_context, validated, do_execute)
+
+    return cast(OutputDataT, result)
 
 
 async def execute_traced_output_function(
@@ -520,6 +698,10 @@ class BaseOutputProcessor(ABC, Generic[OutputDataT]):
         """Process an output message, performing validation and (if necessary) calling the output function."""
         raise NotImplementedError()
 
+    def get_output_context(self, mode: OutputMode) -> OutputContext:
+        """Return context information about this processor for output hooks."""
+        return OutputContext(mode=mode, output_type=None, object_def=None, has_function=False)
+
 
 @dataclass(kw_only=True)
 class BaseObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
@@ -540,12 +722,19 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         description: str | None = None,
         strict: bool | None = None,
     ):
+        self._output_type: type[Any] | None = None
+
         if inspect.isfunction(output) or inspect.ismethod(output):
             self._function_schema = _function_schema.function_schema(output, GenerateToolJsonSchema)
             self.validator = self._function_schema.validator
             json_schema = self._function_schema.json_schema
             json_schema['description'] = self._function_schema.description
+
+            # Extract return type from function signature for output_type
+            type_hints = _utils.get_function_type_hints(output)
+            self._output_type = type_hints.get('return', None)
         else:
+            self._output_type = cast(type[Any], output)
             json_schema_type_adapter: TypeAdapter[Any]
             validation_type_adapter: TypeAdapter[Any]
             if _utils.is_model_like(output):
@@ -666,6 +855,14 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             )
 
         return output
+
+    def get_output_context(self, mode: OutputMode) -> OutputContext:
+        return OutputContext(
+            mode=mode,
+            output_type=self._output_type,
+            object_def=self.object_def,
+            has_function=self._function_schema is not None,
+        )
 
 
 @dataclass
@@ -812,6 +1009,9 @@ class TextOutputProcessor(BaseOutputProcessor[OutputDataT]):
     ) -> OutputDataT:
         return cast(OutputDataT, data)
 
+    def get_output_context(self, mode: OutputMode) -> OutputContext:
+        return OutputContext(mode=mode, output_type=str, object_def=None, has_function=False)
+
 
 @dataclass(init=False)
 class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
@@ -834,6 +1034,9 @@ class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
 
         self._str_argument_name = argument_name
 
+        type_hints = _utils.get_function_type_hints(output_function)
+        self._output_type: type[Any] | None = type_hints.get('return', None)
+
     async def process(
         self,
         data: str,
@@ -852,6 +1055,14 @@ class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
             validation_context=validation_context,
             allow_partial=allow_partial,
             wrap_validation_errors=wrap_validation_errors,
+        )
+
+    def get_output_context(self, mode: OutputMode) -> OutputContext:
+        return OutputContext(
+            mode=mode,
+            output_type=self._output_type,
+            object_def=None,
+            has_function=True,
         )
 
 

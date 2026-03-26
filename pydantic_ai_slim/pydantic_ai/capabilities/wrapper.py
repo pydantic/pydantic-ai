@@ -20,12 +20,15 @@ from .abstract import (
     ValidatedToolArgs,
     WrapModelRequestHandler,
     WrapNodeRunHandler,
+    WrapOutputExecuteHandler,
+    WrapOutputValidateHandler,
     WrapRunHandler,
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
 )
 
 if TYPE_CHECKING:
+    from pydantic_ai._output import OutputContext
     from pydantic_ai.agent.abstract import AgentModelSettings
     from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.run import AgentRunResult
@@ -280,3 +283,95 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         error: Exception,
     ) -> Any:
         return await self.wrapped.on_tool_execute_error(ctx, call=call, tool_def=tool_def, args=args, error=error)
+
+    # --- Output validate lifecycle hooks ---
+
+    async def before_output_validate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        raw_output: str | dict[str, Any],
+        output_context: OutputContext,
+    ) -> str | dict[str, Any]:
+        return await self.wrapped.before_output_validate(ctx, raw_output=raw_output, output_context=output_context)
+
+    async def after_output_validate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        raw_output: str | dict[str, Any],
+        output: str | dict[str, Any],
+        output_context: OutputContext,
+    ) -> str | dict[str, Any]:
+        return await self.wrapped.after_output_validate(
+            ctx, raw_output=raw_output, output=output, output_context=output_context
+        )
+
+    async def wrap_output_validate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        raw_output: str | dict[str, Any],
+        output_context: OutputContext,
+        handler: WrapOutputValidateHandler,
+    ) -> str | dict[str, Any]:
+        return await self.wrapped.wrap_output_validate(
+            ctx, raw_output=raw_output, output_context=output_context, handler=handler
+        )
+
+    async def on_output_validate_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        raw_output: str | dict[str, Any],
+        output_context: OutputContext,
+        error: ValidationError | ModelRetry,
+    ) -> str | dict[str, Any]:
+        return await self.wrapped.on_output_validate_error(
+            ctx, raw_output=raw_output, output_context=output_context, error=error
+        )
+
+    # --- Output execute lifecycle hooks ---
+
+    async def before_output_execute(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output: str | dict[str, Any],
+        output_context: OutputContext,
+    ) -> str | dict[str, Any]:
+        return await self.wrapped.before_output_execute(ctx, output=output, output_context=output_context)
+
+    async def after_output_execute(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        input: str | dict[str, Any],
+        output: Any,
+        output_context: OutputContext,
+    ) -> Any:
+        return await self.wrapped.after_output_execute(ctx, input=input, output=output, output_context=output_context)
+
+    async def wrap_output_execute(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output: str | dict[str, Any],
+        output_context: OutputContext,
+        handler: WrapOutputExecuteHandler,
+    ) -> Any:
+        return await self.wrapped.wrap_output_execute(
+            ctx, output=output, output_context=output_context, handler=handler
+        )
+
+    async def on_output_execute_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output: str | dict[str, Any],
+        output_context: OutputContext,
+        error: Exception,
+    ) -> Any:
+        return await self.wrapped.on_output_execute_error(
+            ctx, output=output, output_context=output_context, error=error
+        )

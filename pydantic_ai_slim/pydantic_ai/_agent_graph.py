@@ -1031,7 +1031,13 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             max_retries=ctx.deps.max_result_retries,
         )
 
-        result_data = await text_processor.process(text, run_context=run_context)
+        result_data = await _output.run_output_with_hooks(
+            text_processor,
+            text,
+            run_context=run_context,
+            capability=ctx.deps.root_capability,
+            output_mode=ctx.deps.output_schema.mode,
+        )
 
         for validator in ctx.deps.output_validators:
             result_data = await validator.validate(result_data, run_context)

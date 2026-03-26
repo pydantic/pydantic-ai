@@ -15,6 +15,7 @@ from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
+    from pydantic_ai._output import OutputContext
     from pydantic_ai.agent.abstract import AgentModelSettings
     from pydantic_ai.capabilities.prefix_tools import PrefixTools
     from pydantic_ai.models import ModelRequestContext
@@ -51,6 +52,15 @@ WrapToolValidateHandler: TypeAlias = 'Callable[[str | dict[str, Any]], Awaitable
 
 WrapToolExecuteHandler: TypeAlias = 'Callable[[dict[str, Any]], Awaitable[Any]]'
 """Handler type for [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute]."""
+
+RawOutput: TypeAlias = 'str | dict[str, Any]'
+"""Type alias for raw output data (text or tool args)."""
+
+WrapOutputValidateHandler: TypeAlias = 'Callable[[str | dict[str, Any]], Awaitable[str | dict[str, Any]]]'
+"""Handler type for wrap_output_validate."""
+
+WrapOutputExecuteHandler: TypeAlias = 'Callable[[str | dict[str, Any]], Awaitable[Any]]'
+"""Handler type for wrap_output_execute."""
 
 
 @dataclass
@@ -491,6 +501,121 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         from [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]).
         Use [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute]
         to intercept retries.
+        """
+        raise error
+
+    # --- Output validate lifecycle hooks ---
+
+    async def before_output_validate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        raw_output: RawOutput,
+        output_context: OutputContext,
+    ) -> RawOutput:
+        """Modify raw model output before validation/parsing.
+
+        The primary hook for pre-parse repair and normalization of model output.
+        Fires for all output types: text, structured text, and tool-based output.
+
+        For text/structured output, `raw_output` is the raw text string from the model.
+        For tool output, `raw_output` is the already-validated args dict (tool validation
+        hooks have already run at this point).
+        """
+        return raw_output
+
+    async def after_output_validate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        raw_output: RawOutput,
+        output: RawOutput,
+        output_context: OutputContext,
+    ) -> RawOutput:
+        """Modify validated output after successful parsing. Called only on success."""
+        return output
+
+    async def wrap_output_validate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        raw_output: RawOutput,
+        output_context: OutputContext,
+        handler: WrapOutputValidateHandler,
+    ) -> RawOutput:
+        """Wraps output validation. handler(raw_output) performs the validation."""
+        return await handler(raw_output)
+
+    async def on_output_validate_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        raw_output: RawOutput,
+        output_context: OutputContext,
+        error: ValidationError | ModelRetry,
+    ) -> RawOutput:
+        """Called when output validation fails.
+
+        This is the error counterpart to
+        [`after_output_validate`][pydantic_ai.capabilities.AbstractCapability.after_output_validate].
+
+        **Raise** the original `error` (or a different exception) to propagate it.
+        **Return** validated output to suppress the error and continue.
+        """
+        raise error
+
+    # --- Output execute lifecycle hooks ---
+
+    async def before_output_execute(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output: RawOutput,
+        output_context: OutputContext,
+    ) -> RawOutput:
+        """Modify validated output before execution (extraction + function call)."""
+        return output
+
+    async def after_output_execute(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        input: RawOutput,
+        output: Any,
+        output_context: OutputContext,
+    ) -> Any:
+        """Modify result after output execution."""
+        return output
+
+    async def wrap_output_execute(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output: RawOutput,
+        output_context: OutputContext,
+        handler: WrapOutputExecuteHandler,
+    ) -> Any:
+        """Wraps output execution. handler(output) runs extraction + function call."""
+        return await handler(output)
+
+    async def on_output_execute_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output: RawOutput,
+        output_context: OutputContext,
+        error: Exception,
+    ) -> Any:
+        """Called when output execution fails with an exception.
+
+        This is the error counterpart to
+        [`after_output_execute`][pydantic_ai.capabilities.AbstractCapability.after_output_execute].
+
+        **Raise** the original `error` (or a different exception) to propagate it.
+        **Return** any value to suppress the error and use it as the output.
+
+        Not called for retry signals ([`ToolRetryError`][pydantic_ai.exceptions.ToolRetryError]
+        from [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]).
         """
         raise error
 

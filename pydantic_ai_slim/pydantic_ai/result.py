@@ -17,6 +17,7 @@ from ._output import (
     OutputValidator,
     OutputValidatorFunc,
     TextOutputSchema,
+    run_output_with_hooks,
 )
 from ._run_context import AgentDepsT, RunContext
 from ._tool_manager import ToolManager
@@ -226,16 +227,18 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     # not part of the final result output, so we reset the accumulated text
                     text = ''
 
-            result_data = await text_processor.process(
+            run_ctx = replace(self._run_ctx, partial_output=allow_partial)
+            result_data = await run_output_with_hooks(
+                text_processor,
                 text,
-                run_context=replace(self._run_ctx, partial_output=allow_partial),
+                run_context=run_ctx,
+                capability=self._tool_manager.root_capability,
+                output_mode=self._output_schema.mode,
                 allow_partial=allow_partial,
                 wrap_validation_errors=False,
             )
             for validator in self._output_validators:
-                result_data = await validator.validate(
-                    result_data, replace(self._run_ctx, partial_output=allow_partial)
-                )
+                result_data = await validator.validate(result_data, run_ctx)
             return result_data
         else:
             raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
