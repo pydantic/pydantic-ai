@@ -1,8 +1,8 @@
-# Agent Skills
+# Coding Agent Skills
 
-[Agent skills](https://agentskills.io) are packages of instructions and reference material that coding agents load on demand. Pydantic AI maintains a skill for building Pydantic AI applications in the [`pydantic/skills`](https://github.com/pydantic/skills) repository.
+If you're building Pydantic AI applications with a coding agent, you can install the Pydantic AI skill from the [`pydantic/skills`](https://github.com/pydantic/skills) repository to give your agent up-to-date framework knowledge.
 
-With the skill installed, coding agents like Claude Code, Cursor, GitHub Copilot, and OpenAI Codex have access to Pydantic AI patterns, architecture guidance, and common task references covering tools, capabilities, structured output, streaming, testing, multi-agent delegation, hooks, and agent specs.
+[Agent skills](https://agentskills.io) are packages of instructions and reference material that coding agents load on demand. With the skill installed, coding agents have access to Pydantic AI patterns, architecture guidance, and common task references covering tools, capabilities, structured output, streaming, testing, multi-agent delegation, hooks, and agent specs.
 
 ## Installation
 
@@ -17,9 +17,13 @@ claude plugin install ai@pydantic-skills
 
 ### Cross-Agent (agentskills.io)
 
-The [`skills/`](https://github.com/pydantic/skills/tree/main/skills) directory contains standalone `SKILL.md` files compatible with 30+ agents via the [agentskills.io](https://agentskills.io) standard, including Cursor, GitHub Copilot, OpenAI Codex, and Gemini CLI.
+Install the Pydantic AI skill using the [skills CLI](https://github.com/vercel-labs/skills):
 
-Refer to your agent's documentation for how to add skills.
+```bash
+npx skills add pydantic/skills
+```
+
+This works with 30+ agents via the [agentskills.io](https://agentskills.io) standard, including Claude Code, Codex, Cursor, and Gemini CLI.
 
 ## See Also
 
