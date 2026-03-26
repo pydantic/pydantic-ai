@@ -7,15 +7,15 @@ stages of case evaluation.
 
 from __future__ import annotations as _annotations
 
-from typing import TYPE_CHECKING, Generic
+from typing import TYPE_CHECKING, Any, Generic
 
 from typing_extensions import TypeVar
 
 from .evaluators.context import EvaluatorContext
 
-InputsT = TypeVar('InputsT', default=object)
-OutputT = TypeVar('OutputT', default=object)
-MetadataT = TypeVar('MetadataT', default=object)
+InputsT = TypeVar('InputsT', default=Any)
+OutputT = TypeVar('OutputT', default=Any)
+MetadataT = TypeVar('MetadataT', default=Any)
 
 if TYPE_CHECKING:
     from .dataset import Case
