@@ -13,16 +13,17 @@ from ..messages import BinaryContent, FinishReason, ModelResponseStreamEvent, Th
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterProvider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ThinkingLevel
 from . import ModelRequestParameters, download_item
 
 try:
-    from openai import APIError, AsyncOpenAI
+    from openai import APIError, AsyncOpenAI, omit
     from openai.types import chat, completion_usage
     from openai.types.chat import chat_completion, chat_completion_chunk, chat_completion_message_function_tool_call
     from openai.types.chat.chat_completion_content_part_param import ChatCompletionContentPartParam
     from openai.types.chat.chat_completion_message import Annotation as _OpenAIAnnotation
     from openai.types.chat.completion_create_params import WebSearchOptions
+    from openai.types.shared import ReasoningEffort
 
     from .openai import (
         OpenAIChatModel,
@@ -197,7 +198,7 @@ class OpenRouterReasoning(TypedDict, total=False):
     token limits, but not both simultaneously.
     """
 
-    effort: Literal['high', 'medium', 'low']
+    effort: Literal['xhigh', 'high', 'medium', 'low', 'minimal', 'none']
     """OpenAI-style reasoning effort level. Cannot be used with max_tokens."""
 
     max_tokens: int
@@ -527,6 +528,23 @@ def _openrouter_settings_to_openai_settings(
         extra_body['preset'] = preset
     if transforms := model_settings.pop('openrouter_transforms', None):
         extra_body['transforms'] = transforms
+    # Fall back to unified thinking when openrouter_reasoning is not set
+    if 'openrouter_reasoning' not in model_settings and model_request_parameters.thinking is not None:
+        thinking = model_request_parameters.thinking
+        if thinking is not False:
+            unified_reasoning: OpenRouterReasoning = {}
+            # OpenRouter only supports low/medium/high; map others to closest
+            effort_map: dict[ThinkingLevel, str] = {
+                True: 'medium',
+                'minimal': 'low',
+                'low': 'low',
+                'medium': 'medium',
+                'high': 'high',
+                'xhigh': 'high',
+            }
+            unified_reasoning['effort'] = effort_map[thinking]  # type: ignore[typeddict-item]
+            model_settings['openrouter_reasoning'] = unified_reasoning
+
     if reasoning := model_settings.pop('openrouter_reasoning', None):
         extra_body['reasoning'] = reasoning
     if usage := model_settings.pop('openrouter_usage', None):
@@ -580,9 +598,24 @@ class OpenRouterModel(OpenAIChatModel):
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
         new_settings = _openrouter_settings_to_openai_settings(
-            cast(OpenRouterModelSettings, merged_settings or {}), model_request_parameters
+            cast(OpenRouterModelSettings, merged_settings or {}), customized_parameters
         )
         return new_settings, customized_parameters
+
+    @override
+    def _get_reasoning_effort(
+        self,
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ReasoningEffort | Any:
+        """OpenRouter handles reasoning via extra_body['reasoning'], not the reasoning_effort parameter.
+
+        Only pass through explicit openai_reasoning_effort if set; unified thinking
+        is handled in _openrouter_settings_to_openai_settings via extra_body['reasoning'].
+        """
+        if effort := model_settings.get('openai_reasoning_effort'):
+            return effort
+        return omit
 
     @override
     def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:
