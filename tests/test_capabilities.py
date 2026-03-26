@@ -5727,16 +5727,17 @@ class TestModelRetryFromHooks:
         assert call_count == 2
 
     async def test_after_tool_execute_model_retry(self):
-        """after_tool_execute raises ModelRetry — tool retry prompt sent to model."""
+        """after_tool_execute raises ModelRetry — tool retry prompt sent to model, tool retried on success."""
         tool_call_count = 0
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            # After retry prompt, return text
-            for msg in messages:
-                for part in msg.parts:
-                    if isinstance(part, RetryPromptPart):
-                        return make_text_response('got retry, returning text')
+            # Always call the tool — after retry, the hook won't raise again
             if info.function_tools:
+                # Check if we already got a tool return (second call succeeded)
+                for msg in messages:
+                    for part in msg.parts:
+                        if isinstance(part, ToolReturnPart):
+                            return make_text_response(f'got: {part.content}')
                 return ModelResponse(
                     parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
                 )
@@ -5770,18 +5771,19 @@ class TestModelRetryFromHooks:
             return 'tool result'
 
         result = await agent.run('call tool')
-        assert 'got retry' in result.output
-        assert tool_call_count == 1  # Tool only called once, retry is from hook
+        assert result.output == 'got: tool result'
+        assert tool_call_count == 2  # Tool called twice: first rejected by hook, second succeeds
 
     async def test_before_tool_execute_model_retry(self):
-        """before_tool_execute raises ModelRetry — tool execution is skipped, retry sent."""
+        """before_tool_execute raises ModelRetry — tool execution is skipped, then succeeds on retry."""
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            for msg in messages:
-                for part in msg.parts:
-                    if isinstance(part, RetryPromptPart):
-                        return make_text_response('got retry')
+            # Always call the tool — after retry, the hook won't raise again
             if info.function_tools:
+                for msg in messages:
+                    for part in msg.parts:
+                        if isinstance(part, ToolReturnPart):
+                            return make_text_response(f'got: {part.content}')
                 return ModelResponse(
                     parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
                 )
@@ -5808,10 +5810,10 @@ class TestModelRetryFromHooks:
 
         @agent.tool_plain
         def my_tool() -> str:
-            return 'tool result'  # pragma: no cover
+            return 'tool result'
 
         result = await agent.run('call tool')
-        assert result.output == 'got retry'
+        assert result.output == 'got: tool result'
 
     async def test_wrap_tool_execute_model_retry_skips_on_error(self):
         """wrap_tool_execute raising ModelRetry should NOT call on_tool_execute_error."""
