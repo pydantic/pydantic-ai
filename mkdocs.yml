@@ -14,6 +14,7 @@ nav:
   - install.md
   - help.md
   - troubleshooting.md
+  - Coding Agent Skills: coding-agent-skills.md
   - Pydantic AI Gateway: gateway.md
 
   - Documentation:
@@ -98,7 +99,6 @@ nav:
 
   - Integrations:
       - Debugging & Monitoring with Pydantic Logfire: logfire.md
-      - Coding Agent Skills: skills.md
       - Durable Execution:
           - Overview: durable_execution/overview.md
           - Temporal: durable_execution/temporal.md
@@ -373,6 +373,7 @@ plugins:
           - install.md
           - help.md
           - troubleshooting.md
+          - coding-agent-skills.md
         Concepts documentation:
           - a2a.md
           - agent.md
@@ -414,8 +415,6 @@ plugins:
           - mcp/*.md
         UI Event Streams:
           - ui/*.md
-        Integrations:
-          - skills.md
         Optional:
           - testing.md
           - cli.md
