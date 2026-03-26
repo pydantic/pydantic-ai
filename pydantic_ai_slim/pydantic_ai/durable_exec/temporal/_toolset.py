@@ -5,14 +5,14 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
-from pydantic import ConfigDict, Discriminator, with_config
+from pydantic import ConfigDict, Discriminator, Tag, with_config
 from temporalio import workflow
 from temporalio.workflow import ActivityConfig
 from typing_extensions import Self, assert_never
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
-from pydantic_ai.messages import ToolReturnContent
+from pydantic_ai.messages import ToolReturn, ToolReturnContent
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
@@ -52,9 +52,23 @@ class _ModelRetry:
     kind: Literal['model_retry'] = 'model_retry'
 
 
+def _result_discriminator(v: Any) -> str:
+    if isinstance(v, ToolReturn) or (isinstance(v, dict) and v.get('kind') == 'tool-return'):  # pyright: ignore[reportUnknownMemberType]
+        return 'tool-return'
+    return 'content'
+
+
+# Defined at module level so Pydantic resolves the Annotated metadata at runtime,
+# not as a string annotation (which would lose the discriminator under `from __future__ import annotations`).
+_ToolReturnResult = Annotated[
+    Annotated[ToolReturn, Tag('tool-return')] | Annotated[ToolReturnContent, Tag('content')],
+    Discriminator(_result_discriminator),
+]
+
+
 @dataclass
 class _ToolReturn:
-    result: ToolReturnContent
+    result: _ToolReturnResult
     kind: Literal['tool_return'] = 'tool_return'
 
 
@@ -75,6 +89,16 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
     @abstractmethod
     def temporal_activities(self) -> list[Callable[..., Any]]:
         raise NotImplementedError
+
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        # Temporal-wrapped toolsets manage their wrapped toolset's lifecycle
+        # per-activity (inside activities), not per-run.
+        return self
+
+    async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        # Temporal-wrapped toolsets manage their wrapped toolset's lifecycle
+        # per-activity (inside activities), not per-run-step.
+        return self
 
     def visit_and_replace(
         self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
@@ -121,14 +145,24 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
         tool_args: dict[str, Any],
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
+        *,
+        toolset: AbstractToolset[AgentDepsT] | None = None,
     ) -> CallToolResult:
         """Call a tool inside an activity, re-validating args that were deserialized.
 
         The tool args will already have been validated into their proper types in the `ToolManager`,
         but `execute_activity` would have turned them into simple Python types again, so we need to re-validate them.
+
+        Args:
+            name: The name of the tool to call.
+            tool_args: The raw tool arguments to re-validate and pass.
+            ctx: The run context.
+            tool: The tool definition.
+            toolset: The toolset to call the tool on. Defaults to `self.wrapped`.
         """
+        toolset = toolset or self.wrapped
         args_dict = tool.args_validator.validate_python(tool_args)
-        return await self._wrap_call_tool_result(self.wrapped.call_tool(name, args_dict, ctx, tool))
+        return await self._wrap_call_tool_result(toolset.call_tool(name, args_dict, ctx, tool))
 
 
 def temporalize_toolset(
