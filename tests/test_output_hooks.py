@@ -1713,10 +1713,10 @@ class TestErrorHookCoveragePaths:
                 self,
                 ctx: RunContext[Any],
                 *,
-                raw_output: RawOutput,
+                raw_output: str | dict[str, Any],
                 output_context: OutputContext,
                 error: ValidationError | ModelRetry,
-            ) -> RawOutput:
+            ) -> str | dict[str, Any]:
                 error_log.append('inner_error')
                 raise error
 
@@ -1748,7 +1748,7 @@ class TestErrorHookCoveragePaths:
                 self,
                 ctx: RunContext[Any],
                 *,
-                output: RawOutput,
+                output: str | dict[str, Any],
                 output_context: OutputContext,
                 error: Exception,
             ) -> Any:
@@ -1776,13 +1776,13 @@ class TestErrorHookCoveragePaths:
 
         @hooks.on.output_execute_error
         async def first_handler(
-            ctx: RunContext[Any], *, output: RawOutput, output_context: OutputContext, error: Exception
+            ctx: RunContext[Any], *, output: str | dict[str, Any], output_context: OutputContext, error: Exception
         ) -> Any:
             raise ValueError('chained')  # Re-raise different error
 
         @hooks.on.output_execute_error
         async def second_handler(
-            ctx: RunContext[Any], *, output: RawOutput, output_context: OutputContext, error: Exception
+            ctx: RunContext[Any], *, output: str | dict[str, Any], output_context: OutputContext, error: Exception
         ) -> Any:
             return 'recovered'  # This one recovers
 
