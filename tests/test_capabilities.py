@@ -30,12 +30,20 @@ from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
-from pydantic_ai.exceptions import SkipModelRequest, SkipToolExecution, SkipToolValidation, UserError
+from pydantic_ai.exceptions import (
+    ModelRetry,
+    SkipModelRequest,
+    SkipToolExecution,
+    SkipToolValidation,
+    UnexpectedModelBehavior,
+    UserError,
+)
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -5440,3 +5448,448 @@ class TestNodeStreamingWithHooks:
                 pass
 
         assert error_log == ['CallToolsNode']
+
+
+# --- ModelRetry from hooks tests ---
+
+
+class TestModelRetryFromHooks:
+    """Tests for raising ModelRetry from capability hooks."""
+
+    async def test_after_model_request_model_retry(self):
+        """after_model_request raises ModelRetry — model is called again with retry prompt."""
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return make_text_response('bad response')
+            return make_text_response('good response')
+
+        @dataclass
+        class RetryCap(AbstractCapability[Any]):
+            retried: bool = False
+
+            async def after_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                response: ModelResponse,
+            ) -> ModelResponse:
+                if not self.retried:
+                    self.retried = True
+                    raise ModelRetry('Response was bad, please try again')
+                return response
+
+        cap = RetryCap()
+        agent = Agent(FunctionModel(model_fn), capabilities=[cap])
+        result = await agent.run('hello')
+        assert result.output == 'good response'
+        assert call_count == 2
+        # Verify message flow: response is in history, then retry prompt, then new response
+        messages = result.all_messages()
+        assert any(isinstance(p, RetryPromptPart) for msg in messages for p in msg.parts)
+
+    async def test_after_model_request_model_retry_max_retries(self):
+        """after_model_request raises ModelRetry repeatedly — hits max_result_retries."""
+
+        @dataclass
+        class AlwaysRetryCap(AbstractCapability[Any]):
+            async def after_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                response: ModelResponse,
+            ) -> ModelResponse:
+                raise ModelRetry('always bad')
+
+        agent = Agent(
+            FunctionModel(simple_model_function),
+            capabilities=[AlwaysRetryCap()],
+            output_retries=2,
+        )
+        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries'):
+            await agent.run('hello')
+
+    async def test_after_model_request_model_retry_non_streaming(self):
+        """after_model_request raises ModelRetry with agent.run() — works with both streaming and non-streaming models."""
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return make_text_response('bad response')
+            return make_text_response('good response')
+
+        @dataclass
+        class RetryCap(AbstractCapability[Any]):
+            retried: bool = False
+
+            async def after_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                response: ModelResponse,
+            ) -> ModelResponse:
+                if not self.retried:
+                    self.retried = True
+                    raise ModelRetry('Response was bad, please try again')
+                return response
+
+        cap = RetryCap()
+        agent = Agent(FunctionModel(model_fn), capabilities=[cap])
+        result = await agent.run('hello')
+        assert result.output == 'good response'
+        assert call_count == 2
+        # Verify model response is in history before the retry
+        messages = result.all_messages()
+        has_bad_response = any(
+            isinstance(msg, ModelResponse)
+            and any(isinstance(p, TextPart) and p.content == 'bad response' for p in msg.parts)
+            for msg in messages
+        )
+        assert has_bad_response
+
+    async def test_wrap_model_request_model_retry(self):
+        """wrap_model_request raises ModelRetry after calling handler — triggers retry."""
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return make_text_response('first attempt')
+            return make_text_response('second attempt')
+
+        @dataclass
+        class WrapRetryCap(AbstractCapability[Any]):
+            retried: bool = False
+
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: Any,
+            ) -> ModelResponse:
+                response = await handler(request_context)
+                if not self.retried:
+                    self.retried = True
+                    raise ModelRetry('Wrap says retry')
+                return response
+
+        cap = WrapRetryCap()
+        agent = Agent(FunctionModel(model_fn), capabilities=[cap])
+        result = await agent.run('hello')
+        assert result.output == 'second attempt'
+        assert call_count == 2
+
+    async def test_wrap_model_request_model_retry_skips_on_error(self):
+        """wrap_model_request raising ModelRetry should NOT call on_model_request_error."""
+        on_error_called = False
+
+        @dataclass
+        class WrapRetrySkipErrorCap(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: Any,
+            ) -> ModelResponse:
+                raise ModelRetry('retry please')
+
+            async def on_model_request_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                error: Exception,
+            ) -> ModelResponse:
+                nonlocal on_error_called
+                on_error_called = True
+                raise error
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[WrapRetrySkipErrorCap()], output_retries=1)
+        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries'):
+            await agent.run('hello')
+        assert not on_error_called
+
+    async def test_on_model_request_error_model_retry(self):
+        """on_model_request_error raises ModelRetry to recover via retry."""
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError('model failed')
+            return make_text_response('recovered response')
+
+        @dataclass
+        class ErrorRetryCap(AbstractCapability[Any]):
+            async def on_model_request_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                error: Exception,
+            ) -> ModelResponse:
+                raise ModelRetry('Model failed, please try again')
+
+        cap = ErrorRetryCap()
+        agent = Agent(FunctionModel(model_fn), capabilities=[cap])
+        result = await agent.run('hello')
+        assert result.output == 'recovered response'
+        assert call_count == 2
+
+    async def test_after_tool_execute_model_retry(self):
+        """after_tool_execute raises ModelRetry — tool retry prompt sent to model."""
+        tool_call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            # After retry prompt, return text
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, RetryPromptPart):
+                        return make_text_response('got retry, returning text')
+                    if isinstance(part, ToolReturnPart):
+                        return make_text_response(f'got: {part.content}')
+            if info.function_tools:
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        @dataclass
+        class AfterExecRetryCap(AbstractCapability[Any]):
+            retried: bool = False
+
+            async def after_tool_execute(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                result: Any,
+            ) -> Any:
+                if not self.retried:
+                    self.retried = True
+                    raise ModelRetry('Tool result is bad, try again')
+                return result
+
+        cap = AfterExecRetryCap()
+        agent = Agent(FunctionModel(model_fn), capabilities=[cap])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            nonlocal tool_call_count
+            tool_call_count += 1
+            return 'tool result'
+
+        result = await agent.run('call tool')
+        assert 'got retry' in result.output
+        assert tool_call_count == 1  # Tool only called once, retry is from hook
+
+    async def test_before_tool_execute_model_retry(self):
+        """before_tool_execute raises ModelRetry — tool execution is skipped, retry sent."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, RetryPromptPart):
+                        return make_text_response('got retry')
+            if info.function_tools:
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        hooks = Hooks[Any]()
+        hook_called = False
+
+        @hooks.on.before_tool_execute
+        async def reject_first(
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: dict[str, Any],
+        ) -> dict[str, Any]:
+            nonlocal hook_called
+            if not hook_called:
+                hook_called = True
+                raise ModelRetry('Not ready to execute, try again')
+            return args
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[hooks], retries=2)
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'  # pragma: no cover
+
+        result = await agent.run('call tool')
+        assert result.output == 'got retry'
+
+    async def test_wrap_tool_execute_model_retry_skips_on_error(self):
+        """wrap_tool_execute raising ModelRetry should NOT call on_tool_execute_error."""
+        on_error_called = False
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, RetryPromptPart):
+                        return make_text_response('got retry')
+            if info.function_tools:
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        @dataclass
+        class WrapExecRetryCap(AbstractCapability[Any]):
+            async def wrap_tool_execute(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                handler: Any,
+            ) -> Any:
+                raise ModelRetry('Wrap says retry tool')
+
+            async def on_tool_execute_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                error: Exception,
+            ) -> Any:
+                nonlocal on_error_called
+                on_error_called = True
+                raise error
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[WrapExecRetryCap()], retries=2)
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'  # pragma: no cover
+
+        result = await agent.run('call tool')
+        assert result.output == 'got retry'
+        assert not on_error_called
+
+    async def test_on_tool_execute_error_model_retry(self):
+        """on_tool_execute_error raises ModelRetry to recover via retry."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, RetryPromptPart):
+                        return make_text_response('got retry after error')
+            if info.function_tools:
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        @dataclass
+        class ErrorRetryCap(AbstractCapability[Any]):
+            async def on_tool_execute_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                error: Exception,
+            ) -> Any:
+                raise ModelRetry('Tool errored, please retry')
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[ErrorRetryCap()], retries=2)
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            raise ValueError('tool failed')
+
+        result = await agent.run('call tool')
+        assert result.output == 'got retry after error'
+
+    async def test_after_tool_validate_model_retry(self):
+        """after_tool_validate raises ModelRetry — validation retry sent to model."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, RetryPromptPart):
+                        return make_text_response('got validation retry')
+            if info.function_tools:
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        @dataclass
+        class AfterValRetryCap(AbstractCapability[Any]):
+            async def after_tool_validate(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+            ) -> dict[str, Any]:
+                raise ModelRetry('Validated args are bad')
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[AfterValRetryCap()], retries=2)
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'  # pragma: no cover
+
+        result = await agent.run('call tool')
+        assert result.output == 'got validation retry'
+
+    async def test_before_tool_validate_model_retry(self):
+        """before_tool_validate raises ModelRetry — validation retry sent to model."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, RetryPromptPart):
+                        return make_text_response('got pre-validation retry')
+            if info.function_tools:
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        @dataclass
+        class BeforeValRetryCap(AbstractCapability[Any]):
+            async def before_tool_validate(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: str | dict[str, Any],
+            ) -> str | dict[str, Any]:
+                raise ModelRetry('Args look bad before validation')
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[BeforeValRetryCap()], retries=2)
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'  # pragma: no cover
+
+        result = await agent.run('call tool')
+        assert result.output == 'got pre-validation retry'

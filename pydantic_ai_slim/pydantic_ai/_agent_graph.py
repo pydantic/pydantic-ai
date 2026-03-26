@@ -476,13 +476,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     request: _messages.ModelRequest
     is_resuming_without_prompt: bool = False
 
-    _result: CallToolsNode[DepsT, NodeRunEndT] | None = field(repr=False, init=False, default=None)
+    _result: CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT] | None = field(
+        repr=False, init=False, default=None
+    )
     _did_stream: bool = field(repr=False, init=False, default=False)
     last_request_context: ModelRequestContext | None = field(repr=False, init=False, default=None)
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> CallToolsNode[DepsT, NodeRunEndT]:
+    ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
         if self._result is not None:
             return self._result
 
@@ -564,13 +566,24 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if wrap_task.done() and not stream_ready.is_set():
             # wrap_model_request completed without calling handler — short-circuited or raised SkipModelRequest
             try:
-                model_response = wrap_task.result()
-            except exceptions.SkipModelRequest as e:
-                model_response = e.response
-            except Exception as e:
-                model_response = await ctx.deps.root_capability.on_model_request_error(
-                    run_context, request_context=wrap_request_context, error=e
-                )
+                try:
+                    model_response = wrap_task.result()
+                except exceptions.SkipModelRequest as e:
+                    model_response = e.response
+                except exceptions.ModelRetry:
+                    raise  # Propagate to outer handler
+                except Exception as e:
+                    model_response = await ctx.deps.root_capability.on_model_request_error(
+                        run_context, request_context=wrap_request_context, error=e
+                    )
+            except exceptions.ModelRetry as e:
+                self._did_stream = True
+                ctx.state.usage.requests += 1
+                ctx.state.increment_retries(ctx.deps.max_result_retries, error=e)
+                m = _messages.RetryPromptPart(content=e.message)
+                instructions = await ctx.deps.get_instructions(run_context)
+                self._result = ModelRequestNode(_messages.ModelRequest(parts=[m], instructions=instructions))
+                return
             self._did_stream = True
             ctx.state.usage.requests += 1
             skip_sr = _SkipStreamedResponse(model_request_parameters=model_request_parameters, _response=model_response)
@@ -601,11 +614,21 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     pass
             else:
                 try:
-                    model_response = await wrap_task
-                except Exception as e:
-                    model_response = await ctx.deps.root_capability.on_model_request_error(
-                        run_context, request_context=wrap_request_context, error=e
-                    )
+                    try:
+                        model_response = await wrap_task
+                    except exceptions.ModelRetry:
+                        raise  # Propagate to outer handler
+                    except Exception as e:
+                        model_response = await ctx.deps.root_capability.on_model_request_error(
+                            run_context, request_context=wrap_request_context, error=e
+                        )
+                except exceptions.ModelRetry as e:
+                    ctx.state.usage.requests += 1
+                    ctx.state.increment_retries(ctx.deps.max_result_retries, error=e)
+                    m = _messages.RetryPromptPart(content=e.message)
+                    instructions = await ctx.deps.get_instructions(run_context)
+                    self._result = ModelRequestNode(_messages.ModelRequest(parts=[m], instructions=instructions))
+                    return
                 await self._finish_handling(ctx, model_response)
                 assert self._result is not None
 
@@ -629,7 +652,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
     async def _make_request(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> CallToolsNode[DepsT, NodeRunEndT]:
+    ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
         if self._result is not None:
             return self._result  # pragma: no cover
 
@@ -655,17 +678,32 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_request_parameters=model_request_parameters,
         )
         try:
-            model_response = await ctx.deps.root_capability.wrap_model_request(
-                run_context,
-                request_context=request_context,
-                handler=model_handler,
+            try:
+                model_response = await ctx.deps.root_capability.wrap_model_request(
+                    run_context,
+                    request_context=request_context,
+                    handler=model_handler,
+                )
+            except exceptions.SkipModelRequest as e:
+                model_response = e.response
+            except exceptions.ModelRetry:
+                raise  # Propagate to outer handler
+            except Exception as e:
+                model_response = await ctx.deps.root_capability.on_model_request_error(
+                    run_context, request_context=request_context, error=e
+                )
+        except exceptions.ModelRetry as e:
+            # ModelRetry from wrap_model_request or on_model_request_error — retry the model request.
+            # No model response to append (handler may not have been called).
+            ctx.state.usage.requests += 1
+            ctx.state.increment_retries(ctx.deps.max_result_retries, error=e)
+            m = _messages.RetryPromptPart(content=e.message)
+            instructions = await ctx.deps.get_instructions(run_context)
+            retry_node = ModelRequestNode[DepsT, NodeRunEndT](
+                _messages.ModelRequest(parts=[m], instructions=instructions)
             )
-        except exceptions.SkipModelRequest as e:
-            model_response = e.response
-        except Exception as e:
-            model_response = await ctx.deps.root_capability.on_model_request_error(
-                run_context, request_context=request_context, error=e
-            )
+            self._result = retry_node
+            return retry_node
         ctx.state.usage.requests += 1
 
         return await self._finish_handling(ctx, model_response)
@@ -748,16 +786,31 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         response: _messages.ModelResponse,
-    ) -> CallToolsNode[DepsT, NodeRunEndT]:
+    ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
         response.run_id = response.run_id or ctx.state.run_id
 
         run_context = build_run_context(ctx)
         assert self.last_request_context is not None, 'last_request_context must be set before _finish_handling'
         request_context = self.last_request_context
         run_context.model_settings = request_context.model_settings
-        response = await ctx.deps.root_capability.after_model_request(
-            run_context, request_context=request_context, response=response
-        )
+        try:
+            response = await ctx.deps.root_capability.after_model_request(
+                run_context, request_context=request_context, response=response
+            )
+        except exceptions.ModelRetry as e:
+            # Hook rejected the response — append it to history (model DID respond) and retry
+            ctx.state.usage.incr(response.usage)
+            if ctx.deps.usage_limits:  # pragma: no branch
+                ctx.deps.usage_limits.check_tokens(ctx.state.usage)
+            ctx.state.message_history.append(response)
+            ctx.state.increment_retries(ctx.deps.max_result_retries, error=e)
+            m = _messages.RetryPromptPart(content=e.message)
+            instructions = await ctx.deps.get_instructions(run_context)
+            retry_node = ModelRequestNode[DepsT, NodeRunEndT](
+                _messages.ModelRequest(parts=[m], instructions=instructions)
+            )
+            self._result = retry_node
+            return retry_node
 
         # Update usage
         ctx.state.usage.incr(response.usage)
