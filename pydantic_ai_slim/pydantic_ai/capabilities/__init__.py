@@ -1,5 +1,7 @@
 from typing import Any
 
+from pydantic_ai._output import OutputContext
+
 from .abstract import (
     AbstractCapability,
     AgentNode,
@@ -78,4 +80,5 @@ __all__ = [
     'CombinedCapability',
     'HookTimeoutError',
     'Hooks',
+    'OutputContext',
 ]

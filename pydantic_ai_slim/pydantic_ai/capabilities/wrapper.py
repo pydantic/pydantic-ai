@@ -16,6 +16,7 @@ from .abstract import (
     AbstractCapability,
     AgentNode,
     NodeResult,
+    RawOutput,
     RawToolArgs,
     ValidatedToolArgs,
     WrapModelRequestHandler,
@@ -290,19 +291,19 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        raw_output: str | dict[str, Any],
+        raw_output: RawOutput,
         output_context: OutputContext,
-    ) -> str | dict[str, Any]:
+    ) -> RawOutput:
         return await self.wrapped.before_output_validate(ctx, raw_output=raw_output, output_context=output_context)
 
     async def after_output_validate(
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        raw_output: str | dict[str, Any],
-        output: str | dict[str, Any],
+        raw_output: RawOutput,
+        output: RawOutput,
         output_context: OutputContext,
-    ) -> str | dict[str, Any]:
+    ) -> RawOutput:
         return await self.wrapped.after_output_validate(
             ctx, raw_output=raw_output, output=output, output_context=output_context
         )
@@ -311,10 +312,10 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        raw_output: str | dict[str, Any],
+        raw_output: RawOutput,
         output_context: OutputContext,
         handler: WrapOutputValidateHandler,
-    ) -> str | dict[str, Any]:
+    ) -> RawOutput:
         return await self.wrapped.wrap_output_validate(
             ctx, raw_output=raw_output, output_context=output_context, handler=handler
         )
@@ -323,10 +324,10 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        raw_output: str | dict[str, Any],
+        raw_output: RawOutput,
         output_context: OutputContext,
         error: ValidationError | ModelRetry,
-    ) -> str | dict[str, Any]:
+    ) -> RawOutput:
         return await self.wrapped.on_output_validate_error(
             ctx, raw_output=raw_output, output_context=output_context, error=error
         )
@@ -337,26 +338,28 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        output: str | dict[str, Any],
+        output: RawOutput,
         output_context: OutputContext,
-    ) -> str | dict[str, Any]:
+    ) -> RawOutput:
         return await self.wrapped.before_output_execute(ctx, output=output, output_context=output_context)
 
     async def after_output_execute(
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        input: str | dict[str, Any],
+        validated_output: RawOutput,
         output: Any,
         output_context: OutputContext,
     ) -> Any:
-        return await self.wrapped.after_output_execute(ctx, input=input, output=output, output_context=output_context)
+        return await self.wrapped.after_output_execute(
+            ctx, validated_output=validated_output, output=output, output_context=output_context
+        )
 
     async def wrap_output_execute(
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        output: str | dict[str, Any],
+        output: RawOutput,
         output_context: OutputContext,
         handler: WrapOutputExecuteHandler,
     ) -> Any:
@@ -368,7 +371,7 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        output: str | dict[str, Any],
+        output: RawOutput,
         output_context: OutputContext,
         error: Exception,
     ) -> Any:

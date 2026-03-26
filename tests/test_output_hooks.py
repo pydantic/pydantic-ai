@@ -292,7 +292,7 @@ class TestAfterOutputExecute:
                 self,
                 ctx: RunContext[Any],
                 *,
-                input: str | dict[str, Any],
+                validated_output: str | dict[str, Any],
                 output: Any,
                 output_context: OutputContext,
             ) -> Any:
@@ -315,7 +315,7 @@ class TestAfterOutputExecute:
                 self,
                 ctx: RunContext[Any],
                 *,
-                input: str | dict[str, Any],
+                validated_output: str | dict[str, Any],
                 output: Any,
                 output_context: OutputContext,
             ) -> Any:
@@ -340,7 +340,7 @@ class TestAfterOutputExecute:
                 self,
                 ctx: RunContext[Any],
                 *,
-                input: str | dict[str, Any],
+                validated_output: str | dict[str, Any],
                 output: Any,
                 output_context: OutputContext,
             ) -> Any:
@@ -404,7 +404,7 @@ class TestToolOutputWithOutputHooks:
                 self,
                 ctx: RunContext[Any],
                 *,
-                input: str | dict[str, Any],
+                validated_output: str | dict[str, Any],
                 output: Any,
                 output_context: OutputContext,
             ) -> Any:
@@ -501,7 +501,7 @@ class TestToolOutputWithOutputHooks:
                 self,
                 ctx: RunContext[Any],
                 *,
-                input: str | dict[str, Any],
+                validated_output: str | dict[str, Any],
                 output: Any,
                 output_context: OutputContext,
             ) -> Any:
@@ -565,7 +565,7 @@ class TestHookComposition:
                 self,
                 ctx: RunContext[Any],
                 *,
-                input: str | dict[str, Any],
+                validated_output: str | dict[str, Any],
                 output: Any,
                 output_context: OutputContext,
             ) -> Any:
@@ -577,7 +577,7 @@ class TestHookComposition:
                 self,
                 ctx: RunContext[Any],
                 *,
-                input: str | dict[str, Any],
+                validated_output: str | dict[str, Any],
                 output: Any,
                 output_context: OutputContext,
             ) -> Any:
@@ -724,7 +724,7 @@ class TestHooksClassOutputDecorators:
             ctx: RunContext[Any],
             /,
             *,
-            input: str | dict[str, Any],
+            validated_output: str | dict[str, Any],
             output: Any,
             output_context: OutputContext,
         ) -> Any:
@@ -856,7 +856,7 @@ class TestOutputHookFullLifecycle:
                 self,
                 ctx: RunContext[Any],
                 *,
-                input: str | dict[str, Any],
+                validated_output: str | dict[str, Any],
                 output: Any,
                 output_context: OutputContext,
             ) -> Any:
@@ -921,7 +921,7 @@ class TestOutputHookFullLifecycle:
                 self,
                 ctx: RunContext[Any],
                 *,
-                input: str | dict[str, Any],
+                validated_output: str | dict[str, Any],
                 output: Any,
                 output_context: OutputContext,
             ) -> Any:
@@ -1454,7 +1454,7 @@ class TestOutputHookErrorPaths:
                 self,
                 ctx: RunContext[Any],
                 *,
-                input: str | dict[str, Any],
+                validated_output: str | dict[str, Any],
                 output: Any,
                 output_context: OutputContext,
             ) -> Any:

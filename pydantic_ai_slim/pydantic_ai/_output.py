@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
 from pydantic import Json, TypeAdapter, ValidationError
 from pydantic_core import SchemaValidator, to_json
-from typing_extensions import Self, TypedDict, TypeVar
+from typing_extensions import Self, TypedDict, TypeVar, assert_never
 
 from pydantic_ai._instrumentation import InstrumentationNames
 from pydantic_ai._utils import get_function_type_hints
@@ -134,8 +134,8 @@ def _build_output_handlers(
         async def do_execute(output: str | dict[str, Any]) -> Any:
             return output
 
-    else:
-        # UnionOutputProcessor and others: full process() in validate, identity execute.
+    elif isinstance(processor, UnionOutputProcessor):
+        # UnionOutputProcessor: full process() in validate, identity execute.
         async def do_validate(data: str | dict[str, Any]) -> str | dict[str, Any]:
             assert isinstance(data, str)
             result = await processor.process(
@@ -148,6 +148,9 @@ def _build_output_handlers(
 
         async def do_execute(output: str | dict[str, Any]) -> Any:
             return output
+
+    else:
+        assert_never(processor)  # pyright: ignore[reportArgumentType]
 
     return do_validate, do_execute
 
@@ -218,7 +221,7 @@ async def _run_output_execute_hooks(
         )
 
     return await capability.after_output_execute(
-        run_context, input=validated, output=result, output_context=output_context
+        run_context, validated_output=validated, output=result, output_context=output_context
     )
 
 
@@ -700,9 +703,16 @@ class BaseOutputProcessor(ABC, Generic[OutputDataT]):
         """Process an output message, performing validation and (if necessary) calling the output function."""
         raise NotImplementedError()
 
-    def get_output_context(self, mode: OutputMode) -> OutputContext:
+    def get_output_context(
+        self,
+        mode: OutputMode,
+        tool_call: _messages.ToolCallPart | None = None,
+        tool_def: ToolDefinition | None = None,
+    ) -> OutputContext:
         """Return context information about this processor for output hooks."""
-        return OutputContext(mode=mode, output_type=None, object_def=None, has_function=False)
+        return OutputContext(
+            mode=mode, output_type=None, object_def=None, has_function=False, tool_call=tool_call, tool_def=tool_def
+        )
 
 
 @dataclass(kw_only=True)
@@ -858,12 +868,19 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
         return output
 
-    def get_output_context(self, mode: OutputMode) -> OutputContext:
+    def get_output_context(
+        self,
+        mode: OutputMode,
+        tool_call: _messages.ToolCallPart | None = None,
+        tool_def: ToolDefinition | None = None,
+    ) -> OutputContext:
         return OutputContext(
             mode=mode,
             output_type=self._output_type,
             object_def=self.object_def,
             has_function=self._function_schema is not None,
+            tool_call=tool_call,
+            tool_def=tool_def,
         )
 
 
@@ -1011,8 +1028,15 @@ class TextOutputProcessor(BaseOutputProcessor[OutputDataT]):
     ) -> OutputDataT:
         return cast(OutputDataT, data)
 
-    def get_output_context(self, mode: OutputMode) -> OutputContext:
-        return OutputContext(mode=mode, output_type=str, object_def=None, has_function=False)
+    def get_output_context(
+        self,
+        mode: OutputMode,
+        tool_call: _messages.ToolCallPart | None = None,
+        tool_def: ToolDefinition | None = None,
+    ) -> OutputContext:
+        return OutputContext(
+            mode=mode, output_type=str, object_def=None, has_function=False, tool_call=tool_call, tool_def=tool_def
+        )
 
 
 @dataclass(init=False)
@@ -1059,12 +1083,19 @@ class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
             wrap_validation_errors=wrap_validation_errors,
         )
 
-    def get_output_context(self, mode: OutputMode) -> OutputContext:
+    def get_output_context(
+        self,
+        mode: OutputMode,
+        tool_call: _messages.ToolCallPart | None = None,
+        tool_def: ToolDefinition | None = None,
+    ) -> OutputContext:
         return OutputContext(
             mode=mode,
             output_type=self._output_type,
             object_def=None,
             has_function=True,
+            tool_call=tool_call,
+            tool_def=tool_def,
         )
 
 

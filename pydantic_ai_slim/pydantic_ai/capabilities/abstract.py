@@ -580,7 +580,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        input: RawOutput,
+        validated_output: RawOutput,
         output: Any,
         output_context: OutputContext,
     ) -> Any:

@@ -506,7 +506,11 @@ class ToolManager(Generic[AgentDepsT]):
         validated: ValidatedToolCall[AgentDepsT],
     ) -> Any:
         """Execute an output tool call with output hooks."""
-        from ._output import OutputToolset
+        from ._output import (  # pyright: ignore[reportPrivateUsage]
+            OutputToolset,
+            _run_output_execute_hooks,
+            _run_output_validate_hooks,
+        )
 
         assert validated.tool is not None
         assert validated.validated_args is not None
@@ -521,33 +525,25 @@ class ToolManager(Generic[AgentDepsT]):
             raise RuntimeError(f'Expected OutputToolset for output tool {name!r}')
 
         processor = toolset.processors[name]
-        output_context = processor.get_output_context('tool')
-        output_context.tool_call = validated.call
-        output_context.tool_def = validated.tool.tool_def
+        output_context = processor.get_output_context(
+            'tool', tool_call=validated.call, tool_def=validated.tool.tool_def
+        )
 
         # --- Output validate phase (identity — args already validated by tool_validate hooks) ---
-        raw_output: str | dict[str, Any] = validated.validated_args
-        raw_output = await cap.before_output_validate(ctx, raw_output=raw_output, output_context=output_context)
-
         async def do_validate(data: str | dict[str, Any]) -> str | dict[str, Any]:
             return data  # Identity: validation already done by tool hooks
 
-        try:
-            validated_output = await cap.wrap_output_validate(
-                ctx, raw_output=raw_output, output_context=output_context, handler=do_validate
-            )
-        except (ValidationError, ModelRetry) as e:
-            validated_output = await cap.on_output_validate_error(
-                ctx, raw_output=raw_output, output_context=output_context, error=e
-            )
-
-        validated_output = await cap.after_output_validate(
-            ctx, raw_output=raw_output, output=validated_output, output_context=output_context
+        validated_output = await _run_output_validate_hooks(
+            cap,
+            ctx,
+            output_context,
+            validated.validated_args,
+            do_validate,
+            allow_partial=False,
+            wrap_validation_errors=False,
         )
 
         # --- Output execute phase (wraps processor.call + output validators) ---
-        validated_output = await cap.before_output_execute(ctx, output=validated_output, output_context=output_context)
-
         async def do_execute(output: str | dict[str, Any]) -> Any:
             try:
                 result = await processor.call(output, ctx, wrap_validation_errors=False)  # type: ignore[arg-type]
@@ -559,22 +555,7 @@ class ToolManager(Generic[AgentDepsT]):
                 self.failed_tools.add(name)
                 raise self._wrap_error_as_retry(name, validated.call, e) from e
 
-        try:
-            result = await cap.wrap_output_execute(
-                ctx, output=validated_output, output_context=output_context, handler=do_execute
-            )
-        except ToolRetryError:
-            raise  # Control flow
-        except Exception as e:
-            result = await cap.on_output_execute_error(
-                ctx, output=validated_output, output_context=output_context, error=e
-            )
-
-        result = await cap.after_output_execute(
-            ctx, input=validated_output, output=result, output_context=output_context
-        )
-
-        return result
+        return await _run_output_execute_hooks(cap, ctx, output_context, validated_output, do_execute)
 
     async def _execute_function_tool_call(
         self,

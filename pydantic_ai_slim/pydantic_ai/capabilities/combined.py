@@ -16,7 +16,7 @@ from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, RunContext, ToolDefi
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
-from .abstract import AbstractCapability, WrapOutputExecuteHandler, WrapOutputValidateHandler
+from .abstract import AbstractCapability, RawOutput, WrapOutputExecuteHandler, WrapOutputValidateHandler
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
@@ -401,9 +401,9 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        raw_output: str | dict[str, Any],
+        raw_output: RawOutput,
         output_context: OutputContext,
-    ) -> str | dict[str, Any]:
+    ) -> RawOutput:
         for capability in self.capabilities:
             raw_output = await capability.before_output_validate(
                 ctx, raw_output=raw_output, output_context=output_context
@@ -414,10 +414,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        raw_output: str | dict[str, Any],
-        output: str | dict[str, Any],
+        raw_output: RawOutput,
+        output: RawOutput,
         output_context: OutputContext,
-    ) -> str | dict[str, Any]:
+    ) -> RawOutput:
         for capability in reversed(self.capabilities):
             output = await capability.after_output_validate(
                 ctx, raw_output=raw_output, output=output, output_context=output_context
@@ -428,10 +428,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        raw_output: str | dict[str, Any],
+        raw_output: RawOutput,
         output_context: OutputContext,
         handler: WrapOutputValidateHandler,
-    ) -> str | dict[str, Any]:
+    ) -> RawOutput:
         chain = handler
         for cap in reversed(self.capabilities):
             chain = _make_output_validate_wrap(cap, ctx, output_context, chain)
@@ -441,10 +441,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        raw_output: str | dict[str, Any],
+        raw_output: RawOutput,
         output_context: OutputContext,
         error: ValidationError | ModelRetry,
-    ) -> str | dict[str, Any]:
+    ) -> RawOutput:
         for capability in reversed(self.capabilities):
             try:
                 return await capability.on_output_validate_error(
@@ -462,9 +462,9 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        output: str | dict[str, Any],
+        output: RawOutput,
         output_context: OutputContext,
-    ) -> str | dict[str, Any]:
+    ) -> RawOutput:
         for capability in self.capabilities:
             output = await capability.before_output_execute(ctx, output=output, output_context=output_context)
         return output
@@ -473,13 +473,13 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        input: str | dict[str, Any],
+        validated_output: RawOutput,
         output: Any,
         output_context: OutputContext,
     ) -> Any:
         for capability in reversed(self.capabilities):
             output = await capability.after_output_execute(
-                ctx, input=input, output=output, output_context=output_context
+                ctx, validated_output=validated_output, output=output, output_context=output_context
             )
         return output
 
@@ -487,7 +487,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        output: str | dict[str, Any],
+        output: RawOutput,
         output_context: OutputContext,
         handler: WrapOutputExecuteHandler,
     ) -> Any:
@@ -500,7 +500,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        output: str | dict[str, Any],
+        output: RawOutput,
         output_context: OutputContext,
         error: Exception,
     ) -> Any:
@@ -594,9 +594,9 @@ def _make_output_validate_wrap(
     cap: AbstractCapability[AgentDepsT],
     ctx: RunContext[AgentDepsT],
     output_context: OutputContext,
-    inner: Callable[[str | dict[str, Any]], Awaitable[str | dict[str, Any]]],
-) -> Callable[[str | dict[str, Any]], Awaitable[str | dict[str, Any]]]:
-    async def wrapped(raw_output: str | dict[str, Any]) -> str | dict[str, Any]:
+    inner: Callable[[RawOutput], Awaitable[RawOutput]],
+) -> Callable[[RawOutput], Awaitable[RawOutput]]:
+    async def wrapped(raw_output: RawOutput) -> RawOutput:
         return await cap.wrap_output_validate(ctx, raw_output=raw_output, output_context=output_context, handler=inner)
 
     return wrapped
@@ -606,9 +606,9 @@ def _make_output_execute_wrap(
     cap: AbstractCapability[AgentDepsT],
     ctx: RunContext[AgentDepsT],
     output_context: OutputContext,
-    inner: Callable[[str | dict[str, Any]], Awaitable[Any]],
-) -> Callable[[str | dict[str, Any]], Awaitable[Any]]:
-    async def wrapped(output: str | dict[str, Any]) -> Any:
+    inner: Callable[[RawOutput], Awaitable[Any]],
+) -> Callable[[RawOutput], Awaitable[Any]]:
+    async def wrapped(output: RawOutput) -> Any:
         return await cap.wrap_output_execute(ctx, output=output, output_context=output_context, handler=inner)
 
     return wrapped

@@ -206,7 +206,7 @@ class BeforeOutputExecuteHookFunc(Protocol):
 
 class AfterOutputExecuteHookFunc(Protocol):
     """Protocol for :meth:`~AbstractCapability.after_output_execute` hook functions."""
-    def __call__(self, ctx: RunContext[Any], /, *, input: RawOutput, output: Any, output_context: OutputContext) -> Any | Awaitable[Any]: ...
+    def __call__(self, ctx: RunContext[Any], /, *, validated_output: RawOutput, output: Any, output_context: OutputContext) -> Any | Awaitable[Any]: ...
 
 class WrapOutputExecuteHookFunc(Protocol):
     """Protocol for :meth:`~AbstractCapability.wrap_output_execute` hook functions."""
@@ -1051,8 +1051,8 @@ class Hooks(AbstractCapability[AgentDepsT]):
         raise error
 
     async def before_output_validate(
-        self, ctx: RunContext[AgentDepsT], *, raw_output: str | dict[str, Any], output_context: OutputContext
-    ) -> str | dict[str, Any]:
+        self, ctx: RunContext[AgentDepsT], *, raw_output: RawOutput, output_context: OutputContext
+    ) -> RawOutput:
         for entry in self._get('before_output_validate'):
             raw_output = await _call_entry(
                 entry, 'before_output_validate', ctx, raw_output=raw_output, output_context=output_context
@@ -1063,10 +1063,10 @@ class Hooks(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        raw_output: str | dict[str, Any],
-        output: str | dict[str, Any],
+        raw_output: RawOutput,
+        output: RawOutput,
         output_context: OutputContext,
-    ) -> str | dict[str, Any]:
+    ) -> RawOutput:
         for entry in self._get('after_output_validate'):
             output = await _call_entry(
                 entry, 'after_output_validate', ctx, raw_output=raw_output, output=output, output_context=output_context
@@ -1077,10 +1077,10 @@ class Hooks(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        raw_output: str | dict[str, Any],
+        raw_output: RawOutput,
         output_context: OutputContext,
         handler: WrapOutputValidateHandler,
-    ) -> str | dict[str, Any]:
+    ) -> RawOutput:
         entries = self._get('wrap_output_validate')
         if not entries:
             return await handler(raw_output)
@@ -1095,10 +1095,10 @@ class Hooks(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        raw_output: str | dict[str, Any],
+        raw_output: RawOutput,
         output_context: OutputContext,
         error: ValidationError | ModelRetry,
-    ) -> str | dict[str, Any]:
+    ) -> RawOutput:
         for entry in self._get('on_output_validate_error'):
             try:
                 return await _call_entry(
@@ -1114,8 +1114,8 @@ class Hooks(AbstractCapability[AgentDepsT]):
         raise error
 
     async def before_output_execute(
-        self, ctx: RunContext[AgentDepsT], *, output: str | dict[str, Any], output_context: OutputContext
-    ) -> str | dict[str, Any]:
+        self, ctx: RunContext[AgentDepsT], *, output: RawOutput, output_context: OutputContext
+    ) -> RawOutput:
         for entry in self._get('before_output_execute'):
             output = await _call_entry(
                 entry, 'before_output_execute', ctx, output=output, output_context=output_context
@@ -1123,11 +1123,16 @@ class Hooks(AbstractCapability[AgentDepsT]):
         return output
 
     async def after_output_execute(
-        self, ctx: RunContext[AgentDepsT], *, input: str | dict[str, Any], output: Any, output_context: OutputContext
+        self, ctx: RunContext[AgentDepsT], *, validated_output: RawOutput, output: Any, output_context: OutputContext
     ) -> Any:
         for entry in self._get('after_output_execute'):
             output = await _call_entry(
-                entry, 'after_output_execute', ctx, input=input, output=output, output_context=output_context
+                entry,
+                'after_output_execute',
+                ctx,
+                validated_output=validated_output,
+                output=output,
+                output_context=output_context,
             )
         return output
 
@@ -1135,7 +1140,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        output: str | dict[str, Any],
+        output: RawOutput,
         output_context: OutputContext,
         handler: WrapOutputExecuteHandler,
     ) -> Any:
@@ -1153,7 +1158,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        output: str | dict[str, Any],
+        output: RawOutput,
         output_context: OutputContext,
         error: Exception,
     ) -> Any:
