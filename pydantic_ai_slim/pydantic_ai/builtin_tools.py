@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 from abc import ABC
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Annotated, Any, Literal, Union
 
 import pydantic
@@ -13,6 +14,7 @@ __all__ = (
     'AbstractBuiltinTool',
     'WebSearchTool',
     'WebSearchUserLocation',
+    'XSearchTool',
     'CodeExecutionTool',
     'WebFetchTool',
     'UrlContextTool',
@@ -175,6 +177,81 @@ class WebSearchUserLocation(TypedDict, total=False):
 
     timezone: str
     """The timezone of the user's location."""
+
+
+@dataclass(kw_only=True)
+class XSearchTool(AbstractBuiltinTool):
+    """A builtin tool that allows your agent to search X/Twitter for posts and content.
+
+    This tool is exclusive to xAI models. See <https://docs.x.ai/developers/tools/x-search> for more details.
+
+    Supported by:
+
+    * xAI
+    """
+
+    allowed_x_handles: list[str] | None = None
+    """If provided, only posts from these X handles will be included (max 10).
+
+    Supported by:
+
+    * xAI, see <https://docs.x.ai/developers/tools/x-search>
+    """
+
+    excluded_x_handles: list[str] | None = None
+    """If provided, posts from these X handles will be excluded (max 10).
+
+    Supported by:
+
+    * xAI, see <https://docs.x.ai/developers/tools/x-search>
+    """
+
+    from_date: datetime | None = None
+    """If provided, only posts created on or after this datetime will be included.
+
+    Supported by:
+
+    * xAI, see <https://docs.x.ai/developers/tools/x-search>
+    """
+
+    to_date: datetime | None = None
+    """If provided, only posts created on or before this datetime will be included.
+
+    Supported by:
+
+    * xAI, see <https://docs.x.ai/developers/tools/x-search>
+    """
+
+    enable_image_understanding: bool = False
+    """Enable image analysis from X posts.
+
+    Supported by:
+
+    * xAI, see <https://docs.x.ai/developers/tools/x-search>
+    """
+
+    enable_video_understanding: bool = False
+    """Enable video analysis from X content.
+
+    Supported by:
+
+    * xAI, see <https://docs.x.ai/developers/tools/x-search>
+    """
+
+    kind: str = 'x_search'
+    """The kind of tool."""
+
+    def __post_init__(self) -> None:
+        if self.allowed_x_handles is not None and self.excluded_x_handles is not None:
+            raise ValueError('Cannot specify both allowed_x_handles and excluded_x_handles')
+        if self.allowed_x_handles and len(self.allowed_x_handles) > 10:
+            raise ValueError('allowed_x_handles cannot contain more than 10 handles')
+        if self.excluded_x_handles and len(self.excluded_x_handles) > 10:
+            raise ValueError('excluded_x_handles cannot contain more than 10 handles')
+        if self.from_date is not None and not isinstance(self.from_date, datetime):
+            raise TypeError('`from_date` must be a `datetime` object')
+        if self.to_date is not None and not isinstance(self.to_date, datetime):
+            raise TypeError('`to_date` must be a `datetime` object')
 
 
 @dataclass(kw_only=True)
