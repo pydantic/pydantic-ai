@@ -3298,12 +3298,13 @@ async def test_xai_usage_without_details(allow_model_requests: None):
 
 def test_xai_usage_fallback_when_extract_fails(monkeypatch: pytest.MonkeyPatch):
     """Test that token counts fall back to raw usage data when genai-prices extraction returns zeros."""
+
     # Mock RequestUsage.extract to return zeros, simulating genai-prices extraction failure
-    monkeypatch.setattr(
-        xai_module.RequestUsage,
-        'extract',
-        classmethod(lambda cls, *args, **kwargs: RequestUsage(details=kwargs.get('details') or {})),
-    )
+    def mock_extract(cls: type[RequestUsage], *args: Any, **kwargs: Any) -> RequestUsage:
+        details: dict[str, int] = kwargs.get('details') or {}
+        return RequestUsage(details=details)
+
+    monkeypatch.setattr(xai_module.RequestUsage, 'extract', classmethod(mock_extract))
 
     response = create_response(
         content='answer',
