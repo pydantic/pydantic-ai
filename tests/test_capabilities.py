@@ -122,6 +122,7 @@ def test_agent_from_spec_web_fetch():
 
 
 def test_agent_from_spec_mcp():
+    pytest.importorskip('mcp', reason='mcp package not installed')
     agent = Agent.from_spec(
         {
             'model': 'test',
