@@ -236,6 +236,15 @@ class AnthropicModelSettings(ModelSettings, total=False):
     Set to a dict (e.g. `{'id': 'container_xxx'}`) to explicitly specify a container.
     """
 
+    anthropic_eager_input_streaming: bool
+    """Whether to enable eager input streaming on tool definitions.
+
+    When enabled, all tool definitions will have `eager_input_streaming` set to `True`,
+    allowing Anthropic to stream tool call arguments incrementally instead of buffering
+    the entire JSON before streaming. This reduces latency for tool calls with large inputs.
+    See https://platform.claude.com/docs/en/agents-and-tools/tool-use/fine-grained-tool-streaming for more information.
+    """
+
     anthropic_betas: list[AnthropicBetaParam]
     """List of Anthropic beta features to enable for API requests.
 
@@ -659,7 +668,7 @@ class AnthropicModel(Model):
         self, model_request_parameters: ModelRequestParameters, model_settings: AnthropicModelSettings
     ) -> list[BetaToolUnionParam]:
         tools: list[BetaToolUnionParam] = [
-            self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()
+            self._map_tool_definition(r, model_settings) for r in model_request_parameters.tool_defs.values()
         ]
 
         # Add cache_control to the last tool if enabled
@@ -1247,7 +1256,7 @@ class AnthropicModel(Model):
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
 
-    def _map_tool_definition(self, f: ToolDefinition) -> BetaToolParam:
+    def _map_tool_definition(self, f: ToolDefinition, model_settings: AnthropicModelSettings) -> BetaToolParam:
         """Maps a `ToolDefinition` dataclass to an Anthropic `BetaToolParam` dictionary."""
         tool_param: BetaToolParam = {
             'name': f.name,
@@ -1256,6 +1265,8 @@ class AnthropicModel(Model):
         }
         if f.strict and self.profile.supports_json_schema_output:
             tool_param['strict'] = f.strict
+        if model_settings.get('anthropic_eager_input_streaming'):
+            tool_param['eager_input_streaming'] = True
         return tool_param
 
     def _build_output_config(

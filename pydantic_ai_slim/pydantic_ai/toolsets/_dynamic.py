@@ -84,10 +84,13 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
         if new_toolset is self._toolset:
             return self
 
-        # Manage the transition in-place
-        if self._toolset is not None:
-            await self._toolset.__aexit__(None, None, None)
-        self._toolset = new_toolset
+        # Manage the transition: exit old toolset, enter new one.
+        # Use try/finally so self._toolset is updated even if __aexit__ raises.
+        try:
+            if self._toolset is not None:
+                await self._toolset.__aexit__(None, None, None)
+        finally:
+            self._toolset = new_toolset
         if self._toolset is not None:
             await self._toolset.__aenter__()
         return self
