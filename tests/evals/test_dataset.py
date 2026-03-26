@@ -2081,6 +2081,7 @@ async def test_lifecycle_per_case_state():
 
         async def setup(self) -> None:
             self.setup_called = True
+            assert 'StatefulLifecycle(case=' in repr(self)
 
         async def prepare_context(self, ctx: EvaluatorContext[str, str, None]) -> EvaluatorContext[str, str, None]:
             assert self.setup_called, 'setup should have been called before prepare_context'
