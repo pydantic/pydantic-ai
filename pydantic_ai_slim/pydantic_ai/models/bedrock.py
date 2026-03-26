@@ -722,7 +722,8 @@ class BedrockConverseModel(Model):
         params: ConverseRequestTypeDef,
         stream: bool,
     ) -> ConverseResponseTypeDef | ConverseStreamResponseTypeDef:
-        return await self._call_bedrock_unlocked(params=params, stream=stream)
+        async with self._extra_headers_lock:
+            return await self._call_bedrock_unlocked(params=params, stream=stream)
 
     async def _call_with_extra_headers(
         self,
