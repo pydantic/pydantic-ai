@@ -1697,6 +1697,66 @@ class TestOutputHookEdgeCases:
         assert isinstance(result, MyOutput)
         assert result.value == 7
 
+    def test_no_capability_fast_path_structured_validation_error(self):
+        """When capability is None, process() wraps ValidationError in ToolRetryError."""
+        import asyncio
+
+        from pydantic_ai._output import ObjectOutputProcessor, run_output_with_hooks
+        from pydantic_ai._run_context import RunContext
+        from pydantic_ai.exceptions import ToolRetryError
+
+        processor = ObjectOutputProcessor(output=MyOutput)
+
+        async def run():
+            ctx = RunContext(
+                deps=None,
+                model=None,  # type: ignore
+                usage=None,  # type: ignore
+                prompt='test',
+                run_step=0,
+                retry=0,
+                max_retries=3,
+                trace_include_content=False,
+                tracer=NoOpTracer(),
+                instrumentation_version=0,
+            )
+            return await run_output_with_hooks(
+                processor, 'not valid json', run_context=ctx, capability=None, output_mode='prompted'
+            )
+
+        with pytest.raises(ToolRetryError):
+            asyncio.get_event_loop().run_until_complete(run())
+
+    def test_no_capability_fast_path_union_validation_error(self):
+        """When capability is None, UnionOutputProcessor.process() wraps ValidationError in ToolRetryError."""
+        import asyncio
+
+        from pydantic_ai._output import UnionOutputProcessor, run_output_with_hooks
+        from pydantic_ai._run_context import RunContext
+        from pydantic_ai.exceptions import ToolRetryError
+
+        processor = UnionOutputProcessor(outputs=[MyOutput])
+
+        async def run():
+            ctx = RunContext(
+                deps=None,
+                model=None,  # type: ignore
+                usage=None,  # type: ignore
+                prompt='test',
+                run_step=0,
+                retry=0,
+                max_retries=3,
+                trace_include_content=False,
+                tracer=NoOpTracer(),
+                instrumentation_version=0,
+            )
+            return await run_output_with_hooks(
+                processor, 'not valid json', run_context=ctx, capability=None, output_mode='prompted'
+            )
+
+        with pytest.raises(ToolRetryError):
+            asyncio.get_event_loop().run_until_complete(run())
+
     def test_hooks_on_output_execute_via_hooks_class(self):
         """Test wrap_output_execute via Hooks decorator API."""
 

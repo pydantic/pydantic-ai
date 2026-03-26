@@ -688,7 +688,7 @@ class BaseOutputProcessor(ABC, Generic[OutputDataT]):
         mode: OutputMode,
         tool_call: _messages.ToolCallPart | None = None,
         tool_def: ToolDefinition | None = None,
-    ) -> OutputContext:
+    ) -> OutputContext:  # pragma: no cover — overridden by all subclasses
         """Return context information about this processor for output hooks."""
         return OutputContext(
             mode=mode, output_type=None, object_def=None, has_function=False, tool_call=tool_call, tool_def=tool_def
