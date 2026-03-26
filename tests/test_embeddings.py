@@ -1195,6 +1195,7 @@ class TestBedrock:
                     'logfire.msg': 'embeddings amazon.titan-embed-text-v2:0',
                     'gen_ai.usage.input_tokens': 5,
                     'gen_ai.response.model': 'amazon.titan-embed-text-v2:0',
+                    'operation.cost': 5e-07,
                     'gen_ai.embeddings.dimension.count': 256,
                 },
             }
