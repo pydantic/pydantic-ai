@@ -108,7 +108,7 @@ print(metrics['with_prefix']['prefix_length'])
 #> 7
 ```
 
-The case metadata drives per-case behavior without needing custom `Case` subclasses or serialization.
+The case metadata drives per-case behavior without needing custom [`Case`][pydantic_evals.dataset.Case] subclasses or serialization.
 
 ### Conditional Teardown
 
