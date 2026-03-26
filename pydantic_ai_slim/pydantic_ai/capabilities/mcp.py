@@ -65,6 +65,30 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
         self.description = description
         self.__post_init__()
 
+    @classmethod
+    def from_spec(
+        cls,
+        url: str,
+        *,
+        builtin: bool = True,
+        local: Literal[False] | None = None,
+        id: str | None = None,
+        authorization_token: str | None = None,
+        headers: dict[str, str] | None = None,
+        allowed_tools: list[str] | None = None,
+        description: str | None = None,
+    ) -> MCP[Any]:
+        return cls(
+            url=url,
+            builtin=builtin,
+            local=local,
+            id=id,
+            authorization_token=authorization_token,
+            headers=headers,
+            allowed_tools=allowed_tools,
+            description=description,
+        )
+
     @cached_property
     def _resolved_id(self) -> str:
         if self.id:

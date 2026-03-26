@@ -360,39 +360,491 @@ def test_agent_from_spec_capabilities_merged():
 
 def test_model_json_schema_with_capabilities():
     schema = AgentSpec.model_json_schema_with_capabilities()
+    assert schema == snapshot(
+        {
+            '$defs': {
+                'CodeExecutionTool': {
+                    'properties': {'kind': {'default': 'code_execution', 'title': 'Kind', 'type': 'string'}},
+                    'title': 'CodeExecutionTool',
+                    'type': 'object',
+                },
+                'FileSearchTool': {
+                    'properties': {
+                        'kind': {'default': 'file_search', 'title': 'Kind', 'type': 'string'},
+                        'file_store_ids': {'items': {'type': 'string'}, 'title': 'File Store Ids', 'type': 'array'},
+                    },
+                    'required': ['file_store_ids'],
+                    'title': 'FileSearchTool',
+                    'type': 'object',
+                },
+                'ImageGenerationTool': {
+                    'properties': {
+                        'kind': {'default': 'image_generation', 'title': 'Kind', 'type': 'string'},
+                        'background': {
+                            'default': 'auto',
+                            'enum': ['transparent', 'opaque', 'auto'],
+                            'title': 'Background',
+                            'type': 'string',
+                        },
+                        'input_fidelity': {
+                            'anyOf': [{'enum': ['high', 'low'], 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Input Fidelity',
+                        },
+                        'moderation': {
+                            'default': 'auto',
+                            'enum': ['auto', 'low'],
+                            'title': 'Moderation',
+                            'type': 'string',
+                        },
+                        'output_compression': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Output Compression',
+                        },
+                        'output_format': {
+                            'anyOf': [{'enum': ['png', 'webp', 'jpeg'], 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Output Format',
+                        },
+                        'partial_images': {'default': 0, 'title': 'Partial Images', 'type': 'integer'},
+                        'quality': {
+                            'default': 'auto',
+                            'enum': ['low', 'medium', 'high', 'auto'],
+                            'title': 'Quality',
+                            'type': 'string',
+                        },
+                        'size': {
+                            'anyOf': [
+                                {
+                                    'enum': ['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'],
+                                    'type': 'string',
+                                },
+                                {'type': 'null'},
+                            ],
+                            'default': None,
+                            'title': 'Size',
+                        },
+                        'aspect_ratio': {
+                            'anyOf': [
+                                {
+                                    'enum': ['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '2:3', '5:4', '4:5'],
+                                    'type': 'string',
+                                },
+                                {'type': 'null'},
+                            ],
+                            'default': None,
+                            'title': 'Aspect Ratio',
+                        },
+                    },
+                    'title': 'ImageGenerationTool',
+                    'type': 'object',
+                },
+                'MCPServerTool': {
+                    'properties': {
+                        'kind': {'default': 'mcp_server', 'title': 'Kind', 'type': 'string'},
+                        'id': {'title': 'Id', 'type': 'string'},
+                        'url': {'title': 'Url', 'type': 'string'},
+                        'authorization_token': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Authorization Token',
+                        },
+                        'description': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Description',
+                        },
+                        'allowed_tools': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Allowed Tools',
+                        },
+                        'headers': {
+                            'anyOf': [{'additionalProperties': {'type': 'string'}, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Headers',
+                        },
+                    },
+                    'required': ['id', 'url'],
+                    'title': 'MCPServerTool',
+                    'type': 'object',
+                },
+                'MemoryTool': {
+                    'properties': {'kind': {'default': 'memory', 'title': 'Kind', 'type': 'string'}},
+                    'title': 'MemoryTool',
+                    'type': 'object',
+                },
+                'UrlContextTool': {
+                    'deprecated': True,
+                    'properties': {
+                        'kind': {'default': 'url_context', 'title': 'Kind', 'type': 'string'},
+                        'max_uses': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Max Uses',
+                        },
+                        'allowed_domains': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Allowed Domains',
+                        },
+                        'blocked_domains': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Blocked Domains',
+                        },
+                        'enable_citations': {'default': False, 'title': 'Enable Citations', 'type': 'boolean'},
+                        'max_content_tokens': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Max Content Tokens',
+                        },
+                    },
+                    'title': 'UrlContextTool',
+                    'type': 'object',
+                },
+                'WebFetchTool': {
+                    'properties': {
+                        'kind': {'default': 'web_fetch', 'title': 'Kind', 'type': 'string'},
+                        'max_uses': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Max Uses',
+                        },
+                        'allowed_domains': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Allowed Domains',
+                        },
+                        'blocked_domains': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Blocked Domains',
+                        },
+                        'enable_citations': {'default': False, 'title': 'Enable Citations', 'type': 'boolean'},
+                        'max_content_tokens': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Max Content Tokens',
+                        },
+                    },
+                    'title': 'WebFetchTool',
+                    'type': 'object',
+                },
+                'WebSearchTool': {
+                    'properties': {
+                        'kind': {'default': 'web_search', 'title': 'Kind', 'type': 'string'},
+                        'search_context_size': {
+                            'default': 'medium',
+                            'enum': ['low', 'medium', 'high'],
+                            'title': 'Search Context Size',
+                            'type': 'string',
+                        },
+                        'user_location': {
+                            'anyOf': [{'$ref': '#/$defs/WebSearchUserLocation'}, {'type': 'null'}],
+                            'default': None,
+                        },
+                        'blocked_domains': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Blocked Domains',
+                        },
+                        'allowed_domains': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Allowed Domains',
+                        },
+                        'max_uses': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Max Uses',
+                        },
+                    },
+                    'title': 'WebSearchTool',
+                    'type': 'object',
+                },
+                'WebSearchUserLocation': {
+                    'additionalProperties': False,
+                    'description': """\
+Allows you to localize search results based on a user's location.
 
-    assert schema['type'] == 'object'
-    assert 'model' in schema['properties']
-    assert 'capabilities' in schema['properties']
-    assert '$schema' in schema['properties']
+Supported by:
 
-    # Capabilities should be a list with anyOf containing default types
-    cap_schema = schema['properties']['capabilities']
-    assert cap_schema['type'] == 'array'
-    any_of = cap_schema['items']['anyOf']
-
-    # Collect all capability names referenced in the schema (both const literals and object keys)
-    capability_names: set[str] = set()
-    for entry in any_of:
-        if 'const' in entry:
-            capability_names.add(entry['const'])
-        elif '$ref' in entry:  # pragma: no branch
-            # Extract the name from refs like '#/$defs/spec_Instructions'
-            ref = entry['$ref']
-            ref_name = ref.rsplit('/', 1)[-1]
-            for prefix in ('spec_', 'short_spec_'):
-                if ref_name.startswith(prefix):
-                    capability_names.add(ref_name[len(prefix) :])
-
-    assert capability_names == {
-        'BuiltinTool',
-        'ImageGeneration',
-        'MCP',
-        'PrefixTools',
-        'Thinking',
-        'WebFetch',
-        'WebSearch',
-    }
+* Anthropic
+* OpenAI Responses\
+""",
+                    'properties': {
+                        'city': {'title': 'City', 'type': 'string'},
+                        'country': {'title': 'Country', 'type': 'string'},
+                        'region': {'title': 'Region', 'type': 'string'},
+                        'timezone': {'title': 'Timezone', 'type': 'string'},
+                    },
+                    'title': 'WebSearchUserLocation',
+                    'type': 'object',
+                },
+                'short_spec_BuiltinTool': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'BuiltinTool': {
+                            'anyOf': [
+                                {
+                                    'oneOf': [
+                                        {'$ref': '#/$defs/WebSearchTool'},
+                                        {'$ref': '#/$defs/CodeExecutionTool'},
+                                        {'$ref': '#/$defs/WebFetchTool'},
+                                        {'$ref': '#/$defs/UrlContextTool'},
+                                        {'$ref': '#/$defs/ImageGenerationTool'},
+                                        {'$ref': '#/$defs/MemoryTool'},
+                                        {'$ref': '#/$defs/MCPServerTool'},
+                                        {'$ref': '#/$defs/FileSearchTool'},
+                                    ]
+                                },
+                                {'type': 'null'},
+                            ],
+                            'title': 'Builtintool',
+                        }
+                    },
+                    'title': 'short_spec_BuiltinTool',
+                    'type': 'object',
+                },
+                'short_spec_MCP': {
+                    'additionalProperties': False,
+                    'properties': {'MCP': {'title': 'Mcp', 'type': 'string'}},
+                    'required': ['MCP'],
+                    'title': 'short_spec_MCP',
+                    'type': 'object',
+                },
+                'short_spec_Thinking': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'Thinking': {
+                            'anyOf': [
+                                {'type': 'boolean'},
+                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh'], 'type': 'string'},
+                            ],
+                            'title': 'Thinking',
+                        }
+                    },
+                    'title': 'short_spec_Thinking',
+                    'type': 'object',
+                },
+                'spec_ImageGeneration': {
+                    'additionalProperties': False,
+                    'properties': {'ImageGeneration': {'$ref': '#/$defs/spec_params_ImageGeneration'}},
+                    'required': ['ImageGeneration'],
+                    'title': 'spec_ImageGeneration',
+                    'type': 'object',
+                },
+                'spec_MCP': {
+                    'additionalProperties': False,
+                    'properties': {'MCP': {'$ref': '#/$defs/spec_params_MCP'}},
+                    'required': ['MCP'],
+                    'title': 'spec_MCP',
+                    'type': 'object',
+                },
+                'spec_PrefixTools': {
+                    'additionalProperties': False,
+                    'properties': {'PrefixTools': {'$ref': '#/$defs/spec_params_PrefixTools'}},
+                    'required': ['PrefixTools'],
+                    'title': 'spec_PrefixTools',
+                    'type': 'object',
+                },
+                'spec_WebFetch': {
+                    'additionalProperties': False,
+                    'properties': {'WebFetch': {'$ref': '#/$defs/spec_params_WebFetch'}},
+                    'required': ['WebFetch'],
+                    'title': 'spec_WebFetch',
+                    'type': 'object',
+                },
+                'spec_WebSearch': {
+                    'additionalProperties': False,
+                    'properties': {'WebSearch': {'$ref': '#/$defs/spec_params_WebSearch'}},
+                    'required': ['WebSearch'],
+                    'title': 'spec_WebSearch',
+                    'type': 'object',
+                },
+                'spec_params_ImageGeneration': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'builtin': {'title': 'Builtin', 'type': 'boolean'},
+                        'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                    },
+                    'title': 'spec_params_ImageGeneration',
+                    'type': 'object',
+                },
+                'spec_params_MCP': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'url': {'title': 'Url', 'type': 'string'},
+                        'builtin': {'title': 'Builtin', 'type': 'boolean'},
+                        'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'authorization_token': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'title': 'Authorization Token',
+                        },
+                        'headers': {
+                            'anyOf': [{'additionalProperties': {'type': 'string'}, 'type': 'object'}, {'type': 'null'}],
+                            'title': 'Headers',
+                        },
+                        'allowed_tools': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'title': 'Allowed Tools',
+                        },
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                    },
+                    'required': ['url'],
+                    'title': 'spec_params_MCP',
+                    'type': 'object',
+                },
+                'spec_params_PrefixTools': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'prefix': {'title': 'Prefix', 'type': 'string'},
+                        'capability': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'string'}],
+                            'title': 'Capability',
+                        },
+                    },
+                    'required': ['prefix', 'capability'],
+                    'title': 'spec_params_PrefixTools',
+                    'type': 'object',
+                },
+                'spec_params_WebFetch': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'builtin': {'title': 'Builtin', 'type': 'boolean'},
+                        'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'allowed_domains': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'title': 'Allowed Domains',
+                        },
+                        'blocked_domains': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'title': 'Blocked Domains',
+                        },
+                        'max_uses': {'anyOf': [{'type': 'integer'}, {'type': 'null'}], 'title': 'Max Uses'},
+                        'enable_citations': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'Enable Citations',
+                        },
+                        'max_content_tokens': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'title': 'Max Content Tokens',
+                        },
+                    },
+                    'title': 'spec_params_WebFetch',
+                    'type': 'object',
+                },
+                'spec_params_WebSearch': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'builtin': {'title': 'Builtin', 'type': 'boolean'},
+                        'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'search_context_size': {
+                            'anyOf': [{'enum': ['low', 'medium', 'high'], 'type': 'string'}, {'type': 'null'}],
+                            'title': 'Search Context Size',
+                        },
+                        'user_location': {'anyOf': [{'$ref': '#/$defs/WebSearchUserLocation'}, {'type': 'null'}]},
+                        'blocked_domains': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'title': 'Blocked Domains',
+                        },
+                        'allowed_domains': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'title': 'Allowed Domains',
+                        },
+                        'max_uses': {'anyOf': [{'type': 'integer'}, {'type': 'null'}], 'title': 'Max Uses'},
+                    },
+                    'title': 'spec_params_WebSearch',
+                    'type': 'object',
+                },
+            },
+            'additionalProperties': False,
+            'properties': {
+                'model': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Model'},
+                'name': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Name'},
+                'description': {
+                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Description',
+                },
+                'instructions': {
+                    'anyOf': [{'type': 'string'}, {'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Instructions',
+                },
+                'deps_schema': {
+                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Deps Schema',
+                },
+                'output_schema': {
+                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Output Schema',
+                },
+                'model_settings': {
+                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Model Settings',
+                },
+                'retries': {'default': 1, 'title': 'Retries', 'type': 'integer'},
+                'output_retries': {
+                    'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Output Retries',
+                },
+                'end_strategy': {
+                    'default': 'early',
+                    'enum': ['early', 'exhaustive'],
+                    'title': 'End Strategy',
+                    'type': 'string',
+                },
+                'tool_timeout': {
+                    'anyOf': [{'type': 'number'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Tool Timeout',
+                },
+                'instrument': {
+                    'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Instrument',
+                },
+                'metadata': {
+                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Metadata',
+                },
+                'capabilities': {
+                    'default': [],
+                    'items': {
+                        'anyOf': [
+                            {'const': 'BuiltinTool', 'type': 'string'},
+                            {'$ref': '#/$defs/short_spec_BuiltinTool'},
+                            {'const': 'ImageGeneration', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_ImageGeneration'},
+                            {'$ref': '#/$defs/short_spec_MCP'},
+                            {'$ref': '#/$defs/spec_MCP'},
+                            {'$ref': '#/$defs/spec_PrefixTools'},
+                            {'const': 'Thinking', 'type': 'string'},
+                            {'$ref': '#/$defs/short_spec_Thinking'},
+                            {'const': 'WebFetch', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_WebFetch'},
+                            {'const': 'WebSearch', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_WebSearch'},
+                        ]
+                    },
+                    'title': 'Capabilities',
+                    'type': 'array',
+                },
+                '$schema': {'type': 'string'},
+            },
+            'title': '_AgentSpecSchema',
+            'type': 'object',
+        }
+    )
 
 
 def test_model_json_schema_with_custom_capabilities():

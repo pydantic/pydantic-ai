@@ -247,7 +247,10 @@ def build_schema_types(
         required_type_hints: dict[str, Any] = {}
 
         for p in inspect.signature(target).parameters.values():
-            # Skip *args and **kwargs — they can't be represented as typed dict fields
+            # Skip self/cls (unbound instance/class methods) and *args/**kwargs
+            if p.name in ('self', 'cls') and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD):
+                type_hints.pop(p.name, None)
+                continue
             if p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD):
                 type_hints.pop(p.name, None)
                 continue
