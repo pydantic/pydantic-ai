@@ -47,7 +47,7 @@ The unified `thinking` setting maps to each provider's native format:
 | Groq | `reasoning_format='parsed'` | `reasoning_format='parsed'` | `thinking=False` → `'hidden'` (no true disable) |
 | OpenRouter | `reasoning.effort='medium'` | `reasoning.effort='high'` | Via `extra_body` |
 | Cerebras | `disable_reasoning=False` | `disable_reasoning=False` | `thinking=False` → `disable_reasoning=True` |
-| xAI | `reasoning_effort='low'` | `reasoning_effort='high'` | Only `'low'` and `'high'`; rounds down |
+| xAI | `reasoning_effort='high'` | `reasoning_effort='high'` | Only `'low'` and `'high'` |
 | Bedrock (Claude) | `thinking.type='enabled'` | `budget_tokens=16384` | No adaptive support |
 | Bedrock (OpenAI) | `reasoning_effort='medium'` | `reasoning_effort='high'` | |
 

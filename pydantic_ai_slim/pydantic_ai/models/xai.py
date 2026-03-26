@@ -56,14 +56,14 @@ from ..settings import ModelSettings, ThinkingLevel
 from ..usage import RequestUsage
 
 XAI_EFFORT_MAP: dict[ThinkingLevel, str] = {
-    True: 'low',
+    True: 'high',
     'minimal': 'low',
     'low': 'low',
-    'medium': 'low',
+    'medium': 'high',
     'high': 'high',
     'xhigh': 'high',
 }
-"""Maps unified thinking values to xAI reasoning_effort. xAI only supports 'low' and 'high'; rounds down."""
+"""Maps unified thinking values to xAI reasoning_effort. xAI only supports 'low' and 'high'."""
 
 try:
     import xai_sdk.chat as chat_types

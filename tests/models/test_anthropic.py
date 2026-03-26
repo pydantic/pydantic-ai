@@ -614,6 +614,50 @@ async def test_anthropic_cache_tools(allow_model_requests: None):
     )
 
 
+async def test_anthropic_eager_input_streaming(allow_model_requests: None):
+    """Test that anthropic_eager_input_streaming sets eager_input_streaming on all tools."""
+    c = completion_message(
+        [BetaTextBlock(text='Tool result', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        system_prompt='Test system prompt',
+        model_settings=AnthropicModelSettings(anthropic_eager_input_streaming=True),
+    )
+
+    @agent.tool_plain
+    def tool_one() -> str:  # pragma: no cover
+        return 'one'
+
+    @agent.tool_plain
+    def tool_two() -> str:  # pragma: no cover
+        return 'two'
+
+    await agent.run('test prompt')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    tools = completion_kwargs['tools']
+    assert tools == snapshot(
+        [
+            {
+                'name': 'tool_one',
+                'description': '',
+                'input_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'eager_input_streaming': True,
+            },
+            {
+                'name': 'tool_two',
+                'description': '',
+                'input_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'eager_input_streaming': True,
+            },
+        ]
+    )
+
+
 async def test_anthropic_cache_instructions(allow_model_requests: None):
     """Test that anthropic_cache_instructions adds cache_control to system prompt."""
     c = completion_message(

@@ -41,6 +41,7 @@ from pydantic_ai import (
     TextPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolReturn,
     ToolReturnPart,
     UserPromptPart,
     WebSearchTool,
@@ -2025,7 +2026,7 @@ async def test_logfire_plugin(client: Client):
     config['plugins'] = [plugin]
     new_client = Client(**config)
 
-    interceptor = new_client.config()['interceptors'][0]
+    interceptor = new_client.config(active_config=True)['interceptors'][0]
     assert isinstance(interceptor, TracingInterceptor)
     if isinstance(interceptor.tracer, ProxyTracer):
         assert interceptor.tracer._instrumenting_module_name == 'temporalio'  # pyright: ignore[reportPrivateUsage] # pragma: lax no cover
@@ -2131,11 +2132,11 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
         )
         while True:
             await asyncio.sleep(1)
-            status = await workflow.query(HitlAgentWorkflow.get_status)  # pyright: ignore[reportUnknownMemberType]
+            status = await workflow.query(HitlAgentWorkflow.get_status)
             if status == 'done':
                 break
             elif status == 'waiting_for_results':  # pragma: no branch
-                deferred_tool_requests = await workflow.query(HitlAgentWorkflow.get_deferred_tool_requests)  # pyright: ignore[reportUnknownMemberType]
+                deferred_tool_requests = await workflow.query(HitlAgentWorkflow.get_deferred_tool_requests)
                 assert deferred_tool_requests is not None
 
                 results = DeferredToolResults()
@@ -2675,6 +2676,97 @@ fastmcp_agent = Agent(
     name='fastmcp_agent',
     toolsets=[FastMCPToolset('https://mcp.deepwiki.com/mcp', id='deepwiki')],
 )
+
+
+def _tool_return_metadata_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('analyze_data', {})])
+    else:
+        return ModelResponse(parts=[TextPart('done')])
+
+
+_tool_return_metadata_agent = Agent(
+    FunctionModel(_tool_return_metadata_model),
+    name='tool_return_metadata_agent',
+)
+
+
+@_tool_return_metadata_agent.tool_plain
+def analyze_data() -> ToolReturn:
+    return ToolReturn(
+        return_value='analysis result',
+        content='extra content for model',
+        metadata={'key': 'value', 'count': 42},
+    )
+
+
+_tool_return_metadata_temporal_agent = TemporalAgent(_tool_return_metadata_agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+@workflow.defn
+class ToolReturnMetadataWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> list[ModelMessage]:
+        result = await _tool_return_metadata_temporal_agent.run(prompt)
+        return result.all_messages()
+
+
+async def test_tool_return_metadata_survives_temporal(allow_model_requests: None, client: Client):
+    """ToolReturn metadata and content survive Temporal serialization.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4676
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ToolReturnMetadataWorkflow],
+        plugins=[AgentPlugin(_tool_return_metadata_temporal_agent)],
+    ):
+        messages = await client.execute_workflow(
+            ToolReturnMetadataWorkflow.run,
+            args=['analyze'],
+            id=ToolReturnMetadataWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='analyze', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='analyze_data', args={}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='function:_tool_return_metadata_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='analyze_data',
+                        content='analysis result',
+                        tool_call_id=IsStr(),
+                        metadata={'key': 'value', 'count': 42},
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(content='extra content for model', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=57, output_tokens=3),
+                model_name='function:_tool_return_metadata_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
 fastmcp_temporal_agent = TemporalAgent(

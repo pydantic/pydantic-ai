@@ -1,8 +1,9 @@
 from __future__ import annotations as _annotations
 
+import inspect
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, cast
+from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, Union, cast
 
 from pydantic import Discriminator, Tag
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
@@ -84,8 +85,12 @@ with [`RunContext`][pydantic_ai.tools.RunContext] as the first argument for depe
 
 Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure.
 """
-ToolPrepareFunc: TypeAlias = Callable[[RunContext[AgentDepsT], 'ToolDefinition'], Awaitable['ToolDefinition | None']]
+ToolPrepareFunc: TypeAlias = Callable[
+    [RunContext[AgentDepsT], 'ToolDefinition'],
+    Union[Awaitable['ToolDefinition | None'], 'ToolDefinition', None],
+]
 """Definition of a function that can prepare a tool definition at call time.
+Both sync and async functions are accepted.
 
 See [tool docs](../tools-advanced.md#tool-prepare) for more information.
 
@@ -95,7 +100,7 @@ Example — here `only_if_42` is valid as a `ToolPrepareFunc`:
 from pydantic_ai import RunContext, Tool
 from pydantic_ai.tools import ToolDefinition
 
-async def only_if_42(
+def only_if_42(
     ctx: RunContext[int], tool_def: ToolDefinition
 ) -> ToolDefinition | None:
     if ctx.deps == 42:
@@ -111,11 +116,12 @@ Usage `ToolPrepareFunc[AgentDepsT]`.
 """
 
 ToolsPrepareFunc: TypeAlias = Callable[
-    [RunContext[AgentDepsT], list['ToolDefinition']], Awaitable['list[ToolDefinition] | None']
+    [RunContext[AgentDepsT], list['ToolDefinition']],
+    Awaitable['list[ToolDefinition] | None'] | list['ToolDefinition'] | None,
 ]
 """Definition of a function that can prepare the tool definition of all tools for each step.
 This is useful if you want to customize the definition of multiple tools or you want to register
-a subset of tools for a given step.
+a subset of tools for a given step. Both sync and async functions are accepted.
 
 Example — here `turn_on_strict_if_openai` is valid as a `ToolsPrepareFunc`:
 
@@ -126,7 +132,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.tools import ToolDefinition
 
 
-async def turn_on_strict_if_openai(
+def turn_on_strict_if_openai(
     ctx: RunContext[None], tool_defs: list[ToolDefinition]
 ) -> list[ToolDefinition] | None:
     if ctx.model.system == 'openai':
@@ -477,7 +483,10 @@ class Tool(Generic[ToolAgentDepsT]):
         base_tool_def = self.tool_def
 
         if self.prepare is not None:
-            return await self.prepare(ctx, base_tool_def)
+            result = self.prepare(ctx, base_tool_def)
+            if inspect.isawaitable(result):
+                return await result
+            return result
         else:
             return base_tool_def
 

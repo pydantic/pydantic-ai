@@ -38,7 +38,7 @@ class WebSearch(BuiltinOrLocalTool[AgentDepsT]):
         self,
         *,
         builtin: WebSearchTool | AgentBuiltinTool[AgentDepsT] | bool = True,
-        local: Tool[Any] | Callable[..., Any] | Literal[False] | None = None,
+        local: Tool[AgentDepsT] | Callable[..., Any] | Literal[False] | None = None,
         search_context_size: Literal['low', 'medium', 'high'] | None = None,
         user_location: WebSearchUserLocation | None = None,
         blocked_domains: list[str] | None = None,
@@ -71,7 +71,7 @@ class WebSearch(BuiltinOrLocalTool[AgentDepsT]):
     def _builtin_unique_id(self) -> str:
         return WebSearchTool.kind
 
-    def _default_local(self) -> Tool[Any] | AbstractToolset[Any] | None:
+    def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
         try:
             from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool
 
