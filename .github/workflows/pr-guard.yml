@@ -11,6 +11,7 @@ permissions:
 
 concurrency:
   group: pr-guard-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   guard:
