@@ -532,9 +532,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         stream_done = asyncio.Event()
         agent_stream_holder: list[result.AgentStream[DepsT, T]] = []
 
+        _handler_response: _messages.ModelResponse | None = None
+
         async def _streaming_handler(
             req_ctx: ModelRequestContext,
         ) -> _messages.ModelResponse:
+            nonlocal _handler_response
             with set_current_run_context(run_context):
                 async with req_ctx.model.request_stream(
                     req_ctx.messages, req_ctx.model_settings, req_ctx.model_request_parameters, run_context
@@ -545,7 +548,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     agent_stream_holder.append(agent_stream)
                     stream_ready.set()
                     await stream_done.wait()
-            return sr.get()
+            response = sr.get()
+            _handler_response = response
+            return response
 
         wrap_request_context = ModelRequestContext(
             model=model,
@@ -628,6 +633,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         )
                 except exceptions.ModelRetry as e:
                     ctx.state.usage.requests += 1
+                    if _handler_response is not None:
+                        self._append_response(ctx, _handler_response)
                     await self._build_retry_node(ctx, run_context, e)
                 else:
                     self.last_request_context = wrap_request_context
@@ -670,11 +677,16 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.state.usage.requests += 1
             return await self._finish_handling(ctx, e.response)
 
+        _handler_response: _messages.ModelResponse | None = None
+
         async def model_handler(req_ctx: ModelRequestContext) -> _messages.ModelResponse:
+            nonlocal _handler_response
             with set_current_run_context(run_context):
-                return await req_ctx.model.request(
+                response = await req_ctx.model.request(
                     req_ctx.messages, req_ctx.model_settings, req_ctx.model_request_parameters
                 )
+                _handler_response = response
+                return response
 
         request_context = ModelRequestContext(
             model=model,
@@ -699,8 +711,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 )
         except exceptions.ModelRetry as e:
             # ModelRetry from wrap_model_request or on_model_request_error — retry the model request.
-            # No model response to append (handler may not have been called).
+            # If the handler was called, preserve the response in history for context.
             ctx.state.usage.requests += 1
+            if _handler_response is not None:
+                self._append_response(ctx, _handler_response)
             return await self._build_retry_node(ctx, run_context, e)
         self.last_request_context = request_context
         ctx.state.usage.requests += 1
@@ -806,19 +820,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             )
         except exceptions.ModelRetry as e:
             # Hook rejected the response — append it to history (model DID respond) and retry
-            ctx.state.usage.incr(response.usage)
-            if ctx.deps.usage_limits:  # pragma: no branch
-                ctx.deps.usage_limits.check_tokens(ctx.state.usage)
-            ctx.state.message_history.append(response)
+            self._append_response(ctx, response)
             return await self._build_retry_node(ctx, run_context, e)
 
-        # Update usage
-        ctx.state.usage.incr(response.usage)
-        if ctx.deps.usage_limits:  # pragma: no branch
-            ctx.deps.usage_limits.check_tokens(ctx.state.usage)
-
         # Append the model response to state.message_history
-        ctx.state.message_history.append(response)
+        self._append_response(ctx, response)
 
         # Set the `_result` attribute since we can't use `return` in an async iterator
         self._result = CallToolsNode(response)
@@ -847,6 +853,18 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 run_context, request_context=request_context, error=exc
             )
         return result_or_exc
+
+    @staticmethod
+    def _append_response(
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
+        response: _messages.ModelResponse,
+    ) -> None:
+        """Append a model response to history, updating usage tracking."""
+        response.run_id = response.run_id or ctx.state.run_id
+        ctx.state.usage.incr(response.usage)
+        if ctx.deps.usage_limits:  # pragma: no branch
+            ctx.deps.usage_limits.check_tokens(ctx.state.usage)
+        ctx.state.message_history.append(response)
 
     async def _build_retry_node(
         self,

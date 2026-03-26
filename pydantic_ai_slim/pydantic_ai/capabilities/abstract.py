@@ -355,9 +355,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Wraps the model request. handler() calls the model.
 
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to skip `on_model_request_error`
-        and directly retry the model request with a retry prompt. Note that the model response
-        (if the handler was called) is not appended to history, unlike `after_model_request`
-        where the response is preserved.
+        and directly retry the model request with a retry prompt. If the handler was called,
+        the model response is preserved in history for context (same as `after_model_request`).
         """
         return await handler(request_context)
 
