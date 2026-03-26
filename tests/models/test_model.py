@@ -387,6 +387,11 @@ def test_custom_provider_instance_method_model_profile():
 
 
 def test_count_leading_system_messages_stops_before_mid_history_system_message():
+    class ModelForTest(Model):
+        @staticmethod
+        def count_leading_system_messages(messages, is_system_message):
+            return ModelForTest._count_leading_system_messages(messages, is_system_message)
+
     messages = [
         {'role': 'system'},
         {'role': 'system'},
@@ -394,18 +399,23 @@ def test_count_leading_system_messages_stops_before_mid_history_system_message()
         {'role': 'system'},
     ]
 
-    count = Model._count_leading_system_messages(messages, lambda message: message.get('role') == 'system')
+    count = ModelForTest.count_leading_system_messages(messages, lambda message: message.get('role') == 'system')
 
     assert count == 2
 
 
 def test_count_leading_system_messages_supports_object_messages():
+    class ModelForTest(Model):
+        @staticmethod
+        def count_leading_system_messages(messages, is_system_message):
+            return ModelForTest._count_leading_system_messages(messages, is_system_message)
+
     messages = [
         SimpleNamespace(role='system'),
         SimpleNamespace(role='user'),
         SimpleNamespace(role='system'),
     ]
 
-    count = Model._count_leading_system_messages(messages, lambda message: message.role == 'system')
+    count = ModelForTest.count_leading_system_messages(messages, lambda message: message.role == 'system')
 
     assert count == 1
