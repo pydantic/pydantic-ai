@@ -1,14 +1,8 @@
 # Case Lifecycle Hooks
 
-Control per-case setup, context enrichment, and teardown during evaluation using [`CaseLifecycle`][pydantic_evals.lifecycle.CaseLifecycle].
+Control per-case setup, context preparation, and teardown during evaluation using [`CaseLifecycle`][pydantic_evals.lifecycle.CaseLifecycle].
 
 ## Overview
-
-When running evaluations, you may need to:
-
-- **Set up resources** before each case (databases, services, fixtures)
-- **Enrich the evaluator context** with metrics derived from span trees or external state
-- **Clean up resources** after evaluators complete, with behavior that varies based on success or failure
 
 [`CaseLifecycle`][pydantic_evals.lifecycle.CaseLifecycle] provides hooks at each stage of case evaluation. You pass a lifecycle **class** (not an instance) to [`Dataset.evaluate`][pydantic_evals.dataset.Dataset.evaluate], and a new instance is created for each case, so instance attributes naturally hold case-specific state.
 
@@ -22,50 +16,9 @@ Each case follows this flow:
 4. **Evaluators run**
 5. **`teardown()`** — called after evaluators complete
 
-## Enriching Metrics
-
-The most common use case is enriching the evaluator context with additional metrics before evaluators see it. Without lifecycle hooks, metrics set via [`increment_eval_metric`][pydantic_evals.increment_eval_metric] inside the task are finalized before evaluators run and cannot be updated afterward. The `prepare_context` hook runs in between, giving you the ability to modify metrics before evaluators see them:
-
-```python
-from dataclasses import dataclass
-
-from pydantic_evals import Case, Dataset
-from pydantic_evals.evaluators import Evaluator, EvaluatorContext
-from pydantic_evals.lifecycle import CaseLifecycle
-
-
-class EnrichMetrics(CaseLifecycle):
-    async def prepare_context(self, ctx: EvaluatorContext) -> EvaluatorContext:
-        ctx.metrics['output_length'] = len(str(ctx.output))
-        return ctx
-
-
-@dataclass
-class CheckLength(Evaluator):
-    max_length: int = 50
-
-    def evaluate(self, ctx: EvaluatorContext) -> bool:
-        return ctx.metrics.get('output_length', 0) <= self.max_length
-
-
-dataset = Dataset(
-    cases=[Case(name='short', inputs='hi'), Case(name='long', inputs='hello world')],
-    evaluators=[CheckLength()],
-)
-
-report = dataset.evaluate_sync(lambda inputs: inputs.upper(), lifecycle=EnrichMetrics)
-
-for case in report.cases:
-    print(f'{case.name}: output_length={case.metrics["output_length"]}')
-    #> short: output_length=2
-    #> long: output_length=11
-```
-
-In a real agent evaluation, `prepare_context` is especially useful for extracting metrics from the span tree — for example, counting tool calls or measuring API latency across instrumented spans.
-
 ## Per-Case Setup and Teardown
 
-Use `setup()` and `teardown()` when each case needs its own environment. Since a new lifecycle instance is created for each case, instance attributes are naturally case-scoped:
+Use `setup()` and `teardown()` when each case needs its own environment — for example, creating a database, starting a service, or preparing fixtures driven by case metadata. Since a new lifecycle instance is created for each case, instance attributes are naturally case-scoped:
 
 ```python
 from pydantic_evals import Case, Dataset
@@ -155,6 +108,45 @@ report = dataset.evaluate_sync(task, max_concurrency=1, lifecycle=ConditionalCle
 
 print(cleaned_up)
 #> ['success_case']
+```
+
+## Preparing Evaluator Context
+
+The `prepare_context()` hook runs after the task completes but before evaluators see the context. This can be used to add metrics or attributes based on the task output, span tree, or any other state — for example, deriving metrics from instrumented spans (like tool call counts or API latency), or computing values from external resources set up during `setup()`:
+
+```python
+from dataclasses import dataclass
+
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+from pydantic_evals.lifecycle import CaseLifecycle
+
+
+class EnrichMetrics(CaseLifecycle):
+    async def prepare_context(self, ctx: EvaluatorContext) -> EvaluatorContext:
+        ctx.metrics['output_length'] = len(str(ctx.output))
+        return ctx
+
+
+@dataclass
+class CheckLength(Evaluator):
+    max_length: int = 50
+
+    def evaluate(self, ctx: EvaluatorContext) -> bool:
+        return ctx.metrics.get('output_length', 0) <= self.max_length
+
+
+dataset = Dataset(
+    cases=[Case(name='short', inputs='hi'), Case(name='long', inputs='hello world')],
+    evaluators=[CheckLength()],
+)
+
+report = dataset.evaluate_sync(lambda inputs: inputs.upper(), lifecycle=EnrichMetrics)
+
+for case in report.cases:
+    print(f'{case.name}: output_length={case.metrics["output_length"]}')
+    #> short: output_length=2
+    #> long: output_length=11
 ```
 
 ## Type Parameters

@@ -762,7 +762,7 @@ set_eval_attribute('response_keys', list(giant_response_object.keys())[:10])  # 
 
 ## Next Steps
 
-- **[Case Lifecycle Hooks](lifecycle.md)** - Enrich metrics from span trees or set up per-case resources
+- **[Case Lifecycle Hooks](lifecycle.md)** - Per-case setup, teardown, and context preparation
 - **[Custom Evaluators](../evaluators/custom.md)** - Use metrics/attributes in evaluators
 - **[Logfire Integration](logfire-integration.md)** - View metrics in Logfire
 - **[Concurrency & Performance](concurrency.md)** - Optimize evaluation performance
