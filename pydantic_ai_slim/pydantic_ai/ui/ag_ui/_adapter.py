@@ -63,7 +63,13 @@ try:
     )
 
     from .. import MessagesBuilder, UIAdapter, UIEventStream
-    from ._event_stream import BUILTIN_TOOL_CALL_ID_PREFIX, AGUIEventStream, AGUIVersion, thinking_encrypted_metadata
+    from ._event_stream import (
+        BUILTIN_TOOL_CALL_ID_PREFIX,
+        REASONING_VERSION,
+        AGUIEventStream,
+        parse_ag_ui_version,
+        thinking_encrypted_metadata,
+    )
 except ImportError as e:  # pragma: no cover
     raise ImportError(
         'Please install the `ag-ui-protocol` package to use AG-UI integration, '
@@ -137,7 +143,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     """UI adapter for the Agent-User Interaction (AG-UI) protocol."""
 
     _: KW_ONLY
-    ag_ui_version: AGUIVersion = '0.1.10'
+    ag_ui_version: str = '0.1.10'
     """AG-UI protocol version controlling thinking/reasoning event format.
 
     - `'0.1.10'` (default): emits `THINKING_*` events during streaming, drops `ThinkingPart`
@@ -177,7 +183,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         request: Request,
         *,
         agent: AbstractAgent[AgentDepsT, OutputDataT],
-        ag_ui_version: AGUIVersion = '0.1.10',
+        ag_ui_version: str = '0.1.10',
         preserve_file_data: bool = False,
         **kwargs: Any,
     ) -> AGUIAdapter[AgentDepsT, OutputDataT]:
@@ -453,7 +459,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
     @staticmethod
     def _dump_response_parts(  # noqa: C901
-        msg: ModelResponse, *, ag_ui_version: AGUIVersion = '0.1.10', preserve_file_data: bool = False
+        msg: ModelResponse, *, ag_ui_version: str = '0.1.10', preserve_file_data: bool = False
     ) -> list[Message]:
         """Convert a `ModelResponse` into AG-UI messages.
 
@@ -490,7 +496,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     flush()
                 text_content.append(part.content)
             elif isinstance(part, ThinkingPart):
-                if ag_ui_version == '0.1.13':
+                if parse_ag_ui_version(ag_ui_version) >= REASONING_VERSION:
                     flush()
                     encrypted = thinking_encrypted_metadata(part)
                     result.append(
@@ -557,7 +563,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         cls,
         messages: Sequence[ModelMessage],
         *,
-        ag_ui_version: AGUIVersion = '0.1.10',
+        ag_ui_version: str = '0.1.10',
         preserve_file_data: bool = False,
     ) -> list[Message]:
         """Transform Pydantic AI messages into AG-UI messages.

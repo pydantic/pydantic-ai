@@ -29,7 +29,7 @@ try:
     from starlette.responses import Response
 
     from .ui import SSE_CONTENT_TYPE, OnCompleteFunc, StateDeps, StateHandler
-    from .ui.ag_ui import AGUIAdapter, AGUIVersion
+    from .ui.ag_ui import AGUIAdapter
     from .ui.ag_ui.app import AGUIApp
 except ImportError as e:  # pragma: no cover
     raise ImportError(
@@ -53,7 +53,7 @@ async def handle_ag_ui_request(
     agent: AbstractAgent[AgentDepsT, Any],
     request: Request,
     *,
-    ag_ui_version: AGUIVersion = '0.1.10',
+    ag_ui_version: str = '0.1.10',
     output_type: OutputSpec[Any] | None = None,
     message_history: Sequence[ModelMessage] | None = None,
     deferred_tool_results: DeferredToolResults | None = None,
@@ -117,7 +117,7 @@ def run_ag_ui(
     run_input: RunAgentInput,
     accept: str = SSE_CONTENT_TYPE,
     *,
-    ag_ui_version: AGUIVersion = '0.1.10',
+    ag_ui_version: str = '0.1.10',
     output_type: OutputSpec[Any] | None = None,
     message_history: Sequence[ModelMessage] | None = None,
     deferred_tool_results: DeferredToolResults | None = None,

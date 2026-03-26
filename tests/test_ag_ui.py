@@ -3574,11 +3574,8 @@ async def test_thinking_events_v010_empty_content() -> None:
 
     part = ThinkingPart(content='', signature='sig_abc')
 
-    events: list[BaseEvent] = []
-    async for e in event_stream.handle_thinking_start(part):
-        events.append(e)
-    async for e in event_stream.handle_thinking_end(part):
-        events.append(e)
+    events = [e async for e in event_stream.handle_thinking_start(part)]
+    events.extend([e async for e in event_stream.handle_thinking_end(part)])
 
     assert events == []
 
@@ -3611,11 +3608,89 @@ async def test_thinking_end_v013_no_content_no_metadata() -> None:
 
     part = ThinkingPart(content='')
 
-    events: list[BaseEvent] = [e async for e in event_stream.handle_thinking_start(part)]
-    async for e in event_stream.handle_thinking_end(part):
-        events.append(e)
+    events = [e async for e in event_stream.handle_thinking_start(part)]
+    events.extend([e async for e in event_stream.handle_thinking_end(part)])
 
     assert events == []
+
+
+async def test_thinking_delta_v013_after_content_start() -> None:
+    """Test v0.1.13 delta skips START/MESSAGE_START when reasoning already started."""
+    run_input = create_input(UserMessage(id='msg_1', content='test'))
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.13')
+
+    start_part = ThinkingPart(content='initial')
+    events = [e async for e in event_stream.handle_thinking_start(start_part)]
+
+    delta = ThinkingPartDelta(content_delta='more')
+    events.extend([e async for e in event_stream.handle_thinking_delta(delta)])
+
+    assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
+        [
+            {'type': 'REASONING_START', 'message_id': IsStr()},
+            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': 'assistant'},
+            {'type': 'REASONING_MESSAGE_CONTENT', 'message_id': IsStr(), 'delta': 'initial'},
+            {'type': 'REASONING_MESSAGE_CONTENT', 'message_id': IsStr(), 'delta': 'more'},
+        ]
+    )
+
+
+async def test_thinking_end_v010_with_content() -> None:
+    """Test v0.1.10 end emits TextMessageEnd when content was streamed, and ThinkingStart when not started."""
+    run_input = create_input(UserMessage(id='msg_1', content='test'))
+
+    # Case 1: start with content → _reasoning_started=True, _reasoning_text=True
+    # end should emit TextMessageEnd + ThinkingEnd
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.10')
+    part = ThinkingPart(content='text')
+    events = [e async for e in event_stream.handle_thinking_start(part)]
+    events.extend([e async for e in event_stream.handle_thinking_end(part)])
+
+    assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
+        [
+            {'type': 'THINKING_START'},
+            {'type': 'THINKING_TEXT_MESSAGE_START'},
+            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'text'},
+            {'type': 'THINKING_TEXT_MESSAGE_END'},
+            {'type': 'THINKING_END'},
+        ]
+    )
+
+    # Case 2: start with empty content → _reasoning_started=False
+    # end with content → hits ThinkingStartEvent at line 246
+    event_stream2 = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.10')
+    empty_part = ThinkingPart(content='')
+    events2 = [e async for e in event_stream2.handle_thinking_start(empty_part)]
+
+    full_part = ThinkingPart(content='non-empty')
+    events2.extend([e async for e in event_stream2.handle_thinking_end(full_part)])
+
+    assert [e.model_dump(exclude_none=True) for e in events2] == snapshot(
+        [
+            {'type': 'THINKING_START'},
+            {'type': 'THINKING_END'},
+        ]
+    )
+
+
+async def test_thinking_end_v013_no_encrypted_metadata() -> None:
+    """Test v0.1.13 end skips encrypted_value event when part has no signature or metadata."""
+    run_input = create_input(UserMessage(id='msg_1', content='test'))
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.13')
+
+    part = ThinkingPart(content='text')
+    events = [e async for e in event_stream.handle_thinking_start(part)]
+    events.extend([e async for e in event_stream.handle_thinking_end(part)])
+
+    assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
+        [
+            {'type': 'REASONING_START', 'message_id': IsStr()},
+            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': 'assistant'},
+            {'type': 'REASONING_MESSAGE_CONTENT', 'message_id': IsStr(), 'delta': 'text'},
+            {'type': 'REASONING_MESSAGE_END', 'message_id': IsStr()},
+            {'type': 'REASONING_END', 'message_id': IsStr()},
+        ]
+    )
 
 
 # endregion

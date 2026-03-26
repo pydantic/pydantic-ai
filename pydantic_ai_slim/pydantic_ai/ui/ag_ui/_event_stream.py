@@ -9,10 +9,8 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
-from typing import Any, Final, Literal
+from typing import Any, Final
 from uuid import uuid4
-
-from typing_extensions import assert_never
 
 from ..._utils import now_utc
 from ...messages import (
@@ -68,16 +66,21 @@ except ImportError as e:  # pragma: no cover
         'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
     ) from e
 
-AGUIVersion = Literal['0.1.10', '0.1.13']
-"""Supported AG-UI protocol versions for thinking/reasoning event emission."""
-
 __all__ = [
     'AGUIEventStream',
-    'AGUIVersion',
     'RunAgentInput',
     'RunStartedEvent',
     'RunFinishedEvent',
 ]
+
+
+def parse_ag_ui_version(version: str) -> tuple[int, ...]:
+    """Parse an AG-UI version string into a comparable tuple."""
+    return tuple(int(x) for x in version.split('.'))
+
+
+REASONING_VERSION = (0, 1, 13)
+"""AG-UI version that introduced REASONING_* events (replacing THINKING_*)."""
 
 BUILTIN_TOOL_CALL_ID_PREFIX: Final[str] = 'pyd_ai_builtin'
 
@@ -100,7 +103,7 @@ def thinking_encrypted_metadata(part: ThinkingPart) -> dict[str, Any]:
 class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]):
     """UI event stream transformer for the Agent-User Interaction (AG-UI) protocol."""
 
-    ag_ui_version: AGUIVersion = '0.1.10'
+    ag_ui_version: str = '0.1.10'
 
     _reasoning_message_id: str | None = None
     _reasoning_started: bool = False
@@ -181,14 +184,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         self._reasoning_message_id = str(uuid4())
         self._reasoning_started = False
 
-        if self.ag_ui_version == '0.1.10':
-            if part.content:
-                yield ThinkingStartEvent()
-                self._reasoning_started = True
-                yield ThinkingTextMessageStartEvent()
-                yield ThinkingTextMessageContentEvent(delta=part.content)
-                self._reasoning_text = True
-        elif self.ag_ui_version == '0.1.13':
+        if parse_ag_ui_version(self.ag_ui_version) >= REASONING_VERSION:
             if part.content:
                 yield ReasoningStartEvent(message_id=self._reasoning_message_id)
                 self._reasoning_started = True
@@ -196,8 +192,12 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
                 yield ReasoningMessageContentEvent(message_id=self._reasoning_message_id, delta=part.content)
                 self._reasoning_text = True
         else:
-            # exhaustive branching protects against future additions of AG-UI versions
-            assert_never(self.ag_ui_version)
+            if part.content:
+                yield ThinkingStartEvent()
+                self._reasoning_started = True
+                yield ThinkingTextMessageStartEvent()
+                yield ThinkingTextMessageContentEvent(delta=part.content)
+                self._reasoning_text = True
 
     async def handle_thinking_delta(self, delta: ThinkingPartDelta) -> AsyncIterator[BaseEvent]:
         if not delta.content_delta:
@@ -207,17 +207,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             'handle_thinking_start must be called before handle_thinking_delta'
         )
 
-        if self.ag_ui_version == '0.1.10':
-            if not self._reasoning_started:
-                yield ThinkingStartEvent()
-                self._reasoning_started = True
-
-            if not self._reasoning_text:
-                yield ThinkingTextMessageStartEvent()
-                self._reasoning_text = True
-
-            yield ThinkingTextMessageContentEvent(delta=delta.content_delta)
-        elif self.ag_ui_version == '0.1.13':
+        if parse_ag_ui_version(self.ag_ui_version) >= REASONING_VERSION:
             message_id = self._reasoning_message_id
 
             if not self._reasoning_started:
@@ -230,28 +220,22 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
             yield ReasoningMessageContentEvent(message_id=message_id, delta=delta.content_delta)
         else:
-            assert_never(self.ag_ui_version)
+            if not self._reasoning_started:
+                yield ThinkingStartEvent()
+                self._reasoning_started = True
+
+            if not self._reasoning_text:
+                yield ThinkingTextMessageStartEvent()
+                self._reasoning_text = True
+
+            yield ThinkingTextMessageContentEvent(delta=delta.content_delta)
 
     async def handle_thinking_end(
         self, part: ThinkingPart, followed_by_thinking: bool = False
     ) -> AsyncIterator[BaseEvent]:
         assert self._reasoning_message_id is not None, 'handle_thinking_start must be called before handle_thinking_end'
 
-        if self.ag_ui_version == '0.1.10':
-            if not self._reasoning_started and not part.content:
-                self._reasoning_message_id = None
-                return
-
-            if not self._reasoning_started:
-                yield ThinkingStartEvent()
-
-            if self._reasoning_text:
-                yield ThinkingTextMessageEndEvent()
-                self._reasoning_text = False
-
-            yield ThinkingEndEvent()
-            self._reasoning_message_id = None
-        elif self.ag_ui_version == '0.1.13':
+        if parse_ag_ui_version(self.ag_ui_version) >= REASONING_VERSION:
             message_id = self._reasoning_message_id
             encrypted = thinking_encrypted_metadata(part)
 
@@ -276,7 +260,19 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             yield ReasoningEndEvent(message_id=message_id)
             self._reasoning_message_id = None
         else:
-            assert_never(self.ag_ui_version)
+            if not self._reasoning_started and not part.content:
+                self._reasoning_message_id = None
+                return
+
+            if not self._reasoning_started:
+                yield ThinkingStartEvent()
+
+            if self._reasoning_text:
+                yield ThinkingTextMessageEndEvent()
+                self._reasoning_text = False
+
+            yield ThinkingEndEvent()
+            self._reasoning_message_id = None
 
     def handle_tool_call_start(self, part: ToolCallPart | BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
         return self._handle_tool_call_start(part)
