@@ -290,7 +290,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         task_name: str | None = None,
         metadata: dict[str, Any] | None = None,
         repeat: int = 1,
-        lifecycle: type[CaseLifecycle[Any, Any, Any]] | None = None,
+        lifecycle: type[CaseLifecycle[InputsT, OutputT, MetadataT]] | None = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -420,7 +420,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         task_name: str | None = None,
         metadata: dict[str, Any] | None = None,
         repeat: int = 1,
-        lifecycle: type[CaseLifecycle[Any, Any, Any]] | None = None,
+        lifecycle: type[CaseLifecycle[InputsT, OutputT, MetadataT]] | None = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -1134,7 +1134,7 @@ async def _run_task_and_evaluators(
     retry_evaluators: RetryConfig | None,
     *,
     source_case_name: str | None = None,
-    lifecycle: type[CaseLifecycle[Any, Any, Any]] | None = None,
+    lifecycle: type[CaseLifecycle[InputsT, OutputT, MetadataT]] | None = None,
 ) -> ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT]:
     """Run a task on a case and evaluate the results.
 
@@ -1238,10 +1238,10 @@ async def _run_task_and_evaluators(
             span_id=span_id,
         )
 
+    # Teardown exceptions are intentionally not caught here — they propagate
+    # to the caller. If your teardown may raise and you don't want it to crash
+    # the evaluation, handle exceptions within your teardown() implementation.
     if lc is not None:
-        # Teardown exceptions are intentionally not caught here — they propagate
-        # to the caller. If your teardown may raise and you don't want it to crash
-        # the evaluation, handle exceptions within your teardown() implementation.
         await lc.teardown(result)
 
     return result

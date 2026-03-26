@@ -36,9 +36,11 @@ class CaseLifecycle(Generic[InputsT, OutputT, MetadataT]):
     4. Evaluators run
     5. `teardown()` — called after evaluators complete; receives the full result
 
-    Exceptions raised by any hook method will propagate and may abort the evaluation.
-    If your hook may raise and you don't want that to crash the evaluation run,
-    handle exceptions within the hook implementation itself.
+    Exceptions raised by `setup()` or `prepare_context()` are caught and recorded as
+    a `ReportCaseFailure`; `teardown()` is still called afterward so you can clean up.
+    Exceptions raised by `teardown()` propagate to the caller and may abort the evaluation.
+    If your teardown may raise and you don't want it to crash the evaluation run,
+    handle exceptions within your `teardown()` implementation itself.
 
     Args:
         case: The case being evaluated. Available as `self.case` in all hooks.

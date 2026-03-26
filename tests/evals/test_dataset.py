@@ -2167,3 +2167,31 @@ async def test_lifecycle_teardown_exception_propagates():
 
     with pytest.raises(ExceptionGroup, match='unhandled errors in a TaskGroup'):
         await dataset.evaluate(task, lifecycle=BrokenTeardown)
+
+
+async def test_lifecycle_setup_failure_produces_case_failure_and_calls_teardown():
+    """Test that a setup failure produces ReportCaseFailure and teardown is still called."""
+    from pydantic_evals.lifecycle import CaseLifecycle
+
+    teardown_called = False
+
+    class BrokenSetup(CaseLifecycle[str, str, None]):
+        async def setup(self) -> None:
+            raise RuntimeError('setup failed')
+
+        async def teardown(self, result: ReportCase[str, str, None] | ReportCaseFailure[str, str, None]) -> None:
+            nonlocal teardown_called
+            teardown_called = True
+            assert isinstance(result, ReportCaseFailure)
+            assert 'setup failed' in result.error_message
+
+    dataset = Dataset[str, str, None](cases=[Case(name='case1', inputs='hello')])
+
+    async def task(inputs: str) -> str:
+        return inputs.upper()  # pragma: no cover
+
+    report = await dataset.evaluate(task, lifecycle=BrokenSetup)
+
+    assert len(report.failures) == 1
+    assert 'setup failed' in report.failures[0].error_message
+    assert teardown_called

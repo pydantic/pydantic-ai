@@ -159,7 +159,7 @@ print(cleaned_up)
 
 ## Type Parameters
 
-[`CaseLifecycle`][pydantic_evals.lifecycle.CaseLifecycle] is generic over the same three type parameters as [`Case`][pydantic_evals.dataset.Case]: `InputsT`, `OutputT`, and `MetadataT`. All three default to `object`, so you can omit them when your hooks don't need type-specific access:
+[`CaseLifecycle`][pydantic_evals.lifecycle.CaseLifecycle] is generic over the same three type parameters as [`Case`][pydantic_evals.dataset.Case]: `InputsT`, `OutputT`, and `MetadataT`. All three default to `Any`, so you can omit them when your hooks don't need type-specific access:
 
 ```python
 from pydantic_evals import Case, Dataset
