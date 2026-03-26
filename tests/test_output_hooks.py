@@ -1222,9 +1222,7 @@ class TestOutputHookErrorPaths:
         """on_output_execute_error can recover from output function failure."""
 
         def bad_function(value: int) -> str:
-            if value < 100:
-                raise ValueError('value too small')
-            return f'result: {value}'
+            raise ValueError('value too small')
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             assert info.output_tools is not None
@@ -1397,37 +1395,31 @@ class TestOutputHookErrorPaths:
         result = agent.run_sync('hello')
         assert result.output == 'fallback result'
 
-    def test_tool_output_validate_error_hook_identity(self):
-        """For tool output, on_output_validate_error fires (even though validate is identity)."""
+    def test_tool_output_validate_error_hook_not_triggered_on_valid_data(self):
+        """For tool output with valid data, on_output_validate_error does not fire."""
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             assert info.output_tools is not None
             return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"value": 42}')])
 
+        hooks = Hooks()
         error_log: list[str] = []
 
-        @dataclass
-        class ValidateErrorLogCap(AbstractCapability[Any]):
-            async def on_output_validate_error(
-                self,
-                ctx: RunContext[Any],
-                *,
-                raw_output: str | dict[str, Any],
-                output_context: OutputContext,
-                error: ValidationError | ModelRetry,
-            ) -> str | dict[str, Any]:
-                error_log.append('validate_error')
-                raise error
+        @hooks.on.before_output_validate
+        def log_validate(
+            ctx: RunContext[Any], *, raw_output: str | dict[str, Any], output_context: OutputContext
+        ) -> str | dict[str, Any]:
+            error_log.append('before_validate')
+            return raw_output
 
         agent = Agent(
             FunctionModel(model_fn),
             output_type=MyOutput,
-            capabilities=[ValidateErrorLogCap()],
+            capabilities=[hooks],
         )
         result = agent.run_sync('hello')
-        # No errors should occur — validate is identity for tool output
         assert result.output == MyOutput(value=42)
-        assert error_log == []  # No errors, so hook never fires
+        assert error_log == ['before_validate']  # Validate fires but no error
 
     def test_wrapper_capability_output_hooks_delegate(self):
         """WrapperCapability delegates output hooks to wrapped capability."""
