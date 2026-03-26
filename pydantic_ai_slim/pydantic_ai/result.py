@@ -186,7 +186,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         self._cached_output = await self.validate_response_output(self.response)
         return deepcopy(self._cached_output)
 
-    async def validate_response_output(
+    async def validate_response_output(  # noqa: C901
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
     ) -> OutputDataT:
         """Validate a structured result message."""
@@ -205,9 +205,14 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
                     f'Invalid response, unable to find tool call for {output_tool_name!r}'
                 )
-            return await self._tool_manager.handle_call(
-                tool_call, allow_partial=allow_partial, wrap_validation_errors=False
-            )
+            try:
+                return await self._tool_manager.handle_call(
+                    tool_call, allow_partial=allow_partial, wrap_validation_errors=False
+                )
+            except (ValidationError, exceptions.ToolRetryError) as e:
+                if not allow_partial:
+                    raise exceptions.UnexpectedModelBehavior('Invalid output') from e
+                raise
         elif deferred_tool_requests := _get_deferred_tool_requests(message.tool_calls, self._tool_manager):
             if not self._output_schema.allows_deferred_tools:
                 raise exceptions.UserError(
@@ -226,16 +231,21 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     # not part of the final result output, so we reset the accumulated text
                     text = ''
 
-            result_data = await text_processor.process(
-                text,
-                run_context=replace(self._run_ctx, partial_output=allow_partial),
-                allow_partial=allow_partial,
-                wrap_validation_errors=False,
-            )
-            for validator in self._output_validators:
-                result_data = await validator.validate(
-                    result_data, replace(self._run_ctx, partial_output=allow_partial)
+            try:
+                result_data = await text_processor.process(
+                    text,
+                    run_context=replace(self._run_ctx, partial_output=allow_partial),
+                    allow_partial=allow_partial,
+                    wrap_validation_errors=False,
                 )
+                for validator in self._output_validators:
+                    result_data = await validator.validate(
+                        result_data, replace(self._run_ctx, partial_output=allow_partial)
+                    )
+            except (ValidationError, exceptions.ToolRetryError) as e:
+                if not allow_partial:
+                    raise exceptions.UnexpectedModelBehavior('Invalid output') from e
+                raise
             return result_data
         else:
             raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
