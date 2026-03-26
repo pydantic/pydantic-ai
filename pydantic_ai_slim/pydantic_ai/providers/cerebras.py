@@ -48,6 +48,9 @@ class CerebrasProvider(Provider[AsyncOpenAI]):
             'zai': zai_model_profile,
         }
 
+        # Reasoning models that support the cerebras_disable_reasoning setting
+        reasoning_prefixes = ('zai', 'gpt-oss')
+
         profile = None
         model_name_lower = model_name.lower()
         for prefix, profile_func in prefix_to_profile.items():
@@ -65,9 +68,11 @@ class CerebrasProvider(Provider[AsyncOpenAI]):
             'parallel_tool_calls',
             'service_tier',
         )
+        is_reasoning = model_name_lower.startswith(reasoning_prefixes)
         return OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_unsupported_model_settings=unsupported_model_settings,
+            supports_thinking=is_reasoning,
         ).update(profile)
 
     @overload
