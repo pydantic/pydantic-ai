@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -162,6 +162,25 @@ def test_agent_from_spec_bad_args():
 @dataclass
 class CustomCapability(AbstractCapability[None]):
     greeting: str = 'hello'
+
+
+@dataclass(init=False)
+class CapabilityWithCallbackParam(AbstractCapability[None]):
+    """Custom capability with a mix of serializable and non-serializable params."""
+
+    max_retries: int
+    on_error: Any  # Callable — not serializable, will be filtered from schema
+    verbose: Any  # Callable | bool in __init__ — only bool survives in schema
+
+    def __init__(
+        self,
+        max_retries: int = 3,
+        on_error: Callable[..., Any] = lambda: None,
+        verbose: Callable[..., Any] | bool = False,
+    ) -> None:
+        self.max_retries = max_retries
+        self.on_error = on_error
+        self.verbose = verbose
 
 
 def test_agent_from_spec_custom_capability():
@@ -964,6 +983,32 @@ def test_model_json_schema_with_custom_capabilities():
     assert 'CustomCapability' in capability_names
     # Default capabilities should still be present
     assert 'WebSearch' in capability_names
+
+
+def test_model_json_schema_filters_non_serializable_params():
+    """Custom capabilities with non-serializable __init__ params get filtered in schema."""
+    schema = AgentSpec.model_json_schema_with_capabilities(
+        custom_capability_types=[CapabilityWithCallbackParam],
+    )
+    any_of = schema['properties']['capabilities']['items']['anyOf']
+
+    # String form: all remaining params are optional
+    has_string_form = any(e.get('const') == 'CapabilityWithCallbackParam' for e in any_of)
+    assert has_string_form
+
+    # Long form: max_retries and verbose survive; on_error (purely Callable) is filtered out
+    spec_ref = next(
+        (e for e in any_of if '$ref' in e and 'spec_CapabilityWithCallbackParam' in e['$ref']),
+        None,
+    )
+    assert spec_ref is not None
+    params_def = schema['$defs']['spec_params_CapabilityWithCallbackParam']
+    assert 'max_retries' in params_def['properties']
+    assert 'verbose' in params_def['properties']
+    # on_error should not appear — purely Callable, entirely filtered out
+    assert 'on_error' not in params_def['properties']
+    # verbose should be boolean only (Callable member was stripped from the union)
+    assert params_def['properties']['verbose'] == {'title': 'Verbose', 'type': 'boolean'}
 
 
 def test_agent_spec_schema_field_parity():

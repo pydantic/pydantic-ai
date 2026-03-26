@@ -251,7 +251,7 @@ def _filter_serializable_type(tp: object) -> object | None:
     if origin is typing.Union or isinstance(tp, types.UnionType):
         args = typing.get_args(tp)
         filtered = [fa for a in args if (fa := _filter_serializable_type(a)) is not None]
-        if not filtered:
+        if not filtered:  # pragma: no cover — requires union of only non-serializable types
             return None
         if len(filtered) == 1:
             return filtered[0]
