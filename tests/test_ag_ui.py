@@ -40,6 +40,7 @@ from pydantic_ai import (
     TextPart,
     TextPartDelta,
     ThinkingPart,
+    ThinkingPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturn,
@@ -65,7 +66,7 @@ from pydantic_ai.output import OutputDataT
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsSameStr, IsStr, try_import
+from .conftest import IsBytes, IsDatetime, IsInt, IsSameStr, IsStr, try_import
 
 with try_import() as imports_successful:
     from ag_ui.core import (
@@ -2566,45 +2567,30 @@ async def test_messages(image_content: BinaryContent, document_content: BinaryCo
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content=['this is an image:', image_content],
-                        timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(
                         content=[
-                            ImageUrl(
-                                url='http://example.com/image.png', _media_type='image/png', media_type='image/png'
-                            )
+                            'this is an image:',
+                            BinaryImage(data=IsBytes(), media_type='image/jpeg', _identifier='241a70'),
                         ],
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content=[
-                            VideoUrl(
-                                url='http://example.com/video.mp4', _media_type='video/mp4', media_type='video/mp4'
-                            )
-                        ],
+                        content=[ImageUrl(url='http://example.com/image.png', _media_type='image/png')],
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content=[
-                            AudioUrl(
-                                url='http://example.com/audio.mp3', _media_type='audio/mpeg', media_type='audio/mpeg'
-                            )
-                        ],
+                        content=[VideoUrl(url='http://example.com/video.mp4', _media_type='video/mp4')],
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content=[
-                            DocumentUrl(
-                                url='http://example.com/doc.pdf',
-                                _media_type='application/pdf',
-                                media_type='application/pdf',
-                            )
-                        ],
+                        content=[AudioUrl(url='http://example.com/audio.mp3', _media_type='audio/mpeg')],
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content=[document_content],
+                        content=[DocumentUrl(url='http://example.com/doc.pdf', _media_type='application/pdf')],
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=[BinaryContent(data=IsBytes(), media_type='application/pdf')],
                         timestamp=IsDatetime(),
                     ),
                 ]
@@ -3406,7 +3392,7 @@ async def test_stray_tool_call_delta_after_end() -> None:
 
     stray_delta = ToolCallPartDelta(tool_call_id='call_123', args_delta='{"extra": true}')
     async for e in event_stream.handle_tool_call_delta(stray_delta):
-        events.append(e)
+        events.append(e)  # pragma: no cover
 
     event_types = [e.type.value for e in events]
     assert 'TOOL_CALL_START' in event_types
@@ -3555,3 +3541,209 @@ async def test_tool_return_with_files():
             },
         ]
     )
+
+
+# region: Coverage — event_stream thinking version branches
+
+
+async def test_thinking_events_v010_with_content() -> None:
+    """Test v0.1.10 THINKING_* events for ThinkingPart with content."""
+    run_input = create_input(UserMessage(id='msg_1', content='test'))
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.10')
+
+    part = ThinkingPart(content='Some thoughts', signature='sig_abc')
+
+    events: list[BaseEvent] = []
+    async for e in event_stream.handle_thinking_start(part):
+        events.append(e)
+    async for e in event_stream.handle_thinking_end(part):
+        events.append(e)
+
+    assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
+        [
+            {'type': 'THINKING_START'},
+            {'type': 'THINKING_TEXT_MESSAGE_START'},
+            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'Some thoughts'},
+            {'type': 'THINKING_TEXT_MESSAGE_END'},
+            {'type': 'THINKING_END'},
+        ]
+    )
+
+
+async def test_thinking_events_v010_empty_content() -> None:
+    """Test v0.1.10 early return when ThinkingPart has no content."""
+    run_input = create_input(UserMessage(id='msg_1', content='test'))
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.10')
+
+    part = ThinkingPart(content='', signature='sig_abc')
+
+    events: list[BaseEvent] = []
+    async for e in event_stream.handle_thinking_start(part):
+        events.append(e)
+    async for e in event_stream.handle_thinking_end(part):
+        events.append(e)
+
+    assert events == []
+
+
+async def test_thinking_delta_v013() -> None:
+    """Test v0.1.13 REASONING_* events emitted via handle_thinking_delta."""
+    run_input = create_input(UserMessage(id='msg_1', content='test'))
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.13')
+
+    start_part = ThinkingPart(content='')
+    events: list[BaseEvent] = [e async for e in event_stream.handle_thinking_start(start_part)]
+
+    delta = ThinkingPartDelta(content_delta='chunk1')
+    async for e in event_stream.handle_thinking_delta(delta):
+        events.append(e)
+
+    assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
+        [
+            {'type': 'REASONING_START', 'message_id': IsStr()},
+            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': 'assistant'},
+            {'type': 'REASONING_MESSAGE_CONTENT', 'message_id': IsStr(), 'delta': 'chunk1'},
+        ]
+    )
+
+
+async def test_thinking_end_v013_no_content_no_metadata() -> None:
+    """Test v0.1.13 early return when ThinkingPart has no content and no encrypted metadata."""
+    run_input = create_input(UserMessage(id='msg_1', content='test'))
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.13')
+
+    part = ThinkingPart(content='')
+
+    events: list[BaseEvent] = [e async for e in event_stream.handle_thinking_start(part)]
+    async for e in event_stream.handle_thinking_end(part):
+        events.append(e)
+
+    assert events == []
+
+
+# endregion
+
+# region: Coverage — encrypted_metadata branch gap
+
+
+async def test_thinking_encrypted_metadata_partial_fields() -> None:
+    """Test thinking_encrypted_metadata with signature but no provider_name."""
+    run_input = create_input(UserMessage(id='msg_1', content='test'))
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.13')
+
+    part = ThinkingPart(content='Thoughts', signature='sig_only')
+
+    events: list[BaseEvent] = []
+    async for e in event_stream.handle_thinking_start(part):
+        events.append(e)
+    async for e in event_stream.handle_thinking_end(part):
+        events.append(e)
+
+    assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
+        [
+            {'type': 'REASONING_START', 'message_id': IsStr()},
+            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': 'assistant'},
+            {'type': 'REASONING_MESSAGE_CONTENT', 'message_id': IsStr(), 'delta': 'Thoughts'},
+            {'type': 'REASONING_MESSAGE_END', 'message_id': IsStr()},
+            {
+                'type': 'REASONING_ENCRYPTED_VALUE',
+                'subtype': 'message',
+                'entity_id': IsStr(),
+                'encrypted_value': '{"signature": "sig_only"}',
+            },
+            {'type': 'REASONING_END', 'message_id': IsStr()},
+        ]
+    )
+
+
+# endregion
+
+# region: Coverage — adapter uploaded file edge cases
+
+
+def test_load_messages_uploaded_file_missing_fields() -> None:
+    """Test load_messages raises ValueError for malformed pydantic_ai_uploaded_file ActivityMessage."""
+    with pytest.raises(ValueError, match='must have non-empty file_id and provider_name'):
+        AGUIAdapter.load_messages(
+            [ActivityMessage(id='msg_1', activity_type='pydantic_ai_uploaded_file', content={})],
+            preserve_file_data=True,
+        )
+
+
+def test_dump_messages_uploaded_file_with_vendor_metadata() -> None:
+    """Test dump_messages includes vendor_metadata in ActivityMessage when present on UploadedFile."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        UploadedFile(
+                            file_id='file-xyz',
+                            provider_name='openai',
+                            media_type='text/plain',
+                            vendor_metadata={'custom': 'data'},
+                        ),
+                    ]
+                ),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(messages, preserve_file_data=True)
+    activity_msgs = [m for m in ag_ui_msgs if isinstance(m, ActivityMessage)]
+    assert [m.model_dump() for m in activity_msgs] == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'activity',
+                'activity_type': 'pydantic_ai_uploaded_file',
+                'content': {
+                    'file_id': 'file-xyz',
+                    'provider_name': 'openai',
+                    'media_type': 'text/plain',
+                    'identifier': '6f0bbc',
+                    'vendor_metadata': {'custom': 'data'},
+                },
+            }
+        ]
+    )
+
+
+def test_dump_messages_uploaded_file_without_vendor_metadata() -> None:
+    """Test dump_messages omits vendor_metadata from ActivityMessage when None on UploadedFile."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        UploadedFile(
+                            file_id='file-xyz',
+                            provider_name='openai',
+                            media_type='text/plain',
+                        ),
+                    ]
+                ),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(messages, preserve_file_data=True)
+    activity_msgs = [m for m in ag_ui_msgs if isinstance(m, ActivityMessage)]
+    assert [m.model_dump() for m in activity_msgs] == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'activity',
+                'activity_type': 'pydantic_ai_uploaded_file',
+                'content': {
+                    'file_id': 'file-xyz',
+                    'provider_name': 'openai',
+                    'media_type': 'text/plain',
+                    'identifier': '6f0bbc',
+                },
+            }
+        ]
+    )
+
+
+# endregion
