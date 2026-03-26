@@ -145,7 +145,6 @@ jobs:
           key: hf-${{ runner.os }}-${{ hashFiles('**/uv.lock') }}
           restore-keys: |
             hf-${{ runner.os }}-
-          lookup-only: true
 
       - run: uv run ${{ matrix.install.command }} coverage run -m pytest --durations=100 -n auto --dist=loadgroup
         env:
@@ -202,7 +201,6 @@ jobs:
           key: hf-${{ runner.os }}-${{ hashFiles('**/uv.lock') }}
           restore-keys: |
             hf-${{ runner.os }}-
-          lookup-only: true
 
       - run: unset UV_FROZEN
 
@@ -245,7 +243,6 @@ jobs:
           key: hf-${{ runner.os }}-${{ hashFiles('**/uv.lock') }}
           restore-keys: |
             hf-${{ runner.os }}-
-          lookup-only: true
 
       - run: uv run --all-extras --no-extra outlines-vllm-offline python tests/import_examples.py
 
