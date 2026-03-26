@@ -45,6 +45,7 @@ from .evaluators.evaluator import EvaluatorFailure
 from .evaluators.report_common import DEFAULT_REPORT_EVALUATORS
 from .evaluators.report_evaluator import ReportEvaluator, ReportEvaluatorContext
 from .evaluators.spec import EvaluatorSpec
+from .lifecycle import CaseLifecycle
 from .otel import SpanTree
 from .otel._context_subtree import context_subtree
 from .reporting import EvaluationReport, ReportCase, ReportCaseAggregate, ReportCaseFailure
@@ -289,6 +290,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         task_name: str | None = None,
         metadata: dict[str, Any] | None = None,
         repeat: int = 1,
+        lifecycle: type[CaseLifecycle[Any, Any, Any]] | None = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -310,6 +312,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             metadata: Optional dict of experiment metadata.
             repeat: Number of times to run each case. When > 1, each case is run multiple times and
                 results are grouped by the original case name for aggregation. Defaults to 1.
+            lifecycle: Optional lifecycle class for per-case setup, context preparation, and teardown hooks.
+                A new instance is created for each case. See [`CaseLifecycle`][pydantic_evals.lifecycle.CaseLifecycle].
 
         Returns:
             A report containing the results of the evaluation.
@@ -358,6 +362,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                         retry_task,
                         retry_evaluators,
                         source_case_name=source_case_name,
+                        lifecycle=lifecycle,
                     )
                     if progress_bar and task_id is not None:  # pragma: no branch
                         progress_bar.update(task_id, advance=1)
@@ -415,6 +420,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         task_name: str | None = None,
         metadata: dict[str, Any] | None = None,
         repeat: int = 1,
+        lifecycle: type[CaseLifecycle[Any, Any, Any]] | None = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -435,6 +441,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             metadata: Optional dict of experiment metadata.
             repeat: Number of times to run each case. When > 1, each case is run multiple times and
                 results are grouped by the original case name for aggregation. Defaults to 1.
+            lifecycle: Optional lifecycle class for per-case setup, context preparation, and teardown hooks.
+                A new instance is created for each case. See [`CaseLifecycle`][pydantic_evals.lifecycle.CaseLifecycle].
 
         Returns:
             A report containing the results of the evaluation.
@@ -450,6 +458,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 task_name=task_name,
                 metadata=metadata,
                 repeat=repeat,
+                lifecycle=lifecycle,
             )
         )
 
@@ -1125,6 +1134,7 @@ async def _run_task_and_evaluators(
     retry_evaluators: RetryConfig | None,
     *,
     source_case_name: str | None = None,
+    lifecycle: type[CaseLifecycle[Any, Any, Any]] | None = None,
 ) -> ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT]:
     """Run a task on a case and evaluate the results.
 
@@ -1136,10 +1146,13 @@ async def _run_task_and_evaluators(
         retry_task: The retry config to use for running the task.
         retry_evaluators: The retry config to use for running the evaluators.
         source_case_name: The original case name before run-indexing (for multi-run experiments).
+        lifecycle: Optional lifecycle class to instantiate for this case.
 
     Returns:
         A ReportCase containing the evaluation results.
     """
+    lc = lifecycle(case) if lifecycle is not None else None
+    result: ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT]
     trace_id: str | None = None
     span_id: str | None = None
     try:
@@ -1159,8 +1172,14 @@ async def _run_task_and_evaluators(
             if source_case_name is not None:
                 case_span.set_attribute('logfire.experiment.source_case_name', source_case_name)
 
+            if lc is not None:
+                await lc.setup()
+
             t0 = time.time()
             scoring_context = await _run_task(task, case, retry_task)
+
+            if lc is not None:
+                scoring_context = await lc.prepare_context(scoring_context)
 
             case_span.set_attribute('output', scoring_context.output)
             case_span.set_attribute('task_duration', scoring_context.duration)
@@ -1186,7 +1205,7 @@ async def _run_task_and_evaluators(
             case_span.set_attribute('labels', _evaluation_results_adapter.dump_python(labels))
         fallback_duration = time.time() - t0
 
-        return ReportCase[InputsT, OutputT, MetadataT](
+        result = ReportCase[InputsT, OutputT, MetadataT](
             name=report_case_name,
             inputs=case.inputs,
             metadata=case.metadata,
@@ -1205,7 +1224,7 @@ async def _run_task_and_evaluators(
             evaluator_failures=evaluator_failures,
         )
     except Exception as exc:
-        return ReportCaseFailure[InputsT, OutputT, MetadataT](
+        result = ReportCaseFailure[InputsT, OutputT, MetadataT](
             name=report_case_name,
             inputs=case.inputs,
             metadata=case.metadata,
@@ -1216,6 +1235,11 @@ async def _run_task_and_evaluators(
             trace_id=trace_id,
             span_id=span_id,
         )
+
+    if lc is not None:
+        await lc.teardown(result)
+
+    return result
 
 
 _evaluation_results_adapter = TypeAdapter(Mapping[str, EvaluationResult])
