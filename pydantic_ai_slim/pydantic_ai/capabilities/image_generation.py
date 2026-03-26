@@ -28,15 +28,6 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
         self.local = local
         self.__post_init__()
 
-    @classmethod
-    def from_spec(
-        cls,
-        *,
-        builtin: bool = True,
-        local: Literal[False] | None = None,
-    ) -> ImageGeneration[Any]:
-        return cls(builtin=builtin, local=local)
-
     def _default_builtin(self) -> ImageGenerationTool:
         return ImageGenerationTool()
 

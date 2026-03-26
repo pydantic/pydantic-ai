@@ -53,28 +53,6 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
         self.max_content_tokens = max_content_tokens
         self.__post_init__()
 
-    @classmethod
-    def from_spec(
-        cls,
-        *,
-        builtin: bool = True,
-        local: Literal[False] | None = None,
-        allowed_domains: list[str] | None = None,
-        blocked_domains: list[str] | None = None,
-        max_uses: int | None = None,
-        enable_citations: bool | None = None,
-        max_content_tokens: int | None = None,
-    ) -> WebFetch[Any]:
-        return cls(
-            builtin=builtin,
-            local=local,
-            allowed_domains=allowed_domains,
-            blocked_domains=blocked_domains,
-            max_uses=max_uses,
-            enable_citations=enable_citations,
-            max_content_tokens=max_content_tokens,
-        )
-
     def _default_builtin(self) -> WebFetchTool:
         kwargs: dict[str, Any] = {}
         if self.allowed_domains is not None:

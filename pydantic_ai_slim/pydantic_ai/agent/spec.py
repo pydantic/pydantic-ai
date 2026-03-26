@@ -325,15 +325,24 @@ def load_capability_from_nested_spec(spec: dict[str, Any] | str) -> AbstractCapa
 
 def _build_capability_schema_types(registry: Mapping[str, type[Any]]) -> list[Any]:
     """Build a list of schema types for capabilities from a registry."""
+    from pydantic_ai._utils import get_function_type_hints
 
     def _get_schema_target(cls: type[Any]) -> Any:
         # When from_spec is not overridden, it delegates to cls(*args, **kwargs).
         # Use __init__ directly so build_schema_types sees the actual parameter types.
+        # Fall back to from_spec if __init__ hints can't be resolved (e.g. TYPE_CHECKING imports).
         if 'from_spec' not in cls.__dict__:
-            return cls.__init__
+            try:
+                get_function_type_hints(cls.__init__)
+                return cls.__init__
+            except Exception:
+                pass
         return cls.from_spec
+
+    import pydantic_ai._spec
 
     return build_schema_types(
         registry,
         get_schema_target=_get_schema_target,
+        filter_type_hint=pydantic_ai._spec.filter_serializable_type,
     )

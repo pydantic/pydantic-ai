@@ -706,7 +706,25 @@ Supported by:
                 'spec_params_ImageGeneration': {
                     'additionalProperties': False,
                     'properties': {
-                        'builtin': {'title': 'Builtin', 'type': 'boolean'},
+                        'builtin': {
+                            'anyOf': [
+                                {'$ref': '#/$defs/ImageGenerationTool'},
+                                {
+                                    'oneOf': [
+                                        {'$ref': '#/$defs/WebSearchTool'},
+                                        {'$ref': '#/$defs/CodeExecutionTool'},
+                                        {'$ref': '#/$defs/WebFetchTool'},
+                                        {'$ref': '#/$defs/UrlContextTool'},
+                                        {'$ref': '#/$defs/ImageGenerationTool'},
+                                        {'$ref': '#/$defs/MemoryTool'},
+                                        {'$ref': '#/$defs/MCPServerTool'},
+                                        {'$ref': '#/$defs/FileSearchTool'},
+                                    ]
+                                },
+                                {'type': 'boolean'},
+                            ],
+                            'title': 'Builtin',
+                        },
                         'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
                     },
                     'title': 'spec_params_ImageGeneration',
@@ -716,7 +734,10 @@ Supported by:
                     'additionalProperties': False,
                     'properties': {
                         'url': {'title': 'Url', 'type': 'string'},
-                        'builtin': {'title': 'Builtin', 'type': 'boolean'},
+                        'builtin': {
+                            'anyOf': [{'$ref': '#/$defs/MCPServerTool'}, {'type': 'boolean'}],
+                            'title': 'Builtin',
+                        },
                         'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
                         'authorization_token': {
@@ -753,7 +774,25 @@ Supported by:
                 'spec_params_WebFetch': {
                     'additionalProperties': False,
                     'properties': {
-                        'builtin': {'title': 'Builtin', 'type': 'boolean'},
+                        'builtin': {
+                            'anyOf': [
+                                {'$ref': '#/$defs/WebFetchTool'},
+                                {
+                                    'oneOf': [
+                                        {'$ref': '#/$defs/WebSearchTool'},
+                                        {'$ref': '#/$defs/CodeExecutionTool'},
+                                        {'$ref': '#/$defs/WebFetchTool'},
+                                        {'$ref': '#/$defs/UrlContextTool'},
+                                        {'$ref': '#/$defs/ImageGenerationTool'},
+                                        {'$ref': '#/$defs/MemoryTool'},
+                                        {'$ref': '#/$defs/MCPServerTool'},
+                                        {'$ref': '#/$defs/FileSearchTool'},
+                                    ]
+                                },
+                                {'type': 'boolean'},
+                            ],
+                            'title': 'Builtin',
+                        },
                         'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
                         'allowed_domains': {
                             'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
@@ -779,7 +818,25 @@ Supported by:
                 'spec_params_WebSearch': {
                     'additionalProperties': False,
                     'properties': {
-                        'builtin': {'title': 'Builtin', 'type': 'boolean'},
+                        'builtin': {
+                            'anyOf': [
+                                {'$ref': '#/$defs/WebSearchTool'},
+                                {
+                                    'oneOf': [
+                                        {'$ref': '#/$defs/WebSearchTool'},
+                                        {'$ref': '#/$defs/CodeExecutionTool'},
+                                        {'$ref': '#/$defs/WebFetchTool'},
+                                        {'$ref': '#/$defs/UrlContextTool'},
+                                        {'$ref': '#/$defs/ImageGenerationTool'},
+                                        {'$ref': '#/$defs/MemoryTool'},
+                                        {'$ref': '#/$defs/MCPServerTool'},
+                                        {'$ref': '#/$defs/FileSearchTool'},
+                                    ]
+                                },
+                                {'type': 'boolean'},
+                            ],
+                            'title': 'Builtin',
+                        },
                         'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
                         'search_context_size': {
                             'anyOf': [{'enum': ['low', 'medium', 'high'], 'type': 'string'}, {'type': 'null'}],

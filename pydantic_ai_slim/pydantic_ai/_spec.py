@@ -224,10 +224,52 @@ def load_from_registry(
         raise ValueError(f'Failed to instantiate {label} {spec.name!r}{detail}: {e}') from e
 
 
+def filter_serializable_type(tp: Any) -> Any | None:
+    """Filter a type to only include members that can be represented in JSON schema.
+
+    For Union types, removes non-serializable members (TypeVars, Callables).
+    Returns None if the type is entirely non-serializable.
+    """
+    return _filter_serializable_type(tp)
+
+
+def _filter_serializable_type(tp: object) -> object | None:
+    import types
+    import typing
+
+    # TypeVar is not serializable
+    if isinstance(tp, TypeVar):
+        return None
+
+    origin = typing.get_origin(tp)
+
+    # Callable is not serializable
+    if origin is Callable:
+        return None
+
+    # Union: filter members
+    if origin is typing.Union or isinstance(tp, types.UnionType):
+        args = typing.get_args(tp)
+        filtered = [fa for a in args if (fa := _filter_serializable_type(a)) is not None]
+        if not filtered:
+            return None
+        if len(filtered) == 1:
+            return filtered[0]
+        return typing.Union[tuple(filtered)]  # noqa: UP007
+
+    # Other generics (list[X], dict[X, Y]): all args must be serializable
+    args = typing.get_args(tp)
+    if args and not all(_filter_serializable_type(a) is not None for a in args):
+        return None
+
+    return tp
+
+
 def build_schema_types(
     registry: Mapping[str, type[Any]],
     *,
     get_schema_target: Callable[[type[Any]], Any] | None = None,
+    filter_type_hint: Callable[[Any], Any | None] | None = None,
 ) -> list[Any]:
     """Build a list of schema types from a registry for JSON schema generation.
 
@@ -235,6 +277,8 @@ def build_schema_types(
         registry: Mapping from names to classes.
         get_schema_target: Optional callback to get the schema target (e.g. `from_spec` method)
             from a class. Default: use the class itself.
+        filter_type_hint: Optional callback to filter type hints. Called on each resolved type hint;
+            return the (possibly modified) type, or None to exclude the parameter.
 
     Returns:
         A list of types suitable for use in a Union for JSON schema generation.
@@ -244,6 +288,11 @@ def build_schema_types(
         target = get_schema_target(cls) if get_schema_target is not None else cls
         type_hints = get_function_type_hints(target)
         type_hints.pop('return', None)
+
+        # Apply type filtering if provided
+        if filter_type_hint is not None:
+            type_hints = {k: fv for k, v in type_hints.items() if (fv := filter_type_hint(v)) is not None}
+
         required_type_hints: dict[str, Any] = {}
 
         for p in inspect.signature(target).parameters.values():
@@ -253,6 +302,9 @@ def build_schema_types(
                 continue
             if p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD):
                 type_hints.pop(p.name, None)
+                continue
+            # When filtering, skip params whose type was entirely filtered out
+            if filter_type_hint is not None and p.name not in type_hints:
                 continue
             type_hints.setdefault(p.name, Any)
             if p.default is not p.empty:

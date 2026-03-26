@@ -70,7 +70,7 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
         cls,
         url: str,
         *,
-        builtin: bool = True,
+        builtin: MCPServerTool | bool = True,
         local: Literal[False] | None = None,
         id: str | None = None,
         authorization_token: str | None = None,
