@@ -1176,3 +1176,301 @@ class TestRunSync:
         result = agent.run_sync('hello')
         assert result.output == MyOutput(value=77)
         assert log == ['before_validate']
+
+
+class TestOutputHookErrorPaths:
+    """Test error paths to ensure correct error wrapping and hook firing."""
+
+    def test_on_output_validate_error_reraise_wraps_in_tool_retry(self):
+        """When on_output_validate_error re-raises ValidationError, it's wrapped in ToolRetryError causing retry."""
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ModelResponse(parts=[TextPart(content='not valid json')])
+            return ModelResponse(parts=[TextPart(content='{"value": 42}')])
+
+        error_log: list[str] = []
+
+        @dataclass
+        class ErrorLogCapability(AbstractCapability[Any]):
+            async def on_output_validate_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                raw_output: str | dict[str, Any],
+                output_context: OutputContext,
+                error: ValidationError | ModelRetry,
+            ) -> str | dict[str, Any]:
+                error_log.append(f'validate_error: {type(error).__name__}')
+                raise error  # Re-raise — should cause retry
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=PromptedOutput(MyOutput),
+            capabilities=[ErrorLogCapability()],
+        )
+        result = agent.run_sync('hello')
+        assert result.output == MyOutput(value=42)
+        assert call_count == 2
+        assert len(error_log) == 1
+        assert error_log[0] == 'validate_error: ValidationError'
+
+    def test_on_output_execute_error_recovery(self):
+        """on_output_execute_error can recover from output function failure."""
+
+        def bad_function(value: int) -> str:
+            if value < 100:
+                raise ValueError('value too small')
+            return f'result: {value}'
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"value": 42}')])
+
+        @dataclass
+        class RecoverCapability(AbstractCapability[Any]):
+            async def on_output_execute_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                output: str | dict[str, Any],
+                output_context: OutputContext,
+                error: Exception,
+            ) -> Any:
+                return 'recovered value'
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=bad_function,
+            capabilities=[RecoverCapability()],
+        )
+        result = agent.run_sync('hello')
+        assert result.output == 'recovered value'
+
+    def test_composed_on_output_validate_error_chain(self):
+        """Multiple capabilities' on_output_validate_error hooks chain correctly."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[TextPart(content='invalid')])
+            return ModelResponse(parts=[TextPart(content='{"value": 1}')])
+
+        error_log: list[str] = []
+
+        @dataclass
+        class FirstCap(AbstractCapability[Any]):
+            async def on_output_validate_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                raw_output: str | dict[str, Any],
+                output_context: OutputContext,
+                error: ValidationError | ModelRetry,
+            ) -> str | dict[str, Any]:
+                error_log.append('first_error')
+                raise error
+
+        @dataclass
+        class SecondCap(AbstractCapability[Any]):
+            async def on_output_validate_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                raw_output: str | dict[str, Any],
+                output_context: OutputContext,
+                error: ValidationError | ModelRetry,
+            ) -> str | dict[str, Any]:
+                error_log.append('second_error')
+                raise error
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=PromptedOutput(MyOutput),
+            capabilities=[FirstCap(), SecondCap()],
+        )
+        result = agent.run_sync('hello')
+        assert result.output == MyOutput(value=1)
+        # Both error hooks should have been called (reverse order per composition)
+        assert 'second_error' in error_log
+        assert 'first_error' in error_log
+
+    def test_composed_on_output_execute_error_chain(self):
+        """Multiple capabilities' on_output_execute_error hooks chain correctly."""
+
+        def failing_func(value: int) -> str:
+            raise ValueError('intentional')
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"value": 42}')])
+
+        @dataclass
+        class FirstCap(AbstractCapability[Any]):
+            async def on_output_execute_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                output: str | dict[str, Any],
+                output_context: OutputContext,
+                error: Exception,
+            ) -> Any:
+                return 'recovered_by_first'
+
+        @dataclass
+        class SecondCap(AbstractCapability[Any]):
+            async def on_output_execute_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                output: str | dict[str, Any],
+                output_context: OutputContext,
+                error: Exception,
+            ) -> Any:
+                raise error  # Don't recover, pass to next cap
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=failing_func,
+            capabilities=[FirstCap(), SecondCap()],
+        )
+        result = agent.run_sync('hello')
+        assert result.output == 'recovered_by_first'
+
+    def test_hooks_output_validate_error_decorator(self):
+        """Test on_output_validate_error via Hooks decorator API."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[TextPart(content='bad json')])
+            return ModelResponse(parts=[TextPart(content='{"value": 99}')])
+
+        hooks = Hooks()
+
+        @hooks.on.output_validate_error
+        async def handle_error(
+            ctx: RunContext[Any],
+            *,
+            raw_output: str | dict[str, Any],
+            output_context: OutputContext,
+            error: ValidationError | ModelRetry,
+        ) -> str | dict[str, Any]:
+            raise error  # Re-raise to trigger retry
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=PromptedOutput(MyOutput),
+            capabilities=[hooks],
+        )
+        result = agent.run_sync('hello')
+        assert result.output == MyOutput(value=99)
+
+    def test_hooks_output_execute_error_decorator(self):
+        """Test on_output_execute_error via Hooks decorator API."""
+
+        def bad_function(value: int) -> str:
+            raise ValueError('intentional failure')
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"value": 10}')])
+
+        hooks = Hooks()
+
+        @hooks.on.output_execute_error
+        async def handle_error(
+            ctx: RunContext[Any],
+            *,
+            output: str | dict[str, Any],
+            output_context: OutputContext,
+            error: Exception,
+        ) -> Any:
+            return 'fallback result'
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=bad_function,
+            capabilities=[hooks],
+        )
+        result = agent.run_sync('hello')
+        assert result.output == 'fallback result'
+
+    def test_tool_output_validate_error_hook_identity(self):
+        """For tool output, on_output_validate_error fires (even though validate is identity)."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"value": 42}')])
+
+        error_log: list[str] = []
+
+        @dataclass
+        class ValidateErrorLogCap(AbstractCapability[Any]):
+            async def on_output_validate_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                raw_output: str | dict[str, Any],
+                output_context: OutputContext,
+                error: ValidationError | ModelRetry,
+            ) -> str | dict[str, Any]:
+                error_log.append('validate_error')
+                raise error
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=MyOutput,
+            capabilities=[ValidateErrorLogCap()],
+        )
+        result = agent.run_sync('hello')
+        # No errors should occur — validate is identity for tool output
+        assert result.output == MyOutput(value=42)
+        assert error_log == []  # No errors, so hook never fires
+
+    def test_wrapper_capability_output_hooks_delegate(self):
+        """WrapperCapability delegates output hooks to wrapped capability."""
+        from pydantic_ai.capabilities.wrapper import WrapperCapability
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='{"value": 5}')])
+
+        log: list[str] = []
+
+        @dataclass
+        class InnerCap(AbstractCapability[Any]):
+            async def before_output_validate(
+                self,
+                ctx: RunContext[Any],
+                *,
+                raw_output: str | dict[str, Any],
+                output_context: OutputContext,
+            ) -> str | dict[str, Any]:
+                log.append('inner_before_validate')
+                return raw_output
+
+            async def after_output_execute(
+                self,
+                ctx: RunContext[Any],
+                *,
+                input: str | dict[str, Any],
+                output: Any,
+                output_context: OutputContext,
+            ) -> Any:
+                log.append('inner_after_execute')
+                return output
+
+        @dataclass
+        class OuterCap(WrapperCapability[Any]):
+            pass
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=PromptedOutput(MyOutput),
+            capabilities=[OuterCap(wrapped=InnerCap())],
+        )
+        result = agent.run_sync('hello')
+        assert result.output == MyOutput(value=5)
+        assert 'inner_before_validate' in log
+        assert 'inner_after_execute' in log
