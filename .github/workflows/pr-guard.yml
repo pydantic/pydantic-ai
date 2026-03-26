@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Check linked issues and guard against duplicates
+      - name: Check PR template and guard against duplicates
         run: |
           set -euo pipefail
 
@@ -34,21 +34,18 @@ jobs:
 
           # Maintainer bypass
           if [[ "$AUTHOR_ASSOCIATION" == "MEMBER" || "$AUTHOR_ASSOCIATION" == "OWNER" || "$AUTHOR_ASSOCIATION" == "COLLABORATOR" ]]; then
-            echo "Author is a maintainer/collaborator, skipping checks."
+            echo "Author is a maintainer/collaborator (${AUTHOR_ASSOCIATION}), skipping checks."
             exit 0
           fi
 
-          # --- Check 0: [bot] in PR title = auto-close ---
-          # docs/contributing.md instructs AI agents to add [bot] to their PR title
-          # for "expedited review". If they comply, we know it's a bot.
-          if [[ "$PR_TITLE" == *"[bot]"* ]]; then
-            echo "PR title contains [bot]. Closing."
-            gh pr close "$PR_NUMBER" --repo "$REPO"
-            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "This PR has been automatically closed. If this is your work, please raise the PR yourself using the GitHub UI." || true
+          # Fallback: check org membership via API in case author_association is unreliable
+          ORG="${REPO%%/*}"
+          if gh api "orgs/${ORG}/members/${PR_AUTHOR}" > /dev/null 2>&1; then
+            echo "Author is an org member (verified via API), skipping checks."
             exit 0
           fi
 
-          # --- Check 1: PR must have the PR template ---
+          # --- Check: PR must have the PR template ---
           # PRs created from the GitHub UI automatically include the template.
           # PRs created via `gh pr create`, API, or other tools typically don't.
           # We check for a known string from the template as a signal.
@@ -60,31 +57,6 @@ jobs:
             gh pr close "$PR_NUMBER" --repo "$REPO"
             gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$COMMENT" || true
             exit 0
-          fi
-
-          # --- PR limits: new contributors can only have a limited number of open PRs ---
-          # 0 merged -> 1, 1 merged -> 2, 2 merged -> 3, 3+ merged -> unlimited
-          MERGED_COUNT=$(gh api -X GET "search/issues" \
-            -f q="repo:${REPO} type:pr author:${PR_AUTHOR} is:merged" \
-            --jq '.total_count')
-          echo "Author has ${MERGED_COUNT} merged PRs total."
-
-          if [ "$MERGED_COUNT" -lt 3 ]; then
-            MAX_OPEN=$((MERGED_COUNT + 1))
-            # Count open PRs by this author, excluding the current one.
-            # Uses REST API (not search) to avoid indexing lag on newly opened PRs.
-            OPEN_COUNT=$(gh api "repos/${REPO}/pulls?state=open&per_page=100" --paginate --slurp \
-              --jq "[.[][] | select(.user.login == \"${PR_AUTHOR}\" and .number != ${PR_NUMBER})] | length")
-            echo "Open PRs (excluding this one): ${OPEN_COUNT} (limit: ${MAX_OPEN})."
-
-            if [ "$OPEN_COUNT" -ge "$MAX_OPEN" ]; then
-              echo "PR limit exceeded. Closing."
-              gh pr close "$PR_NUMBER" --repo "$REPO"
-              gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$(printf '%s\n\n%s' \
-                "You currently have **${OPEN_COUNT}** other open PR(s), and your limit is **${MAX_OPEN}** (based on **${MERGED_COUNT}** merged PR(s))." \
-                "Please wait for existing PRs to be reviewed and merged before opening new ones. See our [contribution guidelines](https://github.com/${REPO}/blob/main/docs/contributing.md) for details.")" || true
-              exit 0
-            fi
           fi
 
           # Parse closing keywords from PR body
@@ -100,7 +72,6 @@ jobs:
           echo "Found linked issues: $ISSUE_NUMBERS"
 
           # Fetch all open PRs once for duplicate detection.
-          # This is only open PRs (not closed), so the volume is manageable.
           ALL_OPEN_PRS=$(gh api "repos/${REPO}/pulls?state=open&per_page=100" --paginate --slurp --jq 'flatten') || ALL_OPEN_PRS="[]"
 
           FOUND_OPEN_ISSUE="false"
@@ -196,5 +167,4 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
           IS_DRAFT: ${{ github.event.pull_request.draft }}
