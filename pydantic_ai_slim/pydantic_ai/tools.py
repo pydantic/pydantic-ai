@@ -498,7 +498,9 @@ class Tool(Generic[ToolAgentDepsT]):
             # don't leak into future runs. We use `replace()` + deepcopy of only the mutable
             # schema dict instead of `deepcopy(tool_def)` because `_FunctionToolDefinition.original_func`
             # may close over unpicklable objects (e.g. HTTP clients).
-            tool_def_copy = replace(base_tool_def, parameters_json_schema=deepcopy(base_tool_def.parameters_json_schema))
+            tool_def_copy = replace(
+                base_tool_def, parameters_json_schema=deepcopy(base_tool_def.parameters_json_schema)
+            )
             result = self.prepare(ctx, tool_def_copy)
             if inspect.isawaitable(result):
                 return await result

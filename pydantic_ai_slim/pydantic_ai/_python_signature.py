@@ -506,9 +506,10 @@ def _schema_allows_null(schema: dict[str, Any]) -> bool:
     schema_type = schema.get('type')
     if isinstance(schema_type, list) and 'null' in schema_type:
         return True
-    if 'anyOf' in schema or 'oneOf' in schema:
-        union = schema.get('anyOf') or schema.get('oneOf', [])
-        return any(s.get('type') == 'null' for s in union)
+    if 'anyOf' in schema:
+        return any(s.get('type') == 'null' for s in schema['anyOf'])
+    if 'oneOf' in schema:
+        return any(s.get('type') == 'null' for s in schema['oneOf'])
     return False
 
 
