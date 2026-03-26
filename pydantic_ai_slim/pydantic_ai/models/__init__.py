@@ -659,7 +659,7 @@ class ModelRequestParameters:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass
+@dataclass(kw_only=True)
 class ModelRequestContext:
     """Context for model request hooks.
 
@@ -667,6 +667,7 @@ class ModelRequestContext:
     future-proof: new fields can be added without breaking existing implementations.
     """
 
+    model: Model
     messages: list[ModelMessage]
     model_settings: ModelSettings | None
     model_request_parameters: ModelRequestParameters

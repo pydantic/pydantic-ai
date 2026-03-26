@@ -1363,6 +1363,151 @@ class TestModelRequestHooks:
         result = await agent.run('hello')
         assert result.output == 'skipped model'
 
+    async def test_before_model_request_swaps_model(self):
+        call_log: list[str] = []
+
+        def swap_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            call_log.append('swap_model')
+            return make_text_response('from swap model')
+
+        swap_target = FunctionModel(swap_model_fn)
+
+        @dataclass
+        class SwapModelCap(AbstractCapability[Any]):
+            async def before_model_request(
+                self, ctx: RunContext[Any], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                request_context.model = swap_target
+                return request_context
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[SwapModelCap()])
+        result = await agent.run('hello')
+        assert result.output == 'from swap model'
+        assert call_log == ['swap_model']
+
+    async def test_wrap_model_request_swaps_model(self):
+        call_log: list[str] = []
+
+        def swap_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            call_log.append('swap_model')
+            return make_text_response('from swap model')
+
+        swap_target = FunctionModel(swap_model_fn)
+
+        @dataclass
+        class SwapInWrapCap(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any
+            ) -> ModelResponse:
+                request_context.model = swap_target
+                return await handler(request_context)
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[SwapInWrapCap()])
+        result = await agent.run('hello')
+        assert result.output == 'from swap model'
+        assert call_log == ['swap_model']
+
+    async def test_before_model_request_swaps_model_streaming(self):
+        call_log: list[str] = []
+
+        async def swap_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            call_log.append('swap_stream')
+            yield 'from swap stream'
+
+        swap_target = FunctionModel(stream_function=swap_stream_fn)
+
+        @dataclass
+        class SwapModelCap(AbstractCapability[Any]):
+            async def before_model_request(
+                self, ctx: RunContext[Any], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                request_context.model = swap_target
+                return request_context
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[SwapModelCap()],
+        )
+        async with agent.run_stream('hello') as stream:
+            output = await stream.get_output()
+        assert output == 'from swap stream'
+        assert call_log == ['swap_stream']
+
+    async def test_run_context_model_unchanged_after_swap(self):
+        observed_models: list[Any] = []
+
+        def swap_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('from swap model')
+
+        original_model = FunctionModel(simple_model_function)
+        swap_target = FunctionModel(swap_model_fn)
+
+        @dataclass
+        class SwapAndObserveCap(AbstractCapability[Any]):
+            async def before_model_request(
+                self, ctx: RunContext[Any], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                observed_models.append(ctx.model)
+                request_context.model = swap_target
+                return request_context
+
+        agent = Agent(original_model, capabilities=[SwapAndObserveCap()])
+        result = await agent.run('hello')
+        assert result.output == 'from swap model'
+        assert observed_models[0] is original_model
+
+    async def test_hooks_before_model_request_swaps_model(self):
+        call_log: list[str] = []
+        hooks = Hooks()
+
+        def swap_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            call_log.append('swap_model')
+            return make_text_response('from swap model')
+
+        swap_target = FunctionModel(swap_model_fn)
+
+        @hooks.on.before_model_request
+        async def _(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            request_context.model = swap_target
+            return request_context
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        result = await agent.run('hello')
+        assert result.output == 'from swap model'
+        assert call_log == ['swap_model']
+
+    async def test_after_model_request_sees_wrap_swap(self):
+        """after_model_request sees the model swapped during wrap_model_request."""
+        after_models: list[Any] = []
+
+        def swap_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('from swap model')
+
+        swap_target = FunctionModel(swap_model_fn)
+
+        @dataclass
+        class SwapInWrapAndObserveCap(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any
+            ) -> ModelResponse:
+                request_context.model = swap_target
+                return await handler(request_context)
+
+            async def after_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                response: ModelResponse,
+            ) -> ModelResponse:
+                after_models.append(request_context.model)
+                return response
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[SwapInWrapAndObserveCap()])
+        result = await agent.run('hello')
+        assert result.output == 'from swap model'
+        assert after_models[0] is swap_target
+
 
 class TestToolValidateHooks:
     async def test_tool_validate_hooks_fire(self):
