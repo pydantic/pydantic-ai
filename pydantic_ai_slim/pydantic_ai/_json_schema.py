@@ -9,6 +9,7 @@ from typing import Any, Literal
 from .exceptions import UserError
 
 JsonSchema = dict[str, Any]
+JsonSchemaNode = JsonSchema | bool
 
 
 @dataclass(init=False)
@@ -24,7 +25,7 @@ class JsonSchemaTransformer(ABC):
 
     def __init__(
         self,
-        schema: JsonSchema,
+        schema: JsonSchemaNode,
         *,
         strict: bool | None = None,
         prefer_inlined_defs: bool = False,
@@ -45,7 +46,9 @@ class JsonSchemaTransformer(ABC):
         self.prefer_inlined_defs = prefer_inlined_defs
         self.simplify_nullable_unions = simplify_nullable_unions
 
-        self.defs: dict[str, JsonSchema] = deepcopy(self.schema.get('$defs', {}))
+        self.defs: dict[str, JsonSchemaNode] = (
+            deepcopy(self.schema.get('$defs', {})) if isinstance(self.schema, dict) else {}
+        )
         self.refs_stack: list[str] = []
         self.recursive_refs = set[str]()
 
@@ -54,12 +57,17 @@ class JsonSchemaTransformer(ABC):
         """Make changes to the schema."""
         return schema
 
-    def walk(self) -> JsonSchema:
+    def walk(self) -> JsonSchemaNode:
         schema = deepcopy(self.schema)
+        if isinstance(schema, bool):
+            return schema
+        root_schema = self.schema if isinstance(self.schema, dict) else {}
 
         # First, handle everything but $defs:
         schema.pop('$defs', None)
         handled = self._handle(schema)
+        if not isinstance(handled, dict):
+            return handled
 
         if not self.prefer_inlined_defs and self.defs:
             handled['$defs'] = {k: self._handle(v) for k, v in self.defs.items()}
@@ -69,10 +77,10 @@ class JsonSchemaTransformer(ABC):
             # We try to use whatever the original root key was, but if it is already in use,
             # we modify it to avoid collisions.
             defs = {key: self.defs[key] for key in self.recursive_refs}
-            root_ref = self.schema.get('$ref')
+            root_ref = root_schema.get('$ref')
             root_key = None if root_ref is None else re.sub(r'^#/\$defs/', '', root_ref)
             if root_key is None:  # pragma: no cover
-                root_key = self.schema.get('title', 'root')
+                root_key = root_schema.get('title', 'root')
                 while root_key in defs:
                     # Modify the root key until it is not already in use
                     root_key = f'{root_key}_root'
@@ -82,10 +90,13 @@ class JsonSchemaTransformer(ABC):
 
         return handled
 
-    def _handle(self, schema: JsonSchema) -> JsonSchema:
+    def _handle(self, schema: JsonSchemaNode) -> JsonSchemaNode:
+        if isinstance(schema, bool):
+            return schema
+
         nested_refs = 0
         if self.prefer_inlined_defs:
-            while ref := schema.get('$ref'):
+            while isinstance(schema, dict) and (ref := schema.get('$ref')):
                 key = re.sub(r'^#/\$defs/', '', ref)
                 if key in self.recursive_refs:
                     break
@@ -99,6 +110,8 @@ class JsonSchemaTransformer(ABC):
                 if def_schema is None:  # pragma: no cover
                     raise UserError(f'Could not find $ref definition for {key}')
                 schema = def_schema
+            if isinstance(schema, bool):
+                return schema
 
         # Handle the schema based on its type / structure
         type_ = schema.get('type')
@@ -120,7 +133,7 @@ class JsonSchemaTransformer(ABC):
 
     def _handle_object(self, schema: JsonSchema) -> JsonSchema:
         if properties := schema.get('properties'):
-            handled_properties = {}
+            handled_properties: dict[str, JsonSchemaNode] = {}
             for key, value in properties.items():
                 handled_properties[key] = self._handle(value)
             schema['properties'] = handled_properties
@@ -132,7 +145,7 @@ class JsonSchemaTransformer(ABC):
                 schema['additionalProperties'] = self._handle(additional_properties)
 
         if (pattern_properties := schema.get('patternProperties')) is not None:
-            handled_pattern_properties = {}
+            handled_pattern_properties: dict[str, JsonSchemaNode] = {}
             for key, value in pattern_properties.items():
                 handled_pattern_properties[key] = self._handle(value)
             schema['patternProperties'] = handled_pattern_properties
@@ -154,14 +167,15 @@ class JsonSchemaTransformer(ABC):
         except KeyError:
             return schema
 
-        handled = [self._handle(member) for member in members]
+        handled: list[JsonSchemaNode] = [self._handle(member) for member in members]
 
         # TODO (v2): Remove this feature, no longer used
         if self.simplify_nullable_unions:
             handled = self._simplify_nullable_union(handled)
         if len(handled) == 1:
             # In this case, no need to retain the union
-            return handled[0] | schema
+            if isinstance(handled[0], dict):
+                return handled[0] | schema
 
         # If we have keys besides the union kind (such as title or discriminator), keep them without modifications
         schema = schema.copy()
@@ -169,7 +183,7 @@ class JsonSchemaTransformer(ABC):
         return schema
 
     @staticmethod
-    def _simplify_nullable_union(cases: list[JsonSchema]) -> list[JsonSchema]:
+    def _simplify_nullable_union(cases: list[JsonSchemaNode]) -> list[JsonSchemaNode]:
         # TODO (v2): Remove this method, no longer used
         if len(cases) == 2 and {'type': 'null'} in cases:
             # Find the non-null schema
@@ -177,7 +191,7 @@ class JsonSchemaTransformer(ABC):
                 (item for item in cases if item != {'type': 'null'}),
                 None,
             )
-            if non_null_schema:
+            if isinstance(non_null_schema, dict):
                 # Create a new schema based on the non-null part, mark as nullable
                 new_schema = deepcopy(non_null_schema)
                 new_schema['nullable'] = True

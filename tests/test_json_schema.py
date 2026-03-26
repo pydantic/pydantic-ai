@@ -32,6 +32,7 @@ def test_simplify_nullable_unions():
     # Test with simplify_nullable_unions=False (default)
     transformer2 = TestTransformer(schema_with_null, simplify_nullable_unions=False)
     result2 = transformer2.walk()
+    assert isinstance(result2, dict)
 
     # Should keep the anyOf structure
     assert 'anyOf' in result2
@@ -46,6 +47,7 @@ def test_simplify_nullable_unions():
     }
     transformer3 = TestTransformer(schema_no_null, simplify_nullable_unions=True)
     result3 = transformer3.walk()
+    assert isinstance(result3, dict)
 
     # Should keep anyOf since it's not nullable
     assert 'anyOf' in result3
@@ -87,3 +89,36 @@ def test_schema_defs_not_modified():
 
     # Verify the result is correct
     assert result == original_schema_copy
+
+
+def test_boolean_schema_nodes_do_not_crash():
+    class TestTransformer(JsonSchemaTransformer):
+        def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
+            return schema
+
+    schema = {
+        'type': 'object',
+        'properties': {
+            'fields': {
+                'type': 'array',
+                'items': {
+                    'type': 'object',
+                    'properties': {
+                        'value': True,
+                    },
+                },
+            },
+        },
+    }
+
+    transformer = TestTransformer(schema)
+    assert transformer.walk() == schema
+
+
+def test_root_boolean_schema_does_not_crash():
+    class TestTransformer(JsonSchemaTransformer):
+        def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
+            return schema
+
+    transformer = TestTransformer(True)
+    assert transformer.walk() is True
