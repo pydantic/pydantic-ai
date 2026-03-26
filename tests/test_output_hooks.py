@@ -1647,3 +1647,145 @@ class TestOutputHookEdgeCases:
         result = agent.run_sync('hello')
         assert result.output == MyOutput(value=10)
         assert execute_log == ['wrap_execute_before', 'wrap_execute_after']
+
+
+class TestErrorHookCoveragePaths:
+    """Tests to exercise error hook delegation paths (abstract defaults, wrapper, hooks chaining)."""
+
+    def test_bare_capability_default_on_output_validate_error(self):
+        """A bare AbstractCapability subclass with no error hook override exercises default `raise error`."""
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ModelResponse(parts=[TextPart(content='not json')])
+            return ModelResponse(parts=[TextPart(content='{"value": 3}')])
+
+        @dataclass
+        class BareCap(AbstractCapability[Any]):
+            """Has no hook overrides — uses all defaults."""
+
+            pass
+
+        agent = Agent(FunctionModel(model_fn), output_type=PromptedOutput(MyOutput), capabilities=[BareCap()])
+        result = agent.run_sync('hello')
+        assert result.output == MyOutput(value=3)
+        assert call_count == 2  # First attempt failed, retried
+
+    def test_bare_capability_default_on_output_execute_error(self):
+        """A bare AbstractCapability subclass with no error hook override lets execute errors propagate."""
+
+        def failing_func(value: int) -> str:
+            raise ValueError('execute fail')
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"value": 1}')])
+
+        @dataclass
+        class BareCap(AbstractCapability[Any]):
+            pass
+
+        agent = Agent(FunctionModel(model_fn), output_type=failing_func, capabilities=[BareCap()])
+        with pytest.raises(ValueError, match='execute fail'):
+            agent.run_sync('hello')
+
+    def test_wrapper_on_output_validate_error_delegates(self):
+        """WrapperCapability delegates on_output_validate_error to the wrapped capability."""
+        from pydantic_ai.capabilities.wrapper import WrapperCapability
+
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ModelResponse(parts=[TextPart(content='invalid')])
+            return ModelResponse(parts=[TextPart(content='{"value": 8}')])
+
+        error_log: list[str] = []
+
+        @dataclass
+        class InnerCap(AbstractCapability[Any]):
+            async def on_output_validate_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                raw_output: RawOutput,
+                output_context: OutputContext,
+                error: ValidationError | ModelRetry,
+            ) -> RawOutput:
+                error_log.append('inner_error')
+                raise error
+
+        @dataclass
+        class OuterWrap(WrapperCapability[Any]):
+            pass
+
+        agent = Agent(
+            FunctionModel(model_fn), output_type=PromptedOutput(MyOutput), capabilities=[OuterWrap(wrapped=InnerCap())]
+        )
+        result = agent.run_sync('hello')
+        assert result.output == MyOutput(value=8)
+        assert 'inner_error' in error_log
+
+    def test_wrapper_on_output_execute_error_delegates(self):
+        """WrapperCapability delegates on_output_execute_error to the wrapped capability."""
+        from pydantic_ai.capabilities.wrapper import WrapperCapability
+
+        def failing_func(value: int) -> str:
+            raise ValueError('exec fail')
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"value": 1}')])
+
+        @dataclass
+        class InnerCap(AbstractCapability[Any]):
+            async def on_output_execute_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                output: RawOutput,
+                output_context: OutputContext,
+                error: Exception,
+            ) -> Any:
+                return 'wrapper_recovered'
+
+        @dataclass
+        class OuterWrap(WrapperCapability[Any]):
+            pass
+
+        agent = Agent(FunctionModel(model_fn), output_type=failing_func, capabilities=[OuterWrap(wrapped=InnerCap())])
+        result = agent.run_sync('hello')
+        assert result.output == 'wrapper_recovered'
+
+    def test_hooks_on_output_execute_error_chaining(self):
+        """Hooks class on_output_execute_error re-raises, chaining errors."""
+
+        def failing_func(value: int) -> str:
+            raise ValueError('original')
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"value": 1}')])
+
+        hooks = Hooks()
+
+        @hooks.on.output_execute_error
+        async def first_handler(
+            ctx: RunContext[Any], *, output: RawOutput, output_context: OutputContext, error: Exception
+        ) -> Any:
+            raise ValueError('chained')  # Re-raise different error
+
+        @hooks.on.output_execute_error
+        async def second_handler(
+            ctx: RunContext[Any], *, output: RawOutput, output_context: OutputContext, error: Exception
+        ) -> Any:
+            return 'recovered'  # This one recovers
+
+        agent = Agent(FunctionModel(model_fn), output_type=failing_func, capabilities=[hooks])
+        result = agent.run_sync('hello')
+        assert result.output == 'recovered'

@@ -822,7 +822,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
         try:
             output = self.validate(data, allow_partial=allow_partial, validation_context=run_context.validation_context)
-        except ValidationError as e:
+        except ValidationError as e:  # pragma: no cover — error handling now in run_output_with_hooks; only reachable via UnionOutputProcessor.process() or capability=None
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(
                     content=e.errors(include_url=False),
@@ -1211,7 +1211,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             for tool_def in self._tool_defs
         }
 
-    async def call_tool(
+    async def call_tool(  # pragma: no cover — execution now handled by _raw_execute_output_tool when capability is present
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         output = await self.processors[name].call(tool_args, ctx, wrap_validation_errors=False)
