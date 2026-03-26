@@ -9,7 +9,6 @@ from typing import Optional, Union
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, RootModel
-from typing_extensions import TypedDict
 
 from pydantic_ai._python_signature import (
     FunctionParam,
@@ -19,10 +18,6 @@ from pydantic_ai._python_signature import (
     TypeSignature,
     UnionTypeExpr,
     _annotation_to_type_expr,  # pyright: ignore[reportPrivateUsage]
-    _collect_referenced_types,  # pyright: ignore[reportPrivateUsage]
-    _get_schema_from_type,  # pyright: ignore[reportPrivateUsage]
-    _get_type_name,  # pyright: ignore[reportPrivateUsage]
-    _schema_allows_null,  # pyright: ignore[reportPrivateUsage]
     _to_pascal_case,  # pyright: ignore[reportPrivateUsage]
     collect_unique_referenced_types,
     dedup_referenced_types,
@@ -31,11 +26,7 @@ from pydantic_ai._python_signature import (
     schema_to_signature,
 )
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.tools import (
-    Tool,
-    ToolDefinition,
-    _FunctionToolDefinition,  # pyright: ignore[reportPrivateUsage]
-)
+from pydantic_ai.tools import Tool, ToolDefinition
 
 pytestmark = pytest.mark.anyio
 
@@ -43,15 +34,6 @@ pytestmark = pytest.mark.anyio
 def test_render_function_signature_with_no_params():
     sig = FunctionSignature(name='ping', params={}, return_type='None')
     assert str(sig) == 'async def ping() -> None:\n    ...'
-
-
-def test_get_schema_from_type_uses_type_adapter_for_typed_dict():
-    class _Payload(TypedDict):
-        value: int
-
-    schema = _get_schema_from_type(_Payload)
-    assert schema['type'] == 'object'
-    assert 'value' in schema.get('properties', {})
 
 
 def test_dedup_referenced_types_substring_names():
@@ -404,8 +386,8 @@ def test_to_pascal_case_edge_cases():
     assert _to_pascal_case('my-tool-name') == 'MyToolName'
 
 
-def test_function_tool_definition_produces_same_signature_as_function_based():
-    """_FunctionToolDefinition.python_signature matches the old FunctionToolsetTool approach."""
+def test_tool_def_python_signature_matches_function_based():
+    """Tool.tool_def.python_signature matches a directly generated function signature."""
 
     def my_tool(x: int, y: str = 'hello') -> bool:
         """A test tool."""
@@ -413,7 +395,6 @@ def test_function_tool_definition_produces_same_signature_as_function_based():
 
     tool = Tool(my_tool)
     tool_def = tool.tool_def
-    assert isinstance(tool_def, _FunctionToolDefinition)
 
     # The cached signature should match a freshly generated one
     cached_sig = tool_def.python_signature
@@ -440,14 +421,13 @@ def test_tool_definition_cached_property_reset_on_replace():
     assert sig1 is not sig2
 
 
-def test_function_tool_definition_fallback_without_original_func():
-    """_FunctionToolDefinition falls back to schema-based signature when original_func is None."""
+def test_tool_definition_schema_based_python_signature():
+    """ToolDefinition.python_signature generates a schema-based signature."""
 
-    td = _FunctionToolDefinition(
+    td = ToolDefinition(
         name='schema_tool',
         parameters_json_schema={'type': 'object', 'properties': {'q': {'type': 'string'}}, 'required': ['q']},
         description='A schema-based tool',
-        original_func=None,
     )
     sig = td.python_signature
     assert sig.name == 'schema_tool'
@@ -472,7 +452,6 @@ def test_tool_from_schema_python_signature_uses_schema():
             'required': ['query'],
         },
     )
-    assert isinstance(tool.tool_def, _FunctionToolDefinition)
     assert str(tool.tool_def.python_signature) == snapshot("""\
 async def search(*, query: str, limit: int | None = None) -> Any:
     \"\"\"Search documents\"\"\"
@@ -912,20 +891,10 @@ async def t5(*, x: str | None) -> Any:
 # =============================================================================
 
 
-def test_function_tool_definition_eq_non_tool():
-    """_FunctionToolDefinition.__eq__ returns NotImplemented for non-ToolDefinition."""
-    td = _FunctionToolDefinition(name='t', parameters_json_schema={}, original_func=None)
+def test_tool_definition_eq_non_tool():
+    """ToolDefinition does not equal non-ToolDefinition objects."""
+    td = ToolDefinition(name='t')
     assert td != 'not a tool'
-
-
-def test_get_type_name_repr_fallback():
-    """Types without __name__ use repr fallback, NoneType returns 'None'."""
-
-    # NoneType returns 'None'
-    assert _get_type_name(type(None)) == 'None'
-
-    # Literal type args (e.g. the string 'a') have no __name__ → repr fallback
-    assert _get_type_name('some_value') == "'some_value'"
 
 
 def test_function_signature_literal_annotation():
@@ -954,14 +923,6 @@ def test_function_signature_nameerror_fallback():
     sig = function_to_signature(func, name='func_fwd')  # pyright: ignore[reportArgumentType]
     # Should not raise — falls back to empty hints, x becomes Any
     assert 'x' in sig.params
-
-
-def test_schema_allows_null_anyof():
-    """_schema_allows_null detects null in anyOf and oneOf."""
-    assert _schema_allows_null({'anyOf': [{'type': 'string'}, {'type': 'null'}]}) is True
-    assert _schema_allows_null({'anyOf': [{'type': 'string'}]}) is False
-    assert _schema_allows_null({'oneOf': [{'type': 'string'}, {'type': 'null'}]}) is True
-    assert _schema_allows_null({'oneOf': [{'type': 'string'}]}) is False
 
 
 def test_schema_bare_object():
@@ -1163,26 +1124,6 @@ async def tool(*, item: Container) -> Any:
     # Container's 'inner' field references the Inner TypeSignature
     container = next(t for t in sig.referenced_types if t.name == 'Container')
     assert render_type_expr(container.fields['inner'].type) == 'Inner'
-
-
-def test_collect_referenced_types_skips_already_registered():
-    """When a $def name is already in referenced_types, _collect_referenced_types skips it."""
-
-    class _Address(BaseModel):
-        street: str
-
-    class _Person(BaseModel):
-        name: str
-        home: _Address
-
-    # Processing Address first registers it
-    referenced_types: dict[str, TypeSignature] = {}
-    _collect_referenced_types(_Address, referenced_types, 'func', 'a')
-    assert '_Address' in referenced_types
-
-    # Now collect Person — its $defs include _Address which should be skipped
-    _collect_referenced_types(_Person, referenced_types, 'func', 'b')
-    assert '_Person' in referenced_types
 
 
 def test_schema_inline_object_reuses_existing_typename():

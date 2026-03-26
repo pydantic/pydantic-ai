@@ -210,7 +210,7 @@ def _get_type_name(t: Any) -> str:
     """Get the name of a type."""
     if t is type(None):
         return 'None'
-    if hasattr(t, '__name__'):
+    if isinstance(t, type):
         return t.__name__
     s = repr(t)
     return s.replace('typing.', '').replace('typing_extensions.', '')

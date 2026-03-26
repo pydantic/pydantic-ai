@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import inspect
-from copy import deepcopy
 from dataclasses import dataclass, replace
 
 from .._run_context import AgentDepsT, RunContext
@@ -22,14 +21,7 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         original_tools = await super().get_tools(ctx)
-        # Per-run copies so prepare functions can mutate in place (e.g.
-        # `tool_def.parameters_json_schema['properties'][...] = ...`) without
-        # leaking into future runs.  We deepcopy only the mutable schema dict
-        # because `original_func` may close over unpicklable objects.
-        original_tool_defs = [
-            replace(tool.tool_def, parameters_json_schema=deepcopy(tool.tool_def.parameters_json_schema))
-            for tool in original_tools.values()
-        ]
+        original_tool_defs = [tool.tool_def.copy_for_prepare() for tool in original_tools.values()]
         result = self.prepare_func(ctx, original_tool_defs)
         if inspect.isawaitable(result):
             result = await result
