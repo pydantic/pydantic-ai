@@ -566,16 +566,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if wrap_task.done() and not stream_ready.is_set():
             # wrap_model_request completed without calling handler — short-circuited or raised SkipModelRequest
             try:
+                result_or_exc: _messages.ModelResponse | Exception
                 try:
-                    model_response = wrap_task.result()
-                except exceptions.SkipModelRequest as e:
-                    model_response = e.response
-                except exceptions.ModelRetry:
-                    raise  # Propagate to outer handler
+                    result_or_exc = wrap_task.result()
                 except Exception as e:
-                    model_response = await ctx.deps.root_capability.on_model_request_error(
-                        run_context, request_context=wrap_request_context, error=e
-                    )
+                    result_or_exc = e
+                model_response = await self._resolve_wrap_result(ctx, run_context, wrap_request_context, result_or_exc)
             except exceptions.ModelRetry as e:
                 self._did_stream = True
                 ctx.state.usage.requests += 1
@@ -629,9 +625,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 except exceptions.ModelRetry as e:
                     ctx.state.usage.requests += 1
                     await self._build_retry_node(ctx, run_context, e)
-                    return
-                await self._finish_handling(ctx, model_response)
-                assert self._result is not None
+                else:
+                    await self._finish_handling(ctx, model_response)
+                    assert self._result is not None
 
     @staticmethod
     def _build_agent_stream(
@@ -811,6 +807,29 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self._result = CallToolsNode(response)
 
         return self._result
+
+    async def _resolve_wrap_result(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        run_context: RunContext[DepsT],
+        request_context: ModelRequestContext,
+        result_or_exc: _messages.ModelResponse | Exception,
+    ) -> _messages.ModelResponse:
+        """Resolve a wrap_model_request result, handling SkipModelRequest and errors.
+
+        Returns ModelResponse on success.
+        Raises ModelRetry if the result or on_model_request_error raises it.
+        """
+        if isinstance(result_or_exc, Exception):
+            exc = result_or_exc
+            if isinstance(exc, exceptions.SkipModelRequest):
+                return exc.response
+            if isinstance(exc, exceptions.ModelRetry):
+                raise exc
+            return await ctx.deps.root_capability.on_model_request_error(
+                run_context, request_context=request_context, error=exc
+            )
+        return result_or_exc
 
     async def _build_retry_node(
         self,
