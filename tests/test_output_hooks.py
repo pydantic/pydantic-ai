@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
+from opentelemetry.trace import NoOpTracer
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai._run_context import RunContext
@@ -1575,8 +1576,8 @@ class TestOutputHookEdgeCases:
         assert result.output == 'hello world'
         assert any('before_validate' in entry for entry in log)
 
-    def test_no_capability_fast_path(self):
-        """When capability is None, run_output_with_hooks falls through to process()."""
+    def test_no_capability_fast_path_text(self):
+        """When capability is None, run_output_with_hooks falls through to process() for text."""
         import asyncio
 
         from pydantic_ai._output import TextOutputProcessor, run_output_with_hooks
@@ -1594,19 +1595,107 @@ class TestOutputHookEdgeCases:
                 retry=0,
                 max_retries=3,
                 trace_include_content=False,
-                tracer=None,  # type: ignore
+                tracer=NoOpTracer(),
+                instrumentation_version=0,
+            )
+            return await run_output_with_hooks(processor, 'hello', run_context=ctx, capability=None, output_mode='text')
+
+        result = asyncio.get_event_loop().run_until_complete(run())
+        assert result == 'hello'
+
+    def test_no_capability_fast_path_structured(self):
+        """When capability is None, run_output_with_hooks uses process() for structured output."""
+        import asyncio
+
+        from pydantic_ai._output import ObjectOutputProcessor, run_output_with_hooks
+        from pydantic_ai._run_context import RunContext
+
+        processor = ObjectOutputProcessor(output=MyOutput)
+
+        async def run():
+            ctx = RunContext(
+                deps=None,
+                model=None,  # type: ignore
+                usage=None,  # type: ignore
+                prompt='test',
+                run_step=0,
+                retry=0,
+                max_retries=3,
+                trace_include_content=False,
+                tracer=NoOpTracer(),
+                instrumentation_version=0,
+            )
+            return await run_output_with_hooks(
+                processor, '{"value": 42}', run_context=ctx, capability=None, output_mode='prompted'
+            )
+
+        result = asyncio.get_event_loop().run_until_complete(run())
+        assert isinstance(result, MyOutput)
+        assert result.value == 42
+
+    def test_no_capability_fast_path_text_function(self):
+        """When capability is None, run_output_with_hooks uses process() for text functions."""
+        import asyncio
+
+        from pydantic_ai._output import TextFunctionOutputProcessor, run_output_with_hooks
+        from pydantic_ai._run_context import RunContext
+
+        def upper(text: str) -> str:
+            return text.upper()
+
+        processor = TextFunctionOutputProcessor(upper)
+
+        async def run():
+            ctx = RunContext(
+                deps=None,
+                model=None,  # type: ignore
+                usage=None,  # type: ignore
+                prompt='test',
+                run_step=0,
+                retry=0,
+                max_retries=3,
+                trace_include_content=False,
+                tracer=NoOpTracer(),
+                instrumentation_version=0,
+            )
+            return await run_output_with_hooks(processor, 'hello', run_context=ctx, capability=None, output_mode='text')
+
+        result = asyncio.get_event_loop().run_until_complete(run())
+        assert result == 'HELLO'
+
+    def test_no_capability_fast_path_union(self):
+        """When capability is None, run_output_with_hooks uses process() for union output."""
+        import asyncio
+
+        from pydantic_ai._output import UnionOutputProcessor, run_output_with_hooks
+        from pydantic_ai._run_context import RunContext
+
+        processor = UnionOutputProcessor(outputs=[MyOutput])
+
+        async def run():
+            ctx = RunContext(
+                deps=None,
+                model=None,  # type: ignore
+                usage=None,  # type: ignore
+                prompt='test',
+                run_step=0,
+                retry=0,
+                max_retries=3,
+                trace_include_content=False,
+                tracer=NoOpTracer(),
                 instrumentation_version=0,
             )
             return await run_output_with_hooks(
                 processor,
-                'hello',
+                '{"result": {"kind": "MyOutput", "data": {"value": 7}}}',
                 run_context=ctx,
                 capability=None,
-                output_mode='text',
+                output_mode='prompted',
             )
 
         result = asyncio.get_event_loop().run_until_complete(run())
-        assert result == 'hello'
+        assert isinstance(result, MyOutput)
+        assert result.value == 7
 
     def test_hooks_on_output_execute_via_hooks_class(self):
         """Test wrap_output_execute via Hooks decorator API."""
