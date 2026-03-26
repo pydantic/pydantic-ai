@@ -4,6 +4,8 @@ import functools
 import typing
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
+from collections.abc import AsyncIterator, Callable, Iterable, Iterator, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import count
@@ -393,6 +395,7 @@ class BedrockConverseModel(Model):
             provider = infer_provider('gateway/bedrock' if provider == 'gateway' else provider)
         self._provider = provider
         self.client = cast('BedrockRuntimeClient', provider.client)
+        self._extra_headers_lock = anyio.Lock()
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
 
@@ -620,6 +623,48 @@ class BedrockConverseModel(Model):
     ) -> ConverseStreamResponseTypeDef:
         pass
 
+    async def _call_bedrock(
+        self,
+        *,
+        params: ConverseRequestTypeDef,
+        stream: bool,
+    ) -> ConverseResponseTypeDef | ConverseStreamResponseTypeDef:
+        try:
+            if stream:
+                return await anyio.to_thread.run_sync(functools.partial(self.client.converse_stream, **params))
+            return await anyio.to_thread.run_sync(functools.partial(self.client.converse, **params))
+        except ClientError as e:
+            status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
+            if isinstance(status_code, int):
+                raise ModelHTTPError(
+                    status_code=status_code,
+                    model_name=self.model_name,
+                    body=e.response,
+                ) from e
+            raise ModelAPIError(
+                model_name=self.model_name,
+                message=str(e),
+            ) from e
+
+    async def _call_with_extra_headers(
+        self,
+        *,
+        params: ConverseRequestTypeDef,
+        extra_headers: dict[str, str],
+        stream: bool,
+    ) -> ConverseResponseTypeDef | ConverseStreamResponseTypeDef:
+        async with self._extra_headers_lock:
+            handler, events = self._register_extra_headers(
+                self.client,
+                extra_headers,
+                stream=stream,
+            )
+
+            try:
+                return await self._call_bedrock(params=params, stream=stream)
+            finally:
+                self._unregister_extra_headers(self.client, handler, events)
+
     @overload
     async def _messages_create(
         self,
@@ -679,11 +724,12 @@ class BedrockConverseModel(Model):
         if model_settings:
             extra_headers = model_settings.get('extra_headers')
 
-        handler = None
-        events = None
-
         if extra_headers and isinstance(extra_headers, dict):
-            handler, events = self._register_extra_headers(self.client, extra_headers, stream=stream)
+            return await self._call_with_extra_headers(
+                params=params,
+                extra_headers=extra_headers,
+                stream=stream,
+            )
 
         with _map_api_errors(self.model_name):
             try:
@@ -701,6 +747,15 @@ class BedrockConverseModel(Model):
 
     @staticmethod
     def _register_extra_headers(client, headers, *, stream: bool):
+        return await self._call_bedrock(params=params, stream=stream)
+
+    @staticmethod
+    def _register_extra_headers(
+        client: BedrockRuntimeClient,
+        headers: dict[str, str],
+        *,
+        stream: bool,
+    ) -> tuple[Callable[..., None], list[str]]:
         def handler(request, **kwargs):
             for k, v in headers.items():
                 request.headers[k] = v
@@ -712,7 +767,11 @@ class BedrockConverseModel(Model):
         return handler, [event]
 
     @staticmethod
-    def _unregister_extra_headers(client, handler, events):
+    def _unregister_extra_headers(
+        client: BedrockRuntimeClient,
+        handler: Callable[..., None],
+        events: list[str],
+    ) -> None:
         for e in events:
             client.meta.events.unregister(e, handler)
 
