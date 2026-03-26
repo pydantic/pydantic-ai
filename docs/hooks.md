@@ -110,7 +110,7 @@ Node hooks fire for each graph step ([`UserPromptNode`][pydantic_ai.UserPromptNo
 | `model_request` | `model_request=` | `wrap_model_request` |
 | `model_request_error` | `model_request_error=` | `on_model_request_error` |
 
-Model request hooks fire around each LLM call. [`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] bundles `messages`, `model_settings`, and `model_request_parameters`.
+Model request hooks fire around each LLM call. [`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] bundles `model`, `messages`, `model_settings`, and `model_request_parameters`. To swap the model for a given request, set `request_context.model` to a different [`Model`][pydantic_ai.models.Model] instance.
 
 To skip the model call entirely, raise [`SkipModelRequest(response)`][pydantic_ai.exceptions.SkipModelRequest] from `before_model_request` or `model_request` (wrap).
 
