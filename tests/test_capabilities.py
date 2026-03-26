@@ -5565,7 +5565,7 @@ class TestModelRetryFromHooks:
         """wrap_model_request raises ModelRetry without calling handler during streaming."""
 
         async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-            yield 'good response'  # pragma: no cover
+            yield 'good response'
 
         @dataclass
         class ShortCircuitRetryCap(AbstractCapability[Any]):
