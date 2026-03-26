@@ -508,8 +508,8 @@ class ToolManager(Generic[AgentDepsT]):
         """Execute an output tool call with output hooks."""
         from ._output import (
             OutputToolset,
-            _run_output_execute_hooks,
-            _run_output_validate_hooks,
+            run_output_execute_hooks,
+            run_output_validate_hooks,
         )
 
         assert validated.tool is not None
@@ -533,7 +533,7 @@ class ToolManager(Generic[AgentDepsT]):
         async def do_validate(data: str | dict[str, Any]) -> str | dict[str, Any]:
             return data  # Identity: validation already done by tool hooks
 
-        validated_output = await _run_output_validate_hooks(
+        validated_output = await run_output_validate_hooks(
             cap,
             ctx,
             output_context,
@@ -555,7 +555,7 @@ class ToolManager(Generic[AgentDepsT]):
                 self.failed_tools.add(name)
                 raise self._wrap_error_as_retry(name, validated.call, e) from e
 
-        return await _run_output_execute_hooks(cap, ctx, output_context, validated_output, do_execute)
+        return await run_output_execute_hooks(cap, ctx, output_context, validated_output, do_execute)
 
     async def _execute_function_tool_call(
         self,

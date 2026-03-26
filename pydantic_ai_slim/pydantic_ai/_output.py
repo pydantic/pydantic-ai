@@ -155,7 +155,7 @@ def _build_output_handlers(
     return do_validate, do_execute
 
 
-async def _run_output_validate_hooks(
+async def run_output_validate_hooks(
     capability: AbstractCapability[AgentDepsT],
     run_context: RunContext[AgentDepsT],
     output_context: OutputContext,
@@ -199,7 +199,7 @@ async def _run_output_validate_hooks(
     )
 
 
-async def _run_output_execute_hooks(
+async def run_output_execute_hooks(
     capability: AbstractCapability[AgentDepsT],
     run_context: RunContext[AgentDepsT],
     output_context: OutputContext,
@@ -247,10 +247,10 @@ async def run_output_with_hooks(
     output_context = processor.get_output_context(output_mode)
     do_validate, do_execute = _build_output_handlers(processor, run_context, allow_partial, wrap_validation_errors)
 
-    validated = await _run_output_validate_hooks(
+    validated = await run_output_validate_hooks(
         capability, run_context, output_context, text, do_validate, allow_partial, wrap_validation_errors
     )
-    result = await _run_output_execute_hooks(capability, run_context, output_context, validated, do_execute)
+    result = await run_output_execute_hooks(capability, run_context, output_context, validated, do_execute)
 
     return cast(OutputDataT, result)
 
