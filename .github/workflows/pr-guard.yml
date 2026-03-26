@@ -22,9 +22,17 @@ jobs:
         run: |
           set -euo pipefail
 
-          PR_BODY=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.body // ""')
+          PR_JSON=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '{body: (.body // ""), state: .state}')
+          PR_BODY=$(echo "$PR_JSON" | jq -r '.body')
+          PR_STATE=$(echo "$PR_JSON" | jq -r '.state')
 
           echo "PR #${PR_NUMBER} by ${PR_AUTHOR} (${AUTHOR_ASSOCIATION})"
+
+          # Skip closed/merged PRs — the 'edited' event fires even on closed PRs
+          if [ "$PR_STATE" != "open" ]; then
+            echo "PR is not open (state: ${PR_STATE}), skipping."
+            exit 0
+          fi
 
           # Skip draft PRs — authors may create drafts to save progress
           if [ "$IS_DRAFT" = "true" ]; then
