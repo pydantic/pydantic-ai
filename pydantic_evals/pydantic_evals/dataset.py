@@ -1164,17 +1164,18 @@ async def _run_task_and_evaluators(
         expected_output=case.expected_output,
     ) as case_span:
         t0 = time.time()
+
+        context = case_span.context
+        if context is not None:  # pragma: no branch
+            trace_id = f'{context.trace_id:032x}'
+            span_id = f'{context.span_id:016x}'
+
+        if source_case_name is not None:
+            case_span.set_attribute('logfire.experiment.source_case_name', source_case_name)
+
         try:
             if lifecycle is not None:
                 lc = lifecycle(case)
-
-            context = case_span.context
-            if context is not None:  # pragma: no branch
-                trace_id = f'{context.trace_id:032x}'
-                span_id = f'{context.span_id:016x}'
-
-            if source_case_name is not None:
-                case_span.set_attribute('logfire.experiment.source_case_name', source_case_name)
 
             if lc is not None:
                 await lc.setup()
