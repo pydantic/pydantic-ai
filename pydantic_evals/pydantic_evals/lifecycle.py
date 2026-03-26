@@ -40,10 +40,10 @@ class CaseLifecycle(Generic[InputsT, OutputT, MetadataT]):
         case: The case being evaluated. Available as `self.case` in all hooks.
 
     Example:
-        ```python
+        ```python {lint="skip"}
         from pydantic_evals import Case, Dataset
-        from pydantic_evals.lifecycle import CaseLifecycle
         from pydantic_evals.evaluators.context import EvaluatorContext
+        from pydantic_evals.lifecycle import CaseLifecycle
 
         class EnrichMetrics(CaseLifecycle):
             async def prepare_context(self, ctx: EvaluatorContext) -> EvaluatorContext:
@@ -51,7 +51,9 @@ class CaseLifecycle(Generic[InputsT, OutputT, MetadataT]):
                 return ctx
 
         dataset = Dataset(cases=[Case(name='test', inputs='hello')])
-        report = await dataset.evaluate(my_task, lifecycle=EnrichMetrics)
+        report = dataset.evaluate_sync(lambda inputs: inputs.upper(), lifecycle=EnrichMetrics)
+        print(report.cases[0].metrics['custom_metric'])
+        #> 42
         ```
     """
 

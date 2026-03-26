@@ -24,74 +24,88 @@ Each case follows this flow:
 
 ## Enriching Metrics
 
-The most common use case is enriching the evaluator context with metrics derived from the span tree — for example, counting tool calls or measuring API latency — before evaluators see it:
+The most common use case is enriching the evaluator context with additional metrics before evaluators see it. Without lifecycle hooks, metrics set via [`increment_eval_metric`][pydantic_evals.increment_eval_metric] inside the task are finalized before evaluators run and cannot be updated afterward. The `prepare_context` hook runs in between, giving you the ability to modify metrics before evaluators see them:
 
-```python {test="skip"}
-from collections import Counter
+```python
+from dataclasses import dataclass
 
 from pydantic_evals import Case, Dataset
-from pydantic_evals.evaluators.context import EvaluatorContext
+from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 from pydantic_evals.lifecycle import CaseLifecycle
 
 
-class EnrichToolMetrics(CaseLifecycle):
+class EnrichMetrics(CaseLifecycle):
     async def prepare_context(self, ctx: EvaluatorContext) -> EvaluatorContext:
-        tool_spans = [
-            s
-            for s in ctx.span_tree.find(name='.*')
-            if 'gen_ai.tool.name' in s.attributes
-        ]
-        counts = Counter(s.attributes['gen_ai.tool.name'] for s in tool_spans)
-        ctx.metrics['tool_call_count'] = sum(counts.values())
-        ctx.metrics['unique_tool_count'] = len(counts)
-        for name, count in counts.items():
-            ctx.metrics[f'tool_calls:{name}'] = count
+        ctx.metrics['output_length'] = len(str(ctx.output))
         return ctx
 
 
-dataset = Dataset(cases=[Case(name='test', inputs='hello')])
-report = await dataset.evaluate(my_task, lifecycle=EnrichToolMetrics)
+@dataclass
+class CheckLength(Evaluator):
+    max_length: int = 50
+
+    def evaluate(self, ctx: EvaluatorContext) -> bool:
+        return ctx.metrics.get('output_length', 0) <= self.max_length
+
+
+dataset = Dataset(
+    cases=[Case(name='short', inputs='hi'), Case(name='long', inputs='hello world')],
+    evaluators=[CheckLength()],
+)
+
+report = dataset.evaluate_sync(lambda inputs: inputs.upper(), lifecycle=EnrichMetrics)
+
+for case in report.cases:
+    print(f'{case.name}: output_length={case.metrics["output_length"]}')
+    #> short: output_length=2
+    #> long: output_length=11
 ```
 
-Without lifecycle hooks, metrics set via [`increment_eval_metric`][pydantic_evals.increment_eval_metric] inside the task are finalized before evaluators run, and cannot be updated afterward. The `prepare_context` hook runs in between, giving you full access to the span tree and the ability to modify metrics before evaluators see them.
+In a real agent evaluation, `prepare_context` is especially useful for extracting metrics from the span tree — for example, counting tool calls or measuring API latency across instrumented spans.
 
 ## Per-Case Setup and Teardown
 
 Use `setup()` and `teardown()` when each case needs its own environment. Since a new lifecycle instance is created for each case, instance attributes are naturally case-scoped:
 
-```python {test="skip"}
-from contextvars import ContextVar
-
+```python
 from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators.context import EvaluatorContext
 from pydantic_evals.lifecycle import CaseLifecycle
 from pydantic_evals.reporting import ReportCase, ReportCaseFailure
 
-_db: ContextVar['TestDB'] = ContextVar('db')
 
-
-class DatabaseLifecycle(CaseLifecycle[str, dict, dict]):
+class SetupFromMetadata(CaseLifecycle[str, str, dict]):
     async def setup(self) -> None:
-        self.db = await create_test_db()
-        seed_rows = (self.case.metadata or {}).get('seed_rows', 0)
-        if seed_rows:
-            await self.db.insert_seed_data(seed_rows)
-        _db.set(self.db)
+        prefix = (self.case.metadata or {}).get('prefix', '')
+        self.prefix = prefix
+
+    async def prepare_context(
+        self, ctx: EvaluatorContext[str, str, dict]
+    ) -> EvaluatorContext[str, str, dict]:
+        ctx.metrics['prefix_length'] = len(self.prefix)
+        return ctx
 
     async def teardown(
         self,
-        result: ReportCase[str, dict, dict] | ReportCaseFailure[str, dict, dict],
+        result: ReportCase[str, str, dict] | ReportCaseFailure[str, str, dict],
     ) -> None:
-        await self.db.drop()
+        pass  # Clean up resources here
 
 
 dataset = Dataset(
     cases=[
-        Case(name='empty_db', inputs='add 3 users', metadata={'seed_rows': 0}),
-        Case(name='existing_data', inputs='delete inactive', metadata={'seed_rows': 100}),
+        Case(name='no_prefix', inputs='hello', metadata={'prefix': ''}),
+        Case(name='with_prefix', inputs='hello', metadata={'prefix': 'PREFIX:'}),
     ]
 )
 
-report = await dataset.evaluate(my_task, lifecycle=DatabaseLifecycle)
+report = dataset.evaluate_sync(lambda inputs: inputs.upper(), lifecycle=SetupFromMetadata)
+
+metrics = {c.name: c.metrics for c in report.cases}
+print(metrics['no_prefix']['prefix_length'])
+#> 0
+print(metrics['with_prefix']['prefix_length'])
+#> 7
 ```
 
 The case metadata drives per-case behavior without needing custom `Case` subclasses or serialization.
@@ -100,60 +114,55 @@ The case metadata drives per-case behavior without needing custom `Case` subclas
 
 The `teardown()` hook receives the full result, so you can vary cleanup logic based on success or failure — for example, keeping test environments up for manual inspection when a case fails:
 
-```python {test="skip"}
+```python
+from pydantic_evals import Case, Dataset
 from pydantic_evals.lifecycle import CaseLifecycle
 from pydantic_evals.reporting import ReportCase, ReportCaseFailure
 
+cleaned_up: list[str] = []
 
-class KeepOnFailure(CaseLifecycle[str, str, None]):
+
+class ConditionalCleanup(CaseLifecycle[str, str, dict]):
     async def setup(self) -> None:
-        self.env = await create_test_environment()
+        self.resource_id = self.case.name
 
     async def teardown(
         self,
-        result: ReportCase[str, str, None] | ReportCaseFailure[str, str, None],
+        result: ReportCase[str, str, dict] | ReportCaseFailure[str, str, dict],
     ) -> None:
-        if isinstance(result, ReportCaseFailure) and self.keep_failures:
-            print(f'Keeping environment for failed case: {self.case.name}')
+        keep_on_failure = (self.case.metadata or {}).get('keep_on_failure', False)
+        if isinstance(result, ReportCaseFailure) and keep_on_failure:
+            pass  # Keep resource for inspection
         else:
-            await self.env.destroy()
-```
-
-## Combining Hooks
-
-All three hooks can be used together. For example, setting up a database, enriching metrics from it, and cleaning up afterward:
-
-```python {test="skip"}
-from pydantic_evals.evaluators.context import EvaluatorContext
-from pydantic_evals.lifecycle import CaseLifecycle
-from pydantic_evals.reporting import ReportCase, ReportCaseFailure
+            cleaned_up.append(self.resource_id)
 
 
-class FullLifecycle(CaseLifecycle[str, dict, dict]):
-    async def setup(self) -> None:
-        self.db = await create_test_db()
-        seed_rows = (self.case.metadata or {}).get('seed_rows', 0)
-        if seed_rows:
-            await self.db.insert_seed_data(seed_rows)
+dataset = Dataset(
+    cases=[
+        Case(name='success_case', inputs='hello', metadata={'keep_on_failure': True}),
+        Case(name='failure_case', inputs='fail', metadata={'keep_on_failure': True}),
+    ]
+)
 
-    async def prepare_context(
-        self, ctx: EvaluatorContext[str, dict, dict]
-    ) -> EvaluatorContext[str, dict, dict]:
-        ctx.metrics['final_row_count'] = await self.db.count()
-        return ctx
 
-    async def teardown(
-        self,
-        result: ReportCase[str, dict, dict] | ReportCaseFailure[str, dict, dict],
-    ) -> None:
-        await self.db.drop()
+def task(inputs: str) -> str:
+    if inputs == 'fail':
+        raise ValueError('intentional failure')
+    return inputs.upper()
+
+
+report = dataset.evaluate_sync(task, max_concurrency=1, lifecycle=ConditionalCleanup)
+
+print(cleaned_up)
+#> ['success_case']
 ```
 
 ## Type Parameters
 
 [`CaseLifecycle`][pydantic_evals.lifecycle.CaseLifecycle] is generic over the same three type parameters as [`Case`][pydantic_evals.dataset.Case]: `InputsT`, `OutputT`, and `MetadataT`. All three default to `object`, so you can omit them when your hooks don't need type-specific access:
 
-```python {test="skip"}
+```python
+from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators.context import EvaluatorContext
 from pydantic_evals.lifecycle import CaseLifecycle
 
@@ -163,6 +172,13 @@ class GenericMetricEnricher(CaseLifecycle):
     async def prepare_context(self, ctx: EvaluatorContext) -> EvaluatorContext:
         ctx.metrics['custom'] = 42
         return ctx
+
+
+dataset = Dataset(cases=[Case(inputs='test')])
+report = dataset.evaluate_sync(lambda inputs: inputs, lifecycle=GenericMetricEnricher)
+
+print(report.cases[0].metrics['custom'])
+#> 42
 ```
 
 ## Next Steps

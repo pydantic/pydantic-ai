@@ -1151,11 +1151,13 @@ async def _run_task_and_evaluators(
     Returns:
         A ReportCase containing the evaluation results.
     """
-    lc = lifecycle(case) if lifecycle is not None else None
+    lc: CaseLifecycle[Any, Any, Any] | None = None
     result: ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT]
     trace_id: str | None = None
     span_id: str | None = None
     try:
+        if lifecycle is not None:
+            lc = lifecycle(case)
         with logfire_span(
             'case: {case_name}',
             task_name=get_unwrapped_function_name(task),
@@ -1237,7 +1239,23 @@ async def _run_task_and_evaluators(
         )
 
     if lc is not None:
-        await lc.teardown(result)
+        try:
+            await lc.teardown(result)
+        except Exception as teardown_exc:
+            # If teardown fails, convert a successful result into a failure
+            # so the error is visible, but never lose an already-computed result.
+            if isinstance(result, ReportCase):
+                result = ReportCaseFailure[InputsT, OutputT, MetadataT](
+                    name=report_case_name,
+                    inputs=case.inputs,
+                    metadata=case.metadata,
+                    expected_output=case.expected_output,
+                    error_message=f'{type(teardown_exc).__name__}: {teardown_exc}',
+                    error_stacktrace=traceback.format_exc(),
+                    source_case_name=source_case_name,
+                    trace_id=trace_id,
+                    span_id=span_id,
+                )
 
     return result
 
