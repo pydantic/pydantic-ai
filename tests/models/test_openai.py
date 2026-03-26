@@ -1378,6 +1378,50 @@ async def test_yaml_document_as_binary_content_input(allow_model_requests: None,
     assert result.output == snapshot(
         'The configuration you provided is a YAML file for Docker Compose. Docker Compose is a tool used for defining and running multi-container Docker applications. In this specific configuration, the YAML file is specifying a single service called `web`, which uses the `nginx` Docker image. The file starts with specifying the Compose file version as "3", indicating the format version used for composing the services.'
     )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'What type of configuration is this?',
+                            BinaryContent(
+                                data=b'version: "3"\nservices:\n  web:\n    image: nginx', media_type='application/yaml'
+                            ),
+                        ],
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='The configuration you provided is a YAML file for Docker Compose. Docker Compose is a tool used for defining and running multi-container Docker applications. In this specific configuration, the YAML file is specifying a single service called `web`, which uses the `nginx` Docker image. The file starts with specifying the Compose file version as "3", indicating the format version used for composing the services.'
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=55,
+                    output_tokens=77,
+                    details={
+                        'accepted_prediction_tokens': 0,
+                        'audio_tokens': 0,
+                        'reasoning_tokens': 0,
+                        'rejected_prediction_tokens': 0,
+                    },
+                ),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+                provider_response_id='chatcmpl-D1Fb52cAhS0I5T514KLWFLTvsJHYv',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_x_yaml_document_as_binary_content_input(allow_model_requests: None, openai_api_key: str):
@@ -1398,6 +1442,57 @@ The provided YAML snippet is a basic descriptor for something labeled with the n
 Each of these interpretations would depend on the broader context in which this YAML file is used. Further fields in the YAML file would provide more specificity about its purpose and functionality.\
 """
     )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'What does this YAML describe?',
+                            BinaryContent(data=b'name: test\nversion: 1.0.0', media_type='application/x-yaml'),
+                        ],
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+The provided YAML snippet is a basic descriptor for something labeled with the name "test" and a version number "1.0.0". Without additional context or accompanying fields, it's difficult to definitively say what specific application or resource this is describing. In a general sense, such a YAML configuration could be used for various purposes, including but not limited to:
+
+1. **Software/Application:** It could describe a software application or component called "test" with version 1.0.0.
+2. **Configuration Management:** It might be a part of a configuration management system for managing different versions of a service or application.
+3. **Package Information:** If used in a package management context, it might represent metadata for a package or library.
+4. **Service Definition:** It could represent a service or microservice within a larger system.
+
+Each of these interpretations would depend on the broader context in which this YAML file is used. Further fields in the YAML file would provide more specificity about its purpose and functionality.\
+"""
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=57,
+                    output_tokens=202,
+                    details={
+                        'accepted_prediction_tokens': 0,
+                        'audio_tokens': 0,
+                        'reasoning_tokens': 0,
+                        'rejected_prediction_tokens': 0,
+                    },
+                ),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+                provider_response_id='chatcmpl-D1Hu5C2mqc2CPw07SQa6U7Ki9PF7X',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_yaml_document_url_input(
@@ -1410,6 +1505,44 @@ async def test_yaml_document_url_input(
 
     result = await agent.run(['What is the site_name in this YAML configuration?', document_url])
     assert result.output == snapshot('The `site_name` in the provided YAML configuration is `"Pydantic AI"`.')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'What is the site_name in this YAML configuration?',
+                            DocumentUrl(url='https://raw.githubusercontent.com/pydantic/pydantic-ai/main/mkdocs.yml'),
+                        ],
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The `site_name` in the provided YAML configuration is `"Pydantic AI"`.')],
+                usage=RequestUsage(
+                    input_tokens=3152,
+                    output_tokens=18,
+                    details={
+                        'accepted_prediction_tokens': 0,
+                        'audio_tokens': 0,
+                        'reasoning_tokens': 0,
+                        'rejected_prediction_tokens': 0,
+                    },
+                ),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+                provider_response_id='chatcmpl-D9Y2SGcIahjmc95USEBhPxjrIEW8c',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 def test_is_text_like_media_type():
@@ -1435,7 +1568,23 @@ async def test_video_url_not_supported(allow_model_requests: None):
         await agent.run(['Describe this video', VideoUrl(url='https://example.com/video.mp4')])
 
 
-async def test_document_url_input_not_supported(allow_model_requests: None):
+@pytest.mark.parametrize(
+    'content',
+    [
+        pytest.param(
+            DocumentUrl(url='https://example.com/test.pdf'),
+            id='document_url',
+        ),
+        pytest.param(
+            BinaryContent(data=b'%PDF-1.4 test', media_type='application/pdf'),
+            id='binary_content',
+        ),
+    ],
+)
+async def test_document_input_not_supported(
+    allow_model_requests: None,
+    content: DocumentUrl | BinaryContent,
+) -> None:
     m = OpenAIChatModel(
         'gpt-4o',
         provider=OpenAIProvider(api_key='test'),
@@ -1447,7 +1596,7 @@ async def test_document_url_input_not_supported(allow_model_requests: None):
         UserError,
         match="'openai' provider does not support document input via the Chat Completions API",
     ):
-        await agent.run(['Summarize this document', DocumentUrl(url='https://example.com/test.pdf')])
+        await agent.run(['Summarize this document', content])
 
 
 async def test_document_as_binary_content_input_with_tool(
