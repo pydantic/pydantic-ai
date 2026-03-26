@@ -1155,17 +1155,19 @@ async def _run_task_and_evaluators(
     result: ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT]
     trace_id: str | None = None
     span_id: str | None = None
-    try:
-        if lifecycle is not None:
-            lc = lifecycle(case)
-        with logfire_span(
-            'case: {case_name}',
-            task_name=get_unwrapped_function_name(task),
-            case_name=report_case_name,
-            inputs=case.inputs,
-            metadata=case.metadata,
-            expected_output=case.expected_output,
-        ) as case_span:
+    with logfire_span(
+        'case: {case_name}',
+        task_name=get_unwrapped_function_name(task),
+        case_name=report_case_name,
+        inputs=case.inputs,
+        metadata=case.metadata,
+        expected_output=case.expected_output,
+    ) as case_span:
+        t0 = time.time()
+        try:
+            if lifecycle is not None:
+                lc = lifecycle(case)
+
             context = case_span.context
             if context is not None:  # pragma: no branch
                 trace_id = f'{context.trace_id:032x}'
@@ -1177,7 +1179,6 @@ async def _run_task_and_evaluators(
             if lc is not None:
                 await lc.setup()
 
-            t0 = time.time()
             scoring_context = await _run_task(task, case, retry_task)
 
             if lc is not None:
@@ -1205,44 +1206,54 @@ async def _run_task_and_evaluators(
             case_span.set_attribute('assertions', _evaluation_results_adapter.dump_python(assertions))
             case_span.set_attribute('scores', _evaluation_results_adapter.dump_python(scores))
             case_span.set_attribute('labels', _evaluation_results_adapter.dump_python(labels))
-        fallback_duration = time.time() - t0
 
-        result = ReportCase[InputsT, OutputT, MetadataT](
-            name=report_case_name,
-            inputs=case.inputs,
-            metadata=case.metadata,
-            expected_output=case.expected_output,
-            output=scoring_context.output,
-            metrics=scoring_context.metrics,
-            attributes=scoring_context.attributes,
-            scores=scores,
-            labels=labels,
-            assertions=assertions,
-            task_duration=scoring_context.duration,
-            total_duration=_get_span_duration(case_span, fallback_duration),
-            source_case_name=source_case_name,
-            trace_id=trace_id,
-            span_id=span_id,
-            evaluator_failures=evaluator_failures,
-        )
-    except Exception as exc:
-        result = ReportCaseFailure[InputsT, OutputT, MetadataT](
-            name=report_case_name,
-            inputs=case.inputs,
-            metadata=case.metadata,
-            expected_output=case.expected_output,
-            error_message=f'{type(exc).__name__}: {exc}',
-            error_stacktrace=traceback.format_exc(),
-            source_case_name=source_case_name,
-            trace_id=trace_id,
-            span_id=span_id,
-        )
+            result = ReportCase[InputsT, OutputT, MetadataT](
+                name=report_case_name,
+                inputs=case.inputs,
+                metadata=case.metadata,
+                expected_output=case.expected_output,
+                output=scoring_context.output,
+                metrics=scoring_context.metrics,
+                attributes=scoring_context.attributes,
+                scores=scores,
+                labels=labels,
+                assertions=assertions,
+                task_duration=scoring_context.duration,
+                total_duration=time.time() - t0,  # this gets updated below, but is close enough for teardown
+                source_case_name=source_case_name,
+                trace_id=trace_id,
+                span_id=span_id,
+                evaluator_failures=evaluator_failures,
+            )
+        except Exception as exc:
+            # Note: This error is not _actually_ escaping the span, so `escaped=True` on the following line is a lie.
+            # However, I've added this because it affects the details of the otel span, and passing `escaped=True`
+            # better matches the behavior from prior to this change.
+            # We could consider changing this in the future.
+            case_span.record_exception(exc, escaped=True)
+            result = ReportCaseFailure[InputsT, OutputT, MetadataT](
+                name=report_case_name,
+                inputs=case.inputs,
+                metadata=case.metadata,
+                expected_output=case.expected_output,
+                error_message=f'{type(exc).__name__}: {exc}',
+                error_stacktrace=traceback.format_exc(),
+                source_case_name=source_case_name,
+                trace_id=trace_id,
+                span_id=span_id,
+            )
 
-    # Teardown exceptions are intentionally not caught here — they propagate
-    # to the caller. If your teardown may raise and you don't want it to crash
-    # the evaluation, handle exceptions within your teardown() implementation.
-    if lc is not None:
-        await lc.teardown(result)
+        # Teardown exceptions are intentionally not caught here — they propagate
+        # to the caller. If your teardown may raise and you don't want it to crash
+        # the evaluation, handle exceptions within your teardown() implementation.
+        # If you don't like this behavior, let us know and we can change it.
+        if lc is not None:
+            await lc.teardown(result)
+
+    if isinstance(result, ReportCase):
+        # Update the total duration to reflect the teardown time.
+        # Note this means that modifications to this field inside the teardown will not be reflected.
+        result.total_duration = _get_span_duration(case_span, time.time() - t0)
 
     return result
 
