@@ -667,6 +667,7 @@ class ModelRequestContext:
     future-proof: new fields can be added without breaking existing implementations.
     """
 
+    model: Model
     messages: list[ModelMessage]
     model_settings: ModelSettings | None
     model_request_parameters: ModelRequestParameters

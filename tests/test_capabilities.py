@@ -1363,6 +1363,135 @@ class TestModelRequestHooks:
         result = await agent.run('hello')
         assert result.output == 'skipped model'
 
+    async def test_before_model_request_swaps_model(self):
+        call_log: list[str] = []
+
+        def model_a(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            call_log.append('model_a')
+            return make_text_response('from model_a')
+
+        def model_b(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            call_log.append('model_b')
+            return make_text_response('from model_b')
+
+        swap_target = FunctionModel(model_b)
+
+        @dataclass
+        class SwapModelCap(AbstractCapability[Any]):
+            async def before_model_request(
+                self, ctx: RunContext[Any], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                request_context.model = swap_target
+                return request_context
+
+        agent = Agent(FunctionModel(model_a), capabilities=[SwapModelCap()])
+        result = await agent.run('hello')
+        assert result.output == 'from model_b'
+        assert call_log == ['model_b']
+
+    async def test_wrap_model_request_swaps_model(self):
+        call_log: list[str] = []
+
+        def model_a(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            call_log.append('model_a')
+            return make_text_response('from model_a')
+
+        def model_b(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            call_log.append('model_b')
+            return make_text_response('from model_b')
+
+        swap_target = FunctionModel(model_b)
+
+        @dataclass
+        class SwapInWrapCap(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any
+            ) -> ModelResponse:
+                request_context.model = swap_target
+                return await handler(request_context)
+
+        agent = Agent(FunctionModel(model_a), capabilities=[SwapInWrapCap()])
+        result = await agent.run('hello')
+        assert result.output == 'from model_b'
+        assert call_log == ['model_b']
+
+    async def test_before_model_request_swaps_model_streaming(self):
+        call_log: list[str] = []
+
+        async def stream_a(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            call_log.append('stream_a')
+            yield 'from stream_a'
+
+        async def stream_b(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            call_log.append('stream_b')
+            yield 'from stream_b'
+
+        swap_target = FunctionModel(stream_function=stream_b)
+
+        @dataclass
+        class SwapModelCap(AbstractCapability[Any]):
+            async def before_model_request(
+                self, ctx: RunContext[Any], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                request_context.model = swap_target
+                return request_context
+
+        agent = Agent(FunctionModel(stream_function=stream_a), capabilities=[SwapModelCap()])
+        async with agent.run_stream('hello') as stream:
+            output = await stream.get_output()
+        assert output == 'from stream_b'
+        assert call_log == ['stream_b']
+
+    async def test_run_context_model_unchanged_after_swap(self):
+        observed_models: list[Any] = []
+
+        def model_a(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('from model_a')
+
+        def model_b(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('from model_b')
+
+        original_model = FunctionModel(model_a)
+        swap_target = FunctionModel(model_b)
+
+        @dataclass
+        class SwapAndObserveCap(AbstractCapability[Any]):
+            async def before_model_request(
+                self, ctx: RunContext[Any], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                observed_models.append(ctx.model)
+                request_context.model = swap_target
+                return request_context
+
+        agent = Agent(original_model, capabilities=[SwapAndObserveCap()])
+        result = await agent.run('hello')
+        assert result.output == 'from model_b'
+        assert observed_models[0] is original_model
+
+    async def test_hooks_before_model_request_swaps_model(self):
+        call_log: list[str] = []
+        hooks = Hooks()
+
+        def model_a(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            call_log.append('model_a')
+            return make_text_response('from model_a')
+
+        def model_b(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            call_log.append('model_b')
+            return make_text_response('from model_b')
+
+        swap_target = FunctionModel(model_b)
+
+        @hooks.on.before_model_request
+        async def _(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            request_context.model = swap_target
+            return request_context
+
+        agent = Agent(FunctionModel(model_a), capabilities=[hooks])
+        result = await agent.run('hello')
+        assert result.output == 'from model_b'
+        assert call_log == ['model_b']
+
 
 class TestToolValidateHooks:
     async def test_tool_validate_hooks_fire(self):
