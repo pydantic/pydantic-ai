@@ -579,6 +579,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             skip_sr = _SkipStreamedResponse(model_request_parameters=model_request_parameters, _response=model_response)
             agent_stream = self._build_agent_stream(ctx, skip_sr, model_request_parameters)
             yield agent_stream
+            self.last_request_context = wrap_request_context
             await self._finish_handling(ctx, model_response)
             assert self._result is not None
             return
