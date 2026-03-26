@@ -7,7 +7,15 @@
 
 Google Gemini 3 supports [structured outputs with all tools](https://ai.google.dev/gemini-api/docs/structured-output?example=recipe#structured_outputs_with_tools) including function calling, and [combining builtin tools with function calling](https://ai.google.dev/gemini-api/docs/tool-combination). Currently pydantic-ai blocks both combinations unconditionally.
 
-**Key concept**: `output_tools` (from `ToolOutput`) are function declarations from the API's perspective — `tool_defs = function_tools + output_tools` (line 651 of `models/__init__.py`). They all become `function_declarations` in the Google API. This means the restriction on function_declarations + builtin_tools affects output_tools equally.
+**Three distinct mechanisms in the Google API** (important for understanding the restrictions):
+
+1. **function_tools**: user-defined `function_declarations` the model can call (e.g. `get_weather`)
+2. **output_tools** (from `ToolOutput`): also `function_declarations`, but used for structured output extraction — the model "calls" them to return typed data. Defined via `ModelRequestParameters.tool_defs` (`models/__init__.py`), which merges `function_tools + output_tools`. From the API's perspective, output_tools ARE function declarations.
+3. **NativeOutput**: uses `response_schema` + `response_mime_type='application/json'` — the model returns structured JSON directly, no function calling involved. Completely separate from function declarations.
+
+The restrictions being lifted are:
+- `function_declarations` + `builtin_tools` → affects both function_tools AND output_tools (#4788)
+- `response_schema` + `function_declarations` → NativeOutput + function_tools (#4801)
 
 **Comparison with other providers**:
 - **OpenAI**: Allows NativeOutput + function tools. No restrictions.
@@ -22,53 +30,52 @@ Google Gemini 3 supports [structured outputs with all tools](https://ai.google.d
 
 Add to `GoogleModelProfile`:
 ```python
-google_supports_function_tools_with_builtin_tools: bool = False
+google_supports_tool_combination: bool = False
 ```
 
 Set to `is_3_or_newer` in `google_model_profile()`.
 
-This single flag covers:
-- function_tools + builtin_tools (#4788)
-- output_tools + builtin_tools (since output_tools ARE function declarations)
-- NativeOutput + function_tools (#4801) — see rationale at 2b
+Named after [Google's own "tool combination" feature](https://ai.google.dev/gemini-api/docs/tool-combination). This single flag covers all three restriction lifts because they're all part of the same Gemini 3 capability set:
+- function_tools + builtin_tools (#4788) — function declarations can coexist with builtin tools
+- output_tools + builtin_tools — output_tools ARE function declarations (see Context above)
+- NativeOutput + function_tools (#4801) — response_schema can coexist with function declarations
 
-We also keep `google_supports_native_output_with_builtin_tools` for Gemini 2 fallback behavior (prompted vs native workaround when the flag above is False). For Gemini 3, the workaround is skipped entirely.
+We keep the existing `google_supports_native_output_with_builtin_tools` for Gemini 2 fallback behavior (the `prepare_request` workaround that converts ToolOutput to NativeOutput/PromptedOutput when the new flag is False). For Gemini 3, the workaround is skipped entirely.
 
 ### 2. Model: three changes
 
 **File**: `pydantic_ai_slim/pydantic_ai/models/google.py`
 
-#### 2a. `prepare_request` (line 286-301) — remove workaround for Gemini 3
+#### 2a. `GoogleModel.prepare_request` — skip workaround for Gemini 3
 
 The existing workaround converts `ToolOutput` to `NativeOutput`/`PromptedOutput` when output_tools + builtin_tools are both present, because older models can't have function_declarations + builtin tools together.
 
-For Gemini 3, this workaround is unnecessary — output_tools (function declarations) can coexist with builtin tools. Skip the workaround when `google_supports_function_tools_with_builtin_tools` is True:
+For Gemini 3, this workaround is unnecessary — output_tools (function declarations) can coexist with builtin tools. Wrap existing logic in a negated check:
 
 ```python
 def prepare_request(self, ...):
     google_profile = GoogleModelProfile.from_profile(self.profile)
     if model_request_parameters.builtin_tools and model_request_parameters.output_tools:
-        if google_profile.google_supports_function_tools_with_builtin_tools:
-            pass  # Gemini 3+: output_tools (function declarations) + builtin tools work fine
-        elif model_request_parameters.output_mode == 'auto':
-            output_mode = 'native' if google_profile.google_supports_native_output_with_builtin_tools else 'prompted'
-            model_request_parameters = replace(model_request_parameters, output_mode=output_mode)
-        else:
-            output_mode = 'NativeOutput' if google_profile.google_supports_native_output_with_builtin_tools else 'PromptedOutput'
-            raise UserError(
-                f'This model does not support output tools and built-in tools at the same time. Use `output_type={output_mode}(...)` instead.'
-            )
+        if not google_profile.google_supports_tool_combination:
+            if model_request_parameters.output_mode == 'auto':
+                output_mode = 'native' if google_profile.google_supports_native_output_with_builtin_tools else 'prompted'
+                model_request_parameters = replace(model_request_parameters, output_mode=output_mode)
+            else:
+                output_mode = 'NativeOutput' if google_profile.google_supports_native_output_with_builtin_tools else 'PromptedOutput'
+                raise UserError(
+                    f'This model does not support output tools and built-in tools at the same time. Use `output_type={output_mode}(...)` instead.'
+                )
     return super().prepare_request(model_settings, model_request_parameters)
 ```
 
-#### 2b. `_get_tools` (line 444-446) — function tools + builtin tools
+#### 2b. `GoogleModel._get_tools` — function tools + builtin tools
 
 Gate the restriction on the profile flag:
 
 ```python
 if model_request_parameters.builtin_tools:
     if model_request_parameters.function_tools:
-        if not GoogleModelProfile.from_profile(self.profile).google_supports_function_tools_with_builtin_tools:
+        if not GoogleModelProfile.from_profile(self.profile).google_supports_tool_combination:
             raise UserError(
                 'This model does not support function tools and built-in tools at the same time.'
             )
@@ -76,16 +83,17 @@ if model_request_parameters.builtin_tools:
 
 Error message updated to say "This model" per review feedback.
 
-#### 2c. `_build_content_and_config` (line 537-541) — NativeOutput + function tools
+#### 2c. `GoogleModel._build_content_and_config` — NativeOutput + function tools
 
-Gate the restriction on the same flag. Rationale: NativeOutput + function_tools is part of the same Gemini 3 'structured output with tools' capability — if the model supports function_declarations + builtin tools, it supports function_declarations + response_schema.
+Gate the restriction on the same flag. Both `response_schema + function_declarations` and `function_declarations + builtin_tools` are part of Gemini 3's tool combination capability:
 
 ```python
 if model_request_parameters.output_mode == 'native':
     if model_request_parameters.function_tools:
-        if not GoogleModelProfile.from_profile(self.profile).google_supports_function_tools_with_builtin_tools:
+        if not GoogleModelProfile.from_profile(self.profile).google_supports_tool_combination:
             raise UserError(
-                'This model does not support `NativeOutput` and function tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+                'This model does not support `NativeOutput` and function tools at the same time. '
+                'Use `output_type=ToolOutput(...)` instead.'
             )
     response_mime_type = 'application/json'
     ...
@@ -107,22 +115,25 @@ Per DouweM's review: always set this flag when ANY builtin tools are enabled, no
 - Investigate building `BuiltinToolCallPart`/`BuiltinToolReturnPart` from `toolCall`/`toolReturn` response parts, potentially simplifying existing `groundingMetadata` reconstruction logic
 
 **Already handled by pydantic-ai** (no changes needed):
-- `thought_signature` on `Part` — round-tripped via `provider_details` (`google.py:984-990`, `google.py:1161-1179`)
-- `FunctionCall.id` / `FunctionResponse.id` — already mapped (`google.py:1016`, `google.py:1255-1256`)
+- `thought_signature` on `Part` — round-tripped via `provider_details` in `_map_content` and `_map_part_to_content`
+- `FunctionCall.id` / `FunctionResponse.id` — already mapped in `_map_content` and `_map_tool_return_part`
 
 **Open question**: How much of the existing `groundingMetadata`-based reconstruction can we remove/simplify? This needs investigation during implementation — we should compare the `toolCall`/`toolReturn` response parts against the current reconstruction logic to see what becomes redundant.
 
 ## Edge cases
 
+Error types: **UserError** = pydantic-ai raises before API call; **workaround** = auto mode silently converts output mode
+
 | Scenario | Gemini 2 | Gemini 3 |
 |---|---|---|
 | NativeOutput (no tools) | works | works |
-| NativeOutput + builtin_tools | error | works (existing) |
-| NativeOutput + function_tools | error | **works (new)** |
-| NativeOutput + function + builtin | error | **works (new)** |
-| function + builtin (no output type) | error | **works (new)** |
-| auto + function + builtin + output_type | error | **works (new, auto stays 'tool')** |
-| ToolOutput + builtin_tools | error (workaround to native/prompted) | **works (new, no workaround)** |
+| NativeOutput + builtin_tools | not blocked by pydantic-ai (untested) | works (existing) |
+| NativeOutput + function_tools | UserError in `_build_content_and_config` | **works (new)** |
+| NativeOutput + function + builtin | UserError in `_get_tools` (hits function+builtin check first) | **works (new)** |
+| function + builtin (no output type) | UserError in `_get_tools` | **works (new)** |
+| auto + function + builtin + output_type | UserError in `_get_tools` | **works (new, auto stays 'tool')** |
+| ToolOutput + builtin_tools (auto mode) | workaround to native/prompted in `prepare_request` | **works (new, no workaround)** |
+| ToolOutput + builtin_tools (explicit) | UserError in `prepare_request` | **works (new, no workaround)** |
 | ToolOutput + function_tools | works | works (standard tool mode) |
 
 ## Tests
@@ -167,13 +178,21 @@ tests/models/google/
 
 These tests are superseded by the new file:
 
-| Test in test_google.py | Line | Replaced by |
-|---|---|---|
-| `test_google_native_output_with_tools` | 2880 | case 8 |
-| `test_google_builtin_tools_with_other_tools` | 3279 | cases 9, 10 |
-| `test_google_native_output_with_builtin_tools_gemini_3` | 3315 | cases 4, 5, 6 |
+| Test in test_google.py | Replaced by |
+|---|---|
+| `test_google_native_output_with_tools` | case 8 |
+| `test_google_builtin_tools_with_other_tools` | cases 9, 10 |
+| `test_google_native_output_with_builtin_tools_gemini_3` | cases 4, 5, 6 |
 
-Note: `test_google_native_output` (line 2902) and `test_google_native_output_multiple` (line 2955) test NativeOutput WITHOUT tools - could be moved later to keep this PR focused.
+Note: `test_google_native_output` and `test_google_native_output_multiple` test NativeOutput WITHOUT tools — could be moved later to keep this PR focused.
+
+## Documentation (deferred per PR flow)
+
+Per our PR flow, docs are deferred until after review confirms logic is correct. These files need updating once logic is finalized:
+
+- `docs/output.md` — remove/update the statement "Gemini cannot use tools at the same time as structured output"
+- `docs/builtin-tools.md` — update Google row: "Using built-in tools and function tools (including output tools) at the same time is not supported" is no longer true for Gemini 3+
+- `docs/models/google.md` — add section on structured output + tool combination support for Gemini 3
 
 ## Verification
 
