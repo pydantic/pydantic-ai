@@ -903,7 +903,7 @@ You will need to install the `pydantic-ai-strale` package and set your Strale AP
 ```bash
 pip install pydantic-ai-strale
 ```
-```python {test="skip"}
+```python {test="skip" lint="skip"}
 import os
 from pydantic_ai import Agent
 from pydantic_ai_strale import StraleToolset
