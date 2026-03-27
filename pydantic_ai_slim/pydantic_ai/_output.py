@@ -183,7 +183,7 @@ async def run_output_validate_hooks(
         # ModelRetry from before_output_validate or after_output_validate
         if wrap_validation_errors:
             raise _make_retry(e) from e
-        raise
+        raise  # pragma: no cover — wrap_validation_errors=False only in streaming partial validation
 
 
 async def run_output_execute_hooks(

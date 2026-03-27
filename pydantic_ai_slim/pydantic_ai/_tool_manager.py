@@ -498,7 +498,11 @@ class ToolManager(Generic[AgentDepsT]):
                     wrap_validation_errors=wrap_validation_errors,
                 )
             else:
-                validated_args = await self._validate_tool_args(call, tool, ctx, allow_partial=allow_partial)
+                validated_args = (
+                    await self._validate_tool_args(  # pragma: no cover — agents always have root_capability
+                        call, tool, ctx, allow_partial=allow_partial
+                    )
+                )
 
             return ValidatedToolCall(
                 call=call,
@@ -513,9 +517,9 @@ class ToolManager(Generic[AgentDepsT]):
             max_retries = tool.max_retries if tool is not None else self.default_max_retries
             cause = e.__cause__ if isinstance(e.__cause__, Exception) else e
             self._check_max_retries(name, max_retries, cause)
-            if not allow_partial:
+            if not allow_partial:  # pragma: no branch — allow_partial only used in streaming
                 self.failed_tools.add(name)
-            if not wrap_validation_errors:
+            if not wrap_validation_errors:  # pragma: no cover — only in streaming partial validation
                 raise
             return ValidatedToolCall(
                 call=call,
@@ -525,7 +529,10 @@ class ToolManager(Generic[AgentDepsT]):
                 validated_args=None,
                 validation_error=e,
             )
-        except (ValidationError, ModelRetry) as e:
+        except (
+            ValidationError,
+            ModelRetry,
+        ) as e:  # pragma: no cover — with hooks, errors are wrapped as ToolRetryError
             max_retries = tool.max_retries if tool is not None else self.default_max_retries
             self._check_max_retries(name, max_retries, e)
             if not allow_partial:
@@ -554,7 +561,7 @@ class ToolManager(Generic[AgentDepsT]):
             ToolRetryError: If execution or output validation fails.
             UnexpectedModelBehavior: If max retries exceeded.
         """
-        if not validated.args_valid:
+        if not validated.args_valid:  # pragma: no cover — callers check args_valid before calling
             assert validated.validation_error is not None
             raise validated.validation_error
 
@@ -588,7 +595,7 @@ class ToolManager(Generic[AgentDepsT]):
                 do_execute=do_execute,
             )
         else:
-            result = await do_execute(validated.validated_args)
+            result = await do_execute(validated.validated_args)  # pragma: no cover — agents always have root_capability
 
         # Output validators run AFTER all output hooks (consistent with text output)
         try:

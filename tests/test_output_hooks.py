@@ -466,6 +466,41 @@ class TestModelRetryFromOutputHooks:
         assert result.output == MyOutput(value=42)
         assert call_count == 2
 
+    async def test_output_tool_error_hook_raises_model_retry(self):
+        """on_output_validate_error raises ModelRetry for output tool, includes tool_call_id."""
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if info.output_tools:
+                tool = info.output_tools[0]
+                if call_count == 1:
+                    return ModelResponse(
+                        parts=[ToolCallPart(tool_name=tool.name, args='{"value": "bad"}', tool_call_id='call-1')]
+                    )
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=tool.name, args='{"value": 42}', tool_call_id='call-2')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        @dataclass
+        class RetryOnErrorCap(AbstractCapability[Any]):
+            async def on_output_validate_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                output_context: OutputContext,
+                output: str | dict[str, Any],
+                error: ValidationError | ModelRetry,
+            ) -> Any:
+                raise ModelRetry('Please provide a valid integer')
+
+        agent = Agent(FunctionModel(model_fn), output_type=MyOutput, capabilities=[RetryOnErrorCap()])
+        result = await agent.run('hello')
+        assert result.output == MyOutput(value=42)
+        assert call_count == 2
+
 
 class TestOutputToolWithOutputFunction:
     """Output tools with output functions that raise ModelRetry."""
