@@ -530,14 +530,17 @@ class ToolManager(Generic[AgentDepsT]):
                 validation_error=e,
             )
         except (ValidationError, ModelRetry) as e:
+            # Only reachable when root_capability is None (no hooks to wrap errors as ToolRetryError)
             max_retries = tool.max_retries if tool is not None else self.default_max_retries
             self._check_max_retries(name, max_retries, e)
             if not allow_partial:
                 self.failed_tools.add(name)
             if not wrap_validation_errors:
                 raise
-            validation_error = self._wrap_error_as_retry(name, call, e)
-            return ValidatedToolCall(
+            validation_error = self._wrap_error_as_retry(
+                name, call, e
+            )  # pragma: no cover — agents always have root_capability
+            return ValidatedToolCall(  # pragma: no cover
                 call=call,
                 tool=tool,
                 ctx=ctx,
