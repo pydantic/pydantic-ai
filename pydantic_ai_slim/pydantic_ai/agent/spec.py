@@ -15,6 +15,7 @@ from pydantic_ai._agent_graph import EndStrategy
 from pydantic_ai._spec import CapabilitySpec, build_registry, build_schema_types
 from pydantic_ai._template import TemplateStr
 from pydantic_ai._utils import get_function_type_hints
+from pydantic_ai.settings import ModelSettings
 
 if TYPE_CHECKING:
     from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -187,14 +188,14 @@ class AgentSpec(BaseModel):
         # - capabilities uses a resolved Union of typed schema models instead of CapabilitySpec
         # - extra='forbid' enables strict validation in the generated schema
         # When adding or removing fields on AgentSpec, update this class to match.
-        class _AgentSpecSchema(BaseModel, extra='forbid'):
+        class _AgentSpecSchema(BaseModel, extra='forbid', arbitrary_types_allowed=True):
             model: str | None = None
             name: str | None = None
             description: str | None = None
             instructions: str | list[str] | None = None
             deps_schema: dict[str, Any] | None = None
             output_schema: dict[str, Any] | None = None
-            model_settings: dict[str, Any] | None = None
+            model_settings: ModelSettings | None = None
             retries: int = 1
             output_retries: int | None = None
             end_strategy: EndStrategy = 'early'
@@ -207,6 +208,12 @@ class AgentSpec(BaseModel):
         json_schema = _AgentSpecSchema.model_json_schema()
         json_schema['title'] = 'AgentSpec'
         json_schema['properties']['$schema'] = {'type': 'string'}
+
+        # ModelSettings should allow additional properties for provider-specific settings;
+        # extra='forbid' on _AgentSpecSchema propagates additionalProperties:false to nested
+        # types, so we remove it from ModelSettings.
+        model_settings_def: dict[str, Any] = json_schema.get('$defs', {}).get('ModelSettings', {})
+        model_settings_def.pop('additionalProperties', None)
 
         # Replace CapabilitySpec $refs with the capability items Union,
         # so nested capability fields (e.g. PrefixTools.capability) show

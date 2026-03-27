@@ -525,6 +525,45 @@ def test_model_json_schema_with_capabilities():
                     'title': 'MemoryTool',
                     'type': 'object',
                 },
+                'ModelSettings': {
+                    'description': """\
+Settings to configure an LLM.
+
+Here we include only settings which apply to multiple models / model providers,
+though not all of these settings are supported by all models.\
+""",
+                    'properties': {
+                        'max_tokens': {'title': 'Max Tokens', 'type': 'integer'},
+                        'temperature': {'title': 'Temperature', 'type': 'number'},
+                        'top_p': {'title': 'Top P', 'type': 'number'},
+                        'timeout': {'title': 'Timeout', 'type': 'number'},
+                        'parallel_tool_calls': {'title': 'Parallel Tool Calls', 'type': 'boolean'},
+                        'seed': {'title': 'Seed', 'type': 'integer'},
+                        'presence_penalty': {'title': 'Presence Penalty', 'type': 'number'},
+                        'frequency_penalty': {'title': 'Frequency Penalty', 'type': 'number'},
+                        'logit_bias': {
+                            'additionalProperties': {'type': 'integer'},
+                            'title': 'Logit Bias',
+                            'type': 'object',
+                        },
+                        'stop_sequences': {'items': {'type': 'string'}, 'title': 'Stop Sequences', 'type': 'array'},
+                        'extra_headers': {
+                            'additionalProperties': {'type': 'string'},
+                            'title': 'Extra Headers',
+                            'type': 'object',
+                        },
+                        'thinking': {
+                            'anyOf': [
+                                {'type': 'boolean'},
+                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh'], 'type': 'string'},
+                            ],
+                            'title': 'Thinking',
+                        },
+                        'extra_body': {'title': 'Extra Body'},
+                    },
+                    'title': 'ModelSettings',
+                    'type': 'object',
+                },
                 'UrlContextTool': {
                     'deprecated': True,
                     'properties': {
@@ -869,11 +908,7 @@ Supported by:
                     'default': None,
                     'title': 'Output Schema',
                 },
-                'model_settings': {
-                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
-                    'default': None,
-                    'title': 'Model Settings',
-                },
+                'model_settings': {'anyOf': [{'$ref': '#/$defs/ModelSettings'}, {'type': 'null'}], 'default': None},
                 'retries': {'default': 1, 'title': 'Retries', 'type': 'integer'},
                 'output_retries': {
                     'anyOf': [{'type': 'integer'}, {'type': 'null'}],
