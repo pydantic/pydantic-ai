@@ -304,7 +304,7 @@ See [Error hooks](capabilities.md#error-hooks) for the full pattern and recovery
 
 ## Triggering retries with `ModelRetry`
 
-Most hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with a custom message — the same exception used in [tool functions](tools.md#model-retry) and output validators. The supported hooks are listed below; `before_model_request` does not support `ModelRetry` since the model hasn't responded yet.
+Hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with a custom message — the same exception used in [tool functions](tools.md#model-retry) and output validators.
 
 **Model request hooks** (`after_model_request`, `wrap_model_request`, `on_model_request_error`):
 
