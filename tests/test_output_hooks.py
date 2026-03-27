@@ -233,6 +233,148 @@ class TestOnOutputValidateErrorModelRetry:
         assert retry_parts[0].content == 'Please return a valid integer for value'
 
 
+class TestModelRetryFromOutputHooks:
+    """Hooks can raise ModelRetry to trigger a model retry."""
+
+    async def test_before_output_validate_raises_model_retry(self):
+        """before_output_validate can raise ModelRetry to skip validation and retry."""
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ModelResponse(parts=[TextPart(content='{"value": -1}')])
+            return ModelResponse(parts=[TextPart(content='{"value": 42}')])
+
+        @dataclass
+        class RejectNegativeCap(AbstractCapability[Any]):
+            async def before_output_validate(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
+            ) -> str | dict[str, Any]:
+                if isinstance(output, str) and '-1' in output:
+                    raise ModelRetry('Negative values are not allowed')
+                return output
+
+        agent = Agent(FunctionModel(model_fn), output_type=PromptedOutput(MyOutput), capabilities=[RejectNegativeCap()])
+        result = await agent.run('hello')
+        assert result.output == MyOutput(value=42)
+        assert call_count == 2
+
+    async def test_after_output_validate_raises_model_retry(self):
+        """after_output_validate can raise ModelRetry to reject validated output."""
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ModelResponse(parts=[TextPart(content='{"value": 0}')])
+            return ModelResponse(parts=[TextPart(content='{"value": 42}')])
+
+        @dataclass
+        class RejectZeroCap(AbstractCapability[Any]):
+            async def after_output_validate(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+            ) -> Any:
+                # Validated output is a MyOutput instance (Pydantic returns model instances)
+                if isinstance(output, MyOutput) and output.value == 0:
+                    raise ModelRetry('Zero is not a valid value')
+                return output
+
+        agent = Agent(FunctionModel(model_fn), output_type=PromptedOutput(MyOutput), capabilities=[RejectZeroCap()])
+        result = await agent.run('hello')
+        assert result.output == MyOutput(value=42)
+        assert call_count == 2
+
+    async def test_after_output_execute_raises_model_retry(self):
+        """after_output_execute can raise ModelRetry to reject the execution result."""
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ModelResponse(parts=[TextPart(content='short')])
+            return ModelResponse(parts=[TextPart(content='this is long enough')])
+
+        @dataclass
+        class MinLengthCap(AbstractCapability[Any]):
+            async def after_output_execute(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+            ) -> Any:
+                if isinstance(output, str) and len(output) < 10:
+                    raise ModelRetry('Output too short, please elaborate')
+                return output
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[MinLengthCap()])
+        result = await agent.run('hello')
+        assert result.output == 'this is long enough'
+        assert call_count == 2
+
+    async def test_wrap_output_execute_model_retry_skips_error_hook(self):
+        """ModelRetry from wrap_output_execute bypasses on_output_execute_error."""
+        error_hook_called = False
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ModelResponse(parts=[TextPart(content='bad')])
+            return ModelResponse(parts=[TextPart(content='good')])
+
+        @dataclass
+        class WrapRetryCap(AbstractCapability[Any]):
+            async def wrap_output_execute(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any, handler: Any
+            ) -> Any:
+                result = await handler(output)
+                if result == 'bad':
+                    raise ModelRetry('Bad output, please try again')
+                return result
+
+            async def on_output_execute_error(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any, error: Exception
+            ) -> Any:
+                nonlocal error_hook_called
+                error_hook_called = True
+                raise error
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[WrapRetryCap()])
+        result = await agent.run('hello')
+        assert result.output == 'good'
+        assert call_count == 2
+        assert not error_hook_called  # ModelRetry skips on_output_execute_error
+
+    async def test_before_output_execute_raises_model_retry(self):
+        """before_output_execute can raise ModelRetry to skip execution."""
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ModelResponse(parts=[TextPart(content='{"value": 0}')])
+            return ModelResponse(parts=[TextPart(content='{"value": 5}')])
+
+        @dataclass
+        class RejectBeforeExecCap(AbstractCapability[Any]):
+            async def before_output_execute(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+            ) -> Any:
+                if isinstance(output, MyOutput) and output.value == 0:
+                    raise ModelRetry('Cannot execute with zero value')
+                return output
+
+        agent = Agent(
+            FunctionModel(model_fn), output_type=PromptedOutput(MyOutput), capabilities=[RejectBeforeExecCap()]
+        )
+        result = await agent.run('hello')
+        assert result.output == MyOutput(value=5)
+        assert call_count == 2
+
+
 class TestOutputToolWithOutputFunction:
     """Output tools with output functions that raise ModelRetry."""
 

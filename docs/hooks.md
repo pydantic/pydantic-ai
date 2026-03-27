@@ -325,6 +325,58 @@ Error hooks (`*_error` in the `hooks.on` namespace, `on_*_error` on `AbstractCap
 
 See [Error hooks](capabilities.md#error-hooks) for the full pattern and recovery types.
 
+## Triggering retries with `ModelRetry`
+
+Hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with a custom message — the same exception used in [tool functions](tools.md#model-retry) and output validators.
+
+**Model request hooks** (`after_model_request`, `wrap_model_request`, `on_model_request_error`):
+
+- The retry message is sent back to the model as a [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart]
+- `after_model_request`: the original response is preserved in message history so the model can see what it said
+- `wrap_model_request`: the response is preserved only if the handler was called
+- Retries count against the agent's `output_retries` limit
+
+**Tool hooks** (`before/after_tool_validate`, `before/after_tool_execute`, `wrap_tool_execute`, `on_tool_execute_error`):
+
+- Converted to tool retry prompts, same as when a tool function raises `ModelRetry`
+- Retries count against the tool's `max_retries` limit
+
+**Output hooks** (`before/after_output_validate`, `before/after_output_execute`, `wrap_output_execute`, `on_output_execute_error`):
+
+- Converted to retry prompts, same as when an output function raises `ModelRetry`
+- For tool output, retries count against the tool's `max_retries` limit
+- For text output, retries count against the agent's `max_result_retries` limit
+
+`ModelRetry` from `wrap_model_request`, `wrap_tool_execute`, and `wrap_output_execute` is treated as control flow — it bypasses the corresponding `on_*_error` hook.
+
+```python {title="hooks_model_retry.py"}
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Hooks
+from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.messages import ModelResponse
+from pydantic_ai.models import ModelRequestContext
+
+hooks = Hooks()
+
+
+@hooks.on.after_model_request
+async def check_response(
+    ctx: RunContext[None],
+    *,
+    request_context: ModelRequestContext,
+    response: ModelResponse,
+) -> ModelResponse:
+    if 'PLACEHOLDER' in str(response.parts):
+        raise ModelRetry('Response contains placeholder text. Please provide real data.')
+    return response
+
+
+agent = Agent('test', capabilities=[hooks])
+result = agent.run_sync('Hello')
+print(result.output)
+#> success (no tool calls)
+```
+
 ## When to use `Hooks` vs `AbstractCapability`
 
 | Use [`Hooks`][pydantic_ai.capabilities.Hooks] | Use [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] |
