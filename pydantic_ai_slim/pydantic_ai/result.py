@@ -186,7 +186,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         self._cached_output = await self.validate_response_output(self.response)
         return deepcopy(self._cached_output)
 
-    async def validate_response_output(  # noqa: C901
+    async def validate_response_output(
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
     ) -> OutputDataT:
         """Validate a structured result message."""
