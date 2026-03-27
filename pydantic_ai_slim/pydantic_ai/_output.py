@@ -174,7 +174,7 @@ async def run_output_validate_hooks(
                         if run_context.tool_call_id:
                             m.tool_call_id = run_context.tool_call_id
                     raise ToolRetryError(m) from hook_error
-                raise  # pragma: no cover — wrap_validation_errors=False only in streaming
+                raise
 
         return await capability.after_output_validate(run_context, output_context=output_context, output=validated)
     except ToolRetryError:

@@ -529,10 +529,7 @@ class ToolManager(Generic[AgentDepsT]):
                 validated_args=None,
                 validation_error=e,
             )
-        except (
-            ValidationError,
-            ModelRetry,
-        ) as e:  # pragma: no cover — with hooks, errors are wrapped as ToolRetryError
+        except (ValidationError, ModelRetry) as e:
             max_retries = tool.max_retries if tool is not None else self.default_max_retries
             self._check_max_retries(name, max_retries, e)
             if not allow_partial:
