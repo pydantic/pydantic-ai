@@ -147,6 +147,14 @@ class _SerializedNamedSpec(RootModel[str | dict[str, Any]]):
         return NamedSpec(name=self._name, arguments=self._args)
 
 
+class CapabilitySpec(NamedSpec):
+    """A capability specification, distinguishable from other NamedSpec types for schema generation.
+
+    In JSON schemas, fields typed as CapabilitySpec are replaced with the full
+    capability Union (the same set of types used in `AgentSpec.capabilities`).
+    """
+
+
 def build_registry(
     *,
     custom_types: Sequence[type[T]],

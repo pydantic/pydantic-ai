@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from pydantic_ai._run_context import RunContext
-from pydantic_ai._spec import NamedSpec
+from pydantic_ai._spec import CapabilitySpec, NamedSpec
 from pydantic_ai.agent import Agent
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.builtin_tools import CodeExecutionTool, ImageGenerationTool, MCPServerTool, WebFetchTool, WebSearchTool
@@ -194,7 +194,7 @@ def test_agent_from_spec_with_agent_spec_object():
         model='test',
         instructions='You are helpful.',
         capabilities=[
-            NamedSpec(name='WebSearch', arguments=None),
+            CapabilitySpec(name='WebSearch', arguments=None),
         ],
     )
     agent = Agent.from_spec(spec)
@@ -761,8 +761,21 @@ Supported by:
                     'properties': {
                         'prefix': {'title': 'Prefix', 'type': 'string'},
                         'capability': {
-                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'string'}],
-                            'title': 'Capability',
+                            'anyOf': [
+                                {'const': 'BuiltinTool', 'type': 'string'},
+                                {'$ref': '#/$defs/short_spec_BuiltinTool'},
+                                {'const': 'ImageGeneration', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_ImageGeneration'},
+                                {'$ref': '#/$defs/short_spec_MCP'},
+                                {'$ref': '#/$defs/spec_MCP'},
+                                {'$ref': '#/$defs/spec_PrefixTools'},
+                                {'const': 'Thinking', 'type': 'string'},
+                                {'$ref': '#/$defs/short_spec_Thinking'},
+                                {'const': 'WebFetch', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_WebFetch'},
+                                {'const': 'WebSearch', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_WebSearch'},
+                            ]
                         },
                     },
                     'required': ['prefix', 'capability'],
@@ -5495,7 +5508,7 @@ async def test_prefix_tools_from_spec():
 
 async def test_prefix_tools_from_spec_direct():
     """PrefixTools.from_spec works outside Agent.from_spec (no contextvar), using default registry."""
-    cap = PrefixTools.from_spec(prefix='ws', capability='WebSearch')
+    cap = PrefixTools.from_spec(prefix='ws', capability='WebSearch')  # pyright: ignore[reportArgumentType]
     assert isinstance(cap, PrefixTools)
     assert cap.prefix == 'ws'
 
