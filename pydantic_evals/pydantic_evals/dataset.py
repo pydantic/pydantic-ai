@@ -254,7 +254,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         """
         if name is None:
             warnings.warn(
-                'Omitting the `name` parameter is deprecated. Please provide a name for your Dataset.',
+                'Omitting the `name` parameter is deprecated. Please provide a name for your `Dataset`.',
                 PydanticEvalsDeprecationWarning,
                 stacklevel=2,
             )
