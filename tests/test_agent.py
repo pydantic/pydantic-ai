@@ -455,6 +455,197 @@ def test_tool_output_function_retries():
     assert max_retries_log == [target_retries] * (target_retries + 1)
 
 
+def test_tool_output_max_retries_overrides_agent_retries():
+    """ToolOutput.max_retries takes priority over Agent retries. Regression test for #4678."""
+    retries_log: list[int] = []
+    max_retries_log: list[int] = []
+    target_retries = 5
+
+    def get_weather(ctx: RunContext[None], city: str) -> str:
+        retries_log.append(ctx.retry)
+        max_retries_log.append(ctx.max_retries)
+        if ctx.retry < target_retries:
+            raise ModelRetry(f'Retry {ctx.retry}')
+        return f'Weather in {city}'
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        args_json = '{"city": "Mexico City"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    # Agent retries=2 (lower than ToolOutput), ToolOutput max_retries=5
+    # The ToolOutput value should take priority, allowing 5 retries
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=ToolOutput(get_weather, max_retries=target_retries),
+        retries=2,
+    )
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'Weather in Mexico City'
+    assert retries_log == [0, 1, 2, 3, 4, 5]
+    assert max_retries_log == [target_retries] * (target_retries + 1)
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"city": "Mexico City"}',
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=6),
+                model_name='function:return_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Retry 0',
+                        tool_name='final_result',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"city": "Mexico City"}',
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(input_tokens=60, output_tokens=12),
+                model_name='function:return_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Retry 1',
+                        tool_name='final_result',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"city": "Mexico City"}',
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(input_tokens=69, output_tokens=18),
+                model_name='function:return_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Retry 2',
+                        tool_name='final_result',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"city": "Mexico City"}',
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(input_tokens=78, output_tokens=24),
+                model_name='function:return_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Retry 3',
+                        tool_name='final_result',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"city": "Mexico City"}',
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(input_tokens=87, output_tokens=30),
+                model_name='function:return_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Retry 4',
+                        tool_name='final_result',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"city": "Mexico City"}',
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(input_tokens=96, output_tokens=36),
+                model_name='function:return_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
 class TestPartialOutput:
     """Tests for `ctx.partial_output` flag in output validators and output functions."""
 

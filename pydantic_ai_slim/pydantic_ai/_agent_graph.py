@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from .models.instrumented import InstrumentationSettings
+    from .toolsets.abstract import ToolsetTool
 
 __all__ = (
     'GraphAgentState',
@@ -1242,6 +1243,14 @@ def _emit_skipped_output_tool(
     yield _messages.FunctionToolResultEvent(part)
 
 
+def _get_output_tool_max_retries(
+    tool: ToolsetTool[DepsT] | None,
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
+) -> int:
+    """Get the max_retries for an output tool, falling back to the agent-level max_result_retries."""
+    return tool.max_retries if tool else ctx.deps.max_result_retries
+
+
 async def process_tool_calls(  # noqa: C901
     tool_manager: ToolManager[DepsT],
     tool_calls: list[_messages.ToolCallPart],
@@ -1301,7 +1310,8 @@ async def process_tool_calls(  # noqa: C901
                     ):
                         yield event
                     continue
-                ctx.state.increment_retries(ctx.deps.max_result_retries, error=e)
+                tool = tool_manager.tools.get(call.tool_name) if tool_manager.tools else None
+                ctx.state.increment_retries(_get_output_tool_max_retries(tool, ctx), error=e)
                 raise  # pragma: lax no cover
 
             if not validated.args_valid:
@@ -1313,7 +1323,9 @@ async def process_tool_calls(  # noqa: C901
                         yield event
                     continue
 
-                ctx.state.increment_retries(ctx.deps.max_result_retries, error=validated.validation_error)
+                ctx.state.increment_retries(
+                    _get_output_tool_max_retries(validated.tool, ctx), error=validated.validation_error
+                )
                 yield _messages.FunctionToolCallEvent(call, args_valid=False)
                 output_parts.append(validated.validation_error.tool_retry)
                 yield _messages.FunctionToolResultEvent(validated.validation_error.tool_retry)
@@ -1329,13 +1341,13 @@ async def process_tool_calls(  # noqa: C901
                     ):
                         yield event
                     continue
-                ctx.state.increment_retries(ctx.deps.max_result_retries, error=e)
+                ctx.state.increment_retries(_get_output_tool_max_retries(validated.tool, ctx), error=e)
                 raise  # pragma: lax no cover
             except ToolRetryError as e:
                 # If we already have a valid final result, don't increment retries for invalid output tools
                 # This allows the run to succeed if at least one output tool returned a valid result
                 if not final_result:
-                    ctx.state.increment_retries(ctx.deps.max_result_retries, error=e)
+                    ctx.state.increment_retries(_get_output_tool_max_retries(validated.tool, ctx), error=e)
                 yield _messages.FunctionToolCallEvent(call, args_valid=True)
                 output_parts.append(e.tool_retry)
                 yield _messages.FunctionToolResultEvent(e.tool_retry)
