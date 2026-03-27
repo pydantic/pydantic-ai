@@ -321,7 +321,6 @@ Any hook can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the 
 `ModelRetry` from `wrap_model_request` and `wrap_tool_execute` is treated as control flow — it bypasses `on_model_request_error` and `on_tool_execute_error` respectively.
 
 ```python
-from pydantic_ai import Agent
 from pydantic_ai.capabilities.hooks import Hooks
 from pydantic_ai.exceptions import ModelRetry
 
