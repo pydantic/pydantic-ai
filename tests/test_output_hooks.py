@@ -334,7 +334,7 @@ class TestModelRetryFromOutputHooks:
                     raise ModelRetry('Bad output, please try again')
                 return result
 
-            async def on_output_execute_error(
+            async def on_output_execute_error(  # pragma: no cover — verifying this is NOT called
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any, error: Exception
             ) -> Any:
                 nonlocal error_hook_called
@@ -805,7 +805,7 @@ class TestToolOutputWithOutputHooks:
 
         @dataclass
         class BothHooksCap(AbstractCapability[Any]):
-            async def before_tool_validate(
+            async def before_tool_validate(  # pragma: no cover — verifying this is NOT called
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -816,7 +816,7 @@ class TestToolOutputWithOutputHooks:
                 log.append(f'tool_validate:{call.tool_name}')
                 return args
 
-            async def before_tool_execute(
+            async def before_tool_execute(  # pragma: no cover — verifying this is NOT called
                 self,
                 ctx: RunContext[Any],
                 *,
