@@ -164,23 +164,13 @@ class CustomCapability(AbstractCapability[None]):
     greeting: str = 'hello'
 
 
-@dataclass(init=False)
+@dataclass
 class CapabilityWithCallbackParam(AbstractCapability[None]):
     """Custom capability with a mix of serializable and non-serializable params."""
 
-    max_retries: int
-    on_error: Any  # Callable — not serializable, will be filtered from schema
-    verbose: Any  # Callable | bool in __init__ — only bool survives in schema
-
-    def __init__(
-        self,
-        max_retries: int = 3,
-        on_error: Callable[..., Any] = lambda: None,
-        verbose: Callable[..., Any] | bool = False,
-    ) -> None:
-        self.max_retries = max_retries
-        self.on_error = on_error
-        self.verbose = verbose
+    max_retries: int = 3
+    on_error: Callable[..., Any] = lambda: None  # purely Callable, filtered from schema
+    verbose: Callable[..., Any] | bool = False  # Callable | bool, only bool survives in schema
 
 
 def test_agent_from_spec_custom_capability():
@@ -728,18 +718,6 @@ Supported by:
                         'builtin': {
                             'anyOf': [
                                 {'$ref': '#/$defs/ImageGenerationTool'},
-                                {
-                                    'oneOf': [
-                                        {'$ref': '#/$defs/WebSearchTool'},
-                                        {'$ref': '#/$defs/CodeExecutionTool'},
-                                        {'$ref': '#/$defs/WebFetchTool'},
-                                        {'$ref': '#/$defs/UrlContextTool'},
-                                        {'$ref': '#/$defs/ImageGenerationTool'},
-                                        {'$ref': '#/$defs/MemoryTool'},
-                                        {'$ref': '#/$defs/MCPServerTool'},
-                                        {'$ref': '#/$defs/FileSearchTool'},
-                                    ]
-                                },
                                 {'type': 'boolean'},
                             ],
                             'title': 'Builtin',
@@ -796,18 +774,6 @@ Supported by:
                         'builtin': {
                             'anyOf': [
                                 {'$ref': '#/$defs/WebFetchTool'},
-                                {
-                                    'oneOf': [
-                                        {'$ref': '#/$defs/WebSearchTool'},
-                                        {'$ref': '#/$defs/CodeExecutionTool'},
-                                        {'$ref': '#/$defs/WebFetchTool'},
-                                        {'$ref': '#/$defs/UrlContextTool'},
-                                        {'$ref': '#/$defs/ImageGenerationTool'},
-                                        {'$ref': '#/$defs/MemoryTool'},
-                                        {'$ref': '#/$defs/MCPServerTool'},
-                                        {'$ref': '#/$defs/FileSearchTool'},
-                                    ]
-                                },
                                 {'type': 'boolean'},
                             ],
                             'title': 'Builtin',
@@ -840,18 +806,6 @@ Supported by:
                         'builtin': {
                             'anyOf': [
                                 {'$ref': '#/$defs/WebSearchTool'},
-                                {
-                                    'oneOf': [
-                                        {'$ref': '#/$defs/WebSearchTool'},
-                                        {'$ref': '#/$defs/CodeExecutionTool'},
-                                        {'$ref': '#/$defs/WebFetchTool'},
-                                        {'$ref': '#/$defs/UrlContextTool'},
-                                        {'$ref': '#/$defs/ImageGenerationTool'},
-                                        {'$ref': '#/$defs/MemoryTool'},
-                                        {'$ref': '#/$defs/MCPServerTool'},
-                                        {'$ref': '#/$defs/FileSearchTool'},
-                                    ]
-                                },
                                 {'type': 'boolean'},
                             ],
                             'title': 'Builtin',
@@ -956,7 +910,7 @@ Supported by:
                 },
                 '$schema': {'type': 'string'},
             },
-            'title': '_AgentSpecSchema',
+            'title': 'AgentSpec',
             'type': 'object',
         }
     )

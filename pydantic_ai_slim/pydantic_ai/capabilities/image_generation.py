@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic_ai.builtin_tools import ImageGenerationTool
-from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, Tool
+from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 
 from .builtin_or_local import BuiltinOrLocalTool
 
@@ -21,7 +21,9 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
     def __init__(
         self,
         *,
-        builtin: ImageGenerationTool | AgentBuiltinTool[AgentDepsT] | bool = True,
+        builtin: ImageGenerationTool
+        | Callable[[RunContext[AgentDepsT]], Awaitable[ImageGenerationTool | None] | ImageGenerationTool | None]
+        | bool = True,
         local: Tool[AgentDepsT] | Callable[..., Any] | Literal[False] | None = None,
     ) -> None:
         self.builtin = builtin

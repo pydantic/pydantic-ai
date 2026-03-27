@@ -7,6 +7,8 @@ and registry/loading utilities that can be reused by both the evaluator system a
 from __future__ import annotations
 
 import inspect
+import types  # used at runtime in filter_serializable_type
+import typing  # used at runtime in filter_serializable_type
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
@@ -230,13 +232,6 @@ def filter_serializable_type(tp: Any) -> Any | None:
     For Union types, removes non-serializable members (TypeVars, Callables).
     Returns None if the type is entirely non-serializable.
     """
-    return _filter_serializable_type(tp)
-
-
-def _filter_serializable_type(tp: object) -> object | None:
-    import types
-    import typing
-
     # TypeVar is not serializable
     if isinstance(tp, TypeVar):
         return None
@@ -250,7 +245,7 @@ def _filter_serializable_type(tp: object) -> object | None:
     # Union: filter members
     if origin is typing.Union or isinstance(tp, types.UnionType):
         args = typing.get_args(tp)
-        filtered = [fa for a in args if (fa := _filter_serializable_type(a)) is not None]
+        filtered = [fa for a in args if (fa := filter_serializable_type(a)) is not None]
         if not filtered:  # pragma: no cover — requires union of only non-serializable types
             return None
         if len(filtered) == 1:
@@ -259,7 +254,7 @@ def _filter_serializable_type(tp: object) -> object | None:
 
     # Other generics (list[X], dict[X, Y]): all args must be serializable
     args = typing.get_args(tp)
-    if args and not all(_filter_serializable_type(a) is not None for a in args):
+    if args and not all(filter_serializable_type(a) is not None for a in args):
         return None
 
     return tp

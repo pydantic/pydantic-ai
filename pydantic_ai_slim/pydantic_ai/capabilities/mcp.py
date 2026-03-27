@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlparse
 
 from pydantic_ai.builtin_tools import MCPServerTool
-from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, Tool
+from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
 from .builtin_or_local import BuiltinOrLocalTool
@@ -47,7 +47,9 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
         self,
         url: str,
         *,
-        builtin: MCPServerTool | AgentBuiltinTool[AgentDepsT] | bool = True,
+        builtin: MCPServerTool
+        | Callable[[RunContext[AgentDepsT]], Awaitable[MCPServerTool | None] | MCPServerTool | None]
+        | bool = True,
         local: MCPServer | FastMCPToolset[AgentDepsT] | Callable[..., Any] | Literal[False] | None = None,
         id: str | None = None,
         authorization_token: str | None = None,
