@@ -19,7 +19,7 @@ with try_import() as imports_successful:
     import logfire
     from logfire.testing import CaptureLogfire
 
-    from pydantic_evals import Case, Dataset
+    from pydantic_evals import Case, Dataset, PydanticEvalsDeprecationWarning
     from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
     from pydantic_evals.evaluators import (
         EvaluationResult,
@@ -130,7 +130,7 @@ def test_dataset_name_deprecation_warning(
     example_cases: list[Case[TaskInput, TaskOutput, TaskMetadata]],
 ):
     """Test that omitting the name parameter emits a deprecation warning."""
-    with pytest.warns(DeprecationWarning, match='Omitting the `name` parameter is deprecated'):
+    with pytest.warns(PydanticEvalsDeprecationWarning, match='Omitting the `name` parameter is deprecated'):
         Dataset(cases=example_cases)
 
 

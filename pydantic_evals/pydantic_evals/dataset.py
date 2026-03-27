@@ -36,6 +36,7 @@ from pydantic_ai._spec import build_registry, build_schema_types, load_from_regi
 from pydantic_evals._utils import get_event_loop
 
 from ._utils import get_unwrapped_function_name, logfire_span, task_group_gather
+from ._warnings import PydanticEvalsDeprecationWarning
 from .evaluators import EvaluationResult, Evaluator
 from .evaluators._base import BaseEvaluator
 from .evaluators._run_evaluator import run_evaluator
@@ -253,9 +254,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         """
         if name is None:
             warnings.warn(
-                'Omitting the `name` parameter is deprecated. '
-                'Please provide a name for your Dataset.',
-                DeprecationWarning,
+                'Omitting the `name` parameter is deprecated. Please provide a name for your Dataset.',
+                PydanticEvalsDeprecationWarning,
                 stacklevel=2,
             )
 
