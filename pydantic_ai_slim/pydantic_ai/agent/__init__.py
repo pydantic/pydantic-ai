@@ -13,6 +13,7 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
 
+from opentelemetry.baggage import set_baggage
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Self, TypeVar, deprecated
@@ -98,21 +99,21 @@ if TYPE_CHECKING:
     from ..ui._web import ModelsParam
 
 __all__ = (
+    'AbstractAgent',
     'Agent',
+    'AgentModelSettings',
     'AgentRun',
     'AgentRunResult',
-    'capture_run_messages',
-    'EndStrategy',
-    'CallToolsNode',
-    'ModelRequestNode',
-    'UserPromptNode',
-    'InstrumentationSettings',
-    'ParallelExecutionMode',
-    'WrapperAgent',
-    'AbstractAgent',
-    'EventStreamHandler',
-    'AgentModelSettings',
     'BuiltinToolFunc',
+    'CallToolsNode',
+    'EndStrategy',
+    'EventStreamHandler',
+    'InstrumentationSettings',
+    'ModelRequestNode',
+    'ParallelExecutionMode',
+    'UserPromptNode',
+    'WrapperAgent',
+    'capture_run_messages',
 )
 
 
@@ -1267,6 +1268,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instrumentation_settings.version if instrumentation_settings else DEFAULT_INSTRUMENTATION_VERSION
         )
 
+        # generate a ULID for gen_ai.conversation.id
+
         span_attributes: dict[str, str] = {
             'model_name': model_used.model_name if model_used else 'no-model',
             'agent_name': agent_name,
@@ -1283,6 +1286,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instrumentation_names.get_agent_run_span_name(agent_name),
             attributes=span_attributes,
         )
+        # run id is a ULID formatted as a hex string, use that directly as the conversation id
+        run_id = state.run_id
+        # Propagate gen_ai.agent.name and gen_ai.conversation.id as baggage
+        # We use this to correlate LLM and tool calls to the specific agent and run that made them
+        set_baggage('gen_ai.agent.name', agent_name)
+        set_baggage('gen_ai.conversation.id', run_id)
 
         run_metadata: dict[str, Any] | None = None
         try:
@@ -2420,7 +2429,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             self._entered_count += 1
         return self
 
-    async def __aexit__(self, *args: Any) -> bool | None:
+    async def __aexit__(self, *args: object) -> bool | None:
         async with self._enter_lock:
             self._entered_count -= 1
             if self._entered_count == 0 and self._exit_stack is not None:

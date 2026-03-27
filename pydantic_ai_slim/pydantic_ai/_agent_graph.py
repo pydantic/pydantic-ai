@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import dataclasses
 import inspect
-import uuid
+import time
 from asyncio import Task
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import field, replace
+from random import Random
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 
 from opentelemetry.trace import Tracer
@@ -23,6 +24,7 @@ from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, now
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.models import ModelRequestContext
+from pydantic_ai_slim.pydantic_ai._ulid import ulid_as_uuid
 from pydantic_graph import BaseNode, GraphRunContext
 from pydantic_graph.beta import Graph, GraphBuilder
 from pydantic_graph.nodes import End, NodeRunEndT
@@ -77,7 +79,7 @@ class GraphAgentState:
     usage: _usage.RunUsage = dataclasses.field(default_factory=_usage.RunUsage)
     retries: int = 0
     run_step: int = 0
-    run_id: str = dataclasses.field(default_factory=lambda: str(uuid.uuid4()))
+    run_id: str = dataclasses.field(default_factory=lambda: ulid_as_uuid(Random(), lambda: time.time_ns() // 1_000_000))
     metadata: dict[str, Any] | None = None
     last_max_tokens: int | None = None
     """Last-resolved `max_tokens` from model settings, used only in error messages."""
