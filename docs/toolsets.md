@@ -909,7 +909,7 @@ from pydantic_ai import Agent
 from pydantic_ai_strale import StraleToolset
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    'openai:gpt-5.2',
     toolsets=[StraleToolset(api_key=os.environ['STRALE_API_KEY'])],
     system_prompt=(
         'When you need to verify businesses, validate financial identifiers '
