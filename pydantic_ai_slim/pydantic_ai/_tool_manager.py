@@ -468,11 +468,11 @@ class ToolManager(Generic[AgentDepsT]):
         ctx = self.ctx
 
         try:
-            if tool is None:
+            if tool is None:  # pragma: no cover — output tool names are agent-defined, always exist
                 if self.tools:
                     msg = f'Available tools: {", ".join(f"{n!r}" for n in self.tools)}'
                 else:
-                    msg = 'No tools available.'  # pragma: no cover
+                    msg = 'No tools available.'
                 raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
 
             ctx = self._build_tool_context(call, tool, allow_partial=allow_partial)
