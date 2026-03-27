@@ -582,7 +582,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 model_response = await self._resolve_wrap_result(ctx, run_context, wrap_request_context, result_or_exc)
             except exceptions.ModelRetry as e:
                 self._did_stream = True
-                ctx.state.usage.requests += 1
+                # Don't increment usage.requests — handler was never called (short-circuit)
                 run_context = build_run_context(ctx)
                 await self._build_retry_node(ctx, run_context, e)
                 # Must still yield from @asynccontextmanager — yield an empty stream

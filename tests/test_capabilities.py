@@ -5736,6 +5736,40 @@ class TestModelRetryFromHooks:
             result = await streamed.get_output()
         assert result == 'good response'
         assert call_count == 2
+        assert streamed.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=1),
+                    model_name='function:simple_model_function:stream_fn',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Response was bad, please try again',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='good response')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=2),
+                    model_name='function:simple_model_function:stream_fn',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_wrap_model_request_model_retry_streaming_short_circuit(self):
         """wrap_model_request raises ModelRetry without calling handler during streaming."""
@@ -5766,6 +5800,33 @@ class TestModelRetryFromHooks:
             result = await streamed.get_output()
         assert result == 'good response'
         assert cap.call_count == 2
+        assert streamed.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Short-circuit retry',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='good response')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=2),
+                    model_name='function:simple_model_function:stream_fn',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_wrap_model_request_model_retry_streaming_after_handler(self):
         """wrap_model_request raises ModelRetry after calling handler during streaming (tool call scenario)."""
@@ -5808,6 +5869,40 @@ class TestModelRetryFromHooks:
             result = await streamed.get_output()
         assert result == 'good response'
         assert call_count == 2
+        assert streamed.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=1),
+                    model_name='function:simple_model_function:stream_fn',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Post-handler retry',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='good response')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=2),
+                    model_name='function:simple_model_function:stream_fn',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_wrap_model_request_model_retry(self):
         """wrap_model_request raises ModelRetry after calling handler — triggers retry."""
@@ -6102,6 +6197,57 @@ class TestModelRetryFromHooks:
 
         result = await agent.run('call tool')
         assert result.output == 'got: tool result'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='call tool', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=52, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Not ready to execute, try again',
+                            tool_name='my_tool',
+                            tool_call_id='call-1',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=65, output_tokens=4),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='my_tool', content='tool result', tool_call_id='call-1', timestamp=IsDatetime()
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='got: tool result')],
+                    usage=RequestUsage(input_tokens=67, output_tokens=7),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_wrap_tool_execute_model_retry_skips_on_error(self):
         """wrap_tool_execute raising ModelRetry should NOT call on_tool_execute_error."""
@@ -6153,6 +6299,41 @@ class TestModelRetryFromHooks:
         result = await agent.run('call tool')
         assert result.output == 'got retry'
         assert not on_error_called
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='call tool', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=52, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Wrap says retry tool',
+                            tool_name='my_tool',
+                            tool_call_id='call-1',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='got retry')],
+                    usage=RequestUsage(input_tokens=63, output_tokens=4),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_on_tool_execute_error_model_retry(self):
         """on_tool_execute_error raises ModelRetry to recover via retry."""
@@ -6189,6 +6370,41 @@ class TestModelRetryFromHooks:
 
         result = await agent.run('call tool')
         assert result.output == 'got retry after error'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='call tool', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=52, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Tool errored, please retry',
+                            tool_name='my_tool',
+                            tool_call_id='call-1',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='got retry after error')],
+                    usage=RequestUsage(input_tokens=63, output_tokens=6),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_after_tool_validate_model_retry(self):
         """after_tool_validate raises ModelRetry — validation retry sent to model."""
@@ -6224,6 +6440,41 @@ class TestModelRetryFromHooks:
 
         result = await agent.run('call tool')
         assert result.output == 'got validation retry'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='call tool', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=52, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Validated args are bad',
+                            tool_name='my_tool',
+                            tool_call_id='call-1',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='got validation retry')],
+                    usage=RequestUsage(input_tokens=63, output_tokens=5),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_before_tool_validate_model_retry(self):
         """before_tool_validate raises ModelRetry — validation retry sent to model."""
@@ -6259,3 +6510,38 @@ class TestModelRetryFromHooks:
 
         result = await agent.run('call tool')
         assert result.output == 'got pre-validation retry'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='call tool', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=52, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Args look bad before validation',
+                            tool_name='my_tool',
+                            tool_call_id='call-1',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='got pre-validation retry')],
+                    usage=RequestUsage(input_tokens=64, output_tokens=5),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
