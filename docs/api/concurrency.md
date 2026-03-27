@@ -1,4 +1,4 @@
-# `pydantic_ai` — Concurrency
+# `pydantic_ai.models.concurrency`
 
 ::: pydantic_ai.ConcurrencyLimitedModel
 
