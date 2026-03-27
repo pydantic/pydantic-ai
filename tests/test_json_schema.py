@@ -121,3 +121,47 @@ def test_boolean_schema_nodes():
     # Boolean nodes should be preserved
     assert result['properties']['fields']['items']['properties']['value'] is True
     assert result['properties']['fields']['items']['properties']['denied'] is False
+
+
+def test_boolean_in_oneof_union():
+    """Test that boolean schemas within oneOf/anyOf unions are handled correctly.
+
+    See: https://github.com/pydantic/pydantic-ai/issues/4771
+    """
+
+    class PassthroughTransformer(JsonSchemaTransformer):
+        def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
+            return schema
+
+    # Case 1: oneOf with a single True collapses to True
+    schema = {'oneOf': [True]}
+    result = PassthroughTransformer(schema).walk()
+    assert result is True
+
+    # Case 2: anyOf with a single False collapses to False
+    schema = {'anyOf': [False]}
+    result = PassthroughTransformer(schema).walk()
+    assert result is False
+
+    # Case 3: oneOf with True and a typed schema — should keep union
+    schema = {'oneOf': [True, {'type': 'string'}]}
+    result = PassthroughTransformer(schema).walk()
+    assert 'oneOf' in result
+    assert len(result['oneOf']) == 2
+
+    # Case 4: anyOf with False and a typed schema — should keep union
+    schema = {'anyOf': [False, {'type': 'number'}]}
+    result = PassthroughTransformer(schema).walk()
+    assert 'anyOf' in result
+    assert len(result['anyOf']) == 2
+
+    # Case 5: nested bool in items inside oneOf
+    schema = {
+        'oneOf': [
+            {'type': 'array', 'items': True},
+            {'type': 'string'},
+        ]
+    }
+    result = PassthroughTransformer(schema).walk()
+    assert 'oneOf' in result
+    assert result['oneOf'][0]['items'] is True
