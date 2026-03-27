@@ -89,7 +89,7 @@ class NamedSpec(BaseModel):
                 deserialized = _SerializedNamedSpec.model_validate(value)
             except ValidationError:
                 raise exc  # raise the original error
-            return deserialized.to_named_spec()
+            return deserialized.to_named_spec(cls)
 
     @model_serializer(mode='wrap')
     def serialize(self, handler: SerializerFunctionWrapHandler, info: SerializationInfo) -> Any:
@@ -143,8 +143,8 @@ class _SerializedNamedSpec(RootModel[str | dict[str, Any]]):
         # Anything else is passed as a single positional argument
         return (cast(Any, value),)
 
-    def to_named_spec(self) -> NamedSpec:
-        return NamedSpec(name=self._name, arguments=self._args)
+    def to_named_spec(self, cls: type[NamedSpec] = NamedSpec) -> NamedSpec:
+        return cls(name=self._name, arguments=self._args)
 
 
 class CapabilitySpec(NamedSpec):
