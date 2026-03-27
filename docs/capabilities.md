@@ -88,7 +88,7 @@ See the dedicated [Hooks](hooks.md) page for the full API: decorator and constru
 
 [`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], and [`MCP`][pydantic_ai.capabilities.MCP] provide model-agnostic access to common tool types. When the model supports the tool natively (as a [builtin tool](builtin-tools.md)), it's used directly. When it doesn't, a local function tool handles it instead — so your agent works across providers without code changes.
 
-Each accepts `builtin` and `local` keyword arguments to control which side is used:
+[`WebSearch`][pydantic_ai.capabilities.WebSearch] auto-detects DuckDuckGo as a local fallback. [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] requires you to provide a local fallback via `local=` — this should be a tool function that calls an image generation API (e.g. DALL-E) directly. Each accepts `builtin` and `local` keyword arguments to control which side is used:
 
 ```python {title="provider_adaptive_tools.py" test="skip"}
 from pydantic_ai import Agent
@@ -193,7 +193,71 @@ Every [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] has a 
 MCP(url='https://mcp.example.com/api').prefix_tools('mcp')
 ```
 
+### Convenience wrappers
+
+[`BuiltinTool`][pydantic_ai.capabilities.BuiltinTool], [`Toolset`][pydantic_ai.capabilities.Toolset], and [`HistoryProcessor`][pydantic_ai.capabilities.HistoryProcessor] wrap a single tool, toolset, or history processor as a capability, so they can be composed alongside other capabilities:
+
+```python {title="convenience_wrappers.py" test="skip" lint="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import BuiltinTool, HistoryProcessor, Toolset
+from pydantic_ai.builtin_tools import CodeExecutionTool
+from pydantic_ai.toolsets import FunctionToolset
+
+# Register a builtin tool as a capability
+code_exec = BuiltinTool(CodeExecutionTool())
+
+# Wrap a toolset as a capability
+my_toolset = FunctionToolset()
+toolset_cap = Toolset(my_toolset)
+
+# Wrap a history processor as a capability
+def trim_history(messages):
+    return messages[-10:]  # keep only last 10 messages
+
+history_cap = HistoryProcessor(trim_history)
+
+agent = Agent('openai:gpt-5.2', capabilities=[code_exec, toolset_cap, history_cap])
+```
+
 ## Building custom capabilities
+
+[`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] is generic in the agent's dependency type — `AbstractCapability[MyDeps]` means the capability's hooks will receive a `RunContext[MyDeps]`. Use `AbstractCapability[Any]` when the capability works with any dependency type, or a specific type when it needs to access dependency fields:
+
+```python {title="typed_capability.py" test="skip" lint="skip"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.models import ModelRequestContext
+
+
+@dataclass
+class UserGreeter(AbstractCapability[Any]):
+    """Works with any deps type."""
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        return request_context
+
+
+@dataclass
+class Deps:
+    user_name: str
+
+
+@dataclass
+class PersonalGreeter(AbstractCapability[Deps]):
+    """Requires Deps with a user_name field."""
+
+    async def before_model_request(
+        self, ctx: RunContext[Deps], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        # ctx.deps is typed as Deps — IDE autocomplete works
+        print(f'Request for {ctx.deps.user_name}')
+        return request_context
+```
 
 To build your own capability, subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] and override the methods you need. There are two categories: **configuration methods** that are called at agent construction (except [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] which is called per-run), and **lifecycle hooks** that fire during each run.
 
@@ -488,6 +552,11 @@ See [Iterating Over an Agent's Graph](agent.md#iterating-over-an-agents-graph) f
 
 To skip the model call entirely and provide a replacement response, raise [`SkipModelRequest(response)`][pydantic_ai.exceptions.SkipModelRequest] from `before_model_request` or `wrap_model_request`.
 
+`before_model_request` hooks see the full `request_context.messages` list, including any [message history](message-history.md) passed to `agent.run()`, and can modify it.
+
+!!! note "Skip and chain behavior"
+    All skip exceptions (`SkipModelRequest`, `SkipToolValidation`, `SkipToolExecution`) short-circuit the hook chain: remaining capabilities' `before_*` hooks do not fire, and `after_*` hooks are not called for the skipped operation. A skip raised from `wrap_*` propagates immediately — inner capabilities' wrap hooks never execute.
+
 #### Tool hooks
 
 Tool processing has two phases: **validation** (parsing and validating the model's JSON arguments against the tool's schema) and **execution** (running the tool function). Each phase has its own hooks.
@@ -501,7 +570,7 @@ All tool hooks receive a `tool_def` parameter with the [`ToolDefinition`][pydant
 | [`before_tool_validate`][pydantic_ai.capabilities.AbstractCapability.before_tool_validate] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, call: `[`ToolCallPart`][pydantic_ai.messages.ToolCallPart]`, tool_def: `[`ToolDefinition`][pydantic_ai.tools.ToolDefinition]`, args: `[`RawToolArgs`][pydantic_ai.capabilities.RawToolArgs]`) -> `[`RawToolArgs`][pydantic_ai.capabilities.RawToolArgs] | Modify raw args before validation (e.g. JSON repair) |
 | [`after_tool_validate`][pydantic_ai.capabilities.AbstractCapability.after_tool_validate] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, call: `[`ToolCallPart`][pydantic_ai.messages.ToolCallPart]`, tool_def: `[`ToolDefinition`][pydantic_ai.tools.ToolDefinition]`, args: `[`ValidatedToolArgs`][pydantic_ai.capabilities.ValidatedToolArgs]`) -> `[`ValidatedToolArgs`][pydantic_ai.capabilities.ValidatedToolArgs] | Modify validated args |
 | [`wrap_tool_validate`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_validate] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, call: `[`ToolCallPart`][pydantic_ai.messages.ToolCallPart]`, tool_def: `[`ToolDefinition`][pydantic_ai.tools.ToolDefinition]`, args: `[`RawToolArgs`][pydantic_ai.capabilities.RawToolArgs]`, handler: `[`WrapToolValidateHandler`][pydantic_ai.capabilities.WrapToolValidateHandler]`) -> `[`ValidatedToolArgs`][pydantic_ai.capabilities.ValidatedToolArgs] | Wrap the validation step |
-| [`on_tool_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_validate_error] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, call: `[`ToolCallPart`][pydantic_ai.messages.ToolCallPart]`, tool_def: `[`ToolDefinition`][pydantic_ai.tools.ToolDefinition]`, args: `[`RawToolArgs`][pydantic_ai.capabilities.RawToolArgs]`, error: Exception) -> `[`ValidatedToolArgs`][pydantic_ai.capabilities.ValidatedToolArgs] | Handle validation errors (see [error hooks](#error-hooks)) |
+| [`on_tool_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_validate_error] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, call: `[`ToolCallPart`][pydantic_ai.messages.ToolCallPart]`, tool_def: `[`ToolDefinition`][pydantic_ai.tools.ToolDefinition]`, args: `[`RawToolArgs`][pydantic_ai.capabilities.RawToolArgs]`, error: ValidationError | `[`ModelRetry`][pydantic_ai.exceptions.ModelRetry]`) -> `[`ValidatedToolArgs`][pydantic_ai.capabilities.ValidatedToolArgs] | Handle validation errors (see [error hooks](#error-hooks)) |
 
 To skip validation and provide pre-validated args, raise [`SkipToolValidation(args)`][pydantic_ai.exceptions.SkipToolValidation] from `before_tool_validate` or `wrap_tool_validate`.
 
@@ -634,6 +703,8 @@ Error hooks use **raise-to-propagate, return-to-recover** semantics:
 | [`on_tool_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_validate_error] | Tool validation fails | Return validated args `dict` |
 | [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error] | Tool execution fails | Return any tool result |
 
+With multiple capabilities, `on_*_error` hooks fire in **reverse** capability order (like `after_*`). The first capability to return a result **recovers** the error — remaining capabilities' error hooks are not called. If a handler re-raises or raises a new exception, the next capability in the chain sees that exception.
+
 ```python {title="error_hooks_example.py" test="skip" lint="skip"}
 from dataclasses import dataclass, field
 from typing import Any
@@ -729,6 +800,8 @@ print(counter.count)
 #> 0
 ```
 
+When `for_run` returns a new instance, all `get_*()` methods (`get_toolset`, `get_instructions`, `get_model_settings`, etc.) are re-called on that new instance — not on the original. This is important for capabilities where per-run configuration depends on per-run state.
+
 ### Composition
 
 When multiple capabilities are passed to an agent, they are composed into a single [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability]:
@@ -739,6 +812,14 @@ When multiple capabilities are passed to an agent, they are composed into a sing
 * **`wrap_*`** hooks nest as middleware: `cap1` wraps `cap2` wraps `cap3` wraps the actual operation. The first capability is the outermost layer.
 
 This means the first capability in the list has the first and last say on the operation — it sees the original input in its `wrap_*` before handler, and it sees the final output after handler returns.
+
+### Sharing state between capabilities
+
+Capabilities don't have direct access to each other. To share state between capabilities during a run, use a [`contextvars.ContextVar`](https://docs.python.org/3/library/contextvars.html): one capability sets it (e.g. in `wrap_run` or `before_run`), and another reads it from its hooks. The order of capabilities in the `capabilities` list matters — the writer must come before the reader so its `before_*` hook runs first.
+
+### Testing custom capabilities
+
+Test custom capabilities the same way you test agents — using [`TestModel`][pydantic_ai.models.test.TestModel] or [`FunctionModel`][pydantic_ai.models.function.FunctionModel]. Create an agent with your capability and assert on the run result, messages, or any observable side effects of your hooks.
 
 ## Examples
 
