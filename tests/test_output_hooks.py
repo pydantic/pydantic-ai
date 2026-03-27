@@ -2153,6 +2153,40 @@ class TestUnionOutputWithHooks:
         assert call_count == 2
         assert 'validate_error' in error_log
 
+    async def test_union_error_hook_recovery(self):
+        """on_output_validate_error can recover for union types without crashing."""
+
+        class TypeA(BaseModel):
+            a_val: int
+
+        class TypeB(BaseModel):
+            b_val: str
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            # Return invalid union JSON — missing 'result' envelope
+            return ModelResponse(parts=[TextPart(content='{"bad": "data"}')])
+
+        @dataclass
+        class RecoverUnionCap(AbstractCapability[Any]):
+            async def on_output_validate_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                output_context: OutputContext,
+                output: str | dict[str, Any],
+                error: ValidationError | ModelRetry,
+            ) -> Any:
+                # Recover with a pre-built result
+                return TypeA(a_val=42)
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=PromptedOutput([TypeA, TypeB]),
+            capabilities=[RecoverUnionCap()],
+        )
+        result = await agent.run('hello')
+        assert result.output == TypeA(a_val=42)
+
 
 class TestTextFunctionOutputCallHook:
     """Tests that TextFunctionOutputProcessor.call() is exercised through execute hooks."""

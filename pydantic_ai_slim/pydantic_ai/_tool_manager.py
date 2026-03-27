@@ -437,6 +437,9 @@ class ToolManager(Generic[AgentDepsT]):
     async def validate_output_tool_call(
         self,
         call: ToolCallPart,
+        *,
+        allow_partial: bool = False,
+        wrap_validation_errors: bool = True,
     ) -> ValidatedToolCall[AgentDepsT]:
         """Validate output tool args through output validate hooks (skipping tool hooks).
 
@@ -461,7 +464,7 @@ class ToolManager(Generic[AgentDepsT]):
                     msg = 'No tools available.'  # pragma: no cover
                 raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
 
-            ctx = self._build_tool_context(call, tool, allow_partial=False)
+            ctx = self._build_tool_context(call, tool, allow_partial=allow_partial)
 
             toolset = tool.toolset
             assert isinstance(toolset, OutputToolset)
@@ -469,7 +472,7 @@ class ToolManager(Generic[AgentDepsT]):
             output_context = processor.get_output_context('tool', tool_call=call, tool_def=tool.tool_def)
 
             async def do_validate(args: str | dict[str, Any]) -> str | dict[str, Any]:
-                return await self._validate_tool_args(call, tool, ctx, allow_partial=False, args_override=args)
+                return await self._validate_tool_args(call, tool, ctx, allow_partial=allow_partial, args_override=args)
 
             cap = self.root_capability
             if cap is not None:
@@ -480,11 +483,11 @@ class ToolManager(Generic[AgentDepsT]):
                     output_context=output_context,
                     output=raw_args,
                     do_validate=do_validate,
-                    allow_partial=False,
-                    wrap_validation_errors=True,
+                    allow_partial=allow_partial,
+                    wrap_validation_errors=wrap_validation_errors,
                 )
             else:
-                validated_args = await self._validate_tool_args(call, tool, ctx, allow_partial=False)
+                validated_args = await self._validate_tool_args(call, tool, ctx, allow_partial=allow_partial)
 
             return ValidatedToolCall(
                 call=call,
@@ -499,7 +502,10 @@ class ToolManager(Generic[AgentDepsT]):
             max_retries = tool.max_retries if tool is not None else self.default_max_retries
             cause = e.__cause__ if isinstance(e.__cause__, Exception) else e
             self._check_max_retries(name, max_retries, cause)
-            self.failed_tools.add(name)
+            if not allow_partial:
+                self.failed_tools.add(name)
+            if not wrap_validation_errors:
+                raise
             return ValidatedToolCall(
                 call=call,
                 tool=tool,
@@ -511,7 +517,10 @@ class ToolManager(Generic[AgentDepsT]):
         except (ValidationError, ModelRetry) as e:
             max_retries = tool.max_retries if tool is not None else self.default_max_retries
             self._check_max_retries(name, max_retries, e)
-            self.failed_tools.add(name)
+            if not allow_partial:
+                self.failed_tools.add(name)
+            if not wrap_validation_errors:
+                raise
             validation_error = self._wrap_error_as_retry(name, call, e)
             return ValidatedToolCall(
                 call=call,
@@ -581,6 +590,23 @@ class ToolManager(Generic[AgentDepsT]):
             raise self._wrap_error_as_retry(name, validated.call, e) from e
 
         return result
+
+    async def handle_output_tool_call(
+        self,
+        call: ToolCallPart,
+        *,
+        allow_partial: bool = False,
+        wrap_validation_errors: bool = True,
+    ) -> Any:
+        """Handle an output tool call using output hooks (not tool hooks).
+
+        Convenience method combining validate_output_tool_call and execute_output_tool_call.
+        Used by the streaming path in result.py.
+        """
+        validated = await self.validate_output_tool_call(
+            call, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
+        )
+        return await self.execute_output_tool_call(validated)
 
     async def _execute_tool_call_impl(
         self,

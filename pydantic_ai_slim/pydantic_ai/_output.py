@@ -106,9 +106,15 @@ def _build_output_handlers(
 
     async def do_execute(output: Any) -> Any:
         if _union_kind:
+            # Normal path: re-wrap with the kind resolved during validation
             return await processor.call(
                 _UnionValidatedOutput(kind=_union_kind[0], data=output), run_context, wrap_validation_errors
             )
+        if isinstance(processor, UnionOutputProcessor):
+            # Error recovery path: validation failed and on_output_validate_error returned
+            # data directly, so _union_kind was never populated. The recovered data is
+            # already the final validated output — return as-is.
+            return output
         return await processor.call(output, run_context, wrap_validation_errors)
 
     return do_validate, do_execute
