@@ -297,21 +297,32 @@ class ToolManager(Generic[AgentDepsT]):
         if cap is not None:
             tool_def = validated.tool.tool_def
 
-            # before_tool_execute
-            args = await cap.before_tool_execute(ctx, call=call, tool_def=tool_def, args=validated.validated_args)
-
-            # wrap_tool_execute wraps the execution; on_tool_execute_error on failure
             try:
-                tool_result = await cap.wrap_tool_execute(
-                    ctx, call=call, tool_def=tool_def, args=args, handler=do_execute
-                )
-            except (SkipToolExecution, CallDeferred, ApprovalRequired, ToolRetryError):
-                raise  # Control flow, not errors
-            except Exception as e:
-                tool_result = await cap.on_tool_execute_error(ctx, call=call, tool_def=tool_def, args=args, error=e)
+                # before_tool_execute
+                args = await cap.before_tool_execute(ctx, call=call, tool_def=tool_def, args=validated.validated_args)
 
-            # after_tool_execute
-            tool_result = await cap.after_tool_execute(ctx, call=call, tool_def=tool_def, args=args, result=tool_result)
+                # wrap_tool_execute wraps the execution; on_tool_execute_error on failure
+                try:
+                    tool_result = await cap.wrap_tool_execute(
+                        ctx, call=call, tool_def=tool_def, args=args, handler=do_execute
+                    )
+                except (SkipToolExecution, CallDeferred, ApprovalRequired, ToolRetryError):
+                    raise  # Control flow, not errors
+                except ModelRetry:
+                    raise  # Propagate to outer handler
+                except Exception as e:
+                    tool_result = await cap.on_tool_execute_error(ctx, call=call, tool_def=tool_def, args=args, error=e)
+
+                # after_tool_execute
+                tool_result = await cap.after_tool_execute(
+                    ctx, call=call, tool_def=tool_def, args=args, result=tool_result
+                )
+            except ModelRetry as e:
+                # Hook raised ModelRetry — convert to ToolRetryError for retry handling
+                name = call.tool_name
+                self._check_max_retries(name, validated.tool.max_retries, e)
+                self.failed_tools.add(name)
+                raise self._wrap_error_as_retry(name, call, e) from e
         else:
             tool_result = await do_execute(validated.validated_args)
 
