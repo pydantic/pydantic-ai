@@ -327,6 +327,12 @@ Builds on version 3 with improved multimodal content handling to better align wi
 
 Note: The `modality` field is only included for image, audio, and video content types as specified in the OTel spec. DocumentUrl and unsupported media types omit the `modality` field.
 
+#### Version 5
+
+Builds on version 4 with improved handling of deferred tool calls:
+
+- [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] and [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] exceptions no longer record an exception event or set the span status to ERROR — the span is left as UNSET, since deferrals are control flow, not errors.
+
 ---
 
 Note that the OpenTelemetry Semantic Conventions are still experimental and are likely to change.
