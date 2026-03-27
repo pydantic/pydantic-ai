@@ -196,42 +196,37 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
         output_tool_name = final_result_event.tool_name
 
-        if self._output_schema.toolset and output_tool_name is not None:
-            tool_call = next(
-                (part for part in message.tool_calls if part.tool_name == output_tool_name),
-                None,
-            )
-            if tool_call is None:
-                raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
-                    f'Invalid response, unable to find tool call for {output_tool_name!r}'
+        try:
+            if self._output_schema.toolset and output_tool_name is not None:
+                tool_call = next(
+                    (part for part in message.tool_calls if part.tool_name == output_tool_name),
+                    None,
                 )
-            try:
+                if tool_call is None:
+                    raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
+                        f'Invalid response, unable to find tool call for {output_tool_name!r}'
+                    )
                 return await self._tool_manager.handle_call(
                     tool_call, allow_partial=allow_partial, wrap_validation_errors=False
                 )
-            except (ValidationError, exceptions.ToolRetryError) as e:
-                if not allow_partial:
-                    raise exceptions.UnexpectedModelBehavior('Invalid output') from e
-                raise
-        elif deferred_tool_requests := _get_deferred_tool_requests(message.tool_calls, self._tool_manager):
-            if not self._output_schema.allows_deferred_tools:
-                raise exceptions.UserError(
-                    'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
-                )
-            return cast(OutputDataT, deferred_tool_requests)
-        elif self._output_schema.allows_image and message.images:
-            return cast(OutputDataT, message.images[0])
-        elif text_processor := self._output_schema.text_processor:
-            text = ''
-            for part in message.parts:
-                if isinstance(part, _messages.TextPart):
-                    text += part.content
-                elif isinstance(part, _messages.BuiltinToolCallPart):
-                    # Text parts before a built-in tool call are essentially thoughts,
-                    # not part of the final result output, so we reset the accumulated text
-                    text = ''
+            elif deferred_tool_requests := _get_deferred_tool_requests(message.tool_calls, self._tool_manager):
+                if not self._output_schema.allows_deferred_tools:
+                    raise exceptions.UserError(
+                        'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
+                    )
+                return cast(OutputDataT, deferred_tool_requests)
+            elif self._output_schema.allows_image and message.images:
+                return cast(OutputDataT, message.images[0])
+            elif text_processor := self._output_schema.text_processor:
+                text = ''
+                for part in message.parts:
+                    if isinstance(part, _messages.TextPart):
+                        text += part.content
+                    elif isinstance(part, _messages.BuiltinToolCallPart):
+                        # Text parts before a built-in tool call are essentially thoughts,
+                        # not part of the final result output, so we reset the accumulated text
+                        text = ''
 
-            try:
                 result_data = await text_processor.process(
                     text,
                     run_context=replace(self._run_ctx, partial_output=allow_partial),
@@ -242,15 +237,15 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     result_data = await validator.validate(
                         result_data, replace(self._run_ctx, partial_output=allow_partial)
                     )
-            except (ValidationError, exceptions.ToolRetryError) as e:
-                if not allow_partial:
-                    raise exceptions.UnexpectedModelBehavior('Invalid output') from e
-                raise
-            return result_data
-        else:
-            raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
-                'Invalid response, unable to process text output'
-            )
+                return result_data
+            else:
+                raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
+                    'Invalid response, unable to process text output'
+                )
+        except (ValidationError, exceptions.ToolRetryError) as e:
+            if not allow_partial:
+                raise exceptions.UnexpectedModelBehavior('Invalid output') from e
+            raise
 
     async def _stream_response_text(
         self, *, delta: bool = False, debounce_by: float | None = 0.1
