@@ -38,6 +38,7 @@ title: Pydantic Evals
 - [Concurrency & Performance](evals/how-to/concurrency.md) - Control parallel execution
 - [Retry Strategies](evals/how-to/retry-strategies.md) - Handle transient failures
 - [Metrics & Attributes](evals/how-to/metrics-attributes.md) - Track custom data
+- [Case Lifecycle Hooks](evals/how-to/lifecycle.md) - Per-case setup, teardown, and context enrichment
 
 **Examples:**
 
