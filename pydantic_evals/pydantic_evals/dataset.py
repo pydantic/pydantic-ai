@@ -45,6 +45,7 @@ from .evaluators.evaluator import EvaluatorFailure
 from .evaluators.report_common import DEFAULT_REPORT_EVALUATORS
 from .evaluators.report_evaluator import ReportEvaluator, ReportEvaluatorContext
 from .evaluators.spec import EvaluatorSpec
+from .lifecycle import CaseLifecycle
 from .otel import SpanTree
 from .otel._context_subtree import context_subtree
 from .reporting import EvaluationReport, ReportCase, ReportCaseAggregate, ReportCaseFailure
@@ -289,6 +290,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         task_name: str | None = None,
         metadata: dict[str, Any] | None = None,
         repeat: int = 1,
+        lifecycle: type[CaseLifecycle[InputsT, OutputT, MetadataT]] | None = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -310,6 +312,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             metadata: Optional dict of experiment metadata.
             repeat: Number of times to run each case. When > 1, each case is run multiple times and
                 results are grouped by the original case name for aggregation. Defaults to 1.
+            lifecycle: Optional lifecycle class for per-case setup, context preparation, and teardown hooks.
+                A new instance is created for each case. See [`CaseLifecycle`][pydantic_evals.lifecycle.CaseLifecycle].
 
         Returns:
             A report containing the results of the evaluation.
@@ -358,6 +362,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                         retry_task,
                         retry_evaluators,
                         source_case_name=source_case_name,
+                        lifecycle=lifecycle,
                     )
                     if progress_bar and task_id is not None:  # pragma: no branch
                         progress_bar.update(task_id, advance=1)
@@ -415,6 +420,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         task_name: str | None = None,
         metadata: dict[str, Any] | None = None,
         repeat: int = 1,
+        lifecycle: type[CaseLifecycle[InputsT, OutputT, MetadataT]] | None = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -435,6 +441,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             metadata: Optional dict of experiment metadata.
             repeat: Number of times to run each case. When > 1, each case is run multiple times and
                 results are grouped by the original case name for aggregation. Defaults to 1.
+            lifecycle: Optional lifecycle class for per-case setup, context preparation, and teardown hooks.
+                A new instance is created for each case. See [`CaseLifecycle`][pydantic_evals.lifecycle.CaseLifecycle].
 
         Returns:
             A report containing the results of the evaluation.
@@ -450,6 +458,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 task_name=task_name,
                 metadata=metadata,
                 repeat=repeat,
+                lifecycle=lifecycle,
             )
         )
 
@@ -1125,6 +1134,7 @@ async def _run_task_and_evaluators(
     retry_evaluators: RetryConfig | None,
     *,
     source_case_name: str | None = None,
+    lifecycle: type[CaseLifecycle[InputsT, OutputT, MetadataT]] | None = None,
 ) -> ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT]:
     """Run a task on a case and evaluate the results.
 
@@ -1136,31 +1146,44 @@ async def _run_task_and_evaluators(
         retry_task: The retry config to use for running the task.
         retry_evaluators: The retry config to use for running the evaluators.
         source_case_name: The original case name before run-indexing (for multi-run experiments).
+        lifecycle: Optional lifecycle class to instantiate for this case.
 
     Returns:
         A ReportCase containing the evaluation results.
     """
+    lc: CaseLifecycle[Any, Any, Any] | None = None
+    result: ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT]
     trace_id: str | None = None
     span_id: str | None = None
-    try:
-        with logfire_span(
-            'case: {case_name}',
-            task_name=get_unwrapped_function_name(task),
-            case_name=report_case_name,
-            inputs=case.inputs,
-            metadata=case.metadata,
-            expected_output=case.expected_output,
-        ) as case_span:
-            context = case_span.context
-            if context is not None:  # pragma: no branch
-                trace_id = f'{context.trace_id:032x}'
-                span_id = f'{context.span_id:016x}'
+    with logfire_span(
+        'case: {case_name}',
+        task_name=get_unwrapped_function_name(task),
+        case_name=report_case_name,
+        inputs=case.inputs,
+        metadata=case.metadata,
+        expected_output=case.expected_output,
+    ) as case_span:
+        t0 = time.time()
 
-            if source_case_name is not None:
-                case_span.set_attribute('logfire.experiment.source_case_name', source_case_name)
+        context = case_span.context
+        if context is not None:  # pragma: no branch
+            trace_id = f'{context.trace_id:032x}'
+            span_id = f'{context.span_id:016x}'
 
-            t0 = time.time()
+        if source_case_name is not None:
+            case_span.set_attribute('logfire.experiment.source_case_name', source_case_name)
+
+        try:
+            if lifecycle is not None:
+                lc = lifecycle(case)
+
+            if lc is not None:
+                await lc.setup()
+
             scoring_context = await _run_task(task, case, retry_task)
+
+            if lc is not None:
+                scoring_context = await lc.prepare_context(scoring_context)
 
             case_span.set_attribute('output', scoring_context.output)
             case_span.set_attribute('task_duration', scoring_context.duration)
@@ -1184,38 +1207,56 @@ async def _run_task_and_evaluators(
             case_span.set_attribute('assertions', _evaluation_results_adapter.dump_python(assertions))
             case_span.set_attribute('scores', _evaluation_results_adapter.dump_python(scores))
             case_span.set_attribute('labels', _evaluation_results_adapter.dump_python(labels))
-        fallback_duration = time.time() - t0
 
-        return ReportCase[InputsT, OutputT, MetadataT](
-            name=report_case_name,
-            inputs=case.inputs,
-            metadata=case.metadata,
-            expected_output=case.expected_output,
-            output=scoring_context.output,
-            metrics=scoring_context.metrics,
-            attributes=scoring_context.attributes,
-            scores=scores,
-            labels=labels,
-            assertions=assertions,
-            task_duration=scoring_context.duration,
-            total_duration=_get_span_duration(case_span, fallback_duration),
-            source_case_name=source_case_name,
-            trace_id=trace_id,
-            span_id=span_id,
-            evaluator_failures=evaluator_failures,
-        )
-    except Exception as exc:
-        return ReportCaseFailure[InputsT, OutputT, MetadataT](
-            name=report_case_name,
-            inputs=case.inputs,
-            metadata=case.metadata,
-            expected_output=case.expected_output,
-            error_message=f'{type(exc).__name__}: {exc}',
-            error_stacktrace=traceback.format_exc(),
-            source_case_name=source_case_name,
-            trace_id=trace_id,
-            span_id=span_id,
-        )
+            result = ReportCase[InputsT, OutputT, MetadataT](
+                name=report_case_name,
+                inputs=case.inputs,
+                metadata=case.metadata,
+                expected_output=case.expected_output,
+                output=scoring_context.output,
+                metrics=scoring_context.metrics,
+                attributes=scoring_context.attributes,
+                scores=scores,
+                labels=labels,
+                assertions=assertions,
+                task_duration=scoring_context.duration,
+                total_duration=time.time() - t0,  # this gets updated below, but is close enough for teardown
+                source_case_name=source_case_name,
+                trace_id=trace_id,
+                span_id=span_id,
+                evaluator_failures=evaluator_failures,
+            )
+        except Exception as exc:
+            # Note: This error is not _actually_ escaping the span, so `escaped=True` on the following line is a lie.
+            # However, I've added this because it affects the details of the otel span, and passing `escaped=True`
+            # better matches the behavior from prior to this change.
+            # We could consider changing this in the future.
+            case_span.record_exception(exc, escaped=True)
+            result = ReportCaseFailure[InputsT, OutputT, MetadataT](
+                name=report_case_name,
+                inputs=case.inputs,
+                metadata=case.metadata,
+                expected_output=case.expected_output,
+                error_message=f'{type(exc).__name__}: {exc}',
+                error_stacktrace=traceback.format_exc(),
+                source_case_name=source_case_name,
+                trace_id=trace_id,
+                span_id=span_id,
+            )
+
+        # Teardown exceptions are intentionally not caught here — they propagate
+        # to the caller. If your teardown may raise and you don't want it to crash
+        # the evaluation, handle exceptions within your teardown() implementation.
+        # If you don't like this behavior, let us know and we can change it.
+        if lc is not None:
+            await lc.teardown(result)
+
+    if isinstance(result, ReportCase):
+        # Update the total duration to reflect the teardown time.
+        # Note this means that modifications to this field inside the teardown will not be reflected.
+        result.total_duration = _get_span_duration(case_span, time.time() - t0)
+
+    return result
 
 
 _evaluation_results_adapter = TypeAdapter(Mapping[str, EvaluationResult])
