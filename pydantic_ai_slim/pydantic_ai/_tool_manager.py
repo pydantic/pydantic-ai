@@ -398,11 +398,11 @@ class ToolManager(Generic[AgentDepsT]):
             max_retries = tool.max_retries if tool is not None else self.default_max_retries
             self._check_max_retries(name, max_retries, e)
 
-            if not allow_partial:
+            if not allow_partial:  # pragma: no branch — allow_partial only used via validate_output_tool_call
                 # If we're validating partial arguments, we don't want to count this as a failed tool as it may still succeed once the full arguments are received.
                 self.failed_tools.add(name)
 
-            if not wrap_validation_errors:
+            if not wrap_validation_errors:  # pragma: no cover — callers always use wrap_validation_errors=True
                 raise
 
             validation_error = self._wrap_error_as_retry(name, call, e)
@@ -681,7 +681,7 @@ class ToolManager(Generic[AgentDepsT]):
             self.failed_tools.add(name)
             raise self._wrap_error_as_retry(name, validated.call, e) from e
 
-        if usage is not None:
+        if usage is not None:  # pragma: no branch — agent always passes usage
             usage.tool_calls += 1
 
         return tool_result
