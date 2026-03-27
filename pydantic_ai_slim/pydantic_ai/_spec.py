@@ -246,7 +246,7 @@ def filter_serializable_type(tp: Any) -> Any | None:
     if origin is typing.Union or isinstance(tp, types.UnionType):
         args = typing.get_args(tp)
         filtered = [fa for a in args if (fa := filter_serializable_type(a)) is not None]
-        if not filtered:  # pragma: no cover — requires union of only non-serializable types
+        if not filtered:
             return None
         if len(filtered) == 1:
             return filtered[0]
@@ -254,7 +254,7 @@ def filter_serializable_type(tp: Any) -> Any | None:
 
     # Other generics (list[X], dict[X, Y]): all args must be serializable
     args = typing.get_args(tp)
-    if args and not all(filter_serializable_type(a) is not None for a in args):
+    if args and any(filter_serializable_type(a) is None for a in args):
         return None
 
     return tp

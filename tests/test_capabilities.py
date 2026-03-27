@@ -171,6 +171,7 @@ class CapabilityWithCallbackParam(AbstractCapability[None]):
     max_retries: int = 3
     on_error: Callable[..., Any] = lambda: None  # purely Callable, filtered from schema
     verbose: Callable[..., Any] | bool = False  # Callable | bool, only bool survives in schema
+    hooks: Callable[..., Any] | Callable[..., None] = lambda: None  # union of all non-serializable, entirely filtered
 
 
 def test_agent_from_spec_custom_capability():
@@ -961,6 +962,8 @@ def test_model_json_schema_filters_non_serializable_params():
     assert 'verbose' in params_def['properties']
     # on_error should not appear — purely Callable, entirely filtered out
     assert 'on_error' not in params_def['properties']
+    # hooks should not appear — union of only non-serializable types, entirely filtered out
+    assert 'hooks' not in params_def['properties']
     # verbose should be boolean only (Callable member was stripped from the union)
     assert params_def['properties']['verbose'] == {'title': 'Verbose', 'type': 'boolean'}
 

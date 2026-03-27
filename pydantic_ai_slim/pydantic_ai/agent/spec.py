@@ -336,7 +336,7 @@ def _build_capability_schema_types(registry: Mapping[str, type[Any]]) -> list[An
             try:
                 get_function_type_hints(cls.__init__)
                 return cls.__init__
-            except Exception:
+            except (NameError, TypeError, AttributeError):
                 pass
         return cls.from_spec
 
