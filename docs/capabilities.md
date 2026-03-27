@@ -68,9 +68,8 @@ See [Thinking](thinking.md) for provider-specific details and the [unified think
 The [`Hooks`][pydantic_ai.capabilities.Hooks] capability provides decorator-based [lifecycle hook](#hooking-into-the-lifecycle) registration — the easiest way to intercept model requests, tool calls, and other events without subclassing [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability]:
 
 ```python {test="skip" lint="skip"}
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities.hooks import Hooks
-from pydantic_ai.models import ModelRequestContext
+from pydantic_ai import Agent, ModelRequestContext, RunContext
+from pydantic_ai.capabilities import Hooks
 
 hooks = Hooks()
 
@@ -140,9 +139,8 @@ cap = BuiltinOrLocalTool(builtin=CodeExecutionTool(), local=my_local_executor)
 [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] wraps a [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc] as a capability, for filtering or modifying [tool definitions](tools.md) per step:
 
 ```python {title="prepare_tools_builtin.py"}
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext, ToolDefinition
 from pydantic_ai.capabilities import PrepareTools
-from pydantic_ai.tools import RunContext, ToolDefinition
 
 
 async def hide_dangerous(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
@@ -332,9 +330,8 @@ When model settings need to vary per step — for example, enabling thinking onl
 ```python {title="dynamic_settings.py"}
 from dataclasses import dataclass
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, ModelSettings, RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.settings import ModelSettings
 
 
 @dataclass
@@ -524,9 +521,8 @@ Capabilities can filter or modify which tool definitions the model sees on each 
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RunContext, ToolDefinition
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.tools import ToolDefinition
 
 
 @dataclass
@@ -575,10 +571,9 @@ from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import RunContext
+from pydantic_ai import AgentStreamEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
-    AgentStreamEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     PartStartEvent,
@@ -638,10 +633,9 @@ Error hooks use **raise-to-propagate, return-to-recover** semantics:
 from dataclasses import dataclass, field
 from typing import Any
 
-from pydantic_ai import RunContext
+from pydantic_ai import ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelResponse, TextPart
-from pydantic_ai.models import ModelRequestContext
 
 
 @dataclass
@@ -672,9 +666,8 @@ class ErrorLogger(AbstractCapability[Any]):
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import RunContext
+from pydantic_ai import ModelRequestContext, RunContext
 from pydantic_ai.capabilities import WrapperCapability
-from pydantic_ai.models import ModelRequestContext
 
 
 @dataclass
@@ -698,9 +691,8 @@ By default, a capability instance is shared across all runs of an agent. If your
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.models import ModelRequestContext
 
 
 @dataclass
@@ -751,10 +743,9 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelResponse, TextPart
-from pydantic_ai.models import ModelRequestContext
 
 
 @dataclass
@@ -799,15 +790,13 @@ The `wrap_*` pattern is useful when you need to observe or time both the input a
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, ModelRequestContext, RunContext, ToolDefinition
 from pydantic_ai.capabilities import (
     AbstractCapability,
     WrapModelRequestHandler,
     WrapToolExecuteHandler,
 )
 from pydantic_ai.messages import ModelResponse, ToolCallPart
-from pydantic_ai.models import ModelRequestContext
-from pydantic_ai.tools import ToolDefinition
 
 
 @dataclass
@@ -863,8 +852,7 @@ To make a custom capability usable in [agent specs](agent-spec.md), it needs a [
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import Agent
-from pydantic_ai.agent.spec import AgentSpec
+from pydantic_ai import Agent, AgentSpec
 from pydantic_ai.capabilities import AbstractCapability
 
 
@@ -892,9 +880,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from pydantic_ai import RunContext
+from pydantic_ai import RunContext, ToolDefinition
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.tools import ToolDefinition
 
 
 @dataclass

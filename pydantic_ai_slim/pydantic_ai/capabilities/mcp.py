@@ -15,7 +15,7 @@ from .builtin_or_local import BuiltinOrLocalTool
 try:
     from pydantic_ai.mcp import MCPServer
     from pydantic_ai.toolsets.fastmcp import FastMCPToolset
-except ImportError:  # pragma: no cover — mcp is an optional dependency
+except ImportError:  # pragma: no branch — mcp is an optional dependency
     if not TYPE_CHECKING:
         MCPServer = Any  # type: ignore[assignment,misc]
         FastMCPToolset = Any  # type: ignore[assignment,misc]
