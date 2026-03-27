@@ -37,12 +37,14 @@ from pydantic_ai import (
     RetryPromptPart,
     RunContext,
     RunUsage,
+    TextContent,
     TextPart,
     TextPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturn,
     ToolReturnPart,
+    UserContent,
     UserPromptPart,
     WebSearchTool,
     WebSearchUserLocation,
@@ -3715,7 +3717,7 @@ multimodal_content_temporal_agent = TemporalAgent(multimodal_content_agent, acti
 @workflow.defn
 class MultiModalContentWorkflow:
     @workflow.run
-    async def run(self, prompt: list[str | MultiModalContent]) -> list[ModelMessage]:
+    async def run(self, prompt: list[UserContent]) -> list[ModelMessage]:
         result = await multimodal_content_temporal_agent.run(prompt)
         return result.all_messages()
 
@@ -3838,3 +3840,40 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
             ('BinaryContent', 'image/png'),
             ('DocumentUrl', 'application/pdf'),
         ]
+
+
+async def test_text_content_serialization_in_workflow(client: Client):
+    """Test that TextContent is properly serialized in Temporal."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MultiModalContentWorkflow],
+        plugins=[AgentPlugin(multimodal_content_temporal_agent)],
+    ):
+        prompt = [
+            'This is a text content test',
+            TextContent(content='This should be preserved as TextContent', metadata={'preserved': True}),
+        ]
+        messages = await client.execute_workflow(
+            MultiModalContentWorkflow.run,
+            args=[prompt],
+            id='test_text_content_serialization',
+            task_queue=TASK_QUEUE,
+        )
+        assert messages[0] == snapshot(
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'This is a text content test',
+                            TextContent(
+                                content='This should be preserved as TextContent', metadata={'preserved': True}
+                            ),
+                        ],
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            )
+        )
