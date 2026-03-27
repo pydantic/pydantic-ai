@@ -5,7 +5,7 @@ import json
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, cast, get_origin, overload
 
 from pydantic import Json, TypeAdapter, ValidationError
 from pydantic_core import SchemaValidator, to_json
@@ -725,7 +725,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             # Extract the function's input type (what the model produces) for output_type
             type_hints = _utils.get_function_type_hints(output)
             for hint_name, hint_type in type_hints.items():  # pragma: no branch
-                if hint_name != 'return' and hint_type is not RunContext:
+                if hint_name != 'return' and hint_type is not RunContext and get_origin(hint_type) is not RunContext:
                     self._output_type = hint_type
                     break
         else:

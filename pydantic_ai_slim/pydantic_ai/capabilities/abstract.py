@@ -521,6 +521,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         For text/structured output, `raw_output` is the raw text string from the model.
         For tool output, `raw_output` is the already-validated args dict (tool validation
         hooks have already run at this point).
+
+        During streaming, this hook fires on every partial chunk as well as the final
+        result. Check ``ctx.partial_output`` to distinguish and avoid expensive work
+        on partial results.
         """
         return raw_output
 
@@ -595,7 +599,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         output_context: OutputContext,
         handler: WrapOutputExecuteHandler,
     ) -> Any:
-        """Wraps output execution. handler(output) runs extraction + function call."""
+        """Wraps output execution. handler(output) runs extraction + function call.
+
+        During streaming, this fires on every partial chunk. Check ``ctx.partial_output``
+        to skip expensive work on partial results.
+        """
         return await handler(output)
 
     async def on_output_execute_error(

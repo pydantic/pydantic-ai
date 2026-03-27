@@ -153,6 +153,9 @@ Output validation hooks fire when the model's output is parsed and validated —
 
 The primary use case is **pre-parse normalization**: `before_output_validate` lets you fix malformed model output before it reaches the parser.
 
+!!! note
+    During streaming, output hooks fire on every partial chunk as well as the final result — similar to output functions and output validators. Check `ctx.partial_output` in your hooks to distinguish partial from final results and avoid expensive work on partials.
+
 ### Output execution hooks
 
 | `hooks.on.` | Constructor kwarg | `AbstractCapability` method |
