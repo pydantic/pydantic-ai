@@ -714,8 +714,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         except exceptions.ModelRetry as e:
             # ModelRetry from wrap_model_request or on_model_request_error — retry the model request.
             # If the handler was called, preserve the response in history for context.
-            ctx.state.usage.requests += 1
             if _handler_response is not None:
+                ctx.state.usage.requests += 1
                 self._append_response(ctx, _handler_response)
             return await self._build_retry_node(ctx, run_context, e)
         self.last_request_context = request_context
