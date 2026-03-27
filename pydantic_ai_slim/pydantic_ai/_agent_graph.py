@@ -20,11 +20,11 @@ from typing_extensions import TypeVar, assert_never
 from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._tool_manager import ToolManager, ValidatedToolCall
+from pydantic_ai._ulid import ulid_as_uuid
 from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, now_utc
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.models import ModelRequestContext
-from pydantic_ai_slim.pydantic_ai._ulid import ulid_as_uuid
 from pydantic_graph import BaseNode, GraphRunContext
 from pydantic_graph.beta import Graph, GraphBuilder
 from pydantic_graph.nodes import End, NodeRunEndT
