@@ -12,20 +12,15 @@ from pydantic_core import from_json, to_json
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
 
 from pydantic_ai._agent_graph import EndStrategy
-from pydantic_ai._spec import NamedSpec, build_registry, build_schema_types
+from pydantic_ai._spec import CapabilitySpec, build_registry, build_schema_types
 from pydantic_ai._template import TemplateStr
+from pydantic_ai._utils import get_function_type_hints
+from pydantic_ai.settings import ModelSettings
 
 if TYPE_CHECKING:
     from pydantic_ai.capabilities.abstract import AbstractCapability
 
-CapabilitySpec = NamedSpec
-"""The specification of a capability to be constructed.
-
-Supports the same short forms as `EvaluatorSpec`:
-* `'MyCapability'` — no arguments
-* `{'MyCapability': single_arg}` — a single positional argument
-* `{'MyCapability': {k1: v1, k2: v2}}` — keyword arguments
-"""
+__all__ = ['CapabilitySpec']  # re-exported from _spec
 
 DEFAULT_SCHEMA_PATH_TEMPLATE = './{stem}_schema.json'
 """Default template for schema file paths, where {stem} is replaced with the spec filename stem."""
@@ -193,14 +188,14 @@ class AgentSpec(BaseModel):
         # - capabilities uses a resolved Union of typed schema models instead of CapabilitySpec
         # - extra='forbid' enables strict validation in the generated schema
         # When adding or removing fields on AgentSpec, update this class to match.
-        class _AgentSpecSchema(BaseModel, extra='forbid'):
+        class _AgentSpecSchema(BaseModel, extra='forbid', arbitrary_types_allowed=True):
             model: str | None = None
             name: str | None = None
             description: str | None = None
             instructions: str | list[str] | None = None
             deps_schema: dict[str, Any] | None = None
             output_schema: dict[str, Any] | None = None
-            model_settings: dict[str, Any] | None = None
+            model_settings: ModelSettings | None = None
             retries: int = 1
             output_retries: int | None = None
             end_strategy: EndStrategy = 'early'
@@ -211,7 +206,21 @@ class AgentSpec(BaseModel):
                 capabilities: list[Union[tuple(capability_schema_types)]] = []  # pyright: ignore  # noqa: UP007
 
         json_schema = _AgentSpecSchema.model_json_schema()
+        json_schema['title'] = 'AgentSpec'
         json_schema['properties']['$schema'] = {'type': 'string'}
+
+        # ModelSettings should allow additional properties for provider-specific settings;
+        # extra='forbid' on _AgentSpecSchema propagates additionalProperties:false to nested
+        # types, so we remove it from ModelSettings.
+        model_settings_def: dict[str, Any] = json_schema.get('$defs', {}).get('ModelSettings', {})
+        model_settings_def.pop('additionalProperties', None)
+
+        # Replace CapabilitySpec $refs with the capability items Union,
+        # so nested capability fields (e.g. PrefixTools.capability) show
+        # the same rich schema as the top-level capabilities array.
+        cap_items_schema = json_schema['properties']['capabilities']['items']
+        _replace_capability_spec_refs(json_schema, cap_items_schema)
+
         return json_schema
 
     @classmethod
@@ -290,7 +299,7 @@ class CapabilitySpecContext:
 capability_spec_context: ContextVar[CapabilitySpecContext | None] = ContextVar('capability_spec_context', default=None)
 
 
-def load_capability_from_nested_spec(spec: dict[str, Any] | str) -> AbstractCapability[Any]:
+def load_capability_from_nested_spec(spec: CapabilitySpec | dict[str, Any] | str) -> AbstractCapability[Any]:
     """Load a capability from a nested spec, reusing the current spec-loading context.
 
     When called inside `Agent.from_spec()` or `Agent._resolve_spec()`, this uses the same
@@ -301,9 +310,9 @@ def load_capability_from_nested_spec(spec: dict[str, Any] | str) -> AbstractCapa
     [`PrefixTools`][pydantic_ai.capabilities.PrefixTools] that need to instantiate
     a nested capability from a spec argument.
     """
-    from pydantic_ai._spec import NamedSpec, load_from_registry
+    from pydantic_ai._spec import load_from_registry
 
-    cap_spec = NamedSpec.model_validate(spec)
+    cap_spec = spec if isinstance(spec, CapabilitySpec) else CapabilitySpec.model_validate(spec)
     ctx = capability_spec_context.get()
     if ctx is not None:
         return load_from_registry(
@@ -325,7 +334,41 @@ def load_capability_from_nested_spec(spec: dict[str, Any] | str) -> AbstractCapa
 
 def _build_capability_schema_types(registry: Mapping[str, type[Any]]) -> list[Any]:
     """Build a list of schema types for capabilities from a registry."""
+
+    def _get_schema_target(cls: type[Any]) -> Any:
+        # When from_spec is not overridden, it delegates to cls(*args, **kwargs).
+        # Use __init__ directly so build_schema_types sees the actual parameter types.
+        # Fall back to from_spec if __init__ hints can't be resolved (e.g. TYPE_CHECKING imports).
+        if 'from_spec' not in cls.__dict__:
+            try:
+                get_function_type_hints(cls.__init__)
+                return cls.__init__
+            except (NameError, TypeError, AttributeError):
+                pass
+        return cls.from_spec
+
     return build_schema_types(
         registry,
-        get_schema_target=lambda cls: cls.from_spec,
+        get_schema_target=_get_schema_target,
     )
+
+
+def _replace_capability_spec_refs(schema: dict[str, Any], cap_items_schema: dict[str, Any]) -> None:
+    """Walk the schema and replace any $ref to CapabilitySpec with the capability items Union."""
+    cap_ref = '#/$defs/CapabilitySpec'
+
+    if schema.get('$ref') == cap_ref:
+        schema.clear()
+        schema.update(cap_items_schema)
+        return
+    for value in schema.values():
+        if isinstance(value, dict):
+            _replace_capability_spec_refs(cast(dict[str, Any], value), cap_items_schema)
+        elif isinstance(value, list):
+            for item in value:  # pyright: ignore[reportUnknownVariableType]
+                if isinstance(item, dict):
+                    _replace_capability_spec_refs(cast(dict[str, Any], item), cap_items_schema)
+
+    # Clean up the CapabilitySpec $def entry
+    defs: dict[str, Any] = schema.get('$defs', {})
+    defs.pop('CapabilitySpec', None)
