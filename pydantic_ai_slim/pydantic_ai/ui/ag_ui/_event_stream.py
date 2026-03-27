@@ -35,6 +35,11 @@ try:
     from ag_ui.core import (
         BaseEvent,
         EventType,
+        ReasoningEndEvent,
+        ReasoningStartEvent,
+        ReasoningTextMessageContentEvent,
+        ReasoningTextMessageEndEvent,
+        ReasoningTextMessageStartEvent,
         RunAgentInput,
         RunErrorEvent,
         RunFinishedEvent,
@@ -42,11 +47,6 @@ try:
         TextMessageContentEvent,
         TextMessageEndEvent,
         TextMessageStartEvent,
-        ThinkingEndEvent,
-        ThinkingStartEvent,
-        ThinkingTextMessageContentEvent,
-        ThinkingTextMessageEndEvent,
-        ThinkingTextMessageStartEvent,
         ToolCallArgsEvent,
         ToolCallEndEvent,
         ToolCallResultEvent,
@@ -148,11 +148,11 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         self, part: ThinkingPart, follows_thinking: bool = False
     ) -> AsyncIterator[BaseEvent]:
         if not follows_thinking:
-            yield ThinkingStartEvent(type=EventType.THINKING_START)
+            yield ReasoningStartEvent(type=EventType.REASONING_START)
 
         if part.content:
-            yield ThinkingTextMessageStartEvent(type=EventType.THINKING_TEXT_MESSAGE_START)
-            yield ThinkingTextMessageContentEvent(type=EventType.THINKING_TEXT_MESSAGE_CONTENT, delta=part.content)
+            yield ReasoningTextMessageStartEvent(type=EventType.REASONING_TEXT_MESSAGE_START)
+            yield ReasoningTextMessageContentEvent(type=EventType.REASONING_TEXT_MESSAGE_CONTENT, delta=part.content)
             self._thinking_text = True
 
     async def handle_thinking_delta(self, delta: ThinkingPartDelta) -> AsyncIterator[BaseEvent]:
@@ -160,20 +160,20 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             return  # pragma: no cover
 
         if not self._thinking_text:
-            yield ThinkingTextMessageStartEvent(type=EventType.THINKING_TEXT_MESSAGE_START)
+            yield ReasoningTextMessageStartEvent(type=EventType.REASONING_TEXT_MESSAGE_START)
             self._thinking_text = True
 
-        yield ThinkingTextMessageContentEvent(type=EventType.THINKING_TEXT_MESSAGE_CONTENT, delta=delta.content_delta)
+        yield ReasoningTextMessageContentEvent(type=EventType.REASONING_TEXT_MESSAGE_CONTENT, delta=delta.content_delta)
 
     async def handle_thinking_end(
         self, part: ThinkingPart, followed_by_thinking: bool = False
     ) -> AsyncIterator[BaseEvent]:
         if self._thinking_text:
-            yield ThinkingTextMessageEndEvent(type=EventType.THINKING_TEXT_MESSAGE_END)
+            yield ReasoningTextMessageEndEvent(type=EventType.REASONING_TEXT_MESSAGE_END)
             self._thinking_text = False
 
         if not followed_by_thinking:
-            yield ThinkingEndEvent(type=EventType.THINKING_END)
+            yield ReasoningEndEvent(type=EventType.REASONING_END)
 
     def handle_tool_call_start(self, part: ToolCallPart | BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
         return self._handle_tool_call_start(part)
