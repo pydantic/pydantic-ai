@@ -722,8 +722,7 @@ class BedrockConverseModel(Model):
         params: ConverseRequestTypeDef,
         stream: bool,
     ) -> ConverseResponseTypeDef | ConverseStreamResponseTypeDef:
-        async with self._extra_headers_lock:
-            return await self._call_bedrock_unlocked(params=params, stream=stream)
+        return await self._call_bedrock_unlocked(params=params, stream=stream)
 
     async def _call_with_extra_headers(
         self,
@@ -732,17 +731,35 @@ class BedrockConverseModel(Model):
         extra_headers: dict[str, str],
         stream: bool,
     ) -> ConverseResponseTypeDef | ConverseStreamResponseTypeDef:
-        async with self._extra_headers_lock:
+        def run_with_extra_headers() -> ConverseResponseTypeDef | ConverseStreamResponseTypeDef:
             handler, events = self._register_extra_headers(
                 self.client,
                 extra_headers,
                 stream=stream,
             )
-
             try:
-                return await self._call_bedrock_unlocked(params=params, stream=stream)
+                if stream:
+                    return self.client.converse_stream(**params)
+                else:
+                    return self.client.converse(**params)
             finally:
                 self._unregister_extra_headers(self.client, handler, events)
+
+        async with self._extra_headers_lock:
+            try:
+                return await anyio.to_thread.run_sync(run_with_extra_headers)
+            except ClientError as e:
+                status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
+                if isinstance(status_code, int):
+                    raise ModelHTTPError(
+                        status_code=status_code,
+                        model_name=self.model_name,
+                        body=e.response,
+                    ) from e
+                raise ModelAPIError(
+                    model_name=self.model_name,
+                    message=str(e),
+                ) from e
 
     @staticmethod
     def _register_extra_headers(

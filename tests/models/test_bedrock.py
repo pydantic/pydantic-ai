@@ -216,6 +216,45 @@ async def test_bedrock_model_usage_limit_exceeded(
         )
 
 
+@pytest.mark.vcr
+async def test_bedrock_model_with_extra_headers(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    agent = Agent(
+        model=model,
+        instructions='You are a helpful chatbot.',
+    )
+
+    result = await agent.run(
+        'Hello',
+        model_settings={'extra_headers': {'X-Custom-Test': 'pydantic-ai-val'}},
+    )
+
+    assert result.output
+
+
+@pytest.mark.vcr()
+async def test_bedrock_model_stream_with_extra_headers(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    model = BedrockConverseModel(
+        'us.amazon.nova-micro-v1:0',
+        provider=bedrock_provider,
+    )
+    agent = Agent(
+        model=model,
+        instructions='You are a helpful chatbot.',
+    )
+
+    async with agent.run_stream(
+        'Hello',
+        model_settings={'extra_headers': {'X-Custom-Test': 'pydantic-ai-val'}},
+    ) as result:
+        output = await result.get_output()
+
+    assert output
+
+
 @pytest.mark.vcr()
 async def test_bedrock_model_usage_limit_not_exceeded(
     allow_model_requests: None,

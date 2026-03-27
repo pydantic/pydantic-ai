@@ -1,0 +1,32 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Hello"}]}], "system": [{"text": "You are a helpful chatbot."}],
+      "inferenceConfig": {}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ZjhlMjI5Y2QtMjZlYS00NDI1LWEzYTEtOGVmMzUyNWI3YjMw
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '139'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse-stream
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '69'
+      content-type:
+      - application/json
+    parsed_body:
+      message: The security token included in the request is invalid.
+    status:
+      code: 403
+      message: Forbidden
+version: 1
