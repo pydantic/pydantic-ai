@@ -632,7 +632,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                             run_context, request_context=wrap_request_context, error=e
                         )
                 except exceptions.ModelRetry as e:
-                    ctx.state.usage.requests += 1
+                    # Don't increment usage.requests — _streaming_handler already did
                     # In the normal streaming path the handler was always called (that's
                     # how the stream was created), so _handler_response is always set.
                     assert _handler_response is not None

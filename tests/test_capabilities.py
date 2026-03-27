@@ -5633,9 +5633,40 @@ class TestModelRetryFromHooks:
         result = await agent.run('hello')
         assert result.output == 'good response'
         assert call_count == 2
-        # Verify message flow: response is in history, then retry prompt, then new response
-        messages = result.all_messages()
-        assert any(isinstance(p, RetryPromptPart) for msg in messages for p in msg.parts)
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='bad response')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Response was bad, please try again',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='good response')],
+                    usage=RequestUsage(input_tokens=66, output_tokens=4),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_after_model_request_model_retry_max_retries(self):
         """after_model_request raises ModelRetry repeatedly — hits max_result_retries."""
@@ -5811,6 +5842,40 @@ class TestModelRetryFromHooks:
         result = await agent.run('hello')
         assert result.output == 'second attempt'
         assert call_count == 2
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='first attempt')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Wrap says retry',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='second attempt')],
+                    usage=RequestUsage(input_tokens=63, output_tokens=4),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_wrap_model_request_model_retry_skips_on_error(self):
         """wrap_model_request raising ModelRetry should NOT call on_model_request_error."""
@@ -5870,6 +5935,33 @@ class TestModelRetryFromHooks:
         result = await agent.run('hello')
         assert result.output == 'recovered response'
         assert call_count == 2
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Model failed, please try again',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='recovered response')],
+                    usage=RequestUsage(input_tokens=65, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_after_tool_execute_model_retry(self):
         """after_tool_execute raises ModelRetry — tool retry prompt sent to model, tool retried on success."""
@@ -5918,6 +6010,57 @@ class TestModelRetryFromHooks:
         result = await agent.run('call tool')
         assert result.output == 'got: tool result'
         assert tool_call_count == 2  # Tool called twice: first rejected by hook, second succeeds
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='call tool', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=52, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Tool result is bad, try again',
+                            tool_name='my_tool',
+                            tool_call_id='call-1',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=65, output_tokens=4),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='my_tool', content='tool result', tool_call_id='call-1', timestamp=IsDatetime()
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='got: tool result')],
+                    usage=RequestUsage(input_tokens=67, output_tokens=7),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_before_tool_execute_model_retry(self):
         """before_tool_execute raises ModelRetry — tool execution is skipped, then succeeds on retry."""
