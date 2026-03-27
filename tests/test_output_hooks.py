@@ -374,6 +374,98 @@ class TestModelRetryFromOutputHooks:
         assert result.output == MyOutput(value=5)
         assert call_count == 2
 
+    async def test_output_tool_before_validate_raises_model_retry(self):
+        """ModelRetry from before_output_validate on a tool output includes tool_call_id."""
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if info.output_tools:
+                tool = info.output_tools[0]
+                if call_count == 1:
+                    return ModelResponse(
+                        parts=[ToolCallPart(tool_name=tool.name, args='{"value": -1}', tool_call_id='call-1')]
+                    )
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=tool.name, args='{"value": 42}', tool_call_id='call-2')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        @dataclass
+        class RejectNegativeCap(AbstractCapability[Any]):
+            async def before_output_validate(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
+            ) -> str | dict[str, Any]:
+                if (
+                    isinstance(output, str)
+                    and '-1' in output
+                    or isinstance(output, dict)
+                    and output.get('value', 0) < 0
+                ):
+                    raise ModelRetry('Negative values not allowed')
+                return output
+
+        agent = Agent(FunctionModel(model_fn), output_type=MyOutput, capabilities=[RejectNegativeCap()])
+        result = await agent.run('hello')
+        assert result.output == MyOutput(value=42)
+        assert call_count == 2
+
+    async def test_output_tool_after_execute_raises_model_retry(self):
+        """ModelRetry from after_output_execute on a tool output triggers retry."""
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if info.output_tools:
+                tool = info.output_tools[0]
+                if call_count == 1:
+                    return ModelResponse(
+                        parts=[ToolCallPart(tool_name=tool.name, args='{"value": 0}', tool_call_id='call-1')]
+                    )
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=tool.name, args='{"value": 10}', tool_call_id='call-2')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        @dataclass
+        class RejectZeroCap(AbstractCapability[Any]):
+            async def after_output_execute(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+            ) -> Any:
+                if isinstance(output, MyOutput) and output.value == 0:
+                    raise ModelRetry('Zero not allowed')
+                return output
+
+        agent = Agent(FunctionModel(model_fn), output_type=MyOutput, capabilities=[RejectZeroCap()])
+        result = await agent.run('hello')
+        assert result.output == MyOutput(value=10)
+        assert call_count == 2
+
+    async def test_output_tool_validation_failure(self):
+        """Invalid output tool args trigger retry through output validate hooks."""
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if info.output_tools:
+                tool = info.output_tools[0]
+                if call_count == 1:
+                    return ModelResponse(
+                        parts=[ToolCallPart(tool_name=tool.name, args='{"value": "bad"}', tool_call_id='call-1')]
+                    )
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=tool.name, args='{"value": 42}', tool_call_id='call-2')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        agent = Agent(FunctionModel(model_fn), output_type=MyOutput)
+        result = await agent.run('hello')
+        assert result.output == MyOutput(value=42)
+        assert call_count == 2
+
 
 class TestOutputToolWithOutputFunction:
     """Output tools with output functions that raise ModelRetry."""
