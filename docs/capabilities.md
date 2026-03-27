@@ -479,12 +479,12 @@ See [Iterating Over an Agent's Graph](agent.md#iterating-over-an-agents-graph) f
 
 | Hook | Signature | Purpose |
 |---|---|---|
-| [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, request_context: `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]`) -> `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] | Modify messages, settings, or parameters before the model call |
+| [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, request_context: `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]`) -> `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] | Modify messages, settings, parameters, or model before the model call |
 | [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, request_context: `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]`, response: `[`ModelResponse`][pydantic_ai.messages.ModelResponse]`) -> `[`ModelResponse`][pydantic_ai.messages.ModelResponse] | Modify the model's response |
 | [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, request_context: `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]`, handler: `[`WrapModelRequestHandler`][pydantic_ai.capabilities.WrapModelRequestHandler]`) -> `[`ModelResponse`][pydantic_ai.messages.ModelResponse] | Wrap the model call |
 | [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, request_context: `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]`, error: Exception) -> `[`ModelResponse`][pydantic_ai.messages.ModelResponse] | Handle model request errors (see [error hooks](#error-hooks)) |
 
-[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] bundles `messages`, `model_settings`, and `model_request_parameters` into a single object, making the signature future-proof.
+[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] bundles `model`, `messages`, `model_settings`, and `model_request_parameters` into a single object, making the signature future-proof. To swap the model for a given request, set `request_context.model` to a different [`Model`][pydantic_ai.models.Model] instance.
 
 To skip the model call entirely and provide a replacement response, raise [`SkipModelRequest(response)`][pydantic_ai.exceptions.SkipModelRequest] from `before_model_request` or `wrap_model_request`.
 

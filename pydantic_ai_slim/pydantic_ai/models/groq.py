@@ -251,7 +251,10 @@ class GroqModel(Model):
         if fmt := model_settings.get('groq_reasoning_format'):
             return fmt
         thinking = model_request_parameters.thinking
-        if thinking is not None and thinking is not False:
+        if thinking is False:
+            # Groq has no true disable; 'hidden' suppresses reasoning output
+            return 'hidden'
+        if thinking is not None:
             return 'parsed'
         return NOT_GIVEN
 
