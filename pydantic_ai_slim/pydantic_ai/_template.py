@@ -128,13 +128,13 @@ def validate_from_spec_args(
     kwargs: dict[str, Any],
     validation_context: dict[str, Any],
 ) -> tuple[tuple[Any, ...], dict[str, Any]]:
-    """Validate from_spec arguments, resolving TemplateStr types via Pydantic.
+    """Validate `from_spec` arguments, resolving `TemplateStr` types via Pydantic.
 
     Inspects the `from_spec` method's type hints to find parameters that accept
-    TemplateStr. For those parameters, values are validated through Pydantic's
+    `TemplateStr`. For those parameters, values are validated through Pydantic's
     `TypeAdapter`, which invokes `TemplateStr.__get_pydantic_core_schema__`
-    to automatically compile template strings (containing `{{`) into TemplateStr
-    instances using the deps_type/deps_schema from the validation context.
+    to automatically compile template strings (containing `{{`) into `TemplateStr`
+    instances using the `deps_type`/`deps_schema` from the validation context.
     """
     try:
         hints = get_function_type_hints(cls.from_spec)

@@ -4,8 +4,3 @@
     options:
         members:
             - AgentSpec
-
-::: pydantic_ai._template
-    options:
-        members:
-            - TemplateStr

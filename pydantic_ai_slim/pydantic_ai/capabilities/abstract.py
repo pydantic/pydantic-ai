@@ -113,7 +113,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         This method is called once at agent construction time. To get dynamic
         per-request behavior, return a callable that receives
         [`RunContext`][pydantic_ai.tools.RunContext] or a
-        [`TemplateStr`][pydantic_ai._template.TemplateStr] — not a dynamic string.
+        `TemplateStr` — not a dynamic string.
         """
         return None
 
