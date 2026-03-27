@@ -87,4 +87,4 @@ class AlibabaProvider(Provider[AsyncOpenAI]):
             if http_client is None:
                 http_client = cached_async_http_client(provider='alibaba')
 
-            self._client = AsyncOpenAI(base_url=self._base_url, api_key=api_key, http_client=http_client)
+            self._client = AsyncOpenAI(base_url=self._base_url, api_key=api_key, http_client=http_client, timeout=60.0, max_retries=3)

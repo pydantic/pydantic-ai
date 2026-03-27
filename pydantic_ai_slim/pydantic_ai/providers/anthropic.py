@@ -88,10 +88,10 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
                     'to use the Anthropic provider.'
                 )
             if http_client is not None:
-                self._client = AsyncAnthropic(api_key=api_key, base_url=base_url, http_client=http_client)
+                self._client = AsyncAnthropic(api_key=api_key, base_url=base_url, http_client=http_client, timeout=60.0, max_retries=3)
             else:
                 http_client = cached_async_http_client(provider='anthropic')
-                self._client = AsyncAnthropic(api_key=api_key, base_url=base_url, http_client=http_client)
+                self._client = AsyncAnthropic(api_key=api_key, base_url=base_url, http_client=http_client, timeout=60.0, max_retries=3)
 
 
 @dataclass(init=False)
