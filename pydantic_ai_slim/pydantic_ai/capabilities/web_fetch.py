@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic_ai.builtin_tools import WebFetchTool
-from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, Tool
+from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 
 from .builtin_or_local import BuiltinOrLocalTool
 
@@ -36,7 +36,9 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
     def __init__(
         self,
         *,
-        builtin: WebFetchTool | AgentBuiltinTool[AgentDepsT] | bool = True,
+        builtin: WebFetchTool
+        | Callable[[RunContext[AgentDepsT]], Awaitable[WebFetchTool | None] | WebFetchTool | None]
+        | bool = True,
         local: Tool[AgentDepsT] | Callable[..., Any] | Literal[False] | None = None,
         allowed_domains: list[str] | None = None,
         blocked_domains: list[str] | None = None,

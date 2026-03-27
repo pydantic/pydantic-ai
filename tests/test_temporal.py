@@ -2026,7 +2026,7 @@ async def test_logfire_plugin(client: Client):
     config['plugins'] = [plugin]
     new_client = Client(**config)
 
-    interceptor = new_client.config()['interceptors'][0]
+    interceptor = new_client.config(active_config=True)['interceptors'][0]
     assert isinstance(interceptor, TracingInterceptor)
     if isinstance(interceptor.tracer, ProxyTracer):
         assert interceptor.tracer._instrumenting_module_name == 'temporalio'  # pyright: ignore[reportPrivateUsage] # pragma: lax no cover
@@ -2132,11 +2132,11 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
         )
         while True:
             await asyncio.sleep(1)
-            status = await workflow.query(HitlAgentWorkflow.get_status)  # pyright: ignore[reportUnknownMemberType]
+            status = await workflow.query(HitlAgentWorkflow.get_status)
             if status == 'done':
                 break
             elif status == 'waiting_for_results':  # pragma: no branch
-                deferred_tool_requests = await workflow.query(HitlAgentWorkflow.get_deferred_tool_requests)  # pyright: ignore[reportUnknownMemberType]
+                deferred_tool_requests = await workflow.query(HitlAgentWorkflow.get_deferred_tool_requests)
                 assert deferred_tool_requests is not None
 
                 results = DeferredToolResults()

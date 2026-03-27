@@ -501,7 +501,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         assert not self._did_stream, 'stream() should only be called once per node'
 
         try:
-            model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(ctx)
+            model, model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(
+                ctx
+            )
         except exceptions.SkipModelRequest as e:
             # SkipModelRequest in stream path: yield an empty stream and finish handling
             # new_message_index wasn't updated in _prepare_request, fix it here
@@ -532,7 +534,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             req_ctx: ModelRequestContext,
         ) -> _messages.ModelResponse:
             with set_current_run_context(run_context):
-                async with ctx.deps.model.request_stream(
+                async with req_ctx.model.request_stream(
                     req_ctx.messages, req_ctx.model_settings, req_ctx.model_request_parameters, run_context
                 ) as sr:
                     self._did_stream = True
@@ -544,6 +546,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             return sr.get()
 
         wrap_request_context = ModelRequestContext(
+            model=model,
             messages=message_history,
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
@@ -576,6 +579,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             skip_sr = _SkipStreamedResponse(model_request_parameters=model_request_parameters, _response=model_response)
             agent_stream = self._build_agent_stream(ctx, skip_sr, model_request_parameters)
             yield agent_stream
+            self.last_request_context = wrap_request_context
             await self._finish_handling(ctx, model_response)
             assert self._result is not None
             return
@@ -606,6 +610,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     model_response = await ctx.deps.root_capability.on_model_request_error(
                         run_context, request_context=wrap_request_context, error=e
                     )
+                self.last_request_context = wrap_request_context
                 await self._finish_handling(ctx, model_response)
                 assert self._result is not None
 
@@ -634,7 +639,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             return self._result  # pragma: no cover
 
         try:
-            model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(ctx)
+            model, model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(
+                ctx
+            )
         except exceptions.SkipModelRequest as e:
             # new_message_index wasn't updated in _prepare_request, fix it here
             ctx.deps.new_message_index = _first_new_message_index(
@@ -645,11 +652,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         async def model_handler(req_ctx: ModelRequestContext) -> _messages.ModelResponse:
             with set_current_run_context(run_context):
-                return await ctx.deps.model.request(
+                return await req_ctx.model.request(
                     req_ctx.messages, req_ctx.model_settings, req_ctx.model_request_parameters
                 )
 
         request_context = ModelRequestContext(
+            model=model,
             messages=message_history,
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
@@ -666,13 +674,20 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_response = await ctx.deps.root_capability.on_model_request_error(
                 run_context, request_context=request_context, error=e
             )
+        self.last_request_context = request_context
         ctx.state.usage.requests += 1
 
         return await self._finish_handling(ctx, model_response)
 
     async def _prepare_request(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> tuple[ModelSettings | None, models.ModelRequestParameters, list[_messages.ModelMessage], RunContext[DepsT]]:
+    ) -> tuple[
+        models.Model,
+        ModelSettings | None,
+        models.ModelRequestParameters,
+        list[_messages.ModelMessage],
+        RunContext[DepsT],
+    ]:
         self.request.timestamp = now_utc()
         if not self.is_resuming_without_prompt:
             self.request.run_id = self.request.run_id or ctx.state.run_id
@@ -690,6 +705,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         run_context.model_settings = model_settings
 
         request_context = ModelRequestContext(
+            model=ctx.deps.model,
             messages=ctx.state.message_history[:],
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
@@ -700,6 +716,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             request_context,
         )
         self.last_request_context = request_context
+        model = request_context.model
         messages = request_context.messages
         model_settings = request_context.model_settings
         model_request_parameters = request_context.model_request_parameters
@@ -737,12 +754,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # Copy to avoid modifying the original usage object with the counted usage
             usage = deepcopy(usage)
 
-            counted_usage = await ctx.deps.model.count_tokens(messages, model_settings, model_request_parameters)
+            counted_usage = await model.count_tokens(messages, model_settings, model_request_parameters)
             usage.incr(counted_usage)
 
         ctx.deps.usage_limits.check_before_request(usage)
 
-        return model_settings or None, model_request_parameters, messages, run_context
+        return model, model_settings or None, model_request_parameters, messages, run_context
 
     async def _finish_handling(
         self,

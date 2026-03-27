@@ -10,9 +10,8 @@ The [`Hooks`][pydantic_ai.capabilities.Hooks] capability is the recommended way 
 Create a [`Hooks`][pydantic_ai.capabilities.Hooks] instance, register hooks via `@hooks.on.*` decorators, and pass it to your agent:
 
 ```python {title="hooks_decorator.py"}
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities.hooks import Hooks
-from pydantic_ai.models import ModelRequestContext
+from pydantic_ai import Agent, ModelRequestContext, RunContext
+from pydantic_ai.capabilities import Hooks
 
 hooks = Hooks()
 
@@ -55,9 +54,8 @@ Multiple hooks can be registered for the same event — they fire in registratio
 You can also pass hook functions directly to the [`Hooks`][pydantic_ai.capabilities.Hooks] constructor:
 
 ```python {title="hooks_constructor.py"}
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities.hooks import Hooks
-from pydantic_ai.models import ModelRequestContext
+from pydantic_ai import Agent, ModelRequestContext, RunContext
+from pydantic_ai.capabilities import Hooks
 
 
 async def log_request(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
@@ -110,7 +108,7 @@ Node hooks fire for each graph step ([`UserPromptNode`][pydantic_ai.UserPromptNo
 | `model_request` | `model_request=` | `wrap_model_request` |
 | `model_request_error` | `model_request_error=` | `on_model_request_error` |
 
-Model request hooks fire around each LLM call. [`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] bundles `messages`, `model_settings`, and `model_request_parameters`.
+Model request hooks fire around each LLM call. [`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] bundles `model`, `messages`, `model_settings`, and `model_request_parameters`. To swap the model for a given request, set `request_context.model` to a different [`Model`][pydantic_ai.models.Model] instance.
 
 To skip the model call entirely, raise [`SkipModelRequest(response)`][pydantic_ai.exceptions.SkipModelRequest] from `before_model_request` or `model_request` (wrap).
 
@@ -188,9 +186,8 @@ Filters or modifies tool definitions the model sees on each step. Controls visib
 `run_event_stream` wraps the full event stream as an async generator. `event` is a convenience — it fires for each individual event during a streamed run:
 
 ```python {title="hooks_event.py"}
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities.hooks import Hooks
-from pydantic_ai.messages import AgentStreamEvent
+from pydantic_ai import Agent, AgentStreamEvent, RunContext
+from pydantic_ai.capabilities import Hooks
 
 hooks = Hooks()
 event_count = 0
@@ -213,10 +210,9 @@ Tool hooks (validation and execution) support a `tools` parameter to target spec
 ```python {title="hooks_tool_filter.py"}
 from typing import Any
 
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities.hooks import Hooks
+from pydantic_ai import Agent, RunContext, ToolDefinition
+from pydantic_ai.capabilities import Hooks
 from pydantic_ai.messages import ToolCallPart
-from pydantic_ai.tools import ToolDefinition
 
 hooks = Hooks()
 call_log: list[str] = []
@@ -256,9 +252,8 @@ Each hook supports an optional `timeout` in seconds. If the hook exceeds the tim
 ```python {title="hooks_timeout.py"}
 import asyncio
 
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
-from pydantic_ai.models import ModelRequestContext
+from pydantic_ai import Agent, ModelRequestContext, RunContext
+from pydantic_ai.capabilities import Hooks, HookTimeoutError
 
 hooks = Hooks()
 
@@ -286,11 +281,9 @@ Timeouts are set via the decorator parameter (`@hooks.on.before_model_request(ti
 Wrap hooks let you surround an operation with setup/teardown logic. In the `hooks.on` namespace, wrap hooks drop the `wrap_` prefix — `hooks.on.model_request` corresponds to `wrap_model_request`:
 
 ```python {title="hooks_wrap.py"}
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import WrapModelRequestHandler
-from pydantic_ai.capabilities.hooks import Hooks
+from pydantic_ai import Agent, ModelRequestContext, RunContext
+from pydantic_ai.capabilities import Hooks, WrapModelRequestHandler
 from pydantic_ai.messages import ModelResponse
-from pydantic_ai.models import ModelRequestContext
 
 hooks = Hooks()
 wrap_log: list[str] = []
