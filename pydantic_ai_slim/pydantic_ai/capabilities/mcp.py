@@ -12,9 +12,13 @@ from pydantic_ai.toolsets import AbstractToolset
 
 from .builtin_or_local import BuiltinOrLocalTool
 
-if TYPE_CHECKING:
+try:
     from pydantic_ai.mcp import MCPServer
     from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+except ImportError:
+    if not TYPE_CHECKING:
+        MCPServer = Any  # type: ignore[assignment,misc]
+        FastMCPToolset = Any  # type: ignore[assignment,misc]
 
 
 @dataclass(init=False)
@@ -66,30 +70,6 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
         self.allowed_tools = allowed_tools
         self.description = description
         self.__post_init__()
-
-    @classmethod
-    def from_spec(
-        cls,
-        url: str,
-        *,
-        builtin: MCPServerTool | bool = True,
-        local: Literal[False] | None = None,
-        id: str | None = None,
-        authorization_token: str | None = None,
-        headers: dict[str, str] | None = None,
-        allowed_tools: list[str] | None = None,
-        description: str | None = None,
-    ) -> MCP[Any]:
-        return cls(
-            url=url,
-            builtin=builtin,
-            local=local,
-            id=id,
-            authorization_token=authorization_token,
-            headers=headers,
-            allowed_tools=allowed_tools,
-            description=description,
-        )
 
     @cached_property
     def _resolved_id(self) -> str:

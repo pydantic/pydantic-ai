@@ -12,7 +12,7 @@ from pydantic_core import from_json, to_json
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
 
 from pydantic_ai._agent_graph import EndStrategy
-from pydantic_ai._spec import NamedSpec, build_registry, build_schema_types, filter_serializable_type
+from pydantic_ai._spec import NamedSpec, build_registry, build_schema_types
 from pydantic_ai._template import TemplateStr
 from pydantic_ai._utils import get_function_type_hints
 
@@ -343,5 +343,4 @@ def _build_capability_schema_types(registry: Mapping[str, type[Any]]) -> list[An
     return build_schema_types(
         registry,
         get_schema_target=_get_schema_target,
-        filter_type_hint=filter_serializable_type,
     )

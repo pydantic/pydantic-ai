@@ -7,8 +7,8 @@ and registry/loading utilities that can be reused by both the evaluator system a
 from __future__ import annotations
 
 import inspect
-import types  # used at runtime in filter_serializable_type
-import typing  # used at runtime in filter_serializable_type
+import types
+import typing
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
@@ -264,7 +264,6 @@ def build_schema_types(
     registry: Mapping[str, type[Any]],
     *,
     get_schema_target: Callable[[type[Any]], Any] | None = None,
-    filter_type_hint: Callable[[Any], Any | None] | None = None,
 ) -> list[Any]:
     """Build a list of schema types from a registry for JSON schema generation.
 
@@ -272,8 +271,6 @@ def build_schema_types(
         registry: Mapping from names to classes.
         get_schema_target: Optional callback to get the schema target (e.g. `from_spec` method)
             from a class. Default: use the class itself.
-        filter_type_hint: Optional callback to filter type hints. Called on each resolved type hint;
-            return the (possibly modified) type, or None to exclude the parameter.
 
     Returns:
         A list of types suitable for use in a Union for JSON schema generation.
@@ -284,9 +281,8 @@ def build_schema_types(
         type_hints = get_function_type_hints(target)
         type_hints.pop('return', None)
 
-        # Apply type filtering if provided
-        if filter_type_hint is not None:
-            type_hints = {k: fv for k, v in type_hints.items() if (fv := filter_type_hint(v)) is not None}
+        # Filter out non-serializable types (TypeVars, Callables) from unions
+        type_hints = {k: fv for k, v in type_hints.items() if (fv := filter_serializable_type(v)) is not None}
 
         required_type_hints: dict[str, Any] = {}
 
@@ -298,8 +294,8 @@ def build_schema_types(
             if p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD):
                 type_hints.pop(p.name, None)
                 continue
-            # When filtering, skip params whose type was entirely filtered out
-            if filter_type_hint is not None and p.name not in type_hints:
+            # Skip params whose type was entirely filtered out
+            if p.name not in type_hints:
                 continue
             type_hints.setdefault(p.name, Any)
             if p.default is not p.empty:
