@@ -339,7 +339,7 @@ class MCPServer(AbstractToolset[Any], ABC):
 
     When enabled (default), tools are fetched once and cached until either:
     - The server sends a `notifications/tools/list_changed` notification
-    - [`MCPServer.__aexit__`][pydantic_ai.mcp.MCPServer.__aexit__] is called (when the last context exits)
+    - `MCPServer.__aexit__` is called (when the last context exits)
 
     Set to `False` for servers that change tools dynamically without sending notifications.
 
@@ -354,7 +354,7 @@ class MCPServer(AbstractToolset[Any], ABC):
 
     When enabled (default), resources are fetched once and cached until either:
     - The server sends a `notifications/resources/list_changed` notification
-    - [`MCPServer.__aexit__`][pydantic_ai.mcp.MCPServer.__aexit__] is called (when the last context exits)
+    - `MCPServer.__aexit__` is called (when the last context exits)
 
     Set to `False` for servers that change resources dynamically without sending notifications.
     """

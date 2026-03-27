@@ -26,7 +26,7 @@ capabilities:
 
 ## Loading specs
 
-[`Agent.from_file`][pydantic_ai.Agent.from_file] loads a spec from a YAML or JSON file and constructs an agent:
+[`Agent.from_file`][pydantic_ai.agent.Agent.from_file] loads a spec from a YAML or JSON file and constructs an agent:
 
 ```python {title="from_file_example.py" test="skip"}
 from pydantic_ai import Agent
@@ -34,7 +34,7 @@ from pydantic_ai import Agent
 agent = Agent.from_file('agent.yaml')
 ```
 
-[`Agent.from_spec`][pydantic_ai.Agent.from_spec] accepts a dict or [`AgentSpec`][pydantic_ai.agent.spec.AgentSpec] instance and supports additional keyword arguments that supplement or override the spec:
+[`Agent.from_spec`][pydantic_ai.agent.Agent.from_spec] accepts a dict or [`AgentSpec`](#agentspec-reference) instance and supports additional keyword arguments that supplement or override the spec:
 
 ```python {title="from_spec_example.py"}
 from dataclasses import dataclass
@@ -71,7 +71,7 @@ For more control over spec loading, use [`AgentSpec.from_file`][pydantic_ai.agen
 
 ## Template strings
 
-[`TemplateStr`][pydantic_ai.TemplateStr] provides Handlebars-style templates (`{{variable}}`) that are rendered against the agent's [dependencies](dependencies.md) at runtime. In spec files, strings containing `{{` are automatically converted to template strings:
+[`TemplateStr`][pydantic_ai._template.TemplateStr] provides Handlebars-style templates (`{{variable}}`) that are rendered against the agent's [dependencies](dependencies.md) at runtime. In spec files, strings containing `{{` are automatically converted to template strings:
 
 ```yaml {test="skip"}
 instructions: "You are assisting {{name}}, who is a {{role}}."
@@ -79,7 +79,7 @@ instructions: "You are assisting {{name}}, who is a {{role}}."
 
 Template variables are resolved from the fields of the `deps` object. When a `deps_type` (or [`deps_schema`](#deps_schema)) is provided, template variable names are validated at construction time.
 
-In Python code, [`TemplateStr`][pydantic_ai.TemplateStr] can be used explicitly, but a callable with [`RunContext`][pydantic_ai.tools.RunContext] is generally preferred for IDE autocomplete and type checking:
+In Python code, [`TemplateStr`][pydantic_ai._template.TemplateStr] can be used explicitly, but a callable with [`RunContext`][pydantic_ai.tools.RunContext] is generally preferred for IDE autocomplete and type checking:
 
 ```python {title="template_instructions.py"}
 from dataclasses import dataclass
@@ -117,7 +117,7 @@ See [Publishing capabilities](capabilities.md#publishing-capabilities) for how t
 
 ## `AgentSpec` reference
 
-The [`AgentSpec`][pydantic_ai.agent.spec.AgentSpec] model represents the full spec structure:
+The [`AgentSpec`](#agentspec-reference) model represents the full spec structure:
 
 | Field | Type | Description |
 |---|---|---|
