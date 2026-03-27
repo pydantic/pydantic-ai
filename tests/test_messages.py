@@ -1387,3 +1387,53 @@ def test_args_as_dict_raise_if_invalid_non_dict_json():
     part = ToolCallPart(tool_name='test_tool', args='[1, 2, 3]')
     with pytest.raises(AssertionError):
         part.args_as_dict(raise_if_invalid=True)
+
+
+def test_strip_model_date_suffix():
+    """_strip_model_date_suffix removes YYYYMMDD date suffixes from model names."""
+    from pydantic_ai.messages import _strip_model_date_suffix
+
+    # Date suffix should be stripped
+    assert _strip_model_date_suffix('openai/gpt-5.2-20251211') == 'openai/gpt-5.2'
+    assert _strip_model_date_suffix('gpt-4o-2024-08-06-20240806') == 'gpt-4o-2024-08-06'
+    assert _strip_model_date_suffix('claude-sonnet-4-5-20250514') == 'claude-sonnet-4-5'
+
+    # No date suffix — unchanged
+    assert _strip_model_date_suffix('gpt-5.2') == 'gpt-5.2'
+    assert _strip_model_date_suffix('openai/gpt-5.2') == 'openai/gpt-5.2'
+    assert _strip_model_date_suffix('claude-sonnet-4-5') == 'claude-sonnet-4-5'
+
+    # Short numbers should NOT be stripped (not 8-digit date)
+    assert _strip_model_date_suffix('gpt-4o-mini-123') == 'gpt-4o-mini-123'
+
+
+def test_model_response_cost_with_date_suffix():
+    """ModelResponse.cost() should fall back to stripped model name when date suffix prevents lookup."""
+    from decimal import Decimal
+
+    from pydantic_ai.messages import ModelResponse
+    from pydantic_ai.usage import RequestUsage
+
+    usage = RequestUsage(input_tokens=100, output_tokens=50)
+
+    # A model name that genai-prices recognizes
+    response_clean = ModelResponse(
+        parts=[],
+        model_name='gpt-5.2',
+        provider_name='openai',
+        usage=usage,
+    )
+    cost_clean = response_clean.cost()
+    assert cost_clean.total_price > Decimal('0')
+
+    # Same model but with date suffix (as returned by OpenRouter)
+    response_dated = ModelResponse(
+        parts=[],
+        model_name='openai/gpt-5.2-20251211',
+        provider_name='litellm',
+        usage=usage,
+    )
+    cost_dated = response_dated.cost()
+    # Should succeed via fallback and return same pricing
+    assert cost_dated.total_price > Decimal('0')
+    assert cost_dated.total_price == cost_clean.total_price

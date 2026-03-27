@@ -4,6 +4,7 @@ import base64
 import hashlib
 import mimetypes
 import os
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
@@ -1634,6 +1635,20 @@ ModelResponsePart = Annotated[
 """A message part returned by a model."""
 
 
+_DATE_SUFFIX_RE = re.compile(r'-\d{8}$')
+"""Matches a date suffix like `-20251211` at the end of a model name."""
+
+
+def _strip_model_date_suffix(model_name: str) -> str:
+    """Strip a date suffix (e.g. `-20251211`) from a model name.
+
+    Some providers like OpenRouter return versioned model names such as
+    `openai/gpt-5.2-20251211`. The date suffix is not recognized by
+    `genai-prices`, so we strip it for a fallback lookup.
+    """
+    return _DATE_SUFFIX_RE.sub('', model_name)
+
+
 @dataclass(repr=False)
 class ModelResponse:
     """A response from a model, e.g. a message from the model to the Pydantic AI app."""
@@ -1767,12 +1782,36 @@ class ModelResponse:
                 )
             except LookupError:
                 pass
-        return calc_price(
-            self.usage,
-            self.model_name,
-            provider_id=self.provider_name,
-            genai_request_timestamp=self.timestamp,
-        )
+        try:
+            return calc_price(
+                self.usage,
+                self.model_name,
+                provider_id=self.provider_name,
+                genai_request_timestamp=self.timestamp,
+            )
+        except LookupError:
+            pass
+        # Some providers (e.g. OpenRouter) return model names with a date suffix
+        # like "openai/gpt-5.2-20251211". Strip the suffix and retry.
+        normalized = _strip_model_date_suffix(self.model_name)
+        if normalized != self.model_name:
+            if self.provider_url:
+                try:
+                    return calc_price(
+                        self.usage,
+                        normalized,
+                        provider_api_url=self.provider_url,
+                        genai_request_timestamp=self.timestamp,
+                    )
+                except LookupError:
+                    pass
+            return calc_price(
+                self.usage,
+                normalized,
+                provider_id=self.provider_name,
+                genai_request_timestamp=self.timestamp,
+            )
+        raise LookupError(f'Could not find pricing for model {self.model_name!r}')
 
     def otel_events(self, settings: InstrumentationSettings) -> list[LogRecord]:
         """Return OpenTelemetry events for the response."""
