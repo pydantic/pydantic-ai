@@ -130,41 +130,60 @@ async def run_output_validate_hooks(
     allow_partial: bool,
     wrap_validation_errors: bool,
 ) -> Any:
-    """Run the output validate hooks around do_validate."""
-    output = await capability.before_output_validate(run_context, output_context=output_context, output=output)
+    """Run the output validate hooks around do_validate.
+
+    ModelRetry from any hook (before, after, wrap, on_error) is caught by the outer handler
+    and converted to ToolRetryError, triggering a model retry.
+    """
+
+    def _make_retry(e: ModelRetry) -> ToolRetryError:
+        m = _messages.RetryPromptPart(content=e.message, tool_name=run_context.tool_name)
+        if run_context.tool_call_id:
+            m.tool_call_id = run_context.tool_call_id
+        return ToolRetryError(m)
 
     try:
-        validated = await capability.wrap_output_validate(
-            run_context, output_context=output_context, output=output, handler=do_validate
-        )
-    except (ValidationError, ModelRetry) as e:
-        if allow_partial:
-            if wrap_validation_errors and isinstance(e, ValidationError):  # pragma: no cover
-                m = _messages.RetryPromptPart(content=e.errors(include_url=False), tool_name=run_context.tool_name)
-                if run_context.tool_call_id:
-                    m.tool_call_id = run_context.tool_call_id
-                raise ToolRetryError(m) from e
-            raise
-        try:
-            validated = await capability.on_output_validate_error(
-                run_context, output_context=output_context, output=output, error=e
-            )
-        except (ValidationError, ModelRetry) as hook_error:
-            if wrap_validation_errors:
-                if isinstance(hook_error, ValidationError):
-                    m = _messages.RetryPromptPart(
-                        content=hook_error.errors(include_url=False), tool_name=run_context.tool_name
-                    )
-                    if run_context.tool_call_id:
-                        m.tool_call_id = run_context.tool_call_id
-                else:
-                    m = _messages.RetryPromptPart(content=hook_error.message, tool_name=run_context.tool_name)
-                    if run_context.tool_call_id:
-                        m.tool_call_id = run_context.tool_call_id
-                raise ToolRetryError(m) from hook_error
-            raise  # pragma: no cover — wrap_validation_errors=False only in streaming
+        output = await capability.before_output_validate(run_context, output_context=output_context, output=output)
 
-    return await capability.after_output_validate(run_context, output_context=output_context, output=validated)
+        try:
+            validated = await capability.wrap_output_validate(
+                run_context, output_context=output_context, output=output, handler=do_validate
+            )
+        except (ValidationError, ModelRetry) as e:
+            if allow_partial:
+                if wrap_validation_errors and isinstance(e, ValidationError):  # pragma: no cover
+                    m = _messages.RetryPromptPart(content=e.errors(include_url=False), tool_name=run_context.tool_name)
+                    if run_context.tool_call_id:
+                        m.tool_call_id = run_context.tool_call_id
+                    raise ToolRetryError(m) from e
+                raise
+            try:
+                validated = await capability.on_output_validate_error(
+                    run_context, output_context=output_context, output=output, error=e
+                )
+            except (ValidationError, ModelRetry) as hook_error:
+                if wrap_validation_errors:
+                    if isinstance(hook_error, ValidationError):
+                        m = _messages.RetryPromptPart(
+                            content=hook_error.errors(include_url=False), tool_name=run_context.tool_name
+                        )
+                        if run_context.tool_call_id:
+                            m.tool_call_id = run_context.tool_call_id
+                    else:
+                        m = _messages.RetryPromptPart(content=hook_error.message, tool_name=run_context.tool_name)
+                        if run_context.tool_call_id:
+                            m.tool_call_id = run_context.tool_call_id
+                    raise ToolRetryError(m) from hook_error
+                raise  # pragma: no cover — wrap_validation_errors=False only in streaming
+
+        return await capability.after_output_validate(run_context, output_context=output_context, output=validated)
+    except ToolRetryError:
+        raise  # Already wrapped, propagate
+    except ModelRetry as e:
+        # ModelRetry from before_output_validate or after_output_validate
+        if wrap_validation_errors:
+            raise _make_retry(e) from e
+        raise
 
 
 async def run_output_execute_hooks(
@@ -175,21 +194,36 @@ async def run_output_execute_hooks(
     output: Any,
     do_execute: Callable[[Any], Awaitable[Any]],
 ) -> Any:
-    """Run the output execute hooks around do_execute."""
-    output = await capability.before_output_execute(run_context, output_context=output_context, output=output)
+    """Run the output execute hooks around do_execute.
 
+    ModelRetry from any hook (before, after, wrap, on_error) is caught by the outer handler
+    and converted to ToolRetryError, triggering a model retry.
+    """
     try:
-        result = await capability.wrap_output_execute(
-            run_context, output_context=output_context, output=output, handler=do_execute
-        )
-    except ToolRetryError:
-        raise  # Control flow, not error
-    except Exception as e:
-        result = await capability.on_output_execute_error(
-            run_context, output_context=output_context, output=output, error=e
-        )
+        output = await capability.before_output_execute(run_context, output_context=output_context, output=output)
 
-    return await capability.after_output_execute(run_context, output_context=output_context, output=result)
+        try:
+            result = await capability.wrap_output_execute(
+                run_context, output_context=output_context, output=output, handler=do_execute
+            )
+        except ToolRetryError:
+            raise  # Control flow, not error
+        except ModelRetry:
+            raise  # Propagate to outer handler, skip on_output_execute_error
+        except Exception as e:
+            result = await capability.on_output_execute_error(
+                run_context, output_context=output_context, output=output, error=e
+            )
+
+        return await capability.after_output_execute(run_context, output_context=output_context, output=result)
+    except ToolRetryError:
+        raise  # Already wrapped, propagate
+    except ModelRetry as e:
+        # ModelRetry from before/after/wrap/on_error — convert to ToolRetryError
+        m = _messages.RetryPromptPart(content=e.message, tool_name=run_context.tool_name)
+        if run_context.tool_call_id:
+            m.tool_call_id = run_context.tool_call_id
+        raise ToolRetryError(m) from e
 
 
 async def run_output_with_hooks(

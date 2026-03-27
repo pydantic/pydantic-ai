@@ -521,6 +521,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         For text/structured output, `output` is the raw text string from the model.
         For tool output, `output` is the raw tool arguments (string or dict).
 
+        Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to skip validation and
+        ask the model to try again with a custom message.
+
         During streaming, this hook fires on every partial chunk as well as the final
         result. Check ``ctx.partial_output`` to distinguish and avoid expensive work
         on partial results.
@@ -534,7 +537,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         output_context: OutputContext,
         output: Any,
     ) -> Any:
-        """Modify validated output after successful parsing. Called only on success."""
+        """Modify validated output after successful parsing. Called only on success.
+
+        Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject the validated
+        output and ask the model to try again.
+        """
         return output
 
     async def wrap_output_validate(
@@ -545,7 +552,12 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         output: RawOutput,
         handler: WrapOutputValidateHandler,
     ) -> Any:
-        """Wraps output validation. handler(output) performs the validation."""
+        """Wraps output validation. handler(output) performs the validation.
+
+        [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within the handler goes to
+        [`on_output_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_output_validate_error].
+        `ModelRetry` raised directly (not from the handler) bypasses the error hook.
+        """
         return await handler(output)
 
     async def on_output_validate_error(
@@ -575,7 +587,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         output_context: OutputContext,
         output: Any,
     ) -> Any:
-        """Modify validated output before execution (extraction + function call)."""
+        """Modify validated output before execution (extraction + function call).
+
+        Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to skip execution and
+        ask the model to try again.
+        """
         return output
 
     async def after_output_execute(
@@ -585,7 +601,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         output_context: OutputContext,
         output: Any,
     ) -> Any:
-        """Modify result after output execution."""
+        """Modify result after output execution.
+
+        Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject the result
+        and ask the model to try again.
+        """
         return output
 
     async def wrap_output_execute(
@@ -597,6 +617,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         handler: WrapOutputExecuteHandler,
     ) -> Any:
         """Wraps output execution. handler(output) runs extraction + function call.
+
+        [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] bypasses
+        [`on_output_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_output_execute_error]
+        (treated as control flow, not an error).
 
         During streaming, this fires on every partial chunk. Check ``ctx.partial_output``
         to skip expensive work on partial results.
