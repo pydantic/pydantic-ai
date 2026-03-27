@@ -58,12 +58,12 @@ class TestBeforeOutputValidate:
                 self,
                 ctx: RunContext[Any],
                 *,
-                raw_output: str | dict[str, Any],
                 output_context: OutputContext,
+                output: str | dict[str, Any],
             ) -> str | dict[str, Any]:
-                if isinstance(raw_output, str):
-                    return raw_output.replace('"not_a_number"', '42')
-                return raw_output  # pragma: no cover
+                if isinstance(output, str):
+                    return output.replace('"not_a_number"', '42')
+                return output  # pragma: no cover
 
         agent = Agent(FunctionModel(model_fn), output_type=PromptedOutput(MyOutput), capabilities=[FixJsonCap()])
         result = await agent.run('hello')
@@ -82,14 +82,14 @@ class TestBeforeOutputValidate:
                 self,
                 ctx: RunContext[Any],
                 *,
-                raw_output: str | dict[str, Any],
                 output_context: OutputContext,
+                output: str | dict[str, Any],
             ) -> str | dict[str, Any]:
-                log.append(f'before_output_validate:{raw_output}')
+                log.append(f'before_output_validate:{output}')
                 assert output_context.mode == 'text'
                 assert output_context.output_type is str
                 assert output_context.has_function is False
-                return raw_output
+                return output
 
         agent = Agent(FunctionModel(model_fn), capabilities=[LogCap()])
         result = await agent.run('hello')
@@ -112,12 +112,12 @@ class TestBeforeOutputValidate:
                 self,
                 ctx: RunContext[Any],
                 *,
-                raw_output: str | dict[str, Any],
                 output_context: OutputContext,
+                output: str | dict[str, Any],
             ) -> str | dict[str, Any]:
-                log.append(f'before:{raw_output}')
+                log.append(f'before:{output}')
                 assert output_context.has_function is True
-                return raw_output
+                return output
 
         agent = Agent(FunctionModel(model_fn), output_type=TextOutput(upcase), capabilities=[LogCap()])
         result = await agent.run('hello')
@@ -139,11 +139,11 @@ class TestBeforeOutputValidate:
                 self,
                 ctx: RunContext[Any],
                 *,
-                raw_output: str | dict[str, Any],
                 output_context: OutputContext,
+                output: str | dict[str, Any],
             ) -> str | dict[str, Any]:
-                assert isinstance(raw_output, str)
-                return f'hello {raw_output}'
+                assert isinstance(output, str)
+                return f'hello {output}'
 
         agent = Agent(FunctionModel(model_fn), output_type=TextOutput(upcase), capabilities=[PrependCap()])
         result = await agent.run('greet')
@@ -165,10 +165,10 @@ class TestOnOutputValidateError:
                 self,
                 ctx: RunContext[Any],
                 *,
-                raw_output: str | dict[str, Any],
                 output_context: OutputContext,
+                output: str | dict[str, Any],
                 error: ValidationError | ModelRetry,
-            ) -> str | dict[str, Any]:
+            ) -> Any:
                 # Recovery replaces the validation result; for structured output
                 # the execute step (call()) returns this as-is when there's no function.
                 return {'value': 99}
@@ -196,6 +196,114 @@ class TestOnOutputValidateError:
         assert call_count == 2
 
 
+class TestOnOutputValidateErrorModelRetry:
+    """on_output_validate_error can raise ModelRetry to trigger a retry with a custom message."""
+
+    async def test_error_hook_raises_model_retry(self):
+        """on_output_validate_error raises ModelRetry, which becomes a retry prompt."""
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ModelResponse(parts=[TextPart(content='{"value": "bad"}')])
+            return ModelResponse(parts=[TextPart(content='{"value": 42}')])
+
+        @dataclass
+        class RetryHookCap(AbstractCapability[Any]):
+            async def on_output_validate_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                output_context: OutputContext,
+                output: str | dict[str, Any],
+                error: ValidationError | ModelRetry,
+            ) -> Any:
+                raise ModelRetry('Please return a valid integer for value')
+
+        agent = Agent(FunctionModel(model_fn), output_type=PromptedOutput(MyOutput), capabilities=[RetryHookCap()])
+        result = await agent.run('hello')
+        assert result.output == MyOutput(value=42)
+        assert call_count == 2
+        # Verify the retry message contains the ModelRetry message
+        messages = result.all_messages()
+        retry_parts = [p for m in messages for p in m.parts if hasattr(p, 'content') and p.part_kind == 'retry-prompt']
+        assert len(retry_parts) == 1
+        assert retry_parts[0].content == 'Please return a valid integer for value'
+
+
+class TestOutputToolWithOutputFunction:
+    """Output tools with output functions that raise ModelRetry."""
+
+    async def test_output_function_model_retry(self):
+        """An output function on a tool output type that raises ModelRetry triggers a retry."""
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if info.output_tools:
+                tool = info.output_tools[0]
+                if call_count == 1:
+                    return ModelResponse(
+                        parts=[ToolCallPart(tool_name=tool.name, args='{"value": 1}', tool_call_id='call-1')]
+                    )
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=tool.name, args='{"value": 10}', tool_call_id='call-2')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        def my_output_fn(output: MyOutput) -> MyOutput:
+            if output.value < 5:
+                raise ModelRetry('Value must be >= 5')
+            return output
+
+        agent = Agent(FunctionModel(model_fn), output_type=my_output_fn)
+        result = await agent.run('hello')
+        assert result.output == MyOutput(value=10)
+        assert call_count == 2
+
+    async def test_output_function_model_retry_with_hooks(self):
+        """Output function ModelRetry works correctly when output hooks are present."""
+        log: list[str] = []
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if info.output_tools:
+                tool = info.output_tools[0]
+                if call_count == 1:
+                    return ModelResponse(
+                        parts=[ToolCallPart(tool_name=tool.name, args='{"value": 1}', tool_call_id='call-1')]
+                    )
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=tool.name, args='{"value": 10}', tool_call_id='call-2')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        def my_output_fn(output: MyOutput) -> MyOutput:
+            if output.value < 5:
+                raise ModelRetry('Value must be >= 5')
+            return output
+
+        @dataclass
+        class LogCap(AbstractCapability[Any]):
+            async def before_output_execute(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+            ) -> Any:
+                log.append(f'execute:{output}')
+                return output
+
+        agent = Agent(FunctionModel(model_fn), output_type=my_output_fn, capabilities=[LogCap()])
+        result = await agent.run('hello')
+        assert result.output == MyOutput(value=10)
+        assert call_count == 2
+        # Execute hook fires for both attempts (retry + success)
+        assert len(log) == 2
+
+
 class TestWrapOutputValidate:
     """wrap_output_validate provides full middleware control around validation."""
 
@@ -212,12 +320,12 @@ class TestWrapOutputValidate:
                 self,
                 ctx: RunContext[Any],
                 *,
-                raw_output: str | dict[str, Any],
                 output_context: OutputContext,
+                output: str | dict[str, Any],
                 handler: Any,
-            ) -> str | dict[str, Any]:
+            ) -> Any:
                 log.append('before')
-                result = await handler(raw_output)
+                result = await handler(output)
                 log.append('after')
                 return result
 
@@ -227,7 +335,7 @@ class TestWrapOutputValidate:
         assert log == ['before', 'after']
 
     async def test_wrap_can_transform_input(self):
-        """wrap_output_validate can transform the raw_output before passing to handler."""
+        """wrap_output_validate can transform the output before passing to handler."""
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(parts=[TextPart(content='{"value": "oops"}')])
@@ -238,12 +346,12 @@ class TestWrapOutputValidate:
                 self,
                 ctx: RunContext[Any],
                 *,
-                raw_output: str | dict[str, Any],
                 output_context: OutputContext,
+                output: str | dict[str, Any],
                 handler: Any,
-            ) -> str | dict[str, Any]:
+            ) -> Any:
                 # Fix the input before validation
-                fixed = '{"value": 7}' if isinstance(raw_output, str) else raw_output
+                fixed = '{"value": 7}' if isinstance(output, str) else output
                 return await handler(fixed)
 
         agent = Agent(FunctionModel(model_fn), output_type=PromptedOutput(MyOutput), capabilities=[TransformCap()])
@@ -262,12 +370,12 @@ class TestWrapOutputValidate:
                 self,
                 ctx: RunContext[Any],
                 *,
-                raw_output: str | dict[str, Any],
                 output_context: OutputContext,
+                output: str | dict[str, Any],
                 handler: Any,
-            ) -> str | dict[str, Any]:
+            ) -> Any:
                 try:
-                    return await handler(raw_output)
+                    return await handler(output)
                 except (ValidationError, ModelRetry):
                     return {'value': 0}
 
@@ -292,9 +400,8 @@ class TestAfterOutputExecute:
                 self,
                 ctx: RunContext[Any],
                 *,
-                validated_output: str | dict[str, Any],
-                output: Any,
                 output_context: OutputContext,
+                output: Any,
             ) -> Any:
                 assert isinstance(output, MyOutput)
                 return MyOutput(value=output.value * 2)
@@ -315,9 +422,8 @@ class TestAfterOutputExecute:
                 self,
                 ctx: RunContext[Any],
                 *,
-                validated_output: str | dict[str, Any],
-                output: Any,
                 output_context: OutputContext,
+                output: Any,
             ) -> Any:
                 return output.upper() if isinstance(output, str) else output
 
@@ -340,9 +446,8 @@ class TestAfterOutputExecute:
                 self,
                 ctx: RunContext[Any],
                 *,
-                validated_output: str | dict[str, Any],
-                output: Any,
                 output_context: OutputContext,
+                output: Any,
             ) -> Any:
                 # output is already 'WORLD' from upcase
                 return f'[{output}]'
@@ -373,20 +478,19 @@ class TestToolOutputWithOutputHooks:
                 self,
                 ctx: RunContext[Any],
                 *,
-                raw_output: str | dict[str, Any],
                 output_context: OutputContext,
+                output: str | dict[str, Any],
             ) -> str | dict[str, Any]:
                 log.append(f'before_output_validate:{output_context.mode}')
-                return raw_output
+                return output
 
             async def after_output_validate(
                 self,
                 ctx: RunContext[Any],
                 *,
-                raw_output: str | dict[str, Any],
-                output: str | dict[str, Any],
                 output_context: OutputContext,
-            ) -> str | dict[str, Any]:
+                output: Any,
+            ) -> Any:
                 log.append('after_output_validate')
                 return output
 
@@ -394,8 +498,8 @@ class TestToolOutputWithOutputHooks:
                 self,
                 ctx: RunContext[Any],
                 *,
-                output: str | dict[str, Any],
                 output_context: OutputContext,
+                output: str | dict[str, Any],
             ) -> str | dict[str, Any]:
                 log.append('before_output_execute')
                 return output
@@ -404,9 +508,8 @@ class TestToolOutputWithOutputHooks:
                 self,
                 ctx: RunContext[Any],
                 *,
-                validated_output: str | dict[str, Any],
-                output: Any,
                 output_context: OutputContext,
+                output: Any,
             ) -> Any:
                 log.append('after_output_execute')
                 return output
@@ -419,8 +522,8 @@ class TestToolOutputWithOutputHooks:
         assert 'before_output_execute' in log
         assert 'after_output_execute' in log
 
-    async def test_tool_hooks_and_output_hooks_both_fire(self):
-        """Both tool hooks (outer) and output hooks (inner) fire for output tools."""
+    async def test_output_hooks_fire_without_tool_hooks(self):
+        """Output tools use output hooks only — tool hooks do NOT fire."""
         log: list[str] = []
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -459,28 +562,28 @@ class TestToolOutputWithOutputHooks:
                 self,
                 ctx: RunContext[Any],
                 *,
-                raw_output: str | dict[str, Any],
                 output_context: OutputContext,
+                output: str | dict[str, Any],
             ) -> str | dict[str, Any]:
                 log.append('output_validate')
-                return raw_output
+                return output
 
             async def before_output_execute(
                 self,
                 ctx: RunContext[Any],
                 *,
-                output: str | dict[str, Any],
                 output_context: OutputContext,
-            ) -> str | dict[str, Any]:
+                output: Any,
+            ) -> Any:
                 log.append('output_execute')
                 return output
 
         agent = Agent(FunctionModel(model_fn), output_type=MyOutput, capabilities=[BothHooksCap()])
         result = await agent.run('hello')
         assert result.output == MyOutput(value=42)
-        # Tool hooks fire first, output hooks fire inside the tool execution
-        assert 'tool_validate:final_result' in log
-        assert 'tool_execute:final_result' in log
+        # Only output hooks fire for output tools — tool hooks are skipped
+        assert 'tool_validate:final_result' not in log
+        assert 'tool_execute:final_result' not in log
         assert 'output_validate' in log
         assert 'output_execute' in log
 
@@ -501,9 +604,8 @@ class TestToolOutputWithOutputHooks:
                 self,
                 ctx: RunContext[Any],
                 *,
-                validated_output: str | dict[str, Any],
-                output: Any,
                 output_context: OutputContext,
+                output: Any,
             ) -> Any:
                 if isinstance(output, MyOutput):
                     return MyOutput(value=output.value * 2)
@@ -530,11 +632,11 @@ class TestHookComposition:
                 self,
                 ctx: RunContext[Any],
                 *,
-                raw_output: str | dict[str, Any],
                 output_context: OutputContext,
+                output: str | dict[str, Any],
             ) -> str | dict[str, Any]:
                 log.append('cap1')
-                return raw_output
+                return output
 
         @dataclass
         class Cap2(AbstractCapability[Any]):
@@ -542,11 +644,11 @@ class TestHookComposition:
                 self,
                 ctx: RunContext[Any],
                 *,
-                raw_output: str | dict[str, Any],
                 output_context: OutputContext,
+                output: str | dict[str, Any],
             ) -> str | dict[str, Any]:
                 log.append('cap2')
-                return raw_output
+                return output
 
         agent = Agent(FunctionModel(model_fn), output_type=PromptedOutput(MyOutput), capabilities=[Cap1(), Cap2()])
         result = await agent.run('hello')
@@ -565,9 +667,8 @@ class TestHookComposition:
                 self,
                 ctx: RunContext[Any],
                 *,
-                validated_output: str | dict[str, Any],
-                output: Any,
                 output_context: OutputContext,
+                output: Any,
             ) -> Any:
                 return f'{output}!' if isinstance(output, str) else output
 
@@ -577,9 +678,8 @@ class TestHookComposition:
                 self,
                 ctx: RunContext[Any],
                 *,
-                validated_output: str | dict[str, Any],
-                output: Any,
                 output_context: OutputContext,
+                output: Any,
             ) -> Any:
                 return f'{output}?' if isinstance(output, str) else output
 
@@ -602,11 +702,11 @@ class TestHooksClassOutputDecorators:
             ctx: RunContext[Any],
             /,
             *,
-            raw_output: str | dict[str, Any],
             output_context: OutputContext,
+            output: str | dict[str, Any],
         ) -> str | dict[str, Any]:
             log.append('before_output_validate')
-            return raw_output
+            return output
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(parts=[TextPart(content='{"value": 3}')])
@@ -626,10 +726,9 @@ class TestHooksClassOutputDecorators:
             ctx: RunContext[Any],
             /,
             *,
-            raw_output: str | dict[str, Any],
-            output: str | dict[str, Any],
             output_context: OutputContext,
-        ) -> str | dict[str, Any]:
+            output: Any,
+        ) -> Any:
             log.append('after_output_validate')
             return output
 
@@ -651,12 +750,12 @@ class TestHooksClassOutputDecorators:
             ctx: RunContext[Any],
             /,
             *,
-            raw_output: str | dict[str, Any],
             output_context: OutputContext,
+            output: str | dict[str, Any],
             handler: Any,
-        ) -> str | dict[str, Any]:
+        ) -> Any:
             log.append('wrap_start')
-            result = await handler(raw_output)
+            result = await handler(output)
             log.append('wrap_end')
             return result
 
@@ -677,10 +776,10 @@ class TestHooksClassOutputDecorators:
             ctx: RunContext[Any],
             /,
             *,
-            raw_output: str | dict[str, Any],
             output_context: OutputContext,
+            output: str | dict[str, Any],
             error: ValidationError | ModelRetry,
-        ) -> str | dict[str, Any]:
+        ) -> Any:
             return {'value': 999}
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -701,8 +800,8 @@ class TestHooksClassOutputDecorators:
             ctx: RunContext[Any],
             /,
             *,
-            output: str | dict[str, Any],
             output_context: OutputContext,
+            output: str | dict[str, Any],
         ) -> str | dict[str, Any]:
             log.append('before_output_execute')
             return output
@@ -724,9 +823,8 @@ class TestHooksClassOutputDecorators:
             ctx: RunContext[Any],
             /,
             *,
-            validated_output: str | dict[str, Any],
-            output: Any,
             output_context: OutputContext,
+            output: Any,
         ) -> Any:
             if isinstance(output, MyOutput):
                 return MyOutput(value=output.value * 2)
@@ -749,8 +847,8 @@ class TestHooksClassOutputDecorators:
             ctx: RunContext[Any],
             /,
             *,
-            output: str | dict[str, Any],
             output_context: OutputContext,
+            output: str | dict[str, Any],
             handler: Any,
         ) -> Any:
             log.append('exec_start')
@@ -776,11 +874,11 @@ class TestHooksClassOutputDecorators:
             ctx: RunContext[Any],
             /,
             *,
-            raw_output: str | dict[str, Any],
             output_context: OutputContext,
+            output: str | dict[str, Any],
         ) -> str | dict[str, Any]:
             log.append('sync_before')
-            return raw_output
+            return output
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return make_text_response('hello')
@@ -804,21 +902,21 @@ class TestOutputHookFullLifecycle:
         @dataclass
         class FullLifecycleCap(AbstractCapability[Any]):
             async def before_output_validate(
-                self, ctx: RunContext[Any], *, raw_output: str | dict[str, Any], output_context: OutputContext
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
             ) -> str | dict[str, Any]:
                 log.append('before_validate')
-                return raw_output
+                return output
 
             async def wrap_output_validate(
                 self,
                 ctx: RunContext[Any],
                 *,
-                raw_output: str | dict[str, Any],
                 output_context: OutputContext,
+                output: str | dict[str, Any],
                 handler: Any,
-            ) -> str | dict[str, Any]:
+            ) -> Any:
                 log.append('wrap_validate:before')
-                result = await handler(raw_output)
+                result = await handler(output)
                 log.append('wrap_validate:after')
                 return result
 
@@ -826,15 +924,14 @@ class TestOutputHookFullLifecycle:
                 self,
                 ctx: RunContext[Any],
                 *,
-                raw_output: str | dict[str, Any],
-                output: str | dict[str, Any],
                 output_context: OutputContext,
-            ) -> str | dict[str, Any]:
+                output: Any,
+            ) -> Any:
                 log.append('after_validate')
                 return output
 
             async def before_output_execute(
-                self, ctx: RunContext[Any], *, output: str | dict[str, Any], output_context: OutputContext
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
             ) -> str | dict[str, Any]:
                 log.append('before_execute')
                 return output
@@ -843,8 +940,8 @@ class TestOutputHookFullLifecycle:
                 self,
                 ctx: RunContext[Any],
                 *,
-                output: str | dict[str, Any],
                 output_context: OutputContext,
+                output: str | dict[str, Any],
                 handler: Any,
             ) -> Any:
                 log.append('wrap_execute:before')
@@ -856,9 +953,8 @@ class TestOutputHookFullLifecycle:
                 self,
                 ctx: RunContext[Any],
                 *,
-                validated_output: str | dict[str, Any],
-                output: Any,
                 output_context: OutputContext,
+                output: Any,
             ) -> Any:
                 log.append('after_execute')
                 return output
@@ -892,27 +988,26 @@ class TestOutputHookFullLifecycle:
         @dataclass
         class FullLifecycleCap(AbstractCapability[Any]):
             async def before_output_validate(
-                self, ctx: RunContext[Any], *, raw_output: str | dict[str, Any], output_context: OutputContext
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
             ) -> str | dict[str, Any]:
                 log.append('before_validate')
                 assert output_context.mode == 'tool'
                 assert output_context.tool_call is not None
                 assert output_context.tool_def is not None
-                return raw_output
+                return output
 
             async def after_output_validate(
                 self,
                 ctx: RunContext[Any],
                 *,
-                raw_output: str | dict[str, Any],
-                output: str | dict[str, Any],
                 output_context: OutputContext,
-            ) -> str | dict[str, Any]:
+                output: Any,
+            ) -> Any:
                 log.append('after_validate')
                 return output
 
             async def before_output_execute(
-                self, ctx: RunContext[Any], *, output: str | dict[str, Any], output_context: OutputContext
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
             ) -> str | dict[str, Any]:
                 log.append('before_execute')
                 return output
@@ -921,9 +1016,8 @@ class TestOutputHookFullLifecycle:
                 self,
                 ctx: RunContext[Any],
                 *,
-                validated_output: str | dict[str, Any],
-                output: Any,
                 output_context: OutputContext,
+                output: Any,
             ) -> Any:
                 log.append('after_execute')
                 return output
@@ -952,10 +1046,10 @@ class TestOutputContext:
         @dataclass
         class CaptureCap(AbstractCapability[Any]):
             async def before_output_validate(
-                self, ctx: RunContext[Any], *, raw_output: str | dict[str, Any], output_context: OutputContext
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
             ) -> str | dict[str, Any]:
                 captured.append(output_context)
-                return raw_output
+                return output
 
         agent = Agent(FunctionModel(model_fn), output_type=PromptedOutput(MyOutput), capabilities=[CaptureCap()])
         await agent.run('hello')
@@ -978,10 +1072,10 @@ class TestOutputContext:
         @dataclass
         class CaptureCap(AbstractCapability[Any]):
             async def before_output_validate(
-                self, ctx: RunContext[Any], *, raw_output: str | dict[str, Any], output_context: OutputContext
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
             ) -> str | dict[str, Any]:
                 captured.append(output_context)
-                return raw_output
+                return output
 
         agent = Agent(FunctionModel(model_fn), capabilities=[CaptureCap()])
         await agent.run('hello')
@@ -1005,10 +1099,10 @@ class TestOutputContext:
         @dataclass
         class CaptureCap(AbstractCapability[Any]):
             async def before_output_validate(
-                self, ctx: RunContext[Any], *, raw_output: str | dict[str, Any], output_context: OutputContext
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
             ) -> str | dict[str, Any]:
                 captured.append(output_context)
-                return raw_output
+                return output
 
         agent = Agent(FunctionModel(model_fn), output_type=TextOutput(upcase), capabilities=[CaptureCap()])
         await agent.run('hello')
@@ -1033,10 +1127,10 @@ class TestOutputContext:
         @dataclass
         class CaptureCap(AbstractCapability[Any]):
             async def before_output_validate(
-                self, ctx: RunContext[Any], *, raw_output: str | dict[str, Any], output_context: OutputContext
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
             ) -> str | dict[str, Any]:
                 captured.append(output_context)
-                return raw_output
+                return output
 
         agent = Agent(FunctionModel(model_fn), output_type=MyOutput, capabilities=[CaptureCap()])
         await agent.run('hello')
@@ -1069,8 +1163,8 @@ class TestWrapOutputExecute:
                 self,
                 ctx: RunContext[Any],
                 *,
-                output: str | dict[str, Any],
                 output_context: OutputContext,
+                output: str | dict[str, Any],
                 handler: Any,
             ) -> Any:
                 log.append('before')
@@ -1095,8 +1189,8 @@ class TestWrapOutputExecute:
                 self,
                 ctx: RunContext[Any],
                 *,
-                output: str | dict[str, Any],
                 output_context: OutputContext,
+                output: str | dict[str, Any],
                 handler: Any,
             ) -> Any:
                 await handler(output)  # Call handler but ignore result
@@ -1125,8 +1219,8 @@ class TestOnOutputExecuteError:
                 self,
                 ctx: RunContext[Any],
                 *,
-                output: str | dict[str, Any],
                 output_context: OutputContext,
+                output: str | dict[str, Any],
                 error: Exception,
             ) -> Any:
                 return 'recovered'
@@ -1166,11 +1260,11 @@ class TestRunSync:
             ctx: RunContext[Any],
             /,
             *,
-            raw_output: str | dict[str, Any],
             output_context: OutputContext,
+            output: str | dict[str, Any],
         ) -> str | dict[str, Any]:
             log.append('before_validate')
-            return raw_output
+            return output
 
         agent = Agent(FunctionModel(model_fn), output_type=PromptedOutput(MyOutput), capabilities=[hooks])
         result = agent.run_sync('hello')
@@ -1200,10 +1294,10 @@ class TestOutputHookErrorPaths:
                 self,
                 ctx: RunContext[Any],
                 *,
-                raw_output: str | dict[str, Any],
                 output_context: OutputContext,
+                output: str | dict[str, Any],
                 error: ValidationError | ModelRetry,
-            ) -> str | dict[str, Any]:
+            ) -> Any:
                 error_log.append(f'validate_error: {type(error).__name__}')
                 raise error  # Re-raise — should cause retry
 
@@ -1234,8 +1328,8 @@ class TestOutputHookErrorPaths:
                 self,
                 ctx: RunContext[Any],
                 *,
-                output: str | dict[str, Any],
                 output_context: OutputContext,
+                output: str | dict[str, Any],
                 error: Exception,
             ) -> Any:
                 return 'recovered value'
@@ -1264,10 +1358,10 @@ class TestOutputHookErrorPaths:
                 self,
                 ctx: RunContext[Any],
                 *,
-                raw_output: str | dict[str, Any],
                 output_context: OutputContext,
+                output: str | dict[str, Any],
                 error: ValidationError | ModelRetry,
-            ) -> str | dict[str, Any]:
+            ) -> Any:
                 error_log.append('first_error')
                 raise error
 
@@ -1277,10 +1371,10 @@ class TestOutputHookErrorPaths:
                 self,
                 ctx: RunContext[Any],
                 *,
-                raw_output: str | dict[str, Any],
                 output_context: OutputContext,
+                output: str | dict[str, Any],
                 error: ValidationError | ModelRetry,
-            ) -> str | dict[str, Any]:
+            ) -> Any:
                 error_log.append('second_error')
                 raise error
 
@@ -1311,8 +1405,8 @@ class TestOutputHookErrorPaths:
                 self,
                 ctx: RunContext[Any],
                 *,
-                output: str | dict[str, Any],
                 output_context: OutputContext,
+                output: str | dict[str, Any],
                 error: Exception,
             ) -> Any:
                 return 'recovered_by_first'
@@ -1323,8 +1417,8 @@ class TestOutputHookErrorPaths:
                 self,
                 ctx: RunContext[Any],
                 *,
-                output: str | dict[str, Any],
                 output_context: OutputContext,
+                output: str | dict[str, Any],
                 error: Exception,
             ) -> Any:
                 raise error  # Don't recover, pass to next cap
@@ -1351,10 +1445,10 @@ class TestOutputHookErrorPaths:
         async def handle_error(
             ctx: RunContext[Any],
             *,
-            raw_output: str | dict[str, Any],
             output_context: OutputContext,
+            output: str | dict[str, Any],
             error: ValidationError | ModelRetry,
-        ) -> str | dict[str, Any]:
+        ) -> Any:
             raise error  # Re-raise to trigger retry
 
         agent = Agent(
@@ -1381,8 +1475,8 @@ class TestOutputHookErrorPaths:
         async def handle_error(
             ctx: RunContext[Any],
             *,
-            output: str | dict[str, Any],
             output_context: OutputContext,
+            output: str | dict[str, Any],
             error: Exception,
         ) -> Any:
             return 'fallback result'
@@ -1407,10 +1501,10 @@ class TestOutputHookErrorPaths:
 
         @hooks.on.before_output_validate
         def log_validate(
-            ctx: RunContext[Any], *, raw_output: str | dict[str, Any], output_context: OutputContext
+            ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
         ) -> str | dict[str, Any]:
             error_log.append('before_validate')
-            return raw_output
+            return output
 
         agent = Agent(
             FunctionModel(model_fn),
@@ -1436,19 +1530,18 @@ class TestOutputHookErrorPaths:
                 self,
                 ctx: RunContext[Any],
                 *,
-                raw_output: str | dict[str, Any],
                 output_context: OutputContext,
+                output: str | dict[str, Any],
             ) -> str | dict[str, Any]:
                 log.append('inner_before_validate')
-                return raw_output
+                return output
 
             async def after_output_execute(
                 self,
                 ctx: RunContext[Any],
                 *,
-                validated_output: str | dict[str, Any],
-                output: Any,
                 output_context: OutputContext,
+                output: Any,
             ) -> Any:
                 log.append('inner_after_execute')
                 return output
@@ -1488,9 +1581,9 @@ class TestDefaultOutputErrorHooks:
 
         @hooks.on.before_output_validate
         def noop(
-            ctx: RunContext[Any], *, raw_output: str | dict[str, Any], output_context: OutputContext
+            ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
         ) -> str | dict[str, Any]:
-            return raw_output
+            return output
 
         agent = Agent(FunctionModel(model_fn), output_type=PromptedOutput(MyOutput), capabilities=[hooks])
         result = agent.run_sync('hello')
@@ -1512,7 +1605,7 @@ class TestDefaultOutputErrorHooks:
 
         @hooks.on.before_output_execute
         def noop(
-            ctx: RunContext[Any], *, output: str | dict[str, Any], output_context: OutputContext
+            ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
         ) -> str | dict[str, Any]:
             return output
 
@@ -1536,8 +1629,8 @@ class TestOutputHookEdgeCases:
                 self,
                 ctx: RunContext[Any],
                 *,
-                raw_output: str | dict[str, Any],
                 output_context: OutputContext,
+                output: str | dict[str, Any],
             ) -> str | dict[str, Any]:
                 # Transform text to a pre-parsed dict
                 return {'value': 99}
@@ -1565,11 +1658,11 @@ class TestOutputHookEdgeCases:
                 self,
                 ctx: RunContext[Any],
                 *,
-                raw_output: str | dict[str, Any],
                 output_context: OutputContext,
+                output: str | dict[str, Any],
             ) -> str | dict[str, Any]:
                 log.append(f'before_validate partial={ctx.partial_output}')
-                return raw_output
+                return output
 
         agent = Agent(FunctionModel(model_fn), capabilities=[StreamLogCapability()])
         result = agent.run_sync('hello')
@@ -1770,8 +1863,8 @@ class TestOutputHookEdgeCases:
         async def wrap_exec(
             ctx: RunContext[Any],
             *,
-            output: str | dict[str, Any],
             output_context: OutputContext,
+            output: str | dict[str, Any],
             handler: Any,
         ) -> Any:
             execute_log.append('wrap_execute_before')
@@ -1853,10 +1946,10 @@ class TestErrorHookCoveragePaths:
                 self,
                 ctx: RunContext[Any],
                 *,
-                raw_output: str | dict[str, Any],
                 output_context: OutputContext,
+                output: str | dict[str, Any],
                 error: ValidationError | ModelRetry,
-            ) -> str | dict[str, Any]:
+            ) -> Any:
                 error_log.append('inner_error')
                 raise error
 
@@ -1888,8 +1981,8 @@ class TestErrorHookCoveragePaths:
                 self,
                 ctx: RunContext[Any],
                 *,
-                output: str | dict[str, Any],
                 output_context: OutputContext,
+                output: str | dict[str, Any],
                 error: Exception,
             ) -> Any:
                 return 'wrapper_recovered'
@@ -1916,13 +2009,13 @@ class TestErrorHookCoveragePaths:
 
         @hooks.on.output_execute_error
         async def first_handler(
-            ctx: RunContext[Any], *, output: str | dict[str, Any], output_context: OutputContext, error: Exception
+            ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any], error: Exception
         ) -> Any:
             raise ValueError('chained')  # Re-raise different error
 
         @hooks.on.output_execute_error
         async def second_handler(
-            ctx: RunContext[Any], *, output: str | dict[str, Any], output_context: OutputContext, error: Exception
+            ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any], error: Exception
         ) -> Any:
             return 'recovered'  # This one recovers
 
@@ -1953,30 +2046,29 @@ class TestUnionOutputWithHooks:
         @dataclass
         class LogCapability(AbstractCapability[Any]):
             async def before_output_validate(
-                self, ctx: RunContext[Any], *, raw_output: str | dict[str, Any], output_context: OutputContext
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
             ) -> str | dict[str, Any]:
                 log.append('before_validate')
-                return raw_output
+                return output
 
             async def after_output_validate(
                 self,
                 ctx: RunContext[Any],
                 *,
-                raw_output: str | dict[str, Any],
-                output: str | dict[str, Any],
                 output_context: OutputContext,
-            ) -> str | dict[str, Any]:
+                output: Any,
+            ) -> Any:
                 log.append('after_validate')
                 return output
 
             async def before_output_execute(
-                self, ctx: RunContext[Any], *, output: Any, output_context: OutputContext
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
             ) -> Any:
                 log.append('before_execute')
                 return output
 
             async def after_output_execute(
-                self, ctx: RunContext[Any], *, validated_output: Any, output: Any, output_context: OutputContext
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
             ) -> Any:
                 log.append('after_execute')
                 return output
@@ -2010,7 +2102,7 @@ class TestUnionOutputWithHooks:
         @dataclass
         class DoubleCapability(AbstractCapability[Any]):
             async def after_output_execute(
-                self, ctx: RunContext[Any], *, validated_output: Any, output: Any, output_context: OutputContext
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
             ) -> Any:
                 assert isinstance(output, TypeA)
                 output.value *= 2
@@ -2044,10 +2136,10 @@ class TestUnionOutputWithHooks:
                 self,
                 ctx: RunContext[Any],
                 *,
-                raw_output: str | dict[str, Any],
                 output_context: OutputContext,
+                output: str | dict[str, Any],
                 error: ValidationError | ModelRetry,
-            ) -> str | dict[str, Any]:
+            ) -> Any:
                 error_log.append('validate_error')
                 raise error
 
@@ -2079,7 +2171,7 @@ class TestTextFunctionOutputCallHook:
         @dataclass
         class ExecLogCap(AbstractCapability[Any]):
             async def wrap_output_execute(
-                self, ctx: RunContext[Any], *, output: Any, output_context: OutputContext, handler: Any
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any, handler: Any
             ) -> Any:
                 log.append(f'input: {output}')
                 result = await handler(output)

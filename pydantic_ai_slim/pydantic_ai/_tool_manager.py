@@ -411,9 +411,6 @@ class ToolManager(Generic[AgentDepsT]):
     ) -> Any:
         """Execute a validated tool call, within a trace span for function tools.
 
-        For output tools, no tracing is performed. For function tools, a trace span is
-        created using the tracer from the run context.
-
         Args:
             validated: The validation result from validate_tool_call().
 
@@ -427,9 +424,6 @@ class ToolManager(Generic[AgentDepsT]):
         if self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
-        if validated.tool is not None and validated.tool.tool_def.kind == 'output':
-            return await self._execute_tool_call_impl(validated)
-
         return await self._execute_function_tool_call(
             validated,
             tracer=self.ctx.tracer,
@@ -437,6 +431,156 @@ class ToolManager(Generic[AgentDepsT]):
             instrumentation_version=self.ctx.instrumentation_version,
             usage=self.ctx.usage,
         )
+
+    # --- Output tool methods (output hooks, no tool hooks) ---
+
+    async def validate_output_tool_call(
+        self,
+        call: ToolCallPart,
+    ) -> ValidatedToolCall[AgentDepsT]:
+        """Validate output tool args through output validate hooks (skipping tool hooks).
+
+        Output tools use output hooks for validation instead of tool hooks. The Pydantic
+        schema validation is used as the inner handler wrapped by output validate hooks.
+
+        Raises:
+            UnexpectedModelBehavior: If max retries exceeded.
+        """
+        if self.tools is None or self.ctx is None:
+            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
+
+        name = call.tool_name
+        tool = self.tools.get(name)
+        ctx = self.ctx
+
+        try:
+            if tool is None:
+                if self.tools:
+                    msg = f'Available tools: {", ".join(f"{n!r}" for n in self.tools)}'
+                else:
+                    msg = 'No tools available.'  # pragma: no cover
+                raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
+
+            ctx = self._build_tool_context(call, tool, allow_partial=False)
+
+            toolset = tool.toolset
+            assert isinstance(toolset, OutputToolset)
+            processor = toolset.processors[name]
+            output_context = processor.get_output_context('tool', tool_call=call, tool_def=tool.tool_def)
+
+            async def do_validate(args: str | dict[str, Any]) -> str | dict[str, Any]:
+                return await self._validate_tool_args(call, tool, ctx, allow_partial=False, args_override=args)
+
+            cap = self.root_capability
+            if cap is not None:
+                raw_args: str | dict[str, Any] = call.args if call.args is not None else {}
+                validated_args: dict[str, Any] = await run_output_validate_hooks(
+                    cap,
+                    run_context=ctx,
+                    output_context=output_context,
+                    output=raw_args,
+                    do_validate=do_validate,
+                    allow_partial=False,
+                    wrap_validation_errors=True,
+                )
+            else:
+                validated_args = await self._validate_tool_args(call, tool, ctx, allow_partial=False)
+
+            return ValidatedToolCall(
+                call=call,
+                tool=tool,
+                ctx=ctx,
+                args_valid=True,
+                validated_args=validated_args,
+                validation_error=None,
+            )
+        except ToolRetryError as e:
+            # From run_output_validate_hooks wrapping validation errors
+            max_retries = tool.max_retries if tool is not None else self.default_max_retries
+            cause = e.__cause__ if isinstance(e.__cause__, Exception) else e
+            self._check_max_retries(name, max_retries, cause)
+            self.failed_tools.add(name)
+            return ValidatedToolCall(
+                call=call,
+                tool=tool,
+                ctx=ctx,
+                args_valid=False,
+                validated_args=None,
+                validation_error=e,
+            )
+        except (ValidationError, ModelRetry) as e:
+            max_retries = tool.max_retries if tool is not None else self.default_max_retries
+            self._check_max_retries(name, max_retries, e)
+            self.failed_tools.add(name)
+            validation_error = self._wrap_error_as_retry(name, call, e)
+            return ValidatedToolCall(
+                call=call,
+                tool=tool,
+                ctx=ctx,
+                args_valid=False,
+                validated_args=None,
+                validation_error=validation_error,
+            )
+
+    async def execute_output_tool_call(
+        self,
+        validated: ValidatedToolCall[AgentDepsT],
+    ) -> Any:
+        """Execute output tool through output execute hooks (skipping tool hooks).
+
+        Output validators run AFTER all output hooks, consistent with text output.
+
+        Raises:
+            ToolRetryError: If execution or output validation fails.
+            UnexpectedModelBehavior: If max retries exceeded.
+        """
+        if not validated.args_valid:
+            assert validated.validation_error is not None
+            raise validated.validation_error
+
+        assert validated.tool is not None
+        assert validated.validated_args is not None
+
+        name = validated.call.tool_name
+        toolset = validated.tool.toolset
+        assert isinstance(toolset, OutputToolset)
+
+        processor = toolset.processors[name]
+        output_context = processor.get_output_context(
+            'tool', tool_call=validated.call, tool_def=validated.tool.tool_def
+        )
+
+        async def do_execute(output: Any) -> Any:
+            try:
+                return await processor.call(output, validated.ctx, wrap_validation_errors=False)
+            except ModelRetry as e:
+                self._check_max_retries(name, validated.tool.max_retries, e)  # type: ignore[union-attr]
+                self.failed_tools.add(name)
+                raise self._wrap_error_as_retry(name, validated.call, e) from e
+
+        cap = self.root_capability
+        if cap is not None:
+            result = await run_output_execute_hooks(
+                cap,
+                run_context=validated.ctx,
+                output_context=output_context,
+                output=validated.validated_args,
+                do_execute=do_execute,
+            )
+        else:
+            result = await do_execute(validated.validated_args)
+
+        # Output validators run AFTER all output hooks (consistent with text output)
+        try:
+            for validator in toolset.output_validators:
+                result = await validator.validate(result, validated.ctx, wrap_validation_errors=False)
+        except ModelRetry as e:
+            assert validated.tool is not None
+            self._check_max_retries(name, validated.tool.max_retries, e)
+            self.failed_tools.add(name)
+            raise self._wrap_error_as_retry(name, validated.call, e) from e
+
+        return result
 
     async def _execute_tool_call_impl(
         self,
@@ -481,82 +625,22 @@ class ToolManager(Generic[AgentDepsT]):
 
         name = validated.call.tool_name
 
-        # For output tools, fire output hooks inside the tool execution
-        if validated.tool.tool_def.kind == 'output' and self.root_capability is not None:
-            tool_result = await self._raw_execute_output_tool(validated)
-        else:
-            try:
-                tool_result = await self.toolset.call_tool(
-                    name,
-                    validated.validated_args,
-                    validated.ctx,
-                    validated.tool,
-                )
-            except ModelRetry as e:
-                self._check_max_retries(name, validated.tool.max_retries, e)
-                self.failed_tools.add(name)
-                raise self._wrap_error_as_retry(name, validated.call, e) from e
+        try:
+            tool_result = await self.toolset.call_tool(
+                name,
+                validated.validated_args,
+                validated.ctx,
+                validated.tool,
+            )
+        except ModelRetry as e:
+            self._check_max_retries(name, validated.tool.max_retries, e)
+            self.failed_tools.add(name)
+            raise self._wrap_error_as_retry(name, validated.call, e) from e
 
         if usage is not None:
             usage.tool_calls += 1
 
         return tool_result
-
-    async def _raw_execute_output_tool(
-        self,
-        validated: ValidatedToolCall[AgentDepsT],
-    ) -> Any:
-        """Execute an output tool call with output hooks."""
-        assert validated.tool is not None
-        assert validated.validated_args is not None
-        assert self.root_capability is not None
-
-        cap = self.root_capability
-        ctx = validated.ctx
-        name = validated.call.tool_name
-        toolset = validated.tool.toolset
-
-        if not isinstance(toolset, OutputToolset):  # pragma: no cover
-            raise RuntimeError(f'Expected OutputToolset for output tool {name!r}')
-
-        processor = toolset.processors[name]
-        output_context = processor.get_output_context(
-            'tool', tool_call=validated.call, tool_def=validated.tool.tool_def
-        )
-
-        # --- Output validate phase (identity — args already validated by tool_validate hooks) ---
-        async def do_validate(data: str | dict[str, Any]) -> str | dict[str, Any]:
-            return data  # Identity: validation already done by tool hooks
-
-        validated_output = await run_output_validate_hooks(
-            cap,
-            run_context=ctx,
-            output_context=output_context,
-            raw_output=validated.validated_args,
-            do_validate=do_validate,
-            allow_partial=False,
-            wrap_validation_errors=False,
-        )
-
-        # --- Output execute phase (wraps processor.call + output validators) ---
-        async def do_execute(output: Any) -> Any:
-            try:
-                result = await processor.call(output, ctx, wrap_validation_errors=False)
-                for validator in toolset.output_validators:
-                    result = await validator.validate(result, ctx, wrap_validation_errors=False)
-                return result
-            except ModelRetry as e:
-                self._check_max_retries(name, validated.tool.max_retries, e)  # type: ignore[union-attr]
-                self.failed_tools.add(name)
-                raise self._wrap_error_as_retry(name, validated.call, e) from e
-
-        return await run_output_execute_hooks(
-            cap,
-            run_context=ctx,
-            output_context=output_context,
-            validated=validated_output,
-            do_execute=do_execute,
-        )
 
     async def _execute_function_tool_call(
         self,

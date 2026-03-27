@@ -291,45 +291,42 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        raw_output: RawOutput,
         output_context: OutputContext,
+        output: RawOutput,
     ) -> RawOutput:
-        return await self.wrapped.before_output_validate(ctx, raw_output=raw_output, output_context=output_context)
+        return await self.wrapped.before_output_validate(ctx, output_context=output_context, output=output)
 
     async def after_output_validate(
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        raw_output: RawOutput,
-        output: RawOutput,
         output_context: OutputContext,
-    ) -> RawOutput:
-        return await self.wrapped.after_output_validate(
-            ctx, raw_output=raw_output, output=output, output_context=output_context
-        )
+        output: Any,
+    ) -> Any:
+        return await self.wrapped.after_output_validate(ctx, output_context=output_context, output=output)
 
     async def wrap_output_validate(
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        raw_output: RawOutput,
         output_context: OutputContext,
+        output: RawOutput,
         handler: WrapOutputValidateHandler,
-    ) -> RawOutput:
+    ) -> Any:
         return await self.wrapped.wrap_output_validate(
-            ctx, raw_output=raw_output, output_context=output_context, handler=handler
+            ctx, output_context=output_context, output=output, handler=handler
         )
 
     async def on_output_validate_error(
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        raw_output: RawOutput,
         output_context: OutputContext,
+        output: RawOutput,
         error: ValidationError | ModelRetry,
-    ) -> RawOutput:
+    ) -> Any:
         return await self.wrapped.on_output_validate_error(
-            ctx, raw_output=raw_output, output_context=output_context, error=error
+            ctx, output_context=output_context, output=output, error=error
         )
 
     # --- Output execute lifecycle hooks ---
@@ -338,43 +335,40 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        output: Any,
         output_context: OutputContext,
+        output: Any,
     ) -> Any:
-        return await self.wrapped.before_output_execute(ctx, output=output, output_context=output_context)
+        return await self.wrapped.before_output_execute(ctx, output_context=output_context, output=output)
 
     async def after_output_execute(
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        validated_output: Any,
-        output: Any,
         output_context: OutputContext,
+        output: Any,
     ) -> Any:
-        return await self.wrapped.after_output_execute(
-            ctx, validated_output=validated_output, output=output, output_context=output_context
-        )
+        return await self.wrapped.after_output_execute(ctx, output_context=output_context, output=output)
 
     async def wrap_output_execute(
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        output: Any,
         output_context: OutputContext,
+        output: Any,
         handler: WrapOutputExecuteHandler,
     ) -> Any:
         return await self.wrapped.wrap_output_execute(
-            ctx, output=output, output_context=output_context, handler=handler
+            ctx, output_context=output_context, output=output, handler=handler
         )
 
     async def on_output_execute_error(
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        output: Any,
         output_context: OutputContext,
+        output: Any,
         error: Exception,
     ) -> Any:
         return await self.wrapped.on_output_execute_error(
-            ctx, output=output, output_context=output_context, error=error
+            ctx, output_context=output_context, output=output, error=error
         )

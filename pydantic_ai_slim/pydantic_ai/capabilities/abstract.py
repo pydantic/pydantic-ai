@@ -56,7 +56,7 @@ WrapToolExecuteHandler: TypeAlias = 'Callable[[dict[str, Any]], Awaitable[Any]]'
 RawOutput: TypeAlias = 'str | dict[str, Any]'
 """Type alias for raw output data (text or tool args)."""
 
-WrapOutputValidateHandler: TypeAlias = 'Callable[[str | dict[str, Any]], Awaitable[str | dict[str, Any]]]'
+WrapOutputValidateHandler: TypeAlias = 'Callable[[str | dict[str, Any]], Awaitable[Any]]'
 """Handler type for wrap_output_validate."""
 
 WrapOutputExecuteHandler: TypeAlias = 'Callable[[Any], Awaitable[Any]]'
@@ -510,32 +510,30 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        raw_output: RawOutput,
         output_context: OutputContext,
+        output: RawOutput,
     ) -> RawOutput:
         """Modify raw model output before validation/parsing.
 
         The primary hook for pre-parse repair and normalization of model output.
         Fires for all output types: text, structured text, and tool-based output.
 
-        For text/structured output, `raw_output` is the raw text string from the model.
-        For tool output, `raw_output` is the already-validated args dict (tool validation
-        hooks have already run at this point).
+        For text/structured output, `output` is the raw text string from the model.
+        For tool output, `output` is the raw tool arguments (string or dict).
 
         During streaming, this hook fires on every partial chunk as well as the final
         result. Check ``ctx.partial_output`` to distinguish and avoid expensive work
         on partial results.
         """
-        return raw_output
+        return output
 
     async def after_output_validate(
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        raw_output: RawOutput,
-        output: RawOutput,
         output_context: OutputContext,
-    ) -> RawOutput:
+        output: Any,
+    ) -> Any:
         """Modify validated output after successful parsing. Called only on success."""
         return output
 
@@ -543,21 +541,21 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        raw_output: RawOutput,
         output_context: OutputContext,
+        output: RawOutput,
         handler: WrapOutputValidateHandler,
-    ) -> RawOutput:
-        """Wraps output validation. handler(raw_output) performs the validation."""
-        return await handler(raw_output)
+    ) -> Any:
+        """Wraps output validation. handler(output) performs the validation."""
+        return await handler(output)
 
     async def on_output_validate_error(
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        raw_output: RawOutput,
         output_context: OutputContext,
+        output: RawOutput,
         error: ValidationError | ModelRetry,
-    ) -> RawOutput:
+    ) -> Any:
         """Called when output validation fails.
 
         This is the error counterpart to
@@ -574,8 +572,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        output: Any,
         output_context: OutputContext,
+        output: Any,
     ) -> Any:
         """Modify validated output before execution (extraction + function call)."""
         return output
@@ -584,9 +582,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        validated_output: Any,
-        output: Any,
         output_context: OutputContext,
+        output: Any,
     ) -> Any:
         """Modify result after output execution."""
         return output
@@ -595,8 +592,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        output: Any,
         output_context: OutputContext,
+        output: Any,
         handler: WrapOutputExecuteHandler,
     ) -> Any:
         """Wraps output execution. handler(output) runs extraction + function call.
@@ -610,8 +607,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        output: Any,
         output_context: OutputContext,
+        output: Any,
         error: Exception,
     ) -> Any:
         """Called when output execution fails with an exception.

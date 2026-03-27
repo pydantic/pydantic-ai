@@ -401,54 +401,49 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        raw_output: RawOutput,
         output_context: OutputContext,
+        output: RawOutput,
     ) -> RawOutput:
         for capability in self.capabilities:
-            raw_output = await capability.before_output_validate(
-                ctx, raw_output=raw_output, output_context=output_context
-            )
-        return raw_output
+            output = await capability.before_output_validate(ctx, output_context=output_context, output=output)
+        return output
 
     async def after_output_validate(
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        raw_output: RawOutput,
-        output: RawOutput,
         output_context: OutputContext,
-    ) -> RawOutput:
+        output: Any,
+    ) -> Any:
         for capability in reversed(self.capabilities):
-            output = await capability.after_output_validate(
-                ctx, raw_output=raw_output, output=output, output_context=output_context
-            )
+            output = await capability.after_output_validate(ctx, output_context=output_context, output=output)
         return output
 
     async def wrap_output_validate(
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        raw_output: RawOutput,
         output_context: OutputContext,
+        output: RawOutput,
         handler: WrapOutputValidateHandler,
-    ) -> RawOutput:
+    ) -> Any:
         chain = handler
         for cap in reversed(self.capabilities):
             chain = _make_output_validate_wrap(cap, ctx, output_context, chain)
-        return await chain(raw_output)
+        return await chain(output)
 
     async def on_output_validate_error(
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        raw_output: RawOutput,
         output_context: OutputContext,
+        output: RawOutput,
         error: ValidationError | ModelRetry,
-    ) -> RawOutput:
+    ) -> Any:
         for capability in reversed(self.capabilities):
             try:
                 return await capability.on_output_validate_error(
-                    ctx, raw_output=raw_output, output_context=output_context, error=error
+                    ctx, output_context=output_context, output=output, error=error
                 )
             except (ValidationError, ModelRetry) as new_error:
                 error = new_error
@@ -462,33 +457,30 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        output: Any,
         output_context: OutputContext,
+        output: Any,
     ) -> Any:
         for capability in self.capabilities:
-            output = await capability.before_output_execute(ctx, output=output, output_context=output_context)
+            output = await capability.before_output_execute(ctx, output_context=output_context, output=output)
         return output
 
     async def after_output_execute(
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        validated_output: Any,
-        output: Any,
         output_context: OutputContext,
+        output: Any,
     ) -> Any:
         for capability in reversed(self.capabilities):
-            output = await capability.after_output_execute(
-                ctx, validated_output=validated_output, output=output, output_context=output_context
-            )
+            output = await capability.after_output_execute(ctx, output_context=output_context, output=output)
         return output
 
     async def wrap_output_execute(
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        output: Any,
         output_context: OutputContext,
+        output: Any,
         handler: WrapOutputExecuteHandler,
     ) -> Any:
         chain = handler
@@ -500,14 +492,14 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        output: Any,
         output_context: OutputContext,
+        output: Any,
         error: Exception,
     ) -> Any:
         for capability in reversed(self.capabilities):
             try:
                 return await capability.on_output_execute_error(
-                    ctx, output=output, output_context=output_context, error=error
+                    ctx, output_context=output_context, output=output, error=error
                 )
             except Exception as new_error:
                 error = new_error
@@ -594,10 +586,10 @@ def _make_output_validate_wrap(
     cap: AbstractCapability[AgentDepsT],
     ctx: RunContext[AgentDepsT],
     output_context: OutputContext,
-    inner: Callable[[RawOutput], Awaitable[RawOutput]],
-) -> Callable[[RawOutput], Awaitable[RawOutput]]:
-    async def wrapped(raw_output: RawOutput) -> RawOutput:
-        return await cap.wrap_output_validate(ctx, raw_output=raw_output, output_context=output_context, handler=inner)
+    inner: Callable[[RawOutput], Awaitable[Any]],
+) -> Callable[[RawOutput], Awaitable[Any]]:
+    async def wrapped(output: RawOutput) -> Any:
+        return await cap.wrap_output_validate(ctx, output_context=output_context, output=output, handler=inner)
 
     return wrapped
 
@@ -609,6 +601,6 @@ def _make_output_execute_wrap(
     inner: Callable[[Any], Awaitable[Any]],
 ) -> Callable[[Any], Awaitable[Any]]:
     async def wrapped(output: Any) -> Any:
-        return await cap.wrap_output_execute(ctx, output=output, output_context=output_context, handler=inner)
+        return await cap.wrap_output_execute(ctx, output_context=output_context, output=output, handler=inner)
 
     return wrapped

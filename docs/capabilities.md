@@ -522,25 +522,25 @@ Like tool processing, output processing has two phases: **validation** (parsing 
 
 All output hooks receive an `output_context` parameter with [`OutputContext`][pydantic_ai.capabilities.OutputContext] (mode, output type, schema info, and tool call details for tool output).
 
-Output hooks fire for **all output types**: text, structured text (native/prompted), and tool-based output. For tool output, output hooks fire *inside* the tool execution pipeline — tool hooks are the outer layer, output hooks the inner layer.
+Output hooks fire for **all output types**: text, structured text (native/prompted), and tool-based output. For tool output, only output hooks fire — tool hooks are skipped entirely. The output validate hooks wrap Pydantic schema validation of the tool arguments, and the output execute hooks wrap the output function call and output validators.
 
-**Validation hooks** — `raw_output` is `str` for text output, or `dict` for tool output (already validated by tool hooks):
+**Validation hooks** — `output` is `str` for text output, or `dict` for tool output:
 
 | Hook | Signature | Purpose |
 |---|---|---|
-| [`before_output_validate`][pydantic_ai.capabilities.AbstractCapability.before_output_validate] | `(ctx: RunContext, *, raw_output: RawOutput, output_context: OutputContext) -> RawOutput` | Modify raw output before validation (e.g. JSON repair) |
-| [`after_output_validate`][pydantic_ai.capabilities.AbstractCapability.after_output_validate] | `(ctx: RunContext, *, raw_output: RawOutput, output: RawOutput, output_context: OutputContext) -> RawOutput` | Modify validated output |
-| [`wrap_output_validate`][pydantic_ai.capabilities.AbstractCapability.wrap_output_validate] | `(ctx: RunContext, *, raw_output: RawOutput, output_context: OutputContext, handler: WrapOutputValidateHandler) -> RawOutput` | Wrap the validation step |
-| [`on_output_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_output_validate_error] | `(ctx: RunContext, *, raw_output: RawOutput, output_context: OutputContext, error: ValidationError \| ModelRetry) -> RawOutput` | Handle validation errors (see [error hooks](#error-hooks)) |
+| [`before_output_validate`][pydantic_ai.capabilities.AbstractCapability.before_output_validate] | `(ctx, *, output_context, output: RawOutput) -> RawOutput` | Modify raw output before validation (e.g. JSON repair) |
+| [`after_output_validate`][pydantic_ai.capabilities.AbstractCapability.after_output_validate] | `(ctx, *, output_context, output: Any) -> Any` | Modify validated output |
+| [`wrap_output_validate`][pydantic_ai.capabilities.AbstractCapability.wrap_output_validate] | `(ctx, *, output_context, output: RawOutput, handler) -> Any` | Wrap the validation step |
+| [`on_output_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_output_validate_error] | `(ctx, *, output_context, output: RawOutput, error) -> Any` | Handle validation errors (see [error hooks](#error-hooks)) |
 
 **Execution hooks** — `output` is the validated output from the validation phase:
 
 | Hook | Signature | Purpose |
 |---|---|---|
-| [`before_output_execute`][pydantic_ai.capabilities.AbstractCapability.before_output_execute] | `(ctx: RunContext, *, output: Any, output_context: OutputContext) -> Any` | Modify output before execution |
-| [`after_output_execute`][pydantic_ai.capabilities.AbstractCapability.after_output_execute] | `(ctx: RunContext, *, validated_output: Any, output: Any, output_context: OutputContext) -> Any` | Modify execution result |
-| [`wrap_output_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_output_execute] | `(ctx: RunContext, *, output: Any, output_context: OutputContext, handler: WrapOutputExecuteHandler) -> Any` | Wrap execution |
-| [`on_output_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_output_execute_error] | `(ctx: RunContext, *, output: Any, output_context: OutputContext, error: Exception) -> Any` | Handle execution errors (see [error hooks](#error-hooks)) |
+| [`before_output_execute`][pydantic_ai.capabilities.AbstractCapability.before_output_execute] | `(ctx, *, output_context, output: Any) -> Any` | Modify output before execution |
+| [`after_output_execute`][pydantic_ai.capabilities.AbstractCapability.after_output_execute] | `(ctx, *, output_context, output: Any) -> Any` | Modify execution result |
+| [`wrap_output_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_output_execute] | `(ctx, *, output_context, output: Any, handler) -> Any` | Wrap execution |
+| [`on_output_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_output_execute_error] | `(ctx, *, output_context, output: Any, error) -> Any` | Handle execution errors (see [error hooks](#error-hooks)) |
 
 #### Tool preparation
 

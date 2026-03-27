@@ -1180,15 +1180,14 @@ async def process_tool_calls(  # noqa: C901
         # Early strategy is chosen and final result is not yet set
         # Or exhaustive strategy is chosen
         else:
-            # Validate and execute the output tool call — unlike deferred tools,
-            # output tools track retries and can be skipped if a final_result exists.
+            # Validate and execute the output tool call using output hooks (not tool hooks).
+            # Unlike deferred tools, output tools track retries and can be skipped if a final_result exists.
             try:
-                validated = await tool_manager.validate_tool_call(call)
+                validated = await tool_manager.validate_output_tool_call(call)
             except exceptions.UnexpectedModelBehavior as e:
                 # If we already have a valid final result, don't fail the entire run
                 # This allows exhaustive strategy to complete successfully when at least one output tool is valid
                 if final_result:
-                    # If output tool fails when we already have a final result, skip it without retrying
                     for event in _emit_skipped_output_tool(
                         call, 'Output tool not used - output failed validation.', output_parts, args_valid=False
                     ):
@@ -1212,9 +1211,9 @@ async def process_tool_calls(  # noqa: C901
                 yield _messages.FunctionToolResultEvent(validated.validation_error.tool_retry)
                 continue
 
-            # Validation passed - execute the tool
+            # Validation passed - execute through output hooks
             try:
-                result_data = await tool_manager.execute_tool_call(validated)
+                result_data = await tool_manager.execute_output_tool_call(validated)
             except exceptions.UnexpectedModelBehavior as e:
                 if final_result:
                     for event in _emit_skipped_output_tool(

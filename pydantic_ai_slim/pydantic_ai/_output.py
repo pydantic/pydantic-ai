@@ -81,19 +81,34 @@ def _build_output_handlers(
     wrap_validation_errors: bool,
 ) -> tuple[
     Callable[[str | dict[str, Any]], Awaitable[str | dict[str, Any]]],
-    Callable[[str | dict[str, Any]], Awaitable[Any]],
+    Callable[[Any], Awaitable[Any]],
 ]:
-    """Build validate and execute handler functions using processor's validate/call methods."""
+    """Build validate and execute handler functions using processor's validate/call methods.
+
+    For UnionOutputProcessor, the validate handler unwraps _UnionValidatedOutput so hooks
+    see clean inner data, and the execute handler re-wraps it so call() can resolve the
+    correct inner processor. The kind is stored per-invocation in closure state, avoiding
+    the race condition of shared instance state.
+    """
+    _union_kind: list[str] = []  # Per-invocation storage; list to allow mutation in closure
 
     async def do_validate(data: str | dict[str, Any]) -> str | dict[str, Any]:
-        return processor.validate(
+        result = processor.validate(
             data,
             allow_partial=allow_partial,
             wrap_validation_errors=wrap_validation_errors,
             validation_context=run_context.validation_context,
         )
+        if isinstance(result, _UnionValidatedOutput):
+            _union_kind.append(result.kind)
+            return result.data
+        return result
 
-    async def do_execute(output: str | dict[str, Any]) -> Any:
+    async def do_execute(output: Any) -> Any:
+        if _union_kind:
+            return await processor.call(
+                _UnionValidatedOutput(kind=_union_kind[0], data=output), run_context, wrap_validation_errors
+            )
         return await processor.call(output, run_context, wrap_validation_errors)
 
     return do_validate, do_execute
@@ -104,44 +119,46 @@ async def run_output_validate_hooks(
     *,
     run_context: RunContext[AgentDepsT],
     output_context: OutputContext,
-    raw_output: str | dict[str, Any],
-    do_validate: Callable[[str | dict[str, Any]], Awaitable[str | dict[str, Any]]],
+    output: str | dict[str, Any],
+    do_validate: Callable[[str | dict[str, Any]], Awaitable[Any]],
     allow_partial: bool,
     wrap_validation_errors: bool,
-) -> str | dict[str, Any]:
+) -> Any:
     """Run the output validate hooks around do_validate."""
-    raw_output = await capability.before_output_validate(
-        run_context, raw_output=raw_output, output_context=output_context
-    )
+    output = await capability.before_output_validate(run_context, output_context=output_context, output=output)
 
     try:
         validated = await capability.wrap_output_validate(
-            run_context, raw_output=raw_output, output_context=output_context, handler=do_validate
+            run_context, output_context=output_context, output=output, handler=do_validate
         )
     except (ValidationError, ModelRetry) as e:
         if allow_partial:
             if wrap_validation_errors and isinstance(e, ValidationError):  # pragma: no cover
-                m = _messages.RetryPromptPart(content=e.errors(include_url=False))
+                m = _messages.RetryPromptPart(content=e.errors(include_url=False), tool_name=run_context.tool_name)
+                if run_context.tool_call_id:
+                    m.tool_call_id = run_context.tool_call_id
                 raise ToolRetryError(m) from e
             raise
         try:
             validated = await capability.on_output_validate_error(
-                run_context, raw_output=raw_output, output_context=output_context, error=e
+                run_context, output_context=output_context, output=output, error=e
             )
         except (ValidationError, ModelRetry) as hook_error:
             if wrap_validation_errors:
                 if isinstance(hook_error, ValidationError):
-                    m = _messages.RetryPromptPart(content=hook_error.errors(include_url=False))
-                else:  # pragma: no cover — ModelRetry from error hooks is very rare
+                    m = _messages.RetryPromptPart(
+                        content=hook_error.errors(include_url=False), tool_name=run_context.tool_name
+                    )
+                    if run_context.tool_call_id:
+                        m.tool_call_id = run_context.tool_call_id
+                else:
                     m = _messages.RetryPromptPart(content=hook_error.message, tool_name=run_context.tool_name)
                     if run_context.tool_call_id:
                         m.tool_call_id = run_context.tool_call_id
                 raise ToolRetryError(m) from hook_error
             raise  # pragma: no cover — wrap_validation_errors=False only in streaming
 
-    return await capability.after_output_validate(
-        run_context, raw_output=raw_output, output=validated, output_context=output_context
-    )
+    return await capability.after_output_validate(run_context, output_context=output_context, output=validated)
 
 
 async def run_output_execute_hooks(
@@ -149,26 +166,24 @@ async def run_output_execute_hooks(
     *,
     run_context: RunContext[AgentDepsT],
     output_context: OutputContext,
-    validated: Any,
+    output: Any,
     do_execute: Callable[[Any], Awaitable[Any]],
 ) -> Any:
     """Run the output execute hooks around do_execute."""
-    validated = await capability.before_output_execute(run_context, output=validated, output_context=output_context)
+    output = await capability.before_output_execute(run_context, output_context=output_context, output=output)
 
     try:
         result = await capability.wrap_output_execute(
-            run_context, output=validated, output_context=output_context, handler=do_execute
+            run_context, output_context=output_context, output=output, handler=do_execute
         )
     except ToolRetryError:
         raise  # Control flow, not error
     except Exception as e:
         result = await capability.on_output_execute_error(
-            run_context, output=validated, output_context=output_context, error=e
+            run_context, output_context=output_context, output=output, error=e
         )
 
-    return await capability.after_output_execute(
-        run_context, validated_output=validated, output=result, output_context=output_context
-    )
+    return await capability.after_output_execute(run_context, output_context=output_context, output=result)
 
 
 async def run_output_with_hooks(
@@ -199,7 +214,7 @@ async def run_output_with_hooks(
         capability,
         run_context=run_context,
         output_context=output_context,
-        raw_output=text,
+        output=text,
         do_validate=do_validate,
         allow_partial=allow_partial,
         wrap_validation_errors=wrap_validation_errors,
@@ -208,7 +223,7 @@ async def run_output_with_hooks(
         capability,
         run_context=run_context,
         output_context=output_context,
-        validated=validated,
+        output=validated,
         do_execute=do_execute,
     )
 
@@ -873,6 +888,19 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
 
 @dataclass
+class _UnionValidatedOutput:
+    """Wrapper returned by UnionOutputProcessor.validate() carrying the resolved kind key.
+
+    This allows call() to re-resolve the correct inner processor without storing
+    it as instance state (which would be a race condition under concurrent runs).
+    The wrapper is unwrapped in _build_output_handlers so hooks see clean inner data.
+    """
+
+    kind: str
+    data: Any
+
+
+@dataclass
 class UnionOutputResult:
     kind: str
     data: ObjectJsonSchema
@@ -887,7 +915,6 @@ class UnionOutputModel:
 class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
     _union_processor: ObjectOutputProcessor[UnionOutputModel]
     _processors: dict[str, ObjectOutputProcessor[OutputDataT]]
-    _resolved_processor: ObjectOutputProcessor[OutputDataT] | None
 
     def __init__(
         self,
@@ -897,7 +924,6 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         description: str | None = None,
         strict: bool | None = None,
     ):
-        self._resolved_processor = None
         self._union_processor = ObjectOutputProcessor(output=UnionOutputModel)
 
         json_schemas: list[ObjectJsonSchema] = []
@@ -978,8 +1004,12 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
         validation_context: Any | None = None,
-    ) -> Any:
-        """Validate union envelope, resolve kind, and validate inner type."""
+    ) -> _UnionValidatedOutput:
+        """Validate union envelope, resolve kind, and validate inner type.
+
+        Returns a `_UnionValidatedOutput` wrapper carrying the resolved kind key,
+        so `call()` can re-resolve the correct inner processor without shared state.
+        """
         union_validated: UnionOutputModel = self._union_processor.validate(  # pyright: ignore[reportAssignmentType]
             data, allow_partial=allow_partial, validation_context=validation_context
         )
@@ -997,21 +1027,20 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             else:
                 raise
 
-        # Store resolved processor for call() phase
-        self._resolved_processor = processor
-
-        # Validate inner data
-        return processor.validate(inner_data, allow_partial=allow_partial, validation_context=validation_context)
+        inner_validated = processor.validate(
+            inner_data, allow_partial=allow_partial, validation_context=validation_context
+        )
+        return _UnionValidatedOutput(kind=kind, data=inner_validated)
 
     async def call(
         self,
-        output: Any,
+        output: _UnionValidatedOutput,
         run_context: RunContext[AgentDepsT],
         wrap_validation_errors: bool = True,
     ) -> Any:
-        """Delegate to the resolved inner processor for execution."""
-        assert self._resolved_processor is not None, 'validate() must be called before call()'
-        return await self._resolved_processor.call(output, run_context, wrap_validation_errors)
+        """Delegate to the inner processor resolved by the kind key in the wrapper."""
+        processor = self._processors[output.kind]
+        return await processor.call(output.data, run_context, wrap_validation_errors)
 
     async def process(
         self,
@@ -1022,7 +1051,7 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
         try:
-            output = self.validate(
+            wrapper = self.validate(
                 data,
                 allow_partial=allow_partial,
                 wrap_validation_errors=wrap_validation_errors,
@@ -1037,7 +1066,7 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             else:  # pragma: no cover — wrap_validation_errors is always True in process() callers
                 raise
 
-        return await self.call(output, run_context, wrap_validation_errors)
+        return await self.call(wrapper, run_context, wrap_validation_errors)
 
     def get_output_context(
         self,
@@ -1250,7 +1279,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             for tool_def in self._tool_defs
         }
 
-    async def call_tool(  # pragma: no cover — execution now handled by _raw_execute_output_tool when capability is present
+    async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         output = await self.processors[name].call(tool_args, ctx, wrap_validation_errors=False)
