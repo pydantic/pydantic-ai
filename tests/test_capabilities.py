@@ -408,6 +408,7 @@ def test_agent_from_spec_capabilities_merged():
 
 
 def test_model_json_schema_with_capabilities():
+    pytest.importorskip('mcp', reason='schema varies without mcp package')
     schema = AgentSpec.model_json_schema_with_capabilities()
     assert schema == snapshot(
         {
