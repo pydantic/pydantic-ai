@@ -1061,6 +1061,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             self._infer_name(inspect.currentframe())
 
         loaded_message_history: Sequence[_messages.ModelMessage] | None = None
+        if message_history is None and session_id is not None and self._memory is None:
+            raise exceptions.UserError(
+                '`session_id` was provided, but no `memory` store is configured on this agent. '
+                'Either configure `memory=...` when creating the agent, or pass `message_history=...` explicitly.'
+            )
         if message_history is None and session_id is not None and self._memory is not None:
             loaded_message_history = await self._memory.load(session_id)
 

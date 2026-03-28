@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from pydantic_ai import Agent, InMemoryStore, SQLiteMemoryStore
+from pydantic_ai import Agent, InMemoryStore, SQLiteMemoryStore, UserError
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage
@@ -127,3 +127,10 @@ async def test_sqlite_memory_store_persists_across_agents(tmp_path: Path) -> Non
             ),
         ]
     )
+
+
+async def test_session_id_without_memory_raises() -> None:
+    agent = Agent(TestModel(custom_output_text='ok'))
+
+    with pytest.raises(UserError, match='session_id'):
+        await agent.run('hello', session_id='s1')
