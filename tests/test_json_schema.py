@@ -165,3 +165,113 @@ def test_boolean_in_oneof_union():
     result = PassthroughTransformer(schema).walk()
     assert 'oneOf' in result
     assert result['oneOf'][0]['items'] is True
+
+
+def test_boolean_schemas_in_refs():
+    """Test that boolean schemas within $defs/$ref are handled correctly."""
+
+    class PassthroughTransformer(JsonSchemaTransformer):
+        def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
+            return schema
+
+    # $ref pointing to a boolean schema in $defs
+    schema = {
+        'type': 'object',
+        'properties': {
+            'anything': {'$ref': '#/$defs/AnyValue'},
+            'nothing': {'$ref': '#/$defs/NoValue'},
+        },
+        '$defs': {
+            'AnyValue': True,
+            'NoValue': False,
+        },
+    }
+
+    result = PassthroughTransformer(schema).walk()
+    # When prefer_inlined_defs is False, refs should be preserved
+    assert '$defs' in result
+    assert result['$defs']['AnyValue'] is True
+    assert result['$defs']['NoValue'] is False
+
+
+def test_deeply_nested_boolean_schemas():
+    """Test boolean schemas at multiple nesting levels."""
+
+    class PassthroughTransformer(JsonSchemaTransformer):
+        def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
+            return schema
+
+    schema = {
+        'type': 'object',
+        'properties': {
+            'data': {
+                'type': 'array',
+                'items': {
+                    'type': 'object',
+                    'properties': {
+                        'flexible': True,
+                        'strict': {'type': 'string'},
+                        'nested_array': {
+                            'type': 'array',
+                            'items': {
+                                'type': 'object',
+                                'properties': {
+                                    'wildcard': True,
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    }
+
+    result = PassthroughTransformer(schema).walk()
+    items = result['properties']['data']['items']
+    assert items['properties']['flexible'] is True
+    assert items['properties']['strict'] == {'type': 'string'}
+    nested = items['properties']['nested_array']['items']
+    assert nested['properties']['wildcard'] is True
+
+
+def test_boolean_with_additional_properties():
+    """Test boolean schemas as additionalProperties."""
+
+    class PassthroughTransformer(JsonSchemaTransformer):
+        def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
+            return schema
+
+    # additionalProperties: true (accept any extra keys)
+    schema = {
+        'type': 'object',
+        'properties': {'name': {'type': 'string'}},
+        'additionalProperties': True,
+    }
+    result = PassthroughTransformer(schema).walk()
+    assert result['additionalProperties'] is True
+
+    # additionalProperties: false (no extra keys allowed)
+    schema['additionalProperties'] = False
+    result = PassthroughTransformer(schema).walk()
+    assert result['additionalProperties'] is False
+
+
+def test_boolean_in_prefix_items():
+    """Test boolean schemas within prefixItems (tuple validation)."""
+
+    class PassthroughTransformer(JsonSchemaTransformer):
+        def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
+            return schema
+
+    schema = {
+        'type': 'array',
+        'prefixItems': [
+            {'type': 'string'},
+            True,
+            False,
+        ],
+    }
+    result = PassthroughTransformer(schema).walk()
+    assert result['prefixItems'][0] == {'type': 'string'}
+    assert result['prefixItems'][1] is True
+    assert result['prefixItems'][2] is False
