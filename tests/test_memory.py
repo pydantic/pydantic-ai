@@ -163,3 +163,13 @@ async def test_session_id_without_memory_raises() -> None:
 
     with pytest.raises(UserError, match='session_id'):
         await agent.run('hello', session_id='s1')
+
+
+async def test_message_history_and_session_id_raises() -> None:
+    store = InMemoryStore()
+    agent = Agent(TestModel(custom_output_text='ok'), memory=store)
+
+    r1 = await agent.run('hello', session_id='s1')
+
+    with pytest.raises(UserError, match='message_history'):
+        await agent.run('hello again', message_history=r1.all_messages(), session_id='s1')

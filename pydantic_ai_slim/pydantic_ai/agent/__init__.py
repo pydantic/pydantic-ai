@@ -1061,6 +1061,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             self._infer_name(inspect.currentframe())
 
         loaded_message_history: Sequence[_messages.ModelMessage] | None = None
+        if message_history is not None and session_id is not None:
+            raise exceptions.UserError(
+                'Cannot pass both `message_history` and `session_id` — when providing `message_history`, '
+                '`session_id` would be ignored. Provide only one.'
+            )
         if message_history is None and session_id is not None and self._memory is None:
             raise exceptions.UserError(
                 '`session_id` was provided, but no `memory` store is configured on this agent. '
@@ -1469,7 +1474,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     ):
                         try:
                             await self._memory.save(session_id, final_result.all_messages())
-                        except BaseException as e:
+                        except Exception as e:
                             raise exceptions.UserError(
                                 'Agent run completed successfully, but saving message history to the configured '
                                 f'memory store failed for session_id={session_id!r}.'
