@@ -732,11 +732,10 @@ class BedrockConverseModel(Model):
             )
 
             try:
-                if stream:
-                    return await anyio.to_thread.run_sync(functools.partial(self.client.converse_stream, **params))
-                return await anyio.to_thread.run_sync(functools.partial(self.client.converse, **params))
-            except ClientError as e:
-                self._raise_for_client_error(e)
+                return await self._call_bedrock_unlocked(
+                    params=params,
+                    stream=stream,
+                )
             finally:
                 self._unregister_extra_headers(self.client, handler, events)
 
@@ -970,16 +969,6 @@ class BedrockConverseModel(Model):
                         else:
                             start_tag, end_tag = self.profile.thinking_tags
                             content.append({'text': f'{start_tag}\n{item.content}\n{end_tag}'})
-                    elif isinstance(item, BuiltinToolCallPart):
-                        if item.provider_name == self.system:
-                            if item.tool_name == CodeExecutionTool.kind:
-                                server_tool_use_block_param: ToolUseBlockOutputTypeDef = {
-                                    'toolUseId': _utils.guard_tool_call_id(t=item),
-                                    'name': 'nova_code_interpreter',
-                                    'input': item.args_as_dict(),
-                                    'type': 'server_tool_use',
-                                }
-                                content.append({'toolUse': server_tool_use_block_param})
                     elif isinstance(item, BuiltinToolCallPart):
                         if item.provider_name == self.system:
                             if item.tool_name == CodeExecutionTool.kind:
