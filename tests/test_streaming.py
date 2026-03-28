@@ -24,6 +24,7 @@ from pydantic_ai import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ImageUrl,
+    InMemoryStore,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -702,6 +703,47 @@ async def test_call_tool():
                 ),
             ]
         )
+
+
+async def test_run_stream_session_id_persists_tool_returns() -> None:
+    async def stream_structured_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            assert agent_info.function_tools is not None
+            assert len(agent_info.function_tools) == 1
+            name = agent_info.function_tools[0].name
+            first = messages[0]
+            assert isinstance(first, ModelRequest)
+            assert isinstance(first.parts[0], UserPromptPart)
+            json_string = json.dumps({'x': first.parts[0].content})
+            yield {0: DeltaToolCall(name=name)}
+            yield {0: DeltaToolCall(json_args=json_string)}
+        else:
+            last = messages[-1]
+            assert isinstance(last, ModelRequest)
+            assert isinstance(last.parts[0], ToolReturnPart)
+            assert agent_info.output_tools is not None
+            assert len(agent_info.output_tools) == 1
+            name = agent_info.output_tools[0].name
+            json_data = json.dumps({'response': [last.parts[0].content, 2]})
+            yield {0: DeltaToolCall(name=name)}
+            yield {0: DeltaToolCall(json_args=json_data)}
+
+    store = InMemoryStore()
+    agent = Agent(FunctionModel(stream_function=stream_structured_function), output_type=tuple[str, int], memory=store)
+
+    @agent.tool_plain
+    async def ret_a(x: str) -> str:
+        return f'{x} world'
+
+    async with agent.run_stream('hello', session_id='s1') as result:
+        await result.get_output()
+
+    loaded = await store.load('s1')
+    assert any(
+        isinstance(m, ModelRequest) and any(isinstance(p, ToolReturnPart) for p in m.parts) for m in loaded
+    )
 
 
 async def test_empty_response():
