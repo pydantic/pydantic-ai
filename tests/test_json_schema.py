@@ -275,3 +275,24 @@ def test_boolean_in_prefix_items():
     assert result['prefixItems'][0] == {'type': 'string'}
     assert result['prefixItems'][1] is True
     assert result['prefixItems'][2] is False
+
+
+def test_boolean_root_with_defs():
+    """Test that walk() returns bool directly when root resolves to bool, even with $defs present.
+
+    Regression test for: walk() crashes with TypeError when _handle returns bool and $defs are present.
+    e.g., {'anyOf': [True], '$defs': {'Foo': {'type': 'string'}}}
+    """
+
+    class PassthroughTransformer(JsonSchemaTransformer):
+        def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
+            return schema
+
+    # Root resolves to bool via anyOf with $defs present
+    schema = {'anyOf': [True], '$defs': {'Foo': {'type': 'string'}}}
+    result = PassthroughTransformer(schema).walk()
+    assert result is True
+
+    schema = {'anyOf': [False], '$defs': {'Foo': {'type': 'string'}}}
+    result = PassthroughTransformer(schema).walk()
+    assert result is False

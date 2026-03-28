@@ -61,6 +61,9 @@ class JsonSchemaTransformer(ABC):
         schema.pop('$defs', None)
         handled = self._handle(schema)
 
+        if isinstance(handled, bool):
+            return handled
+
         if not self.prefer_inlined_defs and self.defs:
             handled['$defs'] = {k: self._handle(v) for k, v in self.defs.items()}
 
