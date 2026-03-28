@@ -43,6 +43,7 @@ class Mem0Toolset(FunctionToolset):
         user_id: str | None = None,
         agent_id: str | None = None,
         run_id: str | None = None,
+        id: str | None = None,
     ) -> None:
         if user_id is None and agent_id is None and run_id is None:
             raise UserError(
@@ -53,7 +54,7 @@ class Mem0Toolset(FunctionToolset):
         self._user_id = user_id
         self._agent_id = agent_id
         self._run_id = run_id
-        super().__init__([])
+        super().__init__([], id=id)
 
         def save_memory(
             content: str,
