@@ -87,6 +87,7 @@ from .abstract import (
 )
 from .spec import AgentSpec, get_capability_registry
 from .wrapper import WrapperAgent
+from ..memory import AbstractMemoryStore
 
 if TYPE_CHECKING:
     from starlette.applications import Starlette
@@ -207,6 +208,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     _concurrency_limiter: _concurrency.AbstractConcurrencyLimiter | None = dataclasses.field(repr=False)
 
+    _memory: AbstractMemoryStore | None = dataclasses.field(repr=False)
+
     _enter_lock: Lock = dataclasses.field(repr=False)
     _entered_count: int = dataclasses.field(repr=False)
     _exit_stack: AsyncExitStack | None = dataclasses.field(repr=False)
@@ -240,6 +243,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+        memory: AbstractMemoryStore | None = None,
+        **_deprecated_kwargs: Any,
     ) -> None: ...
 
     @overload
@@ -272,6 +277,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+        memory: AbstractMemoryStore | None = None,
     ) -> None: ...
 
     def __init__(
@@ -302,6 +308,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+        memory: AbstractMemoryStore | None = None,
         **_deprecated_kwargs: Any,
     ):
         """Create an agent.
@@ -467,6 +474,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._event_stream_handler = event_stream_handler
 
         self._concurrency_limiter = _concurrency.normalize_to_limiter(max_concurrency)
+
+        self._memory = memory
 
         self._override_name: ContextVar[_utils.Option[str]] = ContextVar('_override_name', default=None)
         self._override_deps: ContextVar[_utils.Option[AgentDepsT]] = ContextVar('_override_deps', default=None)
@@ -905,6 +914,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         output_type: None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
+        session_id: str | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[AgentDepsT] = None,
@@ -926,6 +936,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         output_type: OutputSpec[RunOutputDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
+        session_id: str | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[AgentDepsT] = None,
@@ -947,6 +958,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         output_type: OutputSpec[Any] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
+        session_id: str | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[AgentDepsT] = None,
@@ -1048,6 +1060,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
+        loaded_message_history: Sequence[_messages.ModelMessage] | None = None
+        if message_history is None and session_id is not None and self._memory is not None:
+            loaded_message_history = await self._memory.load(session_id)
+
         # Resolve spec contributions (additive at run time)
         resolved = self._resolve_spec(spec)
         if resolved is not None:
@@ -1109,8 +1125,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Build the initial state
         usage = usage or _usage.RunUsage()
+        effective_message_history = loaded_message_history if loaded_message_history is not None else message_history
         state = _agent_graph.GraphAgentState(
-            message_history=list(message_history) if message_history else [],
+            message_history=list(effective_message_history) if effective_message_history else [],
             usage=usage,
             retries=0,
             run_step=0,
@@ -1121,7 +1138,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         agent_model_settings = (
             model_settings_override.value if model_settings_override is not None else self.model_settings
         )
-        run_model_settings = model_settings if model_settings_override is None else None
+        run_model_settings = model_settings if model_settings_override is not None else None
 
         usage_limits = usage_limits or _usage.UsageLimits()
 
@@ -1234,7 +1251,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,
             prompt=user_prompt,
-            new_message_index=len(message_history) if message_history else 0,
+            new_message_index=len(effective_message_history) if effective_message_history else 0,
             resumed_request=None,
             model=model_used,
             get_model_settings=get_model_settings,
@@ -1439,6 +1456,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                             _var.reset(_token)
 
                     final_result = agent_run.result
+                    if (
+                        message_history is None
+                        and session_id is not None
+                        and self._memory is not None
+                        and final_result is not None
+                    ):
+                        await self._memory.save(session_id, final_result.all_messages())
                     if (
                         instrumentation_settings
                         and instrumentation_settings.include_content

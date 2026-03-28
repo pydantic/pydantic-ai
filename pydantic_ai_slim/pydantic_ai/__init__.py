@@ -110,6 +110,7 @@ from .messages import (
 from .models import ModelRequestContext
 from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
 from .output import NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
+from .memory import AbstractMemoryStore, InMemoryStore, SQLiteMemoryStore
 from .profiles import (
     DEFAULT_PROFILE,
     InlineDefsJsonSchemaTransformer,
@@ -300,5 +301,8 @@ __all__ = (
     'AgentRun',
     'AgentRunResult',
     'AgentRunResultEvent',
+    'AbstractMemoryStore',
+    'InMemoryStore',
+    'SQLiteMemoryStore',
 )
 __version__ = _metadata_version('pydantic_ai_slim')
