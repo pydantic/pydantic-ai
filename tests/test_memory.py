@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from pydantic_ai import Agent, InMemoryStore, SQLiteMemoryStore, UserError
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage
 
@@ -204,3 +204,29 @@ async def test_message_history_and_session_id_raises() -> None:
 
     with pytest.raises(UserError, match='message_history'):
         await agent.run('hello again', message_history=r1.all_messages(), session_id='s1')
+
+
+async def test_memory_save_failure_raises_user_error() -> None:
+    class FailingMemoryStore:
+        async def load(self, session_id: str) -> list[ModelMessage]:
+            return []
+
+        async def save(self, session_id: str, messages: list[ModelMessage]) -> None:
+            raise RuntimeError('save failed')
+
+        async def clear(self, session_id: str) -> None:
+            pass
+
+    agent = Agent(TestModel(custom_output_text='ok'), memory=FailingMemoryStore())
+
+    with pytest.raises(UserError, match='saving message history'):
+        await agent.run('hello', session_id='s1')
+
+
+async def test_run_stream_session_id_not_consumed_warns() -> None:
+    store = InMemoryStore()
+    agent = Agent(TestModel(custom_output_text='ok'), memory=store)
+
+    with pytest.warns(UserWarning, match='no final result was produced'):
+        async with agent.run_stream('hello', session_id='s1'):
+            pass
