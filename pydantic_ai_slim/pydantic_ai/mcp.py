@@ -357,8 +357,9 @@ Role = Literal['user', 'assistant']
 class TextContent:
     """Text content for a message."""
 
-    type: Literal['text'] = 'text'
     text: str
+    """The text content of the message."""
+    type: Literal['text'] = 'text'
     """The text content of the message."""
     annotations: Annotations | None = None
     metadata: dict[str, Any] | None = None
