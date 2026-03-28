@@ -1479,6 +1479,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                                 'Agent run completed successfully, but saving message history to the configured '
                                 f'memory store failed for session_id={session_id!r}.'
                             ) from e
+                    elif (
+                        message_history is None
+                        and session_id is not None
+                        and self._memory is not None
+                        and final_result is None
+                    ):
+                        warnings.warn(
+                            'An agent run was started with `session_id`, but no final result was produced, so message '
+                            'history was not saved. This can happen when using streaming APIs and the stream is not '
+                            'fully consumed.',
+                            stacklevel=2,
+                        )
                     if (
                         instrumentation_settings
                         and instrumentation_settings.include_content
