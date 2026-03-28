@@ -662,7 +662,11 @@ class GroqStreamedResponse(StreamedResponse):
                     ):
                         yield event
                 return
-            raise  # pragma: no cover
+            if isinstance(e, APIStatusError):
+                if (status_code := e.status_code) >= 400:
+                    raise ModelHTTPError(status_code=status_code, model_name=self._model_name, body=e.body) from e
+                raise ModelAPIError(model_name=self._model_name, message=e.message) from e
+            raise ModelAPIError(model_name=self._model_name, message=e.message) from e
 
     @property
     def model_name(self) -> GroqModelName:
