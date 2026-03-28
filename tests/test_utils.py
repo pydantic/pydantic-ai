@@ -14,10 +14,12 @@ from pydantic_ai._utils import (
     UNSET,
     PeekableAsyncStream,
     check_object_json_schema,
+    get_thread_pool_executor,
     group_by_temporal,
     is_async_callable,
     merge_json_schema_defs,
     run_in_executor,
+    set_thread_pool_executor,
     strip_markdown_fences,
     validate_empty_kwargs,
 )
@@ -573,3 +575,101 @@ def test_validate_empty_kwargs_preserves_order():
     assert '`first`' in error_msg
     assert '`second`' in error_msg
     assert '`third`' in error_msg
+
+
+async def test_run_in_executor_with_custom_thread_pool():
+    """Test that run_in_executor uses a custom ThreadPoolExecutor when set."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='test_pool')
+    original = get_thread_pool_executor()
+
+    try:
+        set_thread_pool_executor(executor)
+        assert get_thread_pool_executor() is executor
+
+        def sync_func(x: int) -> int:
+            import threading
+            thread_name = threading.current_thread().name
+            assert thread_name.startswith('test_pool')
+            return x * 2
+
+        result = await run_in_executor(sync_func, 21)
+        assert result == 42
+
+        # Run multiple calls to verify thread reuse
+        import threading
+
+        thread_ids: set[int] = set()
+
+        def track_thread() -> str:
+            thread_ids.add(threading.current_thread().ident)  # type: ignore[union-attr]
+            return threading.current_thread().name
+
+        for _ in range(5):
+            await run_in_executor(track_thread)
+
+        # With a pool of 2 workers, we should see at most 2 distinct threads
+        assert len(thread_ids) <= 2
+    finally:
+        set_thread_pool_executor(original)
+        executor.shutdown(wait=False)
+
+
+async def test_run_in_executor_custom_pool_with_kwargs():
+    """Test that custom executor works with keyword arguments."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    executor = ThreadPoolExecutor(max_workers=4)
+    original = get_thread_pool_executor()
+
+    try:
+        set_thread_pool_executor(executor)
+
+        def sync_func(a: int, b: int, c: int = 10) -> int:
+            return a + b + c
+
+        result = await run_in_executor(sync_func, 1, 2, c=3)
+        assert result == 6
+    finally:
+        set_thread_pool_executor(original)
+        executor.shutdown(wait=False)
+
+
+async def test_run_in_executor_default_without_custom_pool():
+    """Test that run_in_executor falls back to anyio when no custom pool is set."""
+    original = get_thread_pool_executor()
+
+    try:
+        set_thread_pool_executor(None)
+        assert get_thread_pool_executor() is None
+
+        def sync_func() -> str:
+            return 'default'
+
+        result = await run_in_executor(sync_func)
+        assert result == 'default'
+    finally:
+        set_thread_pool_executor(original)
+
+
+async def test_set_thread_pool_executor_none_restores_default():
+    """Test that setting executor to None restores default behavior."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    executor = ThreadPoolExecutor(max_workers=1)
+    original = get_thread_pool_executor()
+
+    try:
+        set_thread_pool_executor(executor)
+        assert get_thread_pool_executor() is executor
+
+        set_thread_pool_executor(None)
+        assert get_thread_pool_executor() is None
+
+        # Should still work with default behavior
+        result = await run_in_executor(lambda: 'restored')
+        assert result == 'restored'
+    finally:
+        set_thread_pool_executor(original)
+        executor.shutdown(wait=False)

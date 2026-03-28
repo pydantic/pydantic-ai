@@ -7,6 +7,7 @@ import re
 import time
 import uuid
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, fields, is_dataclass
@@ -55,6 +56,45 @@ _R = TypeVar('_R')
 
 _disable_threads: ContextVar[bool] = ContextVar('_disable_threads', default=False)
 
+_thread_pool_executor: ThreadPoolExecutor | None = None
+
+
+def set_thread_pool_executor(executor: ThreadPoolExecutor | None) -> None:
+    """Set a custom thread pool executor for running sync functions in threads.
+
+    By default, `run_in_executor` uses `anyio.to_thread.run_sync` which creates
+    temporary threads that are kept alive for 10 seconds after each call. In
+    long-running servers with sustained traffic, this can lead to thread
+    accumulation (hundreds or thousands of threads over time).
+
+    Providing a fixed-size `ThreadPoolExecutor` prevents unbounded thread growth
+    by reusing a bounded pool of worker threads.
+
+    Example:
+
+    ```python
+    from concurrent.futures import ThreadPoolExecutor
+    from pydantic_ai._utils import set_thread_pool_executor
+
+    # Use a fixed pool of 32 threads
+    set_thread_pool_executor(ThreadPoolExecutor(max_workers=32))
+
+    # ... later, when shutting down:
+    set_thread_pool_executor(None)
+    ```
+
+    Args:
+        executor: A `ThreadPoolExecutor` instance, or `None` to restore default
+            behavior (using `anyio.to_thread.run_sync`).
+    """
+    global _thread_pool_executor
+    _thread_pool_executor = executor
+
+
+def get_thread_pool_executor() -> ThreadPoolExecutor | None:
+    """Get the current custom thread pool executor, or None if using default behavior."""
+    return _thread_pool_executor
+
 
 @contextmanager
 def disable_threads() -> Iterator[None]:
@@ -81,6 +121,12 @@ async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.k
         return func(*args, **kwargs)
 
     wrapped_func = partial(func, *args, **kwargs)
+
+    executor = _thread_pool_executor
+    if executor is not None:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(executor, wrapped_func)
+
     return await run_sync(wrapped_func)
 
 
