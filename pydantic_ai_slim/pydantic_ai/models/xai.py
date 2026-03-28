@@ -52,7 +52,7 @@ from ..models import (
 from ..profiles import ModelProfileSpec
 from ..profiles.grok import GrokModelProfile
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ThinkingLevel
 from ..usage import RequestUsage
 
 try:
@@ -558,8 +558,6 @@ class XaiModel(Model):
             thinking = model_request_parameters.thinking
             if thinking is not False:
                 # xAI only supports 'low' and 'high'; map others to closest
-                from ..settings import ThinkingLevel
-
                 xai_map: dict[ThinkingLevel, str] = {
                     True: 'high',
                     'minimal': 'low',
@@ -1094,7 +1092,7 @@ def _extract_usage(
 
     # Add cached prompt tokens if available (optional attribute)
     if usage_obj.cached_prompt_text_tokens:
-        usage_data['cache_read_tokens'] = usage_obj.cached_prompt_text_tokens
+        usage_data['cached_prompt_text_tokens'] = usage_obj.cached_prompt_text_tokens
 
     # Aggregate server-side tools used by PydanticAI builtin tool name
     if usage_obj.server_side_tools_used:
@@ -1107,13 +1105,17 @@ def _extract_usage(
             usage_data[f'server_side_tools_{tool_name}'] = count
 
     # Build details from non-standard fields
-    details = {k: v for k, v in usage_data.items() if k not in {'prompt_tokens', 'completion_tokens'}}
+    details = {
+        k: v
+        for k, v in usage_data.items()
+        if k not in {'prompt_tokens', 'completion_tokens', 'cached_prompt_text_tokens'}
+    }
 
     extracted = RequestUsage.extract(
         dict(model=model, usage=usage_data),
         provider=provider,
         provider_url=provider_url,
-        provider_fallback='x_ai',  # Pricing file is defined as x_ai.yml
+        provider_fallback='x-ai',  # genai-prices provider ID is 'x-ai'
         details=details or None,
     )
 

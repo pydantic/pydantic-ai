@@ -197,17 +197,17 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
-        """Wraps the entire agent run. ``handler()`` executes the run.
+        """Wraps the entire agent run. `handler()` executes the run.
 
-        If ``handler()`` raises and this method catches the exception and
+        If `handler()` raises and this method catches the exception and
         returns a result instead, the error is suppressed and the recovery
         result is used.
 
-        If this method does not call ``handler()`` (short-circuit), the run
+        If this method does not call `handler()` (short-circuit), the run
         is skipped and the returned result is used directly.
 
         Note: if the caller cancels the run (e.g. by breaking out of an
-        ``iter()`` loop), this method receives an :class:`asyncio.CancelledError`.
+        `iter()` loop), this method receives an :class:`asyncio.CancelledError`.
         Implementations that hold resources should handle cleanup accordingly.
         """
         return await handler()
@@ -222,15 +222,15 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         This is the error counterpart to
         [`after_run`][pydantic_ai.capabilities.AbstractCapability.after_run]:
-        while ``after_run`` is called on success, ``on_run_error`` is called on
+        while `after_run` is called on success, `on_run_error` is called on
         failure (after [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run]
         has had its chance to recover).
 
-        **Raise** the original ``error`` (or a different exception) to propagate it.
+        **Raise** the original `error` (or a different exception) to propagate it.
         **Return** an [`AgentRunResult`][pydantic_ai.run.AgentRunResult] to suppress
         the error and recover the run.
 
-        Not called for ``GeneratorExit`` or ``KeyboardInterrupt``.
+        Not called for `GeneratorExit` or `KeyboardInterrupt`.
         """
         raise error
 
@@ -252,7 +252,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         node: AgentNode[AgentDepsT],
         result: NodeResult[AgentDepsT],
     ) -> NodeResult[AgentDepsT]:
-        """Called after each graph node succeeds. Can modify the result (next node or ``End``)."""
+        """Called after each graph node succeeds. Can modify the result (next node or `End`)."""
         return result
 
     async def wrap_node_run(
@@ -299,8 +299,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         This is the error counterpart to
         [`after_node_run`][pydantic_ai.capabilities.AbstractCapability.after_node_run].
 
-        **Raise** the original ``error`` (or a different exception) to propagate it.
-        **Return** a next node or ``End`` to recover and continue the graph.
+        **Raise** the original `error` (or a different exception) to propagate it.
+        **Return** a next node or `End` to recover and continue the graph.
 
         Useful for recovering from
         [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior]
@@ -337,7 +337,12 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         request_context: ModelRequestContext,
         response: ModelResponse,
     ) -> ModelResponse:
-        """Called after each model response. Can modify the response before further processing."""
+        """Called after each model response. Can modify the response before further processing.
+
+        Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject the response and
+        ask the model to try again. The original response is still appended to message history
+        so the model can see what it said. Retries count against `max_result_retries`.
+        """
         return response
 
     async def wrap_model_request(
@@ -347,7 +352,12 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         request_context: ModelRequestContext,
         handler: WrapModelRequestHandler,
     ) -> ModelResponse:
-        """Wraps the model request. handler() calls the model."""
+        """Wraps the model request. handler() calls the model.
+
+        Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to skip `on_model_request_error`
+        and directly retry the model request with a retry prompt. If the handler was called,
+        the model response is preserved in history for context (same as `after_model_request`).
+        """
         return await handler(request_context)
 
     async def on_model_request_error(
@@ -362,11 +372,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         This is the error counterpart to
         [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request].
 
-        **Raise** the original ``error`` (or a different exception) to propagate it.
+        **Raise** the original `error` (or a different exception) to propagate it.
         **Return** a [`ModelResponse`][pydantic_ai.messages.ModelResponse] to suppress
         the error and use the response as if the model call succeeded.
+        **Raise** [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to retry the model request
+        with a retry prompt instead of recovering or propagating.
 
-        Not called for [`SkipModelRequest`][pydantic_ai.exceptions.SkipModelRequest].
+        Not called for [`SkipModelRequest`][pydantic_ai.exceptions.SkipModelRequest]
+        or [`ModelRetry`][pydantic_ai.exceptions.ModelRetry].
         """
         raise error
 
@@ -380,7 +393,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         tool_def: ToolDefinition,
         args: RawToolArgs,
     ) -> RawToolArgs:
-        """Modify raw args before validation."""
+        """Modify raw args before validation.
+
+        Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to skip validation and
+        ask the model to redo the tool call.
+        """
         return args
 
     async def after_tool_validate(
@@ -391,7 +408,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         tool_def: ToolDefinition,
         args: ValidatedToolArgs,
     ) -> ValidatedToolArgs:
-        """Modify validated args. Called only on successful validation."""
+        """Modify validated args. Called only on successful validation.
+
+        Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject the validated args
+        and ask the model to redo the tool call.
+        """
         return args
 
     async def wrap_tool_validate(
@@ -422,7 +443,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         Fires for [`ValidationError`][pydantic.ValidationError] (schema mismatch) and
         [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] (custom validator rejection).
 
-        **Raise** the original ``error`` (or a different exception) to propagate it.
+        **Raise** the original `error` (or a different exception) to propagate it.
         **Return** validated args to suppress the error and continue as if validation passed.
 
         Not called for [`SkipToolValidation`][pydantic_ai.exceptions.SkipToolValidation].
@@ -439,7 +460,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         tool_def: ToolDefinition,
         args: ValidatedToolArgs,
     ) -> ValidatedToolArgs:
-        """Modify validated args before execution."""
+        """Modify validated args before execution.
+
+        Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to skip execution and
+        ask the model to redo the tool call.
+        """
         return args
 
     async def after_tool_execute(
@@ -451,7 +476,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         args: ValidatedToolArgs,
         result: Any,
     ) -> Any:
-        """Modify result after execution."""
+        """Modify result after execution.
+
+        Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject the tool result
+        and ask the model to redo the tool call.
+        """
         return result
 
     async def wrap_tool_execute(
@@ -480,8 +509,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         This is the error counterpart to
         [`after_tool_execute`][pydantic_ai.capabilities.AbstractCapability.after_tool_execute].
 
-        **Raise** the original ``error`` (or a different exception) to propagate it.
+        **Raise** the original `error` (or a different exception) to propagate it.
         **Return** any value to suppress the error and use it as the tool result.
+        **Raise** [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to
+        redo the tool call instead of recovering or propagating.
 
         Not called for control flow exceptions
         ([`SkipToolExecution`][pydantic_ai.exceptions.SkipToolExecution],

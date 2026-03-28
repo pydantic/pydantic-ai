@@ -14,6 +14,7 @@ nav:
   - install.md
   - help.md
   - troubleshooting.md
+  - Coding Agent Skills: coding-agent-skills.md
   - Pydantic AI Gateway: gateway.md
 
   - Documentation:
@@ -85,6 +86,7 @@ nav:
           - Multi-Run Evaluation: evals/how-to/multi-run.md
           - Retry Strategies: evals/how-to/retry-strategies.md
           - Metrics & Attributes: evals/how-to/metrics-attributes.md
+          - Case Lifecycle Hooks: evals/how-to/lifecycle.md
       - Examples:
           - Simple Validation: evals/examples/simple-validation.md
 
@@ -187,6 +189,7 @@ nav:
       - pydantic_evals:
           - api/pydantic_evals/dataset.md
           - api/pydantic_evals/evaluators.md
+          - api/pydantic_evals/lifecycle.md
           - api/pydantic_evals/online.md
           - api/pydantic_evals/reporting.md
           - api/pydantic_evals/otel.md
@@ -374,6 +377,7 @@ plugins:
           - install.md
           - help.md
           - troubleshooting.md
+          - coding-agent-skills.md
         Concepts documentation:
           - a2a.md
           - agent.md
