@@ -229,7 +229,8 @@ async def test_bedrock_model_with_extra_headers(allow_model_requests: None, bedr
         model_settings={'extra_headers': {'X-Custom-Test': 'pydantic-ai-val'}},
     )
 
-    assert result.output
+    assert result.output == snapshot(...)
+    assert result.all_messages() == snapshot(...)
 
 
 @pytest.mark.vcr()
@@ -252,7 +253,7 @@ async def test_bedrock_model_stream_with_extra_headers(
     ) as result:
         output = await result.get_output()
 
-    assert output
+    assert output == snapshot(...)
 
 
 @pytest.mark.vcr()

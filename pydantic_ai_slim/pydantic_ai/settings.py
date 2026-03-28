@@ -57,7 +57,7 @@ class ModelSettings(TypedDict, total=False):
 
     * Gemini
     * Anthropic
-    * OpenAI
+    * OpenAI 
     * Groq
     * Cohere
     * Mistral
@@ -185,6 +185,7 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic
     * Gemini
     * Groq
+    * Bedrock
     * xAI
     """
 
