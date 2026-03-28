@@ -16,6 +16,9 @@
   <a href="https://github.com/pydantic/pydantic-ai"><img src="https://img.shields.io/pypi/pyversions/pydantic-ai.svg" alt="versions"></a>
   <a href="https://github.com/pydantic/pydantic-ai/blob/main/LICENSE"><img src="https://img.shields.io/github/license/pydantic/pydantic-ai.svg?v" alt="license"></a>
   <a href="https://logfire.pydantic.dev/docs/join-slack/"><img src="https://img.shields.io/badge/Slack-Join%20Slack-4A154B?logo=slack" alt="Join Slack" /></a>
+  <a href="https://gitcgr.com/pydantic/pydantic-ai" target="_blank" rel="noopener noreferrer">
+    <img src="https://gitcgr.com/badge/pydantic/pydantic-ai.svg" alt="gitcgr" />
+  </a>
 </div>
 
 ---
