@@ -286,9 +286,11 @@ class OnlineEvaluator:
 
     evaluator: Evaluator
     sample_rate: float | Callable[[], float | bool] | None = None
-    sink: EvaluationSink | Sequence[EvaluationSink | SinkCallback] | SinkCallback | None = None
     max_concurrency: int = 10
+
+    sink: EvaluationSink | Sequence[EvaluationSink | SinkCallback] | SinkCallback | None = None
     gate: Callable[[EvaluatorContext], bool | Awaitable[bool]] | None = None
+
     on_max_concurrency: Callable[[EvaluatorContext], Any] | None = None
     """Called when an evaluation is dropped because `max_concurrency` was reached.
 
@@ -303,6 +305,7 @@ class OnlineEvaluator:
     If `None`, uses the config's `on_error` default. If neither is set, exceptions are
     silently suppressed — background evaluation never crashes the user's function.
     """
+
     semaphore: threading.Semaphore = field(init=False, repr=False)
     """Thread-safe semaphore for per-evaluator concurrency limiting.
 
@@ -406,10 +409,7 @@ def _should_evaluate(rate: float | Callable[[], float | bool], global_enabled: b
     if _EVALUATION_DISABLED.get():  # pragma: no cover
         return False
 
-    try:
-        resolved = _resolve_sample_rate(rate)
-    except Exception:
-        return False
+    resolved = _resolve_sample_rate(rate)
 
     # Callable can return bool (True = always, False = never)
     if isinstance(resolved, bool):
@@ -675,7 +675,7 @@ def _wrap_async(
 
         # Build context
         context = EvaluatorContext(
-            name=func.__qualname__,
+            name=None,
             inputs=inputs,
             output=result,
             expected_output=None,
@@ -729,7 +729,7 @@ def _wrap_sync(
 
         # Build context
         context = EvaluatorContext(
-            name=func.__qualname__,
+            name=None,
             inputs=inputs,
             output=result,
             expected_output=None,

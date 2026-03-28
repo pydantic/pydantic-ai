@@ -809,4 +809,4 @@ Key classes and functions:
 - **[Custom Evaluators](evaluators/custom.md)** — Write evaluators for your domain
 - **[Built-in Evaluators](evaluators/built-in.md)** — Use ready-made evaluators
 - **[Logfire Integration](how-to/logfire-integration.md)** — Visualize evaluation results in Logfire
-- **[Quick Start](quick-start.md)** — Offline evaluation with `Dataset.evaluate()`
+- **[Quick Start](quick-start.md)** — Offline evaluation with [`Dataset.evaluate()`][pydantic_evals.dataset.Dataset.evaluate]
