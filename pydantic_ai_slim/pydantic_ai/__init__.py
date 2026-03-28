@@ -11,6 +11,7 @@ from .agent import (
     UserPromptNode,
     capture_run_messages,
 )
+from .agent.spec import AgentSpec
 from .builtin_tools import (
     CodeExecutionTool,
     FileSearchTool,
@@ -107,6 +108,7 @@ from .messages import (
     VideoMediaType,
     VideoUrl,
 )
+from .models import ModelRequestContext
 from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
 from .output import NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
 from .profiles import (
@@ -150,6 +152,7 @@ __all__ = (
     # agent
     'Agent',
     'AgentModelSettings',
+    'AgentSpec',
     'EndStrategy',
     'CallToolsNode',
     'ModelRequestNode',
@@ -287,6 +290,8 @@ __all__ = (
     'TemplateStr',
     # format_prompt
     'format_as_xml',
+    # models
+    'ModelRequestContext',
     # settings
     'ModelSettings',
     # usage

@@ -141,7 +141,7 @@ LLMJudge(
 Customize model behavior:
 
 ```python
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai import ModelSettings
 from pydantic_evals.evaluators import LLMJudge
 
 LLMJudge(
@@ -511,7 +511,7 @@ evaluators = [
 ### 4. Use Temperature 0 for Consistency
 
 ```python
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai import ModelSettings
 from pydantic_evals.evaluators import LLMJudge
 
 LLMJudge(
