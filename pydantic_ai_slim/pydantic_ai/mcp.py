@@ -380,14 +380,14 @@ class EmbeddedResource:
     See the [MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/server/resources).
     """
 
-    type: Literal['resource'] = 'resource'
-    """Discriminator for embedded resource content."""
-
     uri: str
     """The URI of the embedded resource."""
 
     content: str | messages.BinaryContent
     """The content of the embedded resource."""
+
+    type: Literal['resource'] = 'resource'
+    """Discriminator for embedded resource content."""
 
     mime_type: str | None = None
     """The MIME type of the resource, if known."""
