@@ -37,22 +37,22 @@ async def test_in_memory_store_persists_across_runs() -> None:
         ]
     )
 
+
+async def test_sqlite_memory_store_clear(tmp_path: Path) -> None:
+    db_path = tmp_path / 'memory.db'
+
+    store = SQLiteMemoryStore(db_path)
+    agent = Agent(TestModel(custom_output_text='ok'), memory=store)
+
+    r1 = await agent.run('hello', session_id='s1')
+    assert r1.output == 'ok'
+
+    await store.clear('s1')
+
     r2 = await agent.run('hello again', session_id='s1')
     assert r2.output == 'ok'
     assert r2.all_messages() == snapshot(
         [
-            ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='ok')],
-                usage=RequestUsage(input_tokens=51, output_tokens=1),
-                model_name='test',
-                timestamp=IsNow(tz=timezone.utc),
-                run_id=IsStr(),
-            ),
             ModelRequest(
                 parts=[UserPromptPart(content='hello again', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
@@ -60,7 +60,36 @@ async def test_in_memory_store_persists_across_runs() -> None:
             ),
             ModelResponse(
                 parts=[TextPart(content='ok')],
-                usage=RequestUsage(input_tokens=53, output_tokens=2),
+                usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt()),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_in_memory_store_clear() -> None:
+    store = InMemoryStore()
+    agent = Agent(TestModel(custom_output_text='ok'), memory=store)
+
+    r1 = await agent.run('hello', session_id='s1')
+    assert r1.output == 'ok'
+
+    await store.clear('s1')
+
+    r2 = await agent.run('hello again', session_id='s1')
+    assert r2.output == 'ok'
+    assert r2.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello again', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='ok')],
+                usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt()),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),

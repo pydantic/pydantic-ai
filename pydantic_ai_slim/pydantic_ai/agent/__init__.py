@@ -1467,7 +1467,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         and self._memory is not None
                         and final_result is not None
                     ):
-                        await self._memory.save(session_id, final_result.all_messages())
+                        try:
+                            await self._memory.save(session_id, final_result.all_messages())
+                        except BaseException as e:
+                            raise exceptions.UserError(
+                                'Agent run completed successfully, but saving message history to the configured '
+                                f'memory store failed for session_id={session_id!r}.'
+                            ) from e
                     if (
                         instrumentation_settings
                         and instrumentation_settings.include_content
