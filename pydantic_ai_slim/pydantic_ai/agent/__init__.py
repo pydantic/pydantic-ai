@@ -49,6 +49,7 @@ from ..builtin_tools import AbstractBuiltinTool
 from ..capabilities import AbstractCapability, CombinedCapability
 from ..capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
 from ..capabilities.history_processor import HistoryProcessor as HistoryProcessorCap
+from ..memory import AbstractMemoryStore
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
@@ -87,7 +88,6 @@ from .abstract import (
 )
 from .spec import AgentSpec, get_capability_registry
 from .wrapper import WrapperAgent
-from ..memory import AbstractMemoryStore
 
 if TYPE_CHECKING:
     from starlette.applications import Starlette
@@ -244,7 +244,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
         memory: AbstractMemoryStore | None = None,
-        **_deprecated_kwargs: Any,
     ) -> None: ...
 
     @overload
@@ -389,6 +388,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             capabilities: Optional list of [capabilities](https://ai.pydantic.dev/capabilities/) to configure the agent with.
                 Custom capabilities can be created by subclassing
                 [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability].
+            memory: Optional memory store to persist and load conversation history by `session_id`.
         """
         if model is None or defer_model_check:
             self._model = model
@@ -952,7 +952,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
-    async def iter(  # noqa: C901
+    async def iter(  # noqa: C901, D417
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
@@ -1138,7 +1138,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         agent_model_settings = (
             model_settings_override.value if model_settings_override is not None else self.model_settings
         )
-        run_model_settings = model_settings if model_settings_override is not None else None
+        run_model_settings = model_settings if model_settings_override is None else None
 
         usage_limits = usage_limits or _usage.UsageLimits()
 

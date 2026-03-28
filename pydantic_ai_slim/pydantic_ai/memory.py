@@ -6,27 +6,36 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-import anyio
+from anyio import to_thread
 
 from . import messages as _messages
+from .messages import ModelRequest, ModelResponse
+
+
+def _in_memory_store_default() -> dict[str, list[ModelRequest | ModelResponse]]:
+    return {}
 
 
 class AbstractMemoryStore(Protocol):
-    async def load(self, session_id: str) -> list[_messages.ModelMessage]: ...
+    """A store for persisting and retrieving agent message history across runs."""
 
-    async def save(self, session_id: str, messages: Sequence[_messages.ModelMessage]) -> None: ...
+    async def load(self, session_id: str) -> list[ModelRequest | ModelResponse]: ...
+
+    async def save(self, session_id: str, messages: Sequence[ModelRequest | ModelResponse]) -> None: ...
 
     async def clear(self, session_id: str) -> None: ...
 
 
 @dataclass
 class InMemoryStore:
-    _store: dict[str, list[_messages.ModelMessage]] = field(default_factory=dict)
+    """Simple in-memory implementation of a memory store."""
 
-    async def load(self, session_id: str) -> list[_messages.ModelMessage]:
+    _store: dict[str, list[ModelRequest | ModelResponse]] = field(default_factory=_in_memory_store_default)
+
+    async def load(self, session_id: str) -> list[ModelRequest | ModelResponse]:
         return list(self._store.get(session_id, []))
 
-    async def save(self, session_id: str, messages: Sequence[_messages.ModelMessage]) -> None:
+    async def save(self, session_id: str, messages: Sequence[ModelRequest | ModelResponse]) -> None:
         self._store[session_id] = list(messages)
 
     async def clear(self, session_id: str) -> None:
@@ -35,6 +44,8 @@ class InMemoryStore:
 
 @dataclass
 class SQLiteMemoryStore:
+    """SQLite-backed implementation of a memory store."""
+
     path: str | Path
 
     def __post_init__(self) -> None:
@@ -54,7 +65,7 @@ class SQLiteMemoryStore:
             finally:
                 conn.close()
 
-        return await anyio.to_thread.run_sync(_load_sync)
+        return await to_thread.run_sync(_load_sync)
 
     async def save(self, session_id: str, messages: Sequence[_messages.ModelMessage]) -> None:
         def _save_sync() -> None:
@@ -71,7 +82,7 @@ class SQLiteMemoryStore:
             finally:
                 conn.close()
 
-        await anyio.to_thread.run_sync(_save_sync)
+        await to_thread.run_sync(_save_sync)
 
     async def clear(self, session_id: str) -> None:
         def _clear_sync() -> None:
@@ -83,13 +94,8 @@ class SQLiteMemoryStore:
             finally:
                 conn.close()
 
-        await anyio.to_thread.run_sync(_clear_sync)
+        await to_thread.run_sync(_clear_sync)
 
 
 def _init_schema(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        'CREATE TABLE IF NOT EXISTS pydantic_ai_memory ('
-        'session_id TEXT PRIMARY KEY, '
-        'messages BLOB NOT NULL'
-        ')'
-    )
+    conn.execute('CREATE TABLE IF NOT EXISTS pydantic_ai_memory (session_id TEXT PRIMARY KEY, messages BLOB NOT NULL)')

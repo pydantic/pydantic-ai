@@ -182,6 +182,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         *,
         output_type: None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
+        session_id: str | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
@@ -204,6 +205,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         *,
         output_type: OutputSpec[RunOutputDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
+        session_id: str | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
@@ -219,7 +221,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
-    async def run(
+    async def run(  # noqa: D417
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
@@ -319,6 +321,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         *,
         output_type: None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
+        session_id: str | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
@@ -341,6 +344,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         *,
         output_type: OutputSpec[RunOutputDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
+        session_id: str | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
@@ -356,7 +360,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
-    def run_sync(
+    def run_sync(  # noqa: D417
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
@@ -458,6 +462,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         *,
         output_type: None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
+        session_id: str | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
@@ -480,6 +485,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         *,
         output_type: OutputSpec[RunOutputDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
+        session_id: str | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
@@ -496,12 +502,13 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     ) -> AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
-    async def run_stream(
+    async def run_stream(  # noqa: D417
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
+        session_id: str | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
@@ -564,6 +571,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             user_prompt,
             output_type=output_type,
             message_history=message_history,
+            session_id=session_id,
             deferred_tool_results=deferred_tool_results,
             model=model,
             instructions=instructions,
@@ -588,6 +596,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         *,
         output_type: None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
+        session_id: str | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
@@ -609,6 +618,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         *,
         output_type: OutputSpec[RunOutputDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
+        session_id: str | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
@@ -623,12 +633,13 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]: ...
 
-    def run_stream_events(
+    def run_stream_events(  # noqa: D417
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
+        session_id: str | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
@@ -709,6 +720,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             user_prompt,
             output_type=output_type,
             message_history=message_history,
+            session_id=session_id,
             deferred_tool_results=deferred_tool_results,
             model=model,
             instructions=instructions,
@@ -768,7 +780,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
-    async def iter(
+    async def iter(  # noqa: D417
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
