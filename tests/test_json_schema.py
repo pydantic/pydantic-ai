@@ -296,3 +296,29 @@ def test_boolean_root_with_defs():
     schema = {'anyOf': [False], '$defs': {'Foo': {'type': 'string'}}}
     result = PassthroughTransformer(schema).walk()
     assert result is False
+
+
+def test_boolean_ref_with_inlined_defs():
+    """Test refs pointing to union schemas that collapse to bool with prefer_inlined_defs=True.
+
+    Covers the refs_stack cleanup path when _handle returns a bool after
+    inlining $ref definitions (nested_refs > 0).
+    """
+
+    class PassthroughTransformer(JsonSchemaTransformer):
+        def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
+            return schema
+
+    # $ref points to a schema with no type, whose anyOf simplifies to bool
+    schema = {
+        'type': 'object',
+        'properties': {
+            'wildcard': {'$ref': '#/$defs/Anything'},
+        },
+        '$defs': {
+            'Anything': {'anyOf': [True]},
+        },
+    }
+    result = PassthroughTransformer(schema, prefer_inlined_defs=True).walk()
+    # The ref should be inlined and the anyOf: [True] should collapse to True
+    assert result['properties']['wildcard'] is True
