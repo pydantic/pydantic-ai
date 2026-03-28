@@ -704,7 +704,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                         parts, run_id=graph_ctx.state.run_id, timestamp=_utils.now_utc()
                                     )
                                     messages.append(tool_return_request)
-                                    graph_ctx.state.message_history.append(tool_return_request)
+                                    graph_ctx.state.post_stream_message_history.append(tool_return_request)
 
                                 await agent_run.next(_agent_graph.SetFinalResult(final_result))
 

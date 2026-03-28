@@ -741,9 +741,7 @@ async def test_run_stream_session_id_persists_tool_returns() -> None:
         await result.get_output()
 
     loaded = await store.load('s1')
-    assert any(
-        isinstance(m, ModelRequest) and any(isinstance(p, ToolReturnPart) for p in m.parts) for m in loaded
-    )
+    assert any(isinstance(m, ModelRequest) and any(isinstance(p, ToolReturnPart) for p in m.parts) for m in loaded)
 
 
 async def test_empty_response():

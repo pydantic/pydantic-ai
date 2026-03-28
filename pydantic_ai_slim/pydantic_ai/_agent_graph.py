@@ -74,6 +74,9 @@ class GraphAgentState:
     """State kept across the execution of the agent graph."""
 
     message_history: list[_messages.ModelMessage] = dataclasses.field(default_factory=list[_messages.ModelMessage])
+    post_stream_message_history: list[_messages.ModelMessage] = dataclasses.field(
+        default_factory=list[_messages.ModelMessage]
+    )
     usage: _usage.RunUsage = dataclasses.field(default_factory=_usage.RunUsage)
     retries: int = 0
     run_step: int = 0
@@ -642,6 +645,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     self.last_request_context = wrap_request_context
                     await self._finish_handling(ctx, model_response)
                     assert self._result is not None
+
+            if ctx.state.post_stream_message_history:
+                ctx.state.message_history.extend(ctx.state.post_stream_message_history)
+                ctx.state.post_stream_message_history.clear()
 
     @staticmethod
     def _build_agent_stream(
