@@ -173,7 +173,7 @@ capabilities:
 [`AgentSpec.to_file`][pydantic_ai.agent.spec.AgentSpec.to_file] saves a spec to YAML or JSON and optionally generates a companion JSON Schema file for editor autocompletion:
 
 ```python {title="save_spec_example.py"}
-from pydantic_ai.agent.spec import AgentSpec
+from pydantic_ai import AgentSpec
 
 spec = AgentSpec(
     model='anthropic:claude-opus-4-6',

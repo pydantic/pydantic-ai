@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
     from typing_extensions import Self
@@ -25,6 +25,10 @@ class InstrumentationNames:
 
     # Output Tool execution span configuration
     output_tool_span_name: str
+
+    # Deferral span attributes
+    tool_deferral_name_attr: ClassVar[str] = 'pydantic_ai.tool.deferral.name'
+    tool_deferral_metadata_attr: ClassVar[str] = 'pydantic_ai.tool.deferral.metadata'
 
     @classmethod
     def for_version(cls, version: int) -> Self:

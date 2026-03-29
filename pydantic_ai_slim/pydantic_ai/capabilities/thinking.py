@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
-from pydantic_ai.settings import ModelSettings as _ModelSettings, ThinkingLevel
-from pydantic_ai.tools import AgentDepsT
+from pydantic_ai.settings import ModelSettings, ThinkingLevel
 
 from .abstract import AbstractCapability
 
 
 @dataclass
-class Thinking(AbstractCapability[AgentDepsT]):
+class Thinking(AbstractCapability[Any]):
     """Enables and configures model thinking/reasoning.
 
     Uses the unified `thinking` setting in
@@ -26,5 +26,5 @@ class Thinking(AbstractCapability[AgentDepsT]):
     - `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`: Enable thinking at a specific effort level.
     """
 
-    def get_model_settings(self) -> _ModelSettings | None:
-        return _ModelSettings(thinking=self.effort)
+    def get_model_settings(self) -> ModelSettings | None:
+        return ModelSettings(thinking=self.effort)

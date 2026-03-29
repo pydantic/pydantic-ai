@@ -46,7 +46,7 @@ class BuiltinOrLocalTool(AbstractCapability[AgentDepsT]):
     - A callable (`BuiltinToolFunc`): dynamically create the builtin per-run via `RunContext`.
     """
 
-    local: Tool[Any] | Callable[..., Any] | AbstractToolset[Any] | Literal[False] | None = None
+    local: Tool[AgentDepsT] | Callable[..., Any] | AbstractToolset[AgentDepsT] | Literal[False] | None = None
     """Configure the local fallback tool.
 
     - `None` (default): auto-detect a local fallback via `_default_local`.
@@ -102,7 +102,7 @@ class BuiltinOrLocalTool(AbstractCapability[AgentDepsT]):
             f'{type(self).__name__}: cannot derive builtin_unique_id — override _builtin_unique_id() in your subclass'
         )
 
-    def _default_local(self) -> Tool[Any] | AbstractToolset[Any] | None:
+    def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
         """Auto-detect a local fallback. Override in subclasses that have one."""
         return None
 
