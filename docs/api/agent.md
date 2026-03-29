@@ -18,3 +18,8 @@
             - CallToolsNode
             - ModelRequestNode
             - UserPromptNode
+
+::: pydantic_ai.agent.spec
+    options:
+        members:
+            - AgentSpec
