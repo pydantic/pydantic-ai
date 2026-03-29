@@ -303,7 +303,7 @@ class OnlineEvaluator:
     Receives the exception, evaluator context, evaluator instance, and a location string
     (`'gate'`, `'sink'`, or `'on_max_concurrency'`). Can be sync or async.
     If `None`, uses the config's `on_error` default. If neither is set, exceptions are
-    silently suppressed — background evaluation never crashes the user's function.
+    silently suppressed.
     """
 
     semaphore: threading.Semaphore = field(init=False, repr=False)

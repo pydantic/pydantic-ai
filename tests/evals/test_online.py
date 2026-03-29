@@ -910,8 +910,8 @@ async def test_fractional_sample_rate():
 
 
 @pytest.mark.anyio
-async def test_sample_rate_callable_exception_skips_evaluator():
-    """Exception in sample_rate callable skips the evaluator without breaking the function."""
+async def test_sample_rate_callable_exception_propagates():
+    """Exception in sample_rate callable propagates — it's the user's responsibility."""
     collector = Collector()
 
     def bad_rate() -> float:
@@ -923,11 +923,8 @@ async def test_sample_rate_callable_exception_skips_evaluator():
     async def my_func(x: int) -> int:
         return x
 
-    result = await my_func(42)
-    assert result == 42
-
-    await wait_for_evaluations()
-    assert len(collector.calls) == 0
+    with pytest.raises(ValueError, match='rate error'):
+        await my_func(42)
 
 
 @pytest.mark.anyio

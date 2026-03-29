@@ -741,7 +741,7 @@ config = OnlineEvalConfig(on_max_concurrency=warn_on_drop)
 
 ## Error Handling
 
-Background evaluation should never crash the user's function. Exceptions in gates, sinks, and `on_max_concurrency` callbacks are caught and either routed to an `on_error` handler or silently suppressed.
+Exceptions in gates, sinks, and `on_max_concurrency` callbacks are caught and either routed to an `on_error` handler or silently suppressed. Note that exceptions in `sample_rate` callables are *not* caught — it is the user's responsibility to ensure these do not raise.
 
 Set `on_error` on [`OnlineEvalConfig`][pydantic_evals.online.OnlineEvalConfig] for a global default, or on [`OnlineEvaluator`][pydantic_evals.online.OnlineEvaluator] to override per-evaluator. The callback receives the exception, the [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext], the [`Evaluator`][pydantic_evals.evaluators.Evaluator] instance, and a location string (`'gate'`, `'sink'`, or `'on_max_concurrency'`):
 
