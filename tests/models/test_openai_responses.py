@@ -10147,3 +10147,47 @@ async def test_openai_responses_refusal_streaming(allow_model_requests: None):
     assert response_msg['parts'] == []
     assert response_msg['finish_reason'] == 'content_filter'
     assert response_msg['provider_details']['refusal'] == "I can't help with that."
+
+
+async def test_openai_responses_orphaned_tool_return_skipped(allow_model_requests: None, openai_api_key: str):
+    """Orphaned ToolReturnParts (no matching ToolCallPart in any ModelResponse) should be silently
+    dropped in _map_messages to prevent OpenAI Responses API 400 errors.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4882.
+    """
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg-1',
+                content=cast(list[Content], [ResponseOutputText(text='Hello!', type='output_text', annotations=[])]),
+                role='assistant',
+                type='message',
+                status='completed',
+            ),
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    # History with an orphaned tool return — the ModelResponse containing the
+    # matching ToolCallPart has been trimmed (e.g. by a history processor).
+    orphaned_history: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart(content='Call the tool')],
+        ),
+        # NOTE: no ModelResponse with ToolCallPart for 'call_orphan_123'
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='some_tool',
+                    content='result',
+                    tool_call_id='call_orphan_123',
+                ),
+                UserPromptPart(content='Continue'),
+            ],
+        ),
+    ]
+
+    result = await agent.run('Follow up', message_history=orphaned_history)
+    assert result.output == 'Hello!'

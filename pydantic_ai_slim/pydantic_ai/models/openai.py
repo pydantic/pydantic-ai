@@ -1947,6 +1947,18 @@ class OpenAIResponsesModel(Model):
             'openai_send_reasoning_ids', profile.openai_supports_encrypted_reasoning_content
         )
 
+        # Collect all tool call IDs from ModelResponse messages so we can skip
+        # orphaned ToolReturnPart/RetryPromptPart entries whose matching tool call
+        # was trimmed (e.g. by history processors). The Responses API strictly
+        # requires every function_call_output to have a preceding function_call.
+        known_tool_call_ids: set[str] = set()
+        for msg in messages:
+            if isinstance(msg, ModelResponse):
+                for p in msg.parts:
+                    if isinstance(p, ToolCallPart) and p.tool_call_id:
+                        call_id, _ = _split_combined_tool_call_id(p.tool_call_id)
+                        known_tool_call_ids.add(call_id)
+
         openai_messages: list[responses.ResponseInputItemParam] = []
         for message in messages:
             if isinstance(message, ModelRequest):
@@ -1958,6 +1970,9 @@ class OpenAIResponsesModel(Model):
                     elif isinstance(part, ToolReturnPart):
                         call_id = _guard_tool_call_id(t=part)
                         call_id, _ = _split_combined_tool_call_id(call_id)
+                        # Skip orphaned tool returns whose matching tool call was trimmed
+                        if known_tool_call_ids and call_id not in known_tool_call_ids:
+                            continue
                         output = await self._map_tool_return_output(part)
                         item = FunctionCallOutput(
                             type='function_call_output',
@@ -1973,6 +1988,9 @@ class OpenAIResponsesModel(Model):
                         else:
                             call_id = _guard_tool_call_id(t=part)
                             call_id, _ = _split_combined_tool_call_id(call_id)
+                            # Skip orphaned retry prompts whose matching tool call was trimmed
+                            if known_tool_call_ids and call_id not in known_tool_call_ids:
+                                continue
                             item = FunctionCallOutput(
                                 type='function_call_output',
                                 call_id=call_id,
