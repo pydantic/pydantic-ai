@@ -54,6 +54,43 @@ with try_import() as bedrock_imports:
     from pydantic_ai.profiles import DEFAULT_PROFILE
     from pydantic_ai.providers import Provider
 
+    class _StubBedrockClient:
+        def __init__(self, error: ClientError):
+            self._error = error
+            self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub')
+
+        def converse(self, **_: Any) -> None:
+            raise self._error
+
+        def converse_stream(self, **_: Any) -> None:
+            raise self._error
+
+    class _StubBedrockProvider(Provider[Any]):
+        def __init__(self, client: _StubBedrockClient):
+            self._client = client
+
+        @property
+        def name(self) -> str:
+            return 'bedrock-stub'
+
+        @property
+        def base_url(self) -> str:
+            return 'https://bedrock.stub'
+
+        @property
+        def client(self) -> _StubBedrockClient:
+            return self._client
+
+        @staticmethod
+        def model_profile(model_name: str):
+            return DEFAULT_PROFILE
+
+    def _bedrock_model_with_error(error: ClientError) -> BedrockConverseModel:
+        return BedrockConverseModel(
+            'us.amazon.nova-micro-v1:0',
+            provider=_StubBedrockProvider(_StubBedrockClient(error)),
+        )
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -97,51 +134,6 @@ def _groq_chunk() -> GroqChunk:
         model='llama-3.3-70b-versatile',
         object='chat.completion.chunk',
         x_groq=None,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Bedrock helpers (stub provider for error injection)
-# ---------------------------------------------------------------------------
-
-
-class _StubBedrockClient:
-    def __init__(self, error: ClientError):
-        self._error = error
-        self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub')
-
-    def converse(self, **_: Any) -> None:
-        raise self._error
-
-    def converse_stream(self, **_: Any) -> None:
-        raise self._error
-
-
-class _StubBedrockProvider(Provider[Any]):
-    def __init__(self, client: _StubBedrockClient):
-        self._client = client
-
-    @property
-    def name(self) -> str:
-        return 'bedrock-stub'
-
-    @property
-    def base_url(self) -> str:
-        return 'https://bedrock.stub'
-
-    @property
-    def client(self) -> _StubBedrockClient:
-        return self._client
-
-    @staticmethod
-    def model_profile(model_name: str):
-        return DEFAULT_PROFILE
-
-
-def _bedrock_model_with_error(error: ClientError) -> BedrockConverseModel:
-    return BedrockConverseModel(
-        'us.amazon.nova-micro-v1:0',
-        provider=_StubBedrockProvider(_StubBedrockClient(error)),
     )
 
 
