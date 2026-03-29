@@ -921,7 +921,7 @@ async def test_sample_rate_callable_exception_propagates():
 
     @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), sample_rate=bad_rate))
     async def my_func(x: int) -> int:
-        return x
+        return x  # pragma: no cover
 
     with pytest.raises(ValueError, match='rate error'):
         await my_func(42)
