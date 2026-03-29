@@ -5,6 +5,7 @@ rules:
   cache-poisoning:
     ignore:
       - after-ci.yml
+      - at-claude.yml
       - ci.yml
       - manually-deploy-docs.yml
 
@@ -17,3 +18,4 @@ rules:
       - at-claude.yml
       - bots.yml
       - ci.yml
+      - manually-deploy-docs.yml
