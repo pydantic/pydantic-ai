@@ -470,50 +470,54 @@ class HuggingFaceStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        if self._provider_timestamp is not None:  # pragma: no branch
-            self.provider_details = {'timestamp': self._provider_timestamp}
         try:
-            async for chunk in self._response:
-                self._usage += _map_usage(chunk)
-
-                if chunk.id:  # pragma: no branch
-                    self.provider_response_id = chunk.id
-
-                try:
-                    choice = chunk.choices[0]
-                except IndexError:
-                    continue
-
-                if raw_finish_reason := choice.finish_reason:
-                    self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
-                    self.finish_reason = _FINISH_REASON_MAP.get(cast(HuggingFaceFinishReason, raw_finish_reason), None)
-
-                # Handle the text part of the response
-                content = choice.delta.content
-                if content:
-                    for event in self._parts_manager.handle_text_delta(
-                        vendor_part_id='content',
-                        content=content,
-                        thinking_tags=self._model_profile.thinking_tags,
-                        ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
-                    ):
-                        yield event
-
-                for dtc in choice.delta.tool_calls or []:
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
-                        vendor_part_id=dtc.index,
-                        tool_name=dtc.function and dtc.function.name,  # type: ignore
-                        args=dtc.function and dtc.function.arguments,
-                        tool_call_id=dtc.id,
-                    )
-                    if maybe_event is not None:
-                        yield maybe_event
+            async for event in self._iter_events():
+                yield event
         except HfHubHTTPError as e:
             raise ModelHTTPError(
                 status_code=e.response.status_code,
                 model_name=self._model_name,
                 body=e.response.content,
             ) from e
+
+    async def _iter_events(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        if self._provider_timestamp is not None:  # pragma: no branch
+            self.provider_details = {'timestamp': self._provider_timestamp}
+        async for chunk in self._response:
+            self._usage += _map_usage(chunk)
+
+            if chunk.id:  # pragma: no branch
+                self.provider_response_id = chunk.id
+
+            try:
+                choice = chunk.choices[0]
+            except IndexError:
+                continue
+
+            if raw_finish_reason := choice.finish_reason:
+                self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
+                self.finish_reason = _FINISH_REASON_MAP.get(cast(HuggingFaceFinishReason, raw_finish_reason), None)
+
+            # Handle the text part of the response
+            content = choice.delta.content
+            if content:
+                for event in self._parts_manager.handle_text_delta(
+                    vendor_part_id='content',
+                    content=content,
+                    thinking_tags=self._model_profile.thinking_tags,
+                    ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
+                ):
+                    yield event
+
+            for dtc in choice.delta.tool_calls or []:
+                maybe_event = self._parts_manager.handle_tool_call_delta(
+                    vendor_part_id=dtc.index,
+                    tool_name=dtc.function and dtc.function.name,  # type: ignore
+                    args=dtc.function and dtc.function.arguments,
+                    tool_call_id=dtc.id,
+                )
+                if maybe_event is not None:
+                    yield maybe_event
 
     @property
     def model_name(self) -> str:

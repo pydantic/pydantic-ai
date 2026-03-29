@@ -866,7 +866,18 @@ class XaiStreamedResponse(StreamedResponse):
             )
             yield self._parts_manager.handle_part(vendor_part_id=return_vendor_id, part=return_part)
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        try:
+            async for event in self._iter_events():
+                yield event
+        except grpc.RpcError as e:
+            status_code = _GRPC_STATUS_TO_HTTP.get(e.code())
+            details = e.details() or str(e)
+            if status_code is not None:
+                raise ModelHTTPError(status_code=status_code, model_name=self._model_name, body=details) from e
+            raise ModelAPIError(model_name=self._model_name, message=details) from e
+
+    async def _iter_events(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Iterate over streaming events from xAI SDK."""
         # Local state to avoid re-emmiting duplicate events.
         prev_reasoning_content = ''
@@ -877,84 +888,77 @@ class XaiStreamedResponse(StreamedResponse):
         # Track previous tool call args to compute deltas (like we do for reasoning content).
         prev_tool_call_args: dict[str, str] = {}
 
-        try:
-            async for response, chunk in self._response:
-                self._update_response_state(response)
+        async for response, chunk in self._response:
+            self._update_response_state(response)
 
-                prev_reasoning_content, prev_encrypted_content, reasoning_events = self._collect_reasoning_events(
-                    response=response,
-                    prev_reasoning_content=prev_reasoning_content,
-                    prev_encrypted_content=prev_encrypted_content,
-                )
-                for event in reasoning_events:
+            prev_reasoning_content, prev_encrypted_content, reasoning_events = self._collect_reasoning_events(
+                response=response,
+                prev_reasoning_content=prev_reasoning_content,
+                prev_encrypted_content=prev_encrypted_content,
+            )
+            for event in reasoning_events:
+                yield event
+
+            # Handle text content (property filters for ROLE_ASSISTANT)
+            if chunk.content:
+                for event in self._parts_manager.handle_text_delta(
+                    vendor_part_id='content',
+                    content=chunk.content,
+                ):
                     yield event
 
-                # Handle text content (property filters for ROLE_ASSISTANT)
-                if chunk.content:
-                    for event in self._parts_manager.handle_text_delta(
-                        vendor_part_id='content',
-                        content=chunk.content,
-                    ):
-                        yield event
-
-                # Handle tool calls/tool results from *this chunk*.
-                #
-                # Important: xAI SDK `Response` is an accumulated view; `response.tool_calls` includes tool calls from
-                # previous chunks. Iterating over it would re-emit tool calls repeatedly. Instead, we read tool calls
-                # from the chunk's deltas which represent what changed in this frame.
-                for output_chunk in chunk.proto.outputs:
-                    delta = output_chunk.delta
-                    if not delta.tool_calls:
+            # Handle tool calls/tool results from *this chunk*.
+            #
+            # Important: xAI SDK `Response` is an accumulated view; `response.tool_calls` includes tool calls from
+            # previous chunks. Iterating over it would re-emit tool calls repeatedly. Instead, we read tool calls
+            # from the chunk's deltas which represent what changed in this frame.
+            for output_chunk in chunk.proto.outputs:
+                delta = output_chunk.delta
+                if not delta.tool_calls:
+                    continue
+                for tool_call in delta.tool_calls:
+                    if not tool_call.function.name:
                         continue
-                    for tool_call in delta.tool_calls:
-                        if not tool_call.function.name:
-                            continue
 
-                        if tool_call.type != chat_pb2.ToolCallType.TOOL_CALL_TYPE_CLIENT_SIDE_TOOL:
-                            for event in self._handle_server_side_tool_call(
-                                tool_call=tool_call,
-                                delta=delta,
-                                seen_tool_call_ids=seen_tool_call_ids,
-                                seen_tool_return_ids=seen_tool_return_ids,
-                                last_tool_return_content=last_tool_return_content,
-                            ):
-                                yield event
-                        else:
-                            # Client-side tools: emit args as deltas so UI adapters receive PartDeltaEvents
-                            # (not repeated PartStartEvents). Use accumulated args from response.tool_calls
-                            # and compute the delta like we do for reasoning content.
-                            accumulated = next((tc for tc in response.tool_calls if tc.id == tool_call.id), None)
-                            accumulated_args = (
-                                accumulated.function.arguments
-                                if accumulated is not None and accumulated.function.arguments
-                                else tool_call.function.arguments
+                    if tool_call.type != chat_pb2.ToolCallType.TOOL_CALL_TYPE_CLIENT_SIDE_TOOL:
+                        for event in self._handle_server_side_tool_call(
+                            tool_call=tool_call,
+                            delta=delta,
+                            seen_tool_call_ids=seen_tool_call_ids,
+                            seen_tool_return_ids=seen_tool_return_ids,
+                            last_tool_return_content=last_tool_return_content,
+                        ):
+                            yield event
+                    else:
+                        # Client-side tools: emit args as deltas so UI adapters receive PartDeltaEvents
+                        # (not repeated PartStartEvents). Use accumulated args from response.tool_calls
+                        # and compute the delta like we do for reasoning content.
+                        accumulated = next((tc for tc in response.tool_calls if tc.id == tool_call.id), None)
+                        accumulated_args = (
+                            accumulated.function.arguments
+                            if accumulated is not None and accumulated.function.arguments
+                            else tool_call.function.arguments
+                        )
+                        prev_args = prev_tool_call_args.get(tool_call.id, '')
+                        is_new_tool_call = tool_call.id not in prev_tool_call_args
+                        args_changed = accumulated_args != prev_args
+
+                        if is_new_tool_call or args_changed:
+                            # Compute delta: if accumulated starts with prev, extract the new portion.
+                            if accumulated_args.startswith(prev_args):
+                                args_delta = accumulated_args[len(prev_args) :] or None
+                            else:
+                                args_delta = accumulated_args or None
+                            prev_tool_call_args[tool_call.id] = accumulated_args
+                            maybe_event = self._parts_manager.handle_tool_call_delta(
+                                vendor_part_id=tool_call.id,
+                                # Only pass tool_name on the first call; it would be appended otherwise.
+                                tool_name=tool_call.function.name if is_new_tool_call else None,
+                                args=args_delta,
+                                tool_call_id=tool_call.id,
                             )
-                            prev_args = prev_tool_call_args.get(tool_call.id, '')
-                            is_new_tool_call = tool_call.id not in prev_tool_call_args
-                            args_changed = accumulated_args != prev_args
-
-                            if is_new_tool_call or args_changed:
-                                # Compute delta: if accumulated starts with prev, extract the new portion.
-                                if accumulated_args.startswith(prev_args):
-                                    args_delta = accumulated_args[len(prev_args) :] or None
-                                else:
-                                    args_delta = accumulated_args or None
-                                prev_tool_call_args[tool_call.id] = accumulated_args
-                                maybe_event = self._parts_manager.handle_tool_call_delta(
-                                    vendor_part_id=tool_call.id,
-                                    # Only pass tool_name on the first call; it would be appended otherwise.
-                                    tool_name=tool_call.function.name if is_new_tool_call else None,
-                                    args=args_delta,
-                                    tool_call_id=tool_call.id,
-                                )
-                                if maybe_event is not None:  # pragma: no branch
-                                    yield maybe_event
-        except grpc.RpcError as e:
-            status_code = _GRPC_STATUS_TO_HTTP.get(e.code())
-            details = e.details() or str(e)
-            if status_code is not None:
-                raise ModelHTTPError(status_code=status_code, model_name=self._model_name, body=details) from e
-            raise ModelAPIError(model_name=self._model_name, message=details) from e
+                            if maybe_event is not None:  # pragma: no branch
+                                yield maybe_event
 
     @property
     def model_name(self) -> str:

@@ -336,7 +336,13 @@ async def test_bedrock_stream_creation_error(allow_model_requests: None):
     error = ClientError(
         {
             'Error': {'Code': 'ThrottlingException', 'Message': 'Rate exceeded'},
-            'ResponseMetadata': {'HTTPStatusCode': 429},
+            'ResponseMetadata': {
+                'RequestId': '',
+                'HostId': '',
+                'HTTPStatusCode': 429,
+                'HTTPHeaders': {},
+                'RetryAttempts': 0,
+            },
         },
         'converse_stream',
     )

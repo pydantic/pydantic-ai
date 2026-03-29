@@ -651,62 +651,63 @@ class MistralStreamedResponse(StreamedResponse):
     _delta_content: str = field(default='', init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        if self._provider_timestamp is not None:  # pragma: no branch
-            self.provider_details = {'timestamp': self._provider_timestamp}
-        chunk: MistralCompletionEvent
         try:
-            async for chunk in self._response:
-                self._usage += _map_usage(chunk.data)
-
-                if chunk.data.id:  # pragma: no branch
-                    self.provider_response_id = chunk.data.id
-
-                try:
-                    choice = chunk.data.choices[0]
-                except IndexError:
-                    continue
-
-                if raw_finish_reason := choice.finish_reason:
-                    self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
-                    self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
-
-                # Handle the text part of the response
-                content = choice.delta.content
-                text, thinking = _map_content(content)
-                for thought in thinking:
-                    for event in self._parts_manager.handle_thinking_delta(vendor_part_id='thinking', content=thought):
-                        yield event
-                if text:
-                    # Attempt to produce an output tool call from the received text
-                    output_tools = {c.name: c for c in self.model_request_parameters.output_tools}
-                    if output_tools:
-                        self._delta_content += text
-                        # TODO: Port to native "manual JSON" mode
-                        maybe_tool_call_part = self._try_get_output_tool_from_text(self._delta_content, output_tools)
-                        if maybe_tool_call_part:
-                            yield self._parts_manager.handle_tool_call_part(
-                                vendor_part_id='output',
-                                tool_name=maybe_tool_call_part.tool_name,
-                                args=maybe_tool_call_part.args_as_dict(),
-                                tool_call_id=maybe_tool_call_part.tool_call_id,
-                            )
-                    else:
-                        for event in self._parts_manager.handle_text_delta(vendor_part_id='content', content=text):
-                            yield event
-
-                # Handle the explicit tool calls
-                for index, dtc in enumerate(choice.delta.tool_calls or []):
-                    # It seems that mistral just sends full tool calls, so we just use them directly, rather than building
-                    yield self._parts_manager.handle_tool_call_part(
-                        vendor_part_id=index,
-                        tool_name=dtc.function.name,
-                        args=dtc.function.arguments,
-                        tool_call_id=dtc.id,
-                    )
+            async for event in self._iter_events():
+                yield event
         except SDKError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self._model_name, body=e.body) from e
             raise ModelAPIError(model_name=self._model_name, message=e.message) from e
+
+    async def _iter_events(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        if self._provider_timestamp is not None:  # pragma: no branch
+            self.provider_details = {'timestamp': self._provider_timestamp}
+        chunk: MistralCompletionEvent
+        async for chunk in self._response:
+            self._usage += _map_usage(chunk.data)
+
+            if chunk.data.id:  # pragma: no branch
+                self.provider_response_id = chunk.data.id
+
+            try:
+                choice = chunk.data.choices[0]
+            except IndexError:
+                continue
+
+            if raw_finish_reason := choice.finish_reason:
+                self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
+                self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+
+            # Handle the text part of the response
+            content = choice.delta.content
+            text, thinking = _map_content(content)
+            for thought in thinking:
+                for event in self._parts_manager.handle_thinking_delta(vendor_part_id='thinking', content=thought):
+                    yield event
+            if text:
+                # Attempt to produce an output tool call from the received text
+                output_tools = {c.name: c for c in self.model_request_parameters.output_tools}
+                if output_tools:
+                    self._delta_content += text
+                    # TODO: Port to native "manual JSON" mode
+                    maybe_tool_call_part = self._try_get_output_tool_from_text(self._delta_content, output_tools)
+                    if maybe_tool_call_part:
+                        yield self._parts_manager.handle_tool_call_part(
+                            vendor_part_id='output',
+                            tool_name=maybe_tool_call_part.tool_name,
+                            args=maybe_tool_call_part.args_as_dict(),
+                            tool_call_id=maybe_tool_call_part.tool_call_id,
+                        )
+                else:
+                    for event in self._parts_manager.handle_text_delta(vendor_part_id='content', content=text):
+                        yield event
+
+            # Handle the explicit tool calls
+            for index, dtc in enumerate(choice.delta.tool_calls or []):
+                # It seems that mistral just sends full tool calls, so we just use them directly, rather than building
+                yield self._parts_manager.handle_tool_call_part(
+                    vendor_part_id=index, tool_name=dtc.function.name, args=dtc.function.arguments, tool_call_id=dtc.id
+                )
 
     @property
     def model_name(self) -> MistralModelName:
