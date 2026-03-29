@@ -21,13 +21,15 @@ node_modules/
 /test_tmp/
 .mcp.json
 .agents/*
+!.agents/README.md
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/pytest-vcr/
+!.agents/skills/address-feedback/
+!.agents/skills/pre-push-review/
 .claude/*
-# need to add because of local setup, + waiting on https://github.com/pydantic/pydantic-ai/pull/4211 to merge
-.agents/*
-!.claude/skills/
-.claude/skills/*
-!.claude/skills/address-feedback
-!.claude/skills/pre-push-review
+!.claude/settings.json
+!.claude/skills
 .github/.review-context/
 /.cursor/
 /.devcontainer/

@@ -1,0 +1,97 @@
+---
+name: pytest-vcr
+description: Record, rewrite, and debug VCR cassettes for HTTP recordings. Use when running tests with --record-mode, verifying cassette playback, or inspecting request/response bodies in YAML cassettes.
+allowed-tools: Bash(uv run pytest *), Bash(uv run python .agents/skills/pytest-vcr/parse_cassette.py *), Bash(source .env && uv run pytest *), Bash(git diff *)
+---
+
+# Pytest VCR Workflow
+
+Use this skill when recording or re-recording VCR cassettes for tests, or when debugging cassette contents.
+
+## Prerequisites
+
+- Verify `.env` exists: `test -f .env && echo 'ok' || echo 'missing'`
+- Missing API keys will cause clear test errors at runtime
+
+## Important flags
+- `--record-mode=rewrite` : Record cassettes (works for both new and existing)
+- `--lf` : Run only the last failed tests
+- `-vv` : Verbose output
+- `--tb=line` : Short traceback output
+- `-k=""` : Run tests matching the given substring expression
+
+## Recording Cassettes
+
+### Step 1: Record cassettes
+
+```bash
+source .env && uv run pytest path/to/test.py::test_function_name -v --tb=line --record-mode=rewrite
+```
+
+Multiple tests can be specified:
+```bash
+source .env && uv run pytest path/to/test.py::test_one path/to/test.py::test_two -v --tb=line --record-mode=rewrite
+```
+
+### Step 2: Verify recordings
+
+Run the same tests WITHOUT `--record-mode` to verify cassettes play back correctly:
+```bash
+source .env && uv run pytest path/to/test.py::test_function_name -vv --tb=line
+```
+
+### Step 3: Review snapshots
+
+If tests use [`snapshot()`](https://github.com/15r10nk/inline-snapshot) assertions:
+- The test run in Step 2 auto-fills snapshot content
+- Review the generated snapshot files to ensure they match expected output
+- You only review - don't manually write snapshot contents
+- Snapshots capture what the test actually produced, additional to explicit assertions
+
+## Parsing Cassettes
+
+Parse VCR cassette YAML files to inspect request/response bodies without dealing with raw YAML.
+
+### Usage
+
+```bash
+uv run python .agents/skills/pytest-vcr/parse_cassette.py <cassette_path> [--interaction N]
+```
+
+### Examples
+
+```bash
+# Parse all interactions in a cassette
+uv run python .agents/skills/pytest-vcr/parse_cassette.py tests/models/cassettes/test_foo/test_bar.yaml
+
+# Parse only interaction 1 (0-indexed)
+uv run python .agents/skills/pytest-vcr/parse_cassette.py tests/models/cassettes/test_foo/test_bar.yaml --interaction 1
+```
+
+### Output
+
+For each interaction, shows:
+- Request: method, URI, parsed body (truncated base64)
+- Response: status code, parsed body (truncated base64)
+
+Base64 strings longer than 100 chars are truncated for readability.
+
+
+## Full Workflow Example
+
+```bash
+# 1. Record cassette
+source .env && uv run pytest tests/models/test_openai.py::test_chat_completion -v --tb=line --record-mode=rewrite
+
+# 2. Verify playback and fill snapshots
+source .env && uv run pytest tests/models/test_openai.py::test_chat_completion -vv --tb=line
+
+# 3. Review test code diffs (excludes cassettes)
+git diff tests/ -- ':!**/cassettes/**'
+
+# 4. List new/changed cassettes (name only - use parse_cassette.py to inspect)
+git diff --name-only tests/ -- '**/cassettes/**'
+
+# 5. Inspect cassette contents if needed
+uv run python .agents/skills/pytest-vcr/parse_cassette.py tests/models/cassettes/test_openai/test_chat_completion.yaml
+```
