@@ -202,6 +202,9 @@ class PrintSink:
 
 Control evaluation frequency with per-evaluator sample rates to balance quality monitoring against cost.
 
+!!! note
+    Sampling is decided **before** the decorated function runs. When no evaluators are sampled for a given call, the function executes without any additional instrumentation overhead (no logfire span or span tree capture).
+
 ### Static Sample Rates
 
 A `sample_rate` between 0.0 and 1.0 sets the probability of evaluating each call:
