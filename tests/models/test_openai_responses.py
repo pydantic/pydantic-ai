@@ -10172,7 +10172,7 @@ async def test_openai_responses_orphaned_tool_return_skipped(allow_model_request
 
     # History with an orphaned tool return — the ModelResponse containing the
     # matching ToolCallPart has been trimmed (e.g. by a history processor).
-    orphaned_history: list[ModelMessage] = [
+    orphaned_history = [
         ModelRequest(
             parts=[UserPromptPart(content='Call the tool')],
         ),
@@ -10191,3 +10191,59 @@ async def test_openai_responses_orphaned_tool_return_skipped(allow_model_request
 
     result = await agent.run('Follow up', message_history=orphaned_history)
     assert result.output == 'Hello!'
+
+    # Verify the orphaned function_call_output was actually skipped from the API input
+    kwargs = get_mock_responses_kwargs(mock_client)
+    input_items = kwargs[0]['input']
+    function_call_outputs = [
+        item for item in input_items if isinstance(item, dict) and item.get('type') == 'function_call_output'
+    ]
+    assert function_call_outputs == [], f'Expected no function_call_output items but got: {function_call_outputs}'
+
+
+async def test_openai_responses_orphaned_retry_prompt_skipped(allow_model_requests: None, openai_api_key: str):
+    """Orphaned RetryPromptParts with tool_name should be skipped like ToolReturnParts.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4882.
+    """
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg-1',
+                content=cast(list[Content], [ResponseOutputText(text='Done', type='output_text', annotations=[])]),
+                role='assistant',
+                type='message',
+                status='completed',
+            ),
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    orphaned_history = [
+        ModelRequest(
+            parts=[UserPromptPart(content='Call the tool')],
+        ),
+        # No ModelResponse with the matching ToolCallPart
+        ModelRequest(
+            parts=[
+                RetryPromptPart(
+                    tool_name='some_tool',
+                    content='Please try again',
+                    tool_call_id='call_orphan_456',
+                ),
+                UserPromptPart(content='Continue'),
+            ],
+        ),
+    ]
+
+    result = await agent.run('Follow up', message_history=orphaned_history)
+    assert result.output == 'Done'
+
+    kwargs = get_mock_responses_kwargs(mock_client)
+    input_items = kwargs[0]['input']
+    function_call_outputs = [
+        item for item in input_items if isinstance(item, dict) and item.get('type') == 'function_call_output'
+    ]
+    assert function_call_outputs == []

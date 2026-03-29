@@ -1971,7 +1971,7 @@ class OpenAIResponsesModel(Model):
                         call_id = _guard_tool_call_id(t=part)
                         call_id, _ = _split_combined_tool_call_id(call_id)
                         # Skip orphaned tool returns whose matching tool call was trimmed
-                        if known_tool_call_ids and call_id not in known_tool_call_ids:
+                        if call_id not in known_tool_call_ids:
                             continue
                         output = await self._map_tool_return_output(part)
                         item = FunctionCallOutput(
@@ -1989,7 +1989,7 @@ class OpenAIResponsesModel(Model):
                             call_id = _guard_tool_call_id(t=part)
                             call_id, _ = _split_combined_tool_call_id(call_id)
                             # Skip orphaned retry prompts whose matching tool call was trimmed
-                            if known_tool_call_ids and call_id not in known_tool_call_ids:
+                            if call_id not in known_tool_call_ids:
                                 continue
                             item = FunctionCallOutput(
                                 type='function_call_output',
