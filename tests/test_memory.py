@@ -1,10 +1,11 @@
+from collections.abc import Sequence
 from datetime import timezone
 from pathlib import Path
 
 import pytest
 
 from pydantic_ai import Agent, InMemoryStore, SQLiteMemoryStore, UserError
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage
 
@@ -208,10 +209,10 @@ async def test_message_history_and_session_id_raises() -> None:
 
 async def test_memory_save_failure_raises_user_error() -> None:
     class FailingMemoryStore:
-        async def load(self, session_id: str) -> list[ModelMessage]:
+        async def load(self, session_id: str) -> list[ModelRequest | ModelResponse]:
             return []
 
-        async def save(self, session_id: str, messages: list[ModelMessage]) -> None:
+        async def save(self, session_id: str, messages: Sequence[ModelRequest | ModelResponse]) -> None:
             raise RuntimeError('save failed')
 
         async def clear(self, session_id: str) -> None:
