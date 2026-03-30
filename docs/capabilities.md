@@ -555,7 +555,7 @@ To skip the model call entirely and provide a replacement response, raise [`Skip
 `before_model_request` hooks see the full `request_context.messages` list, including any [message history](message-history.md) passed to `agent.run()`, and can modify it.
 
 !!! note "Skip and chain behavior"
-    All skip exceptions (`SkipModelRequest`, `SkipToolValidation`, `SkipToolExecution`) short-circuit the hook chain: remaining capabilities' `before_*` hooks do not fire, and `after_*` hooks are not called for the skipped operation. A skip raised from `wrap_*` propagates immediately — inner capabilities' wrap hooks never execute.
+    All skip exceptions ([`SkipModelRequest`][pydantic_ai.exceptions.SkipModelRequest], [`SkipToolValidation`][pydantic_ai.exceptions.SkipToolValidation], [`SkipToolExecution`][pydantic_ai.exceptions.SkipToolExecution]) short-circuit the hook chain: remaining capabilities' `before_*` hooks do not fire, and `after_*` hooks are not called for the skipped operation. A skip raised from `wrap_*` propagates immediately — inner capabilities' wrap hooks never execute.
 
 #### Tool hooks
 
