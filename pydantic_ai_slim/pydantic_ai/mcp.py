@@ -396,8 +396,8 @@ class MCPServer(AbstractToolset[Any], ABC):
         elicitation_callback: ElicitationFnT | None = None,
         cache_tools: bool = True,
         cache_resources: bool = True,
-        include_instructions: bool = False,
         *,
+        include_instructions: bool = False,
         id: str | None = None,
         client_info: mcp_types.Implementation | None = None,
     ):
