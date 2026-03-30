@@ -1,7 +1,7 @@
 """Web fetch tool for Pydantic AI agents.
 
 Fetches web pages and converts their content to markdown using SSRF-protected
-HTTP requests and the ``markdownify`` library for HTML-to-markdown conversion.
+HTTP requests and the `markdownify` library for HTML-to-markdown conversion.
 """
 
 from __future__ import annotations
@@ -147,13 +147,13 @@ def web_fetch_tool(
 ) -> Tool[Any]:
     """Creates a web fetch tool that fetches URLs and converts content to markdown.
 
-    This tool uses SSRF protection via ``pydantic_ai._ssrf.safe_download``.
+    This tool uses SSRF protection via `pydantic_ai._ssrf.safe_download`.
 
     Args:
         max_content_length: Maximum character length of returned content.
-            Defaults to 50,000 (~12,500 tokens). Use ``None`` for no limit.
+            Defaults to 50,000 (~12,500 tokens). Use `None` for no limit.
         allow_local_urls: Whether to allow fetching from private/local IP addresses.
-            Defaults to ``False``.
+            Defaults to `False`.
         timeout: Request timeout in seconds. Defaults to 30.
     """
     return Tool[Any](
