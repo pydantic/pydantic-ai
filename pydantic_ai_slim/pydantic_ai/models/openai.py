@@ -1970,8 +1970,12 @@ class OpenAIResponsesModel(Model):
                     elif isinstance(part, ToolReturnPart):
                         call_id = _guard_tool_call_id(t=part)
                         call_id, _ = _split_combined_tool_call_id(call_id)
-                        # Skip orphaned tool returns whose matching tool call was trimmed
-                        if call_id not in known_tool_call_ids:
+                        # Skip orphaned tool returns whose matching tool call was trimmed.
+                        # The `known_tool_call_ids` guard ensures we only filter when there
+                        # are ModelResponse messages in the history — when the set is empty
+                        # (e.g. first turn or previous_response_id='auto' mode), all returns
+                        # are passed through.
+                        if known_tool_call_ids and call_id not in known_tool_call_ids:
                             continue
                         output = await self._map_tool_return_output(part)
                         item = FunctionCallOutput(
@@ -1989,7 +1993,7 @@ class OpenAIResponsesModel(Model):
                             call_id = _guard_tool_call_id(t=part)
                             call_id, _ = _split_combined_tool_call_id(call_id)
                             # Skip orphaned retry prompts whose matching tool call was trimmed
-                            if call_id not in known_tool_call_ids:
+                            if known_tool_call_ids and call_id not in known_tool_call_ids:
                                 continue
                             item = FunctionCallOutput(
                                 type='function_call_output',

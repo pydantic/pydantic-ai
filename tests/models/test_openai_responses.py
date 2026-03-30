@@ -10171,16 +10171,27 @@ async def test_openai_responses_orphaned_tool_return_skipped(allow_model_request
     agent = Agent(m)
 
     # History with an orphaned tool return — the ModelResponse containing the
-    # matching ToolCallPart has been trimmed (e.g. by a history processor).
+    # matching ToolCallPart for 'call_orphan_123' was trimmed by a history
+    # processor, but a different tool call/return pair survived.
     orphaned_history = [
         ModelRequest(
-            parts=[UserPromptPart(content='Call the tool')],
+            parts=[UserPromptPart(content='Call tools')],
         ),
-        # NOTE: no ModelResponse with ToolCallPart for 'call_orphan_123'
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='surviving_tool', args='{}', tool_call_id='call_surviving_456'),
+                # NOTE: no ToolCallPart for 'call_orphan_123' — it was trimmed
+            ],
+        ),
         ModelRequest(
             parts=[
                 ToolReturnPart(
-                    tool_name='some_tool',
+                    tool_name='surviving_tool',
+                    content='ok',
+                    tool_call_id='call_surviving_456',
+                ),
+                ToolReturnPart(
+                    tool_name='orphaned_tool',
                     content='result',
                     tool_call_id='call_orphan_123',
                 ),
@@ -10192,13 +10203,15 @@ async def test_openai_responses_orphaned_tool_return_skipped(allow_model_request
     result = await agent.run('Follow up', message_history=orphaned_history)
     assert result.output == 'Hello!'
 
-    # Verify the orphaned function_call_output was actually skipped from the API input
+    # Verify the orphaned function_call_output was skipped but the surviving one was kept
     kwargs = get_mock_responses_kwargs(mock_client)
-    input_items = kwargs[0]['input']
+    input_items: list[Any] = kwargs[0]['input']
     function_call_outputs = [
         item for item in input_items if isinstance(item, dict) and item.get('type') == 'function_call_output'
     ]
-    assert function_call_outputs == [], f'Expected no function_call_output items but got: {function_call_outputs}'
+    # Only the surviving tool return should be present, not the orphaned one
+    assert len(function_call_outputs) == 1, f'Expected 1 function_call_output but got: {function_call_outputs}'
+    assert function_call_outputs[0]['call_id'] == 'call_surviving_456'
 
 
 async def test_openai_responses_orphaned_retry_prompt_skipped(allow_model_requests: None, openai_api_key: str):
@@ -10225,11 +10238,21 @@ async def test_openai_responses_orphaned_retry_prompt_skipped(allow_model_reques
         ModelRequest(
             parts=[UserPromptPart(content='Call the tool')],
         ),
-        # No ModelResponse with the matching ToolCallPart
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='surviving_tool', args='{}', tool_call_id='call_surviving_789'),
+                # No ToolCallPart for 'call_orphan_456'
+            ],
+        ),
         ModelRequest(
             parts=[
+                ToolReturnPart(
+                    tool_name='surviving_tool',
+                    content='ok',
+                    tool_call_id='call_surviving_789',
+                ),
                 RetryPromptPart(
-                    tool_name='some_tool',
+                    tool_name='orphaned_tool',
                     content='Please try again',
                     tool_call_id='call_orphan_456',
                 ),
@@ -10242,8 +10265,10 @@ async def test_openai_responses_orphaned_retry_prompt_skipped(allow_model_reques
     assert result.output == 'Done'
 
     kwargs = get_mock_responses_kwargs(mock_client)
-    input_items = kwargs[0]['input']
+    input_items: list[Any] = kwargs[0]['input']
     function_call_outputs = [
         item for item in input_items if isinstance(item, dict) and item.get('type') == 'function_call_output'
     ]
-    assert function_call_outputs == []
+    # Only the surviving tool return should be present, not the orphaned retry
+    assert len(function_call_outputs) == 1, f'Expected 1 function_call_output but got: {function_call_outputs}'
+    assert function_call_outputs[0]['call_id'] == 'call_surviving_789'
