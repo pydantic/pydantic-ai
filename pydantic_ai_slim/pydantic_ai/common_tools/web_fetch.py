@@ -13,6 +13,7 @@ from dataclasses import KW_ONLY, dataclass
 from typing_extensions import Any, TypedDict
 
 from pydantic_ai._ssrf import safe_download
+from pydantic_ai.messages import BinaryContent
 from pydantic_ai.tools import Tool
 
 try:
@@ -54,8 +55,14 @@ class WebFetchLocalTool:
     timeout: int
     """Request timeout in seconds."""
 
-    async def __call__(self, url: str) -> WebFetchResult:
+    async def __call__(self, url: str) -> WebFetchResult | BinaryContent:
         """Fetches the content of a web page at the given URL and returns it as markdown.
+
+        For textual content (HTML, JSON, plain text), returns a
+        [`WebFetchResult`][pydantic_ai.common_tools.web_fetch.WebFetchResult].
+        For binary content (PDF, images, etc.), returns a
+        [`BinaryContent`][pydantic_ai.messages.BinaryContent] so the model can
+        process it natively.
 
         Args:
             url: The URL to fetch.
@@ -89,7 +96,7 @@ class WebFetchLocalTool:
             else:
                 content = text
         else:
-            content = f'[Binary content of type {content_type} cannot be displayed as text]'
+            return BinaryContent(data=response.content, media_type=content_type or 'application/octet-stream')
 
         content = _clean_whitespace(content)
 

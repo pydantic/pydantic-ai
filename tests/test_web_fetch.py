@@ -217,10 +217,13 @@ class TestWebFetchLocalTool:
         assert '<h1>' not in result['content']
 
     async def test_binary_content_type(self):
-        """Binary content types return an error message."""
+        """Binary content types return BinaryContent."""
+        from pydantic_ai.messages import BinaryContent
+
+        pdf_bytes = b'%PDF-1.4 fake content'
         mock_response = httpx.Response(
             200,
-            content=b'\x00\x01\x02',
+            content=pdf_bytes,
             headers={'content-type': 'application/pdf'},
             request=httpx.Request('GET', 'https://example.com/doc.pdf'),
         )
@@ -229,8 +232,9 @@ class TestWebFetchLocalTool:
             tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
             result = await tool('https://example.com/doc.pdf')
 
-        assert 'application/pdf' in result['content']
-        assert 'cannot be displayed' in result['content']
+        assert isinstance(result, BinaryContent)
+        assert result.data == pdf_bytes
+        assert result.media_type == 'application/pdf'
 
     async def test_passes_allow_local(self):
         """allow_local_urls is passed to safe_download."""
