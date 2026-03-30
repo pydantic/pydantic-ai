@@ -134,6 +134,16 @@ def test_dataset_name_deprecation_warning(
         Dataset(cases=example_cases)
 
 
+def test_from_file_uses_filename_as_default_name(tmp_path: Path):
+    """Test that from_file uses filename stem as name and does not emit a deprecation warning."""
+    yaml_content = 'cases:\n- name: test\n  inputs:\n    query: hello\n'
+    yaml_path = tmp_path / 'my_dataset.yaml'
+    yaml_path.write_text(yaml_content)
+
+    dataset = Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(yaml_path)
+    assert dataset.name == 'my_dataset'
+
+
 async def test_dataset_init(
     example_cases: list[Case[TaskInput, TaskOutput, TaskMetadata]],
     simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],

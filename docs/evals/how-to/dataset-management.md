@@ -154,6 +154,7 @@ from typing import Any
 from pydantic_evals import Dataset
 
 yaml_content = """
+name: my_tests
 cases:
 - name: test
   inputs: hello
@@ -173,6 +174,7 @@ from typing import Any
 from pydantic_evals import Dataset
 
 data = {
+    'name': 'my_tests',
     'cases': [
         {
             'name': 'test',
@@ -273,7 +275,7 @@ async def main():
     print(output_file.read_text(encoding='utf-8'))
     """
     # yaml-language-server: $schema=questions_cases_schema.json
-    name: null
+    name: generated
     cases:
     - name: Easy Capital Question
       inputs:
@@ -338,7 +340,7 @@ async def main():
     """
     {
       "$schema": "questions_cases_schema.json",
-      "name": null,
+      "name": "generated",
       "cases": [
         {
           "name": "Easy Capital Question",
