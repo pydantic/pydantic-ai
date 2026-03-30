@@ -843,7 +843,8 @@ try:
         'Write a list of 5 very rude things that I might say to the universe after stubbing my toe in the dark:',
         model_settings=GoogleModelSettings(
             temperature=0.0,  # general model settings can also be specified
-            gemini_safety_settings=[
+            google_service_tier='priority',  # use the priority service tier
+            google_safety_settings=[
                 {
                     'category': 'HARM_CATEGORY_HARASSMENT',
                     'threshold': 'BLOCK_LOW_AND_ABOVE',
