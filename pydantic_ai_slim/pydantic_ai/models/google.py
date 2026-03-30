@@ -166,6 +166,9 @@ _GOOGLE_IMAGE_OUTPUT_FORMAT = Literal['png', 'jpeg', 'webp']
 _GOOGLE_IMAGE_OUTPUT_FORMATS: tuple[_GOOGLE_IMAGE_OUTPUT_FORMAT, ...] = _utils.get_args(_GOOGLE_IMAGE_OUTPUT_FORMAT)
 
 
+_GOOGLE_SERVICE_TIER = Literal['default', 'standard', 'flex', 'priority']
+
+
 class GoogleModelSettings(ModelSettings, total=False):
     """Settings used for a Gemini model request."""
 
@@ -187,6 +190,18 @@ class GoogleModelSettings(ModelSettings, total=False):
     """User-defined metadata to break down billed charges. Only supported by the Vertex AI API.
 
     See the [Gemini API docs](https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/add-labels-to-api-calls) for use cases and limitations.
+    """
+
+    google_service_tier: _GOOGLE_SERVICE_TIER
+    """The service tier to use for the model request.
+
+    Controls the priority of the request, allowing you to trade off cost or latency for traffic priority.
+
+    Values:
+    - `default`: The default service tier (maps to standard).
+    - `standard`: The standard service tier.
+    - `flex`: The flexible service tier.
+    - `priority`: The priority service tier.
     """
 
     google_video_resolution: MediaResolution
@@ -604,6 +619,12 @@ class GoogleModel(Model):
             else:
                 raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
 
+        service_tier: str | None = None
+        if raw_service_tier := model_settings.get('google_service_tier'):
+            service_tier = raw_service_tier.lower()
+            if service_tier == 'default':
+                service_tier = 'standard'
+
         config = GenerateContentConfigDict(
             http_options=http_options,
             system_instruction=system_instruction,
@@ -617,6 +638,7 @@ class GoogleModel(Model):
             safety_settings=model_settings.get('google_safety_settings'),
             thinking_config=self._get_thinking_config(model_settings, model_request_parameters),
             labels=model_settings.get('google_labels'),
+            service_tier=service_tier,
             media_resolution=model_settings.get('google_video_resolution'),
             cached_content=model_settings.get('google_cached_content'),
             tools=cast(ToolListUnionDict, tools),
@@ -664,6 +686,9 @@ class GoogleModel(Model):
 
         if response.create_time is not None:  # pragma: no branch
             vendor_details['timestamp'] = response.create_time
+
+        if response.sdk_http_response and (service_tier := response.sdk_http_response.headers.get('x-gemini-service-tier')):
+            vendor_details['service_tier'] = service_tier.lower()
 
         if candidate is None or candidate.content is None or candidate.content.parts is None:
             parts = []
@@ -953,6 +978,11 @@ class GeminiStreamedResponse(StreamedResponse):
         try:
             async for chunk in self._response:
                 self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url)
+
+                if chunk.sdk_http_response and (
+                    service_tier := chunk.sdk_http_response.headers.get('x-gemini-service-tier')
+                ):
+                    self.provider_details = {**(self.provider_details or {}), 'service_tier': service_tier.lower()}
 
                 if not chunk.candidates:
                     if chunk.prompt_feedback and chunk.prompt_feedback.block_reason:

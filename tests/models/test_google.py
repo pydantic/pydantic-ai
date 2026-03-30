@@ -2714,6 +2714,48 @@ async def test_google_extra_headers_in_config(allow_model_requests: None):
     assert headers['Content-Type'] == 'application/json'
 
 
+async def test_google_service_tier_in_config(allow_model_requests: None):
+    m = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
+    model_settings = GoogleModelSettings(google_service_tier='PrIoRiTy')  # type: ignore
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    assert config_dict['service_tier'] == 'priority'
+
+
+async def test_google_service_tier_default_maps_to_standard(allow_model_requests: None):
+    m = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
+    model_settings = GoogleModelSettings(google_service_tier='default')
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    assert config_dict['service_tier'] == 'standard'
+
+
+async def test_google_vertex_service_tier_in_config(allow_model_requests: None):
+    m = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(vertexai=True, project='test-project'))
+    model_settings = GoogleModelSettings(google_service_tier='priority')
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    assert config_dict['service_tier'] == 'priority'
+
+
 async def test_google_tool_output(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
 
@@ -6296,3 +6338,93 @@ async def test_google_prompt_feedback_streaming(
         assert response_msg['provider_details']['safety_ratings'][0]['category'] == 'HARM_CATEGORY_DANGEROUS_CONTENT'
         assert response_msg['provider_details']['safety_ratings'][0]['probability'] == 'HIGH'
         assert response_msg['provider_details']['safety_ratings'][0]['blocked'] is True
+
+
+async def test_google_service_tier_response_extraction(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+):
+    """Test that service_tier is extracted from the response."""
+    model_name = 'gemini-2.5-flash'
+    model = GoogleModel(model_name, provider=google_provider)
+
+    # Mock sdk_http_response and usage_metadata
+    class MockHttpResponse:
+        def __init__(self, headers: dict[str, str]):
+            self.headers = headers
+
+    response = GenerateContentResponse(
+        candidates=[
+            {
+                'content': {'parts': [{'text': 'Hello'}]},
+                'finish_reason': GoogleFinishReason.STOP,
+            }
+        ],
+        usage_metadata=GenerateContentResponseUsageMetadata(
+            prompt_token_count=1,
+            candidates_token_count=1,
+            total_token_count=2,
+        ),
+        response_id='resp_123',
+        model_version=model_name,
+        create_time=datetime.datetime.now(tz=datetime.timezone.utc),
+    )
+    response.sdk_http_response = MockHttpResponse({'x-gemini-service-tier': 'PRIORITY'})
+
+    mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response)
+
+    agent = Agent(model=model)
+    result = await agent.run('Hello')
+
+    assert result.response.provider_details == snapshot(
+        {
+            'finish_reason': 'STOP',
+            'timestamp': IsDatetime(),
+            'service_tier': 'priority',
+        }
+    )
+
+
+async def test_google_service_tier_streamed_response_extraction(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+):
+    """Test that service_tier is extracted from streamed response chunks."""
+    model_name = 'gemini-2.5-flash'
+    model = GoogleModel(model_name, provider=google_provider)
+
+    class MockHttpResponse:
+        def __init__(self, headers: dict[str, str]):
+            self.headers = headers
+
+    chunk = GenerateContentResponse(
+        candidates=[
+            {
+                'content': {'parts': [{'text': 'Hello'}]},
+                'finish_reason': GoogleFinishReason.STOP,
+            }
+        ],
+        usage_metadata=GenerateContentResponseUsageMetadata(
+            prompt_token_count=1,
+            candidates_token_count=1,
+            total_token_count=2,
+        ),
+        response_id='resp_123',
+        model_version=model_name,
+        create_time=datetime.datetime.now(tz=datetime.timezone.utc),
+    )
+    chunk.sdk_http_response = MockHttpResponse({'x-gemini-service-tier': 'FLEX'})
+
+    async def stream_iterator():
+        yield chunk
+
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=stream_iterator())
+
+    agent = Agent(model=model)
+    async with agent.run_stream('Hello') as result:
+        await result.get_output()
+        assert result.response.provider_details == snapshot(
+            {
+                'finish_reason': 'STOP',
+                'timestamp': IsDatetime(),
+                'service_tier': 'flex',
+            }
+        )
