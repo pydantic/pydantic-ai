@@ -12,6 +12,7 @@ from dataclasses import KW_ONLY, dataclass
 
 from typing_extensions import Any, TypedDict
 
+from pydantic_ai._ssrf import safe_download
 from pydantic_ai.tools import Tool
 
 try:
@@ -62,8 +63,6 @@ class WebFetchLocalTool:
         Returns:
             The fetched page content.
         """
-        from pydantic_ai._ssrf import safe_download
-
         response = await safe_download(
             url,
             allow_local=self.allow_local_urls,
