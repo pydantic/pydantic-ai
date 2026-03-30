@@ -42,7 +42,12 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
     fallback_model: FallbackModel[AgentDepsT]
     """Model to use for image generation when the agent's model doesn't support it natively.
 
-    Must be a model that supports image generation (e.g. ``'openai-responses:gpt-image-1'``).
+    Must be a model that supports image generation, e.g.:
+
+    * ``'openai-responses:gpt-image-1'`` — OpenAI's dedicated image generation model
+    * ``'openai-responses:gpt-4o'`` — OpenAI model with image generation support
+    * ``'google-gla:gemini-2.0-flash-preview-image-generation'`` — Google image generation model
+
     Can be a model name string, ``Model`` instance, or a callable taking ``RunContext``
     that returns a model.
     """
