@@ -118,11 +118,14 @@ To force local-only (never use the builtin, even when the model supports it):
 MCP(url='https://mcp.example.com/api', builtin=False)
 ```
 
-Constraint fields like `allowed_domains` or `blocked_domains` require the builtin — the local fallback can't enforce them. When these are set and the model doesn't support the builtin, a [`UserError`][pydantic_ai.exceptions.UserError] is raised:
+Some constraint fields require the builtin because the local fallback can't enforce them. When these are set and the model doesn't support the builtin, a [`UserError`][pydantic_ai.exceptions.UserError] is raised. For example, [`WebSearch`][pydantic_ai.capabilities.WebSearch] domain constraints require the builtin, while [`WebFetch`][pydantic_ai.capabilities.WebFetch] enforces them locally:
 
 ```python {title="constraints.py" test="skip" lint="skip"}
 # Only search example.com — requires builtin support
 WebSearch(allowed_domains=['example.com'])
+
+# Only fetch example.com — enforced locally when builtin is unavailable
+WebFetch(allowed_domains=['example.com'])
 ```
 
 All of these capabilities are subclasses of [`BuiltinOrLocalTool`][pydantic_ai.capabilities.BuiltinOrLocalTool], which you can use directly or subclass to build your own provider-adaptive tools. For example, to pair [`CodeExecutionTool`][pydantic_ai.builtin_tools.CodeExecutionTool] with a local fallback:
