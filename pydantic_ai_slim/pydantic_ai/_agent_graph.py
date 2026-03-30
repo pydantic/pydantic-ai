@@ -277,8 +277,6 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
             next_message = _messages.ModelRequest(parts=parts)
 
-        next_message.instructions = instructions
-
         return ModelRequestNode[DepsT, NodeRunEndT](
             request=next_message, is_resuming_without_prompt=is_resuming_without_prompt
         )
@@ -774,11 +772,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # resume-without-prompt path; ToolManager.for_run_step is a no-op for the same step.
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
-        # Fetch instructions now that dynamic toolsets have been resolved by for_run_step.
-        # If UserPromptNode already resolved instructions (resume-without-prompt path), reuse them
-        # to avoid evaluating instruction functions twice for the same step.
-        if self.request.instructions is None:
-            self.request.instructions = await _get_instructions(ctx, run_context)
+        # Fetch instructions now that dynamic toolsets have been resolved by for_run_step
+        self.request.instructions = await _get_instructions(ctx, run_context)
 
         # Validate after instructions are resolved; self.request was appended above so [:-1] is prior history
         if not ctx.state.message_history[:-1] and not self.request.parts and not self.request.instructions:

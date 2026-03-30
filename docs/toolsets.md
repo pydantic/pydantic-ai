@@ -116,7 +116,7 @@ _(This example is complete, it can be run "as is")_
 
 ### Toolset Instructions
 
-A [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] can provide instructions that are automatically included in the model request whenever the toolset is used. This lets each toolset carry its own usage guidance alongside its tools, so you don't need to duplicate instructions on every agent that uses the toolset.
+A [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] can provide instructions that are automatically included in the model request. This lets each toolset carry its own usage guidance alongside its tools, so you don't need to duplicate instructions on every agent that uses the toolset.
 
 Instructions can be provided as strings, functions (sync or async, with or without [`RunContext`][pydantic_ai.tools.RunContext]), or a mix of both:
 

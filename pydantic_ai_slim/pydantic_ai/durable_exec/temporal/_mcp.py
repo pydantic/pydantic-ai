@@ -103,13 +103,6 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
         if not workflow.in_workflow():  # pragma: no cover
             return await super().get_instructions(ctx)
 
-        # If enabled but not yet initialized in the workflow process, we must fetch
-        # instructions inside an activity where the wrapped MCP toolset can be entered.
-        try:
-            return await super().get_instructions(ctx)
-        except AttributeError:
-            pass
-
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         activity_config: ActivityConfig = {'summary': f'get instructions: {self.id}', **self.activity_config}
         return await workflow.execute_activity(
