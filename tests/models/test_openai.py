@@ -3593,6 +3593,18 @@ async def test_process_response_no_finish_reason(allow_model_requests: None):
     assert response_message.finish_reason == 'stop'
 
 
+async def test_service_tier_non_standard_value(allow_model_requests: None):
+    """OpenAI-compatible providers can return service_tier values outside the OpenAI Literal."""
+    c = completion_message(ChatCompletionMessage(content='hello', role='assistant'))
+    c.service_tier = 'standard'  # type: ignore  # simulate provider returning non-OpenAI value
+
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+    result = await agent.run('Hello')
+    assert result.output == 'hello'
+
+
 async def test_tool_choice_fallback(allow_model_requests: None) -> None:
     profile = OpenAIModelProfile(openai_supports_tool_choice_required=False).update(openai_model_profile('stub'))
 
