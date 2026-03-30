@@ -52,7 +52,7 @@ from ..models import (
 from ..profiles import ModelProfileSpec
 from ..profiles.grok import GrokModelProfile
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ThinkingLevel
 from ..usage import RequestUsage
 
 try:
@@ -140,6 +140,12 @@ class XaiModelSettings(ModelSettings, total=False):
     Corresponds to the `mcp_call.outputs` value of the `include` parameter in the Responses API.
     """
 
+    xai_reasoning_effort: Literal['low', 'high']
+    """Reasoning effort level for Grok reasoning models.
+
+    See https://docs.x.ai for details.
+    """
+
 
 # Mapping of XaiModelSettings keys to xAI SDK parameter names.
 # Most keys are the same, but some differ (e.g., 'stop_sequences' -> 'stop').
@@ -156,6 +162,7 @@ _XAI_MODEL_SETTINGS_MAPPING: dict[str, str] = {
     'xai_user': 'user',
     'xai_store_messages': 'store_messages',
     'xai_previous_response_id': 'previous_response_id',
+    'xai_reasoning_effort': 'reasoning_effort',
 }
 
 
@@ -545,6 +552,21 @@ class XaiModel(Model):
 
         # Map model settings to xAI SDK parameters
         xai_settings = _map_model_settings(model_settings)
+
+        # Fall back to unified thinking when xai_reasoning_effort is not set
+        if 'reasoning_effort' not in xai_settings and model_request_parameters.thinking is not None:
+            thinking = model_request_parameters.thinking
+            if thinking is not False:
+                # xAI only supports 'low' and 'high'; map others to closest
+                xai_map: dict[ThinkingLevel, str] = {
+                    True: 'high',
+                    'minimal': 'low',
+                    'low': 'low',
+                    'medium': 'high',
+                    'high': 'high',
+                    'xhigh': 'high',
+                }
+                xai_settings['reasoning_effort'] = xai_map[thinking]
 
         # Populate use_encrypted_content and include based on model settings
         include: list[chat_pb2.IncludeOption] = []
@@ -1070,7 +1092,7 @@ def _extract_usage(
 
     # Add cached prompt tokens if available (optional attribute)
     if usage_obj.cached_prompt_text_tokens:
-        usage_data['cache_read_tokens'] = usage_obj.cached_prompt_text_tokens
+        usage_data['cached_prompt_text_tokens'] = usage_obj.cached_prompt_text_tokens
 
     # Aggregate server-side tools used by PydanticAI builtin tool name
     if usage_obj.server_side_tools_used:
@@ -1083,13 +1105,17 @@ def _extract_usage(
             usage_data[f'server_side_tools_{tool_name}'] = count
 
     # Build details from non-standard fields
-    details = {k: v for k, v in usage_data.items() if k not in {'prompt_tokens', 'completion_tokens'}}
+    details = {
+        k: v
+        for k, v in usage_data.items()
+        if k not in {'prompt_tokens', 'completion_tokens', 'cached_prompt_text_tokens'}
+    }
 
     extracted = RequestUsage.extract(
         dict(model=model, usage=usage_data),
         provider=provider,
         provider_url=provider_url,
-        provider_fallback='x_ai',  # Pricing file is defined as x_ai.yml
+        provider_fallback='x-ai',  # genai-prices provider ID is 'x-ai'
         details=details or None,
     )
 

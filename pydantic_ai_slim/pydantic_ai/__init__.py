@@ -1,7 +1,9 @@
 from importlib.metadata import version as _metadata_version
 
+from ._template import TemplateStr
 from .agent import (
     Agent,
+    AgentModelSettings,
     CallToolsNode,
     EndStrategy,
     InstrumentationSettings,
@@ -9,6 +11,7 @@ from .agent import (
     UserPromptNode,
     capture_run_messages,
 )
+from .agent.spec import AgentSpec
 from .builtin_tools import (
     CodeExecutionTool,
     FileSearchTool,
@@ -42,6 +45,9 @@ from .exceptions import (
     ModelAPIError,
     ModelHTTPError,
     ModelRetry,
+    SkipModelRequest,
+    SkipToolExecution,
+    SkipToolValidation,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
@@ -101,6 +107,7 @@ from .messages import (
     VideoMediaType,
     VideoUrl,
 )
+from .models import ModelRequestContext
 from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
 from .output import NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
 from .profiles import (
@@ -112,9 +119,19 @@ from .profiles import (
 )
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
 from .settings import ModelSettings
-from .tools import DeferredToolRequests, DeferredToolResults, RunContext, Tool, ToolApproved, ToolDefinition, ToolDenied
+from .tools import (
+    AgentBuiltinTool,
+    DeferredToolRequests,
+    DeferredToolResults,
+    RunContext,
+    Tool,
+    ToolApproved,
+    ToolDefinition,
+    ToolDenied,
+)
 from .toolsets import (
     AbstractToolset,
+    AgentToolset,
     ApprovalRequiredToolset,
     CombinedToolset,
     ExternalToolset,
@@ -133,6 +150,8 @@ __all__ = (
     '__version__',
     # agent
     'Agent',
+    'AgentModelSettings',
+    'AgentSpec',
     'EndStrategy',
     'CallToolsNode',
     'ModelRequestNode',
@@ -161,6 +180,9 @@ __all__ = (
     'ModelHTTPError',
     'FallbackExceptionGroup',
     'IncompleteToolCall',
+    'SkipModelRequest',
+    'SkipToolExecution',
+    'SkipToolValidation',
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
     'UserError',
@@ -224,6 +246,7 @@ __all__ = (
     'InlineDefsJsonSchemaTransformer',
     'JsonSchemaTransformer',
     # tools
+    'AgentBuiltinTool',
     'Tool',
     'ToolDefinition',
     'RunContext',
@@ -233,6 +256,7 @@ __all__ = (
     'ToolDenied',
     # toolsets
     'AbstractToolset',
+    'AgentToolset',
     'ApprovalRequiredToolset',
     'CombinedToolset',
     'ExternalToolset',
@@ -260,8 +284,12 @@ __all__ = (
     'PromptedOutput',
     'TextOutput',
     'StructuredDict',
+    # template
+    'TemplateStr',
     # format_prompt
     'format_as_xml',
+    # models
+    'ModelRequestContext',
     # settings
     'ModelSettings',
     # usage

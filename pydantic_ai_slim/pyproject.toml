@@ -106,6 +106,7 @@ cli = [
     "prompt-toolkit>=3",
     "argcomplete>=3.5.0",
     "pyperclip>=1.9.0",
+    "pyyaml>=6.0.2",
 ]
 # MCP
 mcp = ["mcp>=1.25.0,<2.0"]
@@ -124,11 +125,13 @@ web = ["starlette>=0.45.3", "httpx>=0.27.0", "uvicorn>=0.38.0"]
 # Retries
 retries = ["tenacity>=8.2.3"]
 # Temporal
-temporal = ["temporalio==1.20.0"]
+temporal = ["temporalio>=1.24.0"]
 # DBOS
 dbos = ["dbos>=2.10.0"]
 # Prefect
 prefect = ["prefect>=3.4.21"]
+# Spec (YAML agent specs)
+spec = ["pyyaml>=6.0.2", "pydantic-handlebars>=0.1.0"]
 
 [tool.hatch.metadata]
 allow-direct-references = true

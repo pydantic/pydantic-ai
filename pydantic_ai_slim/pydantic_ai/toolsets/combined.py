@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from asyncio import Lock
 from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field, replace
@@ -31,8 +30,6 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
 
     toolsets: Sequence[AbstractToolset[AgentDepsT]]
 
-    _enter_lock: Lock = field(compare=False, init=False, default_factory=Lock)
-    _entered_count: int = field(init=False, default=0)
     _exit_stack: AsyncExitStack | None = field(init=False, default=None)
 
     @property
@@ -43,22 +40,27 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     def label(self) -> str:
         return f'{self.__class__.__name__}({", ".join(toolset.label for toolset in self.toolsets)})'  # pragma: no cover
 
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        new_toolsets = [await t.for_run(ctx) for t in self.toolsets]
+        return replace(self, toolsets=new_toolsets)
+
+    async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        new_toolsets = [await t.for_run_step(ctx) for t in self.toolsets]
+        if all(new is old for new, old in zip(new_toolsets, self.toolsets)):
+            return self
+        return replace(self, toolsets=new_toolsets)
+
     async def __aenter__(self) -> Self:
-        async with self._enter_lock:
-            if self._entered_count == 0:
-                async with AsyncExitStack() as exit_stack:
-                    for toolset in self.toolsets:
-                        await exit_stack.enter_async_context(toolset)
-                    self._exit_stack = exit_stack.pop_all()
-            self._entered_count += 1
+        async with AsyncExitStack() as exit_stack:
+            for toolset in self.toolsets:
+                await exit_stack.enter_async_context(toolset)
+            self._exit_stack = exit_stack.pop_all()
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
-        async with self._enter_lock:
-            self._entered_count -= 1
-            if self._entered_count == 0 and self._exit_stack is not None:
-                await self._exit_stack.aclose()
-                self._exit_stack = None
+        if self._exit_stack is not None:
+            await self._exit_stack.aclose()
+            self._exit_stack = None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         toolsets_tools = await asyncio.gather(*(toolset.get_tools(ctx) for toolset in self.toolsets))
