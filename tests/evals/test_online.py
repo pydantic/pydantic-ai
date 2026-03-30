@@ -1614,6 +1614,24 @@ async def test_gate_exception_does_not_cancel_sibling_evaluators():
 
 
 @pytest.mark.anyio
+async def test_configure_on_sampling_error():
+    """configure() can set on_sampling_error on DEFAULT_CONFIG."""
+    original = DEFAULT_CONFIG.on_sampling_error
+    try:
+
+        def handler(exc: Exception, evaluator: Evaluator) -> None:
+            pass
+
+        configure(on_sampling_error=handler)
+        assert DEFAULT_CONFIG.on_sampling_error is handler
+
+        configure(on_sampling_error=None)
+        assert DEFAULT_CONFIG.on_sampling_error is None
+    finally:
+        DEFAULT_CONFIG.on_sampling_error = original
+
+
+@pytest.mark.anyio
 async def test_configure_on_error():
     """configure() can set on_error on DEFAULT_CONFIG."""
     original = DEFAULT_CONFIG.on_error
@@ -1621,7 +1639,7 @@ async def test_configure_on_error():
 
         def handler(
             exc: Exception,
-            ctx: EvaluatorContext[Any, Any, Any] | None,
+            ctx: EvaluatorContext[Any, Any, Any],
             evaluator: Evaluator,
             location: OnErrorLocation,
         ) -> None:
