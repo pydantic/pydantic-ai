@@ -3258,12 +3258,46 @@ class TestWebFetchCapability:
         # Should have used the markdownify-based fallback tool
         assert 'Tool result' in result.output
 
+    def test_webfetch_local_false_with_nonsupporting_model(self, allow_model_requests: None):
+        """WebFetch(local=False) with non-supporting model → UserError."""
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
+        agent = Agent(model, capabilities=[WebFetch(local=False)])
+        with pytest.raises(UserError, match='not supported'):
+            agent.run_sync('fetch')
+
+    def test_webfetch_builtin_false(self):
+        """WebFetch(builtin=False) → only local, no builtin registered."""
+        cap = WebFetch(builtin=False)
+        assert cap.get_builtin_tools() == []
+        toolset = cap.get_toolset()
+        assert toolset is not None
+
     def test_webfetch_requires_builtin_with_constraints(self, allow_model_requests: None):
         """WebFetch(blocked_domains=...) with non-supporting model → UserError."""
         model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
         agent = Agent(model, capabilities=[WebFetch(blocked_domains=['evil.com'])])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
+
+    def test_webfetch_both_false_raises(self):
+        """WebFetch(builtin=False, local=False) → UserError at construction."""
+        with pytest.raises(UserError, match='both builtin and local cannot be False'):
+            WebFetch(builtin=False, local=False)
+
+    def test_webfetch_builtin_false_with_constraints_raises(self):
+        """WebFetch(builtin=False, allowed_domains=...) → UserError at construction."""
+        with pytest.raises(UserError, match='constraint fields require the builtin tool'):
+            WebFetch(builtin=False, allowed_domains=['example.com'])
+
+    def test_webfetch_local_callable(self):
+        """WebFetch(local=some_function) → bare callable wrapped in Tool."""
+        from pydantic_ai.tools import Tool
+
+        def my_fetch(url: str) -> str:
+            return f'fetched {url}'  # pragma: no cover
+
+        cap = WebFetch(local=my_fetch)
+        assert isinstance(cap.local, Tool)
 
 
 class TestImageGenerationCapability:
