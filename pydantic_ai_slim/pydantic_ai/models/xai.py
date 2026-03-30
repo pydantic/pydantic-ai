@@ -645,14 +645,7 @@ class XaiModel(Model):
         )
 
         chat = await self._create_chat(messages, cast(XaiModelSettings, model_settings or {}), model_request_parameters)
-        try:
-            response_stream = chat.stream()
-        except grpc.RpcError as e:
-            status_code = _GRPC_STATUS_TO_HTTP.get(e.code())
-            details = e.details() or str(e)
-            if status_code is not None:
-                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=details) from e
-            raise ModelAPIError(model_name=self.model_name, message=details) from e
+        response_stream = chat.stream()
         yield await self._process_streamed_response(response_stream, model_request_parameters)
 
     def _process_response(self, response: chat_types.Response) -> ModelResponse:
