@@ -76,7 +76,7 @@ def image_generation_tool(
     """Creates an image generation tool backed by a subagent.
 
     Args:
-        model: The model to use for image generation (e.g. ``'openai-responses:gpt-image-1'``),
+        model: The model to use for image generation (e.g. ``'openai-responses:gpt-4o'``),
             or a callable taking ``RunContext`` that returns a model.
         builtin: The image generation tool configuration to pass to the subagent.
     """

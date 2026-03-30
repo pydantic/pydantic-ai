@@ -3301,7 +3301,7 @@ class TestImageGenerationCapability:
         """ImageGeneration(fallback_model=...) creates a local fallback tool."""
         from pydantic_ai.tools import Tool
 
-        cap = ImageGeneration(fallback_model='openai-responses:gpt-image-1')
+        cap = ImageGeneration(fallback_model='openai-responses:gpt-4o')
         assert isinstance(cap.local, Tool)
         assert cap.get_toolset() is not None
         builtins = cap.get_builtin_tools()
@@ -3368,12 +3368,12 @@ class TestImageGenerationCapability:
             return 'image_url'  # pragma: no cover
 
         with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
-            ImageGeneration(fallback_model='openai-responses:gpt-image-1', local=my_gen)
+            ImageGeneration(fallback_model='openai-responses:gpt-4o', local=my_gen)
 
     def test_image_generation_fallback_model_with_local_false(self):
         """ImageGeneration(fallback_model=..., local=False) raises UserError."""
         with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
-            ImageGeneration(fallback_model='openai-responses:gpt-image-1', local=False)
+            ImageGeneration(fallback_model='openai-responses:gpt-4o', local=False)
 
     async def test_image_generation_callable_fallback_model(self, allow_model_requests: None):
         """ImageGeneration with async callable fallback_model resolves the model per-run."""
