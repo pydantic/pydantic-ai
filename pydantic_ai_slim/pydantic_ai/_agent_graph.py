@@ -1286,7 +1286,7 @@ async def process_tool_calls(  # noqa: C901
             # output tools track retries and can be skipped if a final_result exists.
             try:
                 validated = await tool_manager.validate_tool_call(call)
-            except exceptions.UnexpectedModelBehavior:
+            except exceptions.UnexpectedModelBehavior as e:
                 # If we already have a valid final result, don't fail the entire run
                 # This allows exhaustive strategy to complete successfully when at least one output tool is valid
                 if final_result:
@@ -1296,7 +1296,11 @@ async def process_tool_calls(  # noqa: C901
                     ):
                         yield event
                     continue
-                raise  # pragma: lax no cover
+                tool = tool_manager.tools.get(call.tool_name) if tool_manager.tools else None
+                max_retries = tool.max_retries if tool else ctx.deps.max_result_retries
+                raise exceptions.UnexpectedModelBehavior(  # pragma: lax no cover
+                    f'Exceeded maximum retries ({max_retries}) for output validation'
+                ) from (e.__cause__ or e)
 
             if not validated.args_valid:
                 assert validated.validation_error is not None
@@ -1315,14 +1319,17 @@ async def process_tool_calls(  # noqa: C901
             # Validation passed - execute the tool
             try:
                 result_data = await tool_manager.execute_tool_call(validated)
-            except exceptions.UnexpectedModelBehavior:
+            except exceptions.UnexpectedModelBehavior as e:
                 if final_result:
                     for event in _emit_skipped_output_tool(
                         call, 'Output tool not used - output function execution failed.', output_parts, args_valid=True
                     ):
                         yield event
                     continue
-                raise  # pragma: lax no cover
+                max_retries = validated.tool.max_retries if validated.tool else ctx.deps.max_result_retries
+                raise exceptions.UnexpectedModelBehavior(  # pragma: lax no cover
+                    f'Exceeded maximum retries ({max_retries}) for output validation'
+                ) from (e.__cause__ or e)
             except ToolRetryError as e:
                 yield _messages.FunctionToolCallEvent(call, args_valid=True)
                 output_parts.append(e.tool_retry)
