@@ -12,6 +12,8 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import get_function_type_hints
 from pydantic_ai.tools import AgentDepsT
 
+__all__ = ['TemplateStr']
+
 
 class TemplateStr(Generic[AgentDepsT]):
     """A Handlebars template string that renders against `RunContext.deps`.
