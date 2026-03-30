@@ -9,8 +9,8 @@ import pytest
 
 from pydantic_ai.common_tools.web_fetch import (
     WebFetchLocalTool,
-    _clean_whitespace,
-    _extract_title,
+    _clean_whitespace,  # pyright: ignore[reportPrivateUsage]
+    _extract_title,  # pyright: ignore[reportPrivateUsage]
     web_fetch_tool,
 )
 
