@@ -649,7 +649,7 @@ class OpenAIChatModel(Model):
         model_response = self._process_response(response)
         return model_response
 
-    def _get_reasoning_effort(
+    def _translate_thinking(
         self,
         model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
@@ -751,7 +751,7 @@ class OpenAIChatModel(Model):
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 response_format=response_format or OMIT,
                 seed=model_settings.get('seed', OMIT),
-                reasoning_effort=self._get_reasoning_effort(model_settings, model_request_parameters),
+                reasoning_effort=self._translate_thinking(model_settings, model_request_parameters),
                 user=model_settings.get('openai_user', OMIT),
                 web_search_options=web_search_options or OMIT,
                 service_tier=model_settings.get('openai_service_tier', OMIT),
@@ -1699,7 +1699,7 @@ class OpenAIResponsesModel(Model):
             previous_response_id, messages = self._get_previous_response_id_and_new_messages(messages)
 
         instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
-        reasoning = self._get_reasoning(model_settings, model_request_parameters)
+        reasoning = self._translate_thinking(model_settings, model_request_parameters)
 
         text: responses.ResponseTextConfigParam | None = None
         if model_request_parameters.output_mode == 'native':
@@ -1794,7 +1794,7 @@ class OpenAIResponsesModel(Model):
         except APIConnectionError as e:
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
-    def _get_reasoning(
+    def _translate_thinking(
         self,
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,

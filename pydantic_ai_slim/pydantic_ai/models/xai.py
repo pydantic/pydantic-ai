@@ -56,6 +56,16 @@ from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ThinkingLevel
 from ..usage import RequestUsage
 
+XAI_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'high']] = {
+    True: 'high',
+    'minimal': 'low',
+    'low': 'low',
+    'medium': 'high',
+    'high': 'high',
+    'xhigh': 'high',
+}
+"""Maps unified thinking values to xAI reasoning_effort. xAI only supports 'low' and 'high'."""
+
 try:
     import xai_sdk.chat as chat_types
     from xai_sdk import AsyncClient
@@ -559,16 +569,7 @@ class XaiModel(Model):
         if 'reasoning_effort' not in xai_settings and model_request_parameters.thinking is not None:
             thinking = model_request_parameters.thinking
             if thinking is not False:
-                # xAI only supports 'low' and 'high'; map others to closest
-                xai_map: dict[ThinkingLevel, str] = {
-                    True: 'high',
-                    'minimal': 'low',
-                    'low': 'low',
-                    'medium': 'high',
-                    'high': 'high',
-                    'xhigh': 'high',
-                }
-                xai_settings['reasoning_effort'] = xai_map[thinking]
+                xai_settings['reasoning_effort'] = XAI_EFFORT_MAP[thinking]
 
         # Populate use_encrypted_content and include based on model settings
         include: list[chat_pb2.IncludeOption] = []
