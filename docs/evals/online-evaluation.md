@@ -572,6 +572,8 @@ class HasKeyword(Evaluator):
 
 async def main():
     # Build a context manually (in practice, you'd get this from stored data)
+    # Normally EvaluatorContext would not be manually constructed —
+    # it is built automatically by the @evaluate decorator or OnlineEvaluation capability.
     ctx = EvaluatorContext(
         name='example',
         inputs={'query': 'greet the user'},
@@ -633,6 +635,8 @@ def _make_context(
     metadata: object = None,
     duration: float = 0.0,
 ) -> EvaluatorContext:
+    # Normally EvaluatorContext would not be manually constructed —
+    # it is built automatically by the @evaluate decorator or OnlineEvaluation capability.
     return EvaluatorContext(
         name=None,
         inputs=inputs,

@@ -265,31 +265,26 @@ class OnlineEvaluator:
 
     Different evaluators often need different settings — a cheap heuristic should
     run on 100% of traffic while an expensive LLM judge might run on only 1%.
-
-    Args:
-        evaluator: The evaluator to run.
-        sample_rate: Probability of running this evaluator (0.0–1.0), or a callable returning
-            a float or bool. Defaults to `None`, which uses the config's `default_sample_rate`
-            at each call. Set explicitly to override.
-        sink: Override sink(s) for this evaluator. If None, the config's default_sink is used.
-        max_concurrency: Maximum number of concurrent evaluations for this evaluator.
-        gate: Optional predicate that receives the `EvaluatorContext` and returns whether the
-            evaluator should run. Called only for sampled requests. Can be sync or async.
-        on_max_concurrency: Optional callback invoked when an evaluation is dropped because
-            `max_concurrency` was reached. Receives the `EvaluatorContext` that would have been
-            evaluated. Can be sync or async. If None, dropped evaluations are silently ignored.
-        on_error: Optional callback invoked when an exception occurs in the gate, sink, or
-            on_max_concurrency callback. Receives the exception, context, evaluator, and a
-            location string. Can be sync or async. If None, uses the config's default. If
-            neither is set, exceptions are silently suppressed.
     """
 
     evaluator: Evaluator
+    """The evaluator to run."""
     sample_rate: float | Callable[[], float | bool] | None = None
+    """Probability of running this evaluator (0.0–1.0), or a callable returning a float or bool.
+
+    Defaults to `None`, which uses the config's `default_sample_rate` at each call.
+    Set explicitly to override.
+    """
     max_concurrency: int = 10
+    """Maximum number of concurrent evaluations for this evaluator."""
 
     sink: EvaluationSink | Sequence[EvaluationSink | SinkCallback] | SinkCallback | None = None
+    """Override sink(s) for this evaluator. If `None`, the config's `default_sink` is used."""
     gate: Callable[[EvaluatorContext], bool | Awaitable[bool]] | None = None
+    """Optional predicate that receives the `EvaluatorContext` and returns whether the evaluator should run.
+
+    Called only for sampled requests. Can be sync or async.
+    """
 
     on_max_concurrency: Callable[[EvaluatorContext], Any] | None = None
     """Called when an evaluation is dropped because `max_concurrency` was reached.
