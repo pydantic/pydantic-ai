@@ -184,6 +184,20 @@ _OPENAI_IMAGE_SIZE = Literal['auto', '1024x1024', '1024x1536', '1536x1024']
 _OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = _utils.get_args(_OPENAI_IMAGE_SIZE)
 
 
+class _ChatCompletion(chat.ChatCompletion):
+    """Relaxes strict Literal validation on fields that OpenAI-compatible providers may return non-standard values for."""
+
+    service_tier: str | None = None  # type: ignore[reportIncompatibleVariableOverride]
+    """OpenAI-compatible providers can return arbitrary ``service_tier`` values (e.g. ``"standard"``, ``"on_demand"``)."""
+
+
+class _ChatCompletionChunk(ChatCompletionChunk):  # pyright: ignore[reportUnusedClass] — subclassed in openrouter.py
+    """Relaxes strict Literal validation on fields that OpenAI-compatible providers may return non-standard values for."""
+
+    service_tier: str | None = None  # type: ignore[reportIncompatibleVariableOverride]
+    """OpenAI-compatible providers can return arbitrary ``service_tier`` values (e.g. ``"standard"``, ``"on_demand"``)."""
+
+
 class _AzureContentFilterResultDetail(BaseModel):
     filtered: bool
     severity: str | None = None
@@ -777,12 +791,12 @@ class OpenAIChatModel(Model):
         except APIConnectionError as e:
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
-    def _validate_completion(self, response: chat.ChatCompletion) -> chat.ChatCompletion:
+    def _validate_completion(self, response: chat.ChatCompletion) -> _ChatCompletion:
         """Hook that validates chat completions before processing.
 
         This method may be overridden by subclasses of `OpenAIChatModel` to apply custom completion validations.
         """
-        return chat.ChatCompletion.model_validate(response.model_dump())
+        return _ChatCompletion.model_validate(response.model_dump())
 
     def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any] | None:
         """Hook that response content to provider details.

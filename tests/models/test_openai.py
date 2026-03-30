@@ -3532,7 +3532,7 @@ async def test_invalid_response(allow_model_requests: None):
     with pytest.raises(UnexpectedModelBehavior) as exc_info:
         await agent.run('What is the capital of France?')
     assert exc_info.value.message.startswith(
-        'Invalid response from openai chat completions endpoint: 4 validation errors for ChatCompletion'
+        'Invalid response from openai chat completions endpoint: 4 validation errors for _ChatCompletion'
     )
 
 
@@ -3580,6 +3580,18 @@ async def test_process_response_no_finish_reason(allow_model_requests: None):
     response_message = messages[1]
     assert isinstance(response_message, ModelResponse)
     assert response_message.finish_reason == 'stop'
+
+
+async def test_service_tier_non_standard_value(allow_model_requests: None):
+    """OpenAI-compatible providers can return service_tier values outside the OpenAI Literal."""
+    c = completion_message(ChatCompletionMessage(content='hello', role='assistant'))
+    c.service_tier = 'standard'  # type: ignore  # simulate provider returning non-OpenAI value
+
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+    result = await agent.run('Hello')
+    assert result.output == 'hello'
 
 
 async def test_tool_choice_fallback(allow_model_requests: None) -> None:
