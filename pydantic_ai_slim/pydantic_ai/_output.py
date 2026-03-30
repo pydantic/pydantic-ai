@@ -879,6 +879,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
 
         processors: dict[str, ObjectOutputProcessor[Any]] = {}
         tool_defs: list[ToolDefinition] = []
+        max_retries: int | None = None
 
         default_name = name or DEFAULT_OUTPUT_TOOL_NAME
         default_description = description
@@ -889,17 +890,24 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             name = None
             description = None
             strict = None
+            output_max_retries: int | None = None
             if isinstance(output, ToolOutput):
-                # do we need to error on conflicts here? (DavidM): If this is internal maybe doesn't matter, if public, use overloads
+                # do we need to error on conflicts here here? (DavidM): If this is internal maybe doesn't matter, if public, use overloads
                 name = output.name
                 description = output.description
                 strict = output.strict
+                output_max_retries = output.max_retries
 
                 output = output.output  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
 
             description = description or default_description
             if strict is None:
                 strict = default_strict
+
+            # If multiple ToolOutputs have different max_retries values,
+            # we use the last non-None value provided
+            if output_max_retries is not None:
+                max_retries = output_max_retries
 
             processor = ObjectOutputProcessor(output=output, description=description, strict=strict)  # pyright: ignore[reportUnknownArgumentType]
             object_def = processor.object_def
@@ -934,7 +942,10 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             processors[name] = processor
             tool_defs.append(tool_def)
 
-        return cls(processors=processors, tool_defs=tool_defs)
+        if max_retries is None:
+            max_retries = 1
+
+        return cls(processors=processors, tool_defs=tool_defs, max_retries=max_retries)
 
     def __init__(
         self,
