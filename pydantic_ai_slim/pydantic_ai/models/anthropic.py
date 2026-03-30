@@ -426,7 +426,7 @@ class AnthropicModel(Model):
         if thinking is None or thinking is False:
             return OMIT  # type: ignore[return-value]
         profile = AnthropicModelProfile.from_profile(self.profile)
-        if profile.anthropic_supports_adaptive_thinking and thinking in (True, 'medium'):
+        if profile.anthropic_supports_adaptive_thinking:
             return {'type': 'adaptive'}
         return {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
 

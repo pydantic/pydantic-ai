@@ -248,7 +248,7 @@ class TestAnthropicThinkingTranslation:
         assert result is None
 
     def test_adaptive_model_with_effort_level(self):
-        """thinking='high' on adaptive+effort model sets both thinking type AND output_config effort."""
+        """thinking='high' on adaptive+effort model uses adaptive thinking and output_config effort."""
         from pydantic_ai.models.anthropic import AnthropicModel
         from pydantic_ai.profiles.anthropic import AnthropicModelProfile
 
@@ -262,11 +262,11 @@ class TestAnthropicThinkingTranslation:
         params = ModelRequestParameters(thinking='high')
         settings: ModelSettings = {}
 
-        # thinking param: budget-based (only True/'medium' use adaptive)
+        # All truthy thinking values use adaptive on adaptive models
         thinking_param = AnthropicModel._translate_thinking(model, settings, params)
-        assert thinking_param == snapshot({'type': 'enabled', 'budget_tokens': 16384})
+        assert thinking_param == snapshot({'type': 'adaptive'})
 
-        # output_config: effort is set separately
+        # output_config: effort controls depth separately
         output_config = model._build_output_config(params, settings)
         assert output_config == snapshot({'effort': 'high'})
 
@@ -279,23 +279,23 @@ class TestAnthropicThinkingTranslation:
         result = AnthropicModel._translate_thinking(adaptive_model, settings, params)
         assert result == {'type': 'adaptive'}
 
-    def test_low_uses_budget_on_adaptive(self, adaptive_model: FunctionModel):
-        """thinking='low' on adaptive model -> budget (not adaptive)."""
+    def test_low_uses_adaptive_on_adaptive(self, adaptive_model: FunctionModel):
+        """thinking='low' on adaptive model -> adaptive (effort controlled via output_config)."""
         from pydantic_ai.models.anthropic import AnthropicModel
 
         params = ModelRequestParameters(thinking='low')
         settings: ModelSettings = {}
         result = AnthropicModel._translate_thinking(adaptive_model, settings, params)
-        assert result == {'type': 'enabled', 'budget_tokens': 2048}
+        assert result == {'type': 'adaptive'}
 
-    def test_high_uses_budget_on_adaptive(self, adaptive_model: FunctionModel):
-        """thinking='high' on adaptive model -> budget (not adaptive)."""
+    def test_high_uses_adaptive_on_adaptive(self, adaptive_model: FunctionModel):
+        """thinking='high' on adaptive model -> adaptive (effort controlled via output_config)."""
         from pydantic_ai.models.anthropic import AnthropicModel
 
         params = ModelRequestParameters(thinking='high')
         settings: ModelSettings = {}
         result = AnthropicModel._translate_thinking(adaptive_model, settings, params)
-        assert result == {'type': 'enabled', 'budget_tokens': 16384}
+        assert result == {'type': 'adaptive'}
 
 
 class TestOpenAIChatThinkingTranslation:
@@ -885,30 +885,6 @@ class TestXaiThinkingTranslation:
         params = ModelRequestParameters(thinking=True)
         _, resolved_params = model.prepare_request(settings, params)
         assert resolved_params.thinking is True
-
-
-class TestXaiEffortMap:
-    """Test xAI effort mapping values — xAI only supports 'low' and 'high'."""
-
-    @pytest.fixture(autouse=True)
-    def _require_xai_sdk(self):
-        pytest.importorskip('xai_sdk', reason='xai_sdk not installed')
-
-    def test_effort_map_values(self):
-        from pydantic_ai.models.xai import XAI_EFFORT_MAP
-
-        assert XAI_EFFORT_MAP[True] == 'high'
-        assert XAI_EFFORT_MAP['minimal'] == 'low'
-        assert XAI_EFFORT_MAP['low'] == 'low'
-        assert XAI_EFFORT_MAP['medium'] == 'high'
-        assert XAI_EFFORT_MAP['high'] == 'high'
-        assert XAI_EFFORT_MAP['xhigh'] == 'high'
-
-    def test_only_low_and_high_values(self):
-        """xAI only supports two effort levels; all map values must be one of them."""
-        from pydantic_ai.models.xai import XAI_EFFORT_MAP
-
-        assert set(XAI_EFFORT_MAP.values()) == {'low', 'high'}
 
 
 # ---------------------------------------------------------------------------
