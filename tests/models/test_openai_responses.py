@@ -50,7 +50,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimitExceeded, UsageLimits
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsFloat, IsInstance, IsInt, IsNow, IsStr, TestEnv, try_import
@@ -10159,3 +10159,28 @@ async def test_openai_responses_text_content_input(allow_model_requests: None, o
     assert m == snapshot(
         {'role': 'user', 'content': [{'text': 'test', 'type': 'input_text'}, {'text': 'test2', 'type': 'input_text'}]}
     )
+
+
+async def test_openai_responses_usage_limit_exceeded(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model)
+
+    with pytest.raises(
+        UsageLimitExceeded,
+        match='The next request would exceed the input_tokens_limit of 9 \\(input_tokens=12\\)',
+    ):
+        await agent.run(
+            'The quick brown fox jumps over the lazy dog.',
+            usage_limits=UsageLimits(input_tokens_limit=9, count_tokens_before_request=True),
+        )
+
+
+async def test_openai_responses_usage_limit_not_exceeded(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model)
+
+    result = await agent.run(
+        'The quick brown fox jumps over the lazy dog.',
+        usage_limits=UsageLimits(input_tokens_limit=15, count_tokens_before_request=True),
+    )
+    assert result.output == snapshot('That is a well-known pangram!')

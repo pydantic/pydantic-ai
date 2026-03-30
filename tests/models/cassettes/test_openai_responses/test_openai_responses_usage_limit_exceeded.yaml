@@ -1,0 +1,31 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: The quick brown fox jumps over the lazy dog.
+        role: user
+      model: gpt-4o
+    uri: https://api.openai.com/v1/responses/input_tokens
+  response:
+    headers:
+      content-type:
+      - application/json
+    parsed_body:
+      input_tokens: 12
+      object: response.input_tokens
+    status:
+      code: 200
+      message: OK
+version: 1

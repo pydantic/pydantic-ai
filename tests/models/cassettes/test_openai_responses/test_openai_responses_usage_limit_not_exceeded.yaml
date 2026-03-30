@@ -1,0 +1,99 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: The quick brown fox jumps over the lazy dog.
+        role: user
+      model: gpt-4o
+    uri: https://api.openai.com/v1/responses/input_tokens
+  response:
+    headers:
+      content-type:
+      - application/json
+    parsed_body:
+      input_tokens: 12
+      object: response.input_tokens
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: The quick brown fox jumps over the lazy dog.
+        role: user
+      model: gpt-4o
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      content-type:
+      - application/json
+    parsed_body:
+      background: false
+      created_at: 1757604033
+      error: null
+      id: resp_count_tokens_test_001
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - content:
+        - annotations: []
+          text: That is a well-known pangram!
+          type: output_text
+        id: msg_test_001
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      reasoning: null
+      service_tier: default
+      status: completed
+      temperature: 1.0
+      text:
+        format:
+          type: text
+      tool_choice: auto
+      tools: []
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 12
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 8
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 20
+    status:
+      code: 200
+      message: OK
+version: 1
