@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from pydantic_ai.builtin_tools import WebFetchTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
+from pydantic_ai.toolsets import AbstractToolset
 
 from .builtin_or_local import BuiltinOrLocalTool
 
@@ -14,8 +15,8 @@ from .builtin_or_local import BuiltinOrLocalTool
 class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
     """URL fetching capability.
 
-    Uses the model's builtin URL fetching when available. No default local
-    fallback — provide a custom `local` tool if needed.
+    Uses the model's builtin URL fetching when available, falling back to a local
+    function tool (markdownify-based fetch by default) when it isn't.
     """
 
     allowed_domains: list[str] | None
@@ -71,6 +72,14 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
 
     def _builtin_unique_id(self) -> str:
         return WebFetchTool.kind
+
+    def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
+        try:
+            from pydantic_ai.common_tools.web_fetch import web_fetch_tool
+
+            return web_fetch_tool()
+        except ImportError:
+            return None
 
     def _requires_builtin(self) -> bool:
         return self.allowed_domains is not None or self.blocked_domains is not None or self.max_uses is not None

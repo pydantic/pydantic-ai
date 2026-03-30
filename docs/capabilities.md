@@ -20,7 +20,7 @@ Pydantic AI ships with several capabilities that cover common needs:
 | [`Thinking`][pydantic_ai.capabilities.Thinking] | Enables model [thinking/reasoning](thinking.md) at configurable effort | Yes |
 | [`Hooks`][pydantic_ai.capabilities.Hooks] | Decorator-based [lifecycle hook](hooks.md) registration | — |
 | [`WebSearch`][pydantic_ai.capabilities.WebSearch] | Web search — builtin when supported, local fallback otherwise | Yes |
-| [`WebFetch`][pydantic_ai.capabilities.WebFetch] | URL fetching — builtin when supported, custom local fallback | Yes |
+| [`WebFetch`][pydantic_ai.capabilities.WebFetch] | URL fetching — builtin when supported, local fallback otherwise | Yes |
 | [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | Image generation — builtin when supported, custom local fallback | Yes |
 | [`MCP`][pydantic_ai.capabilities.MCP] | MCP server — builtin when supported, direct connection otherwise | Yes |
 | [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] | Filters or modifies [tool definitions](tools.md) per step | — |
@@ -98,7 +98,7 @@ agent = Agent(
     capabilities=[
         # Auto-detects DuckDuckGo as local fallback
         WebSearch(),
-        # Builtin URL fetching; provide local= for fallback
+        # Auto-detects markdownify-based fetch as local fallback
         WebFetch(),
         # Auto-detects transport from URL
         MCP(url='https://mcp.example.com/api'),

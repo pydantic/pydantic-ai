@@ -3212,14 +3212,14 @@ class TestWebSearchCapability:
 
 class TestWebFetchCapability:
     def test_webfetch_default(self):
-        """WebFetch() provides builtin, no default local fallback."""
+        """WebFetch() provides builtin and default local fallback."""
         cap = WebFetch()
         builtins = cap.get_builtin_tools()
         assert len(builtins) == 1
         assert isinstance(builtins[0], WebFetchTool)
-        # No default local fallback — user must provide their own
-        assert cap.local is None
-        assert cap.get_toolset() is None
+        # Default local fallback is auto-detected (markdownify-based)
+        assert cap.local is not None
+        assert cap.get_toolset() is not None
 
     def test_webfetch_requires_builtin_with_constraints(self, allow_model_requests: None):
         """WebFetch(blocked_domains=...) with non-supporting model → UserError."""
@@ -4259,6 +4259,23 @@ def test_web_search_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(builtins, '__import__', mock_import)
     cap = WebSearch(builtin=False)
     # With builtin disabled and no duckduckgo, local is None
+    assert cap.local is None
+
+
+def test_web_fetch_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
+    """WebFetch._default_local() returns None when markdownify is not installed."""
+    import builtins
+
+    original_import = builtins.__import__
+
+    def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == 'pydantic_ai.common_tools.web_fetch':
+            raise ImportError('mocked')
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', mock_import)
+    cap = WebFetch(builtin=False)
+    # With builtin disabled and no markdownify, local is None
     assert cap.local is None
 
 
