@@ -292,6 +292,16 @@ class TestWebFetchLocalTool:
 
         mock_dl.assert_called_once_with('http://localhost:8080', allow_local=True, timeout=60)
 
+    async def test_invalid_url_no_hostname(self):
+        """URL without hostname raises ModelRetry."""
+        from pydantic_ai.exceptions import ModelRetry
+
+        tool = WebFetchLocalTool(
+            max_content_length=None, allow_local_urls=False, timeout=30, allowed_domains=['example.com']
+        )
+        with pytest.raises(ModelRetry, match='no hostname found'):
+            await tool('not-a-url')
+
     async def test_allowed_domains_permits(self):
         """Allowed domain passes validation."""
         mock_response = _html_response('<html><body>ok</body></html>')
