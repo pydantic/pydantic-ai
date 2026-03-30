@@ -633,10 +633,10 @@ async def test_bedrock_stream_non_http_error(allow_model_requests: None):
 
 @pytest.mark.skipif(not bedrock_imports(), reason='botocore not installed')
 @pytest.mark.parametrize(
-    'error,expected_exc,check_status',
+    'error_factory,expected_exc,check_status',
     [
         pytest.param(
-            ClientError(
+            lambda: ClientError(
                 {
                     'Error': {'Code': 'ThrottlingException', 'Message': 'Rate exceeded'},
                     'ResponseMetadata': {
@@ -654,7 +654,7 @@ async def test_bedrock_stream_non_http_error(allow_model_requests: None):
             id='http',
         ),
         pytest.param(
-            ClientError({'Error': {'Code': 'TestException', 'Message': 'broken'}}, 'converse_stream'),
+            lambda: ClientError({'Error': {'Code': 'TestException', 'Message': 'broken'}}, 'converse_stream'),
             ModelAPIError,
             None,
             id='non_http',
@@ -662,10 +662,10 @@ async def test_bedrock_stream_non_http_error(allow_model_requests: None):
     ],
 )
 async def test_bedrock_midstream_error(
-    allow_model_requests: None, error: Any, expected_exc: type[Exception], check_status: int | None
+    allow_model_requests: None, error_factory: Any, expected_exc: type[Exception], check_status: int | None
 ):
     """ClientError during stream iteration is wrapped correctly."""
-    model = _bedrock_model_with_midstream_error(error)
+    model = _bedrock_model_with_midstream_error(error_factory())
     agent = Agent(model)
 
     with pytest.raises(expected_exc) as exc_info:
@@ -748,29 +748,23 @@ def _mistral_client_raising(error: Any) -> Any:
     )
 
 
+def _mistral_sdk_error(status_code: int, message: str) -> SDKError:
+    return SDKError(message, httpx.Response(status_code, request=httpx.Request('POST', 'https://api.mistral.ai')))
+
+
 @pytest.mark.skipif(not mistral_imports(), reason='mistral not installed')
 @pytest.mark.parametrize(
-    'error,expected_exc,check_status',
+    'error_factory,expected_exc,check_status',
     [
-        pytest.param(
-            SDKError('Server error', httpx.Response(500, request=httpx.Request('POST', 'https://api.mistral.ai'))),
-            ModelHTTPError,
-            500,
-            id='http',
-        ),
-        pytest.param(
-            SDKError('SSE error', httpx.Response(200, request=httpx.Request('POST', 'https://api.mistral.ai'))),
-            ModelAPIError,
-            None,
-            id='non_http',
-        ),
+        pytest.param(lambda: _mistral_sdk_error(500, 'Server error'), ModelHTTPError, 500, id='http'),
+        pytest.param(lambda: _mistral_sdk_error(200, 'SSE error'), ModelAPIError, None, id='non_http'),
     ],
 )
 async def test_mistral_stream_creation_error(
-    allow_model_requests: None, error: Any, expected_exc: type[Exception], check_status: int | None
+    allow_model_requests: None, error_factory: Any, expected_exc: type[Exception], check_status: int | None
 ):
     """SDKError during stream creation is wrapped correctly."""
-    mock_client = _mistral_client_raising(error)
+    mock_client = _mistral_client_raising(error_factory())
     m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
 
@@ -785,27 +779,17 @@ async def test_mistral_stream_creation_error(
 
 @pytest.mark.skipif(not mistral_imports(), reason='mistral not installed')
 @pytest.mark.parametrize(
-    'error,expected_exc,check_status',
+    'error_factory,expected_exc,check_status',
     [
-        pytest.param(
-            SDKError('Server error', httpx.Response(500, request=httpx.Request('POST', 'https://api.mistral.ai'))),
-            ModelHTTPError,
-            500,
-            id='http',
-        ),
-        pytest.param(
-            SDKError('SSE error', httpx.Response(200, request=httpx.Request('POST', 'https://api.mistral.ai'))),
-            ModelAPIError,
-            None,
-            id='non_http',
-        ),
+        pytest.param(lambda: _mistral_sdk_error(500, 'Server error'), ModelHTTPError, 500, id='http'),
+        pytest.param(lambda: _mistral_sdk_error(200, 'SSE error'), ModelAPIError, None, id='non_http'),
     ],
 )
 async def test_mistral_midstream_error(
-    allow_model_requests: None, error: Any, expected_exc: type[Exception], check_status: int | None
+    allow_model_requests: None, error_factory: Any, expected_exc: type[Exception], check_status: int | None
 ):
     """SDKError during stream iteration is wrapped correctly."""
-    mock_client = MockMistralAI.create_stream_mock([_mistral_chunk(), error])
+    mock_client = MockMistralAI.create_stream_mock([_mistral_chunk(), error_factory()])
     m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
 
@@ -826,17 +810,17 @@ async def test_mistral_midstream_error(
 
 @pytest.mark.skipif(not xai_imports(), reason='xai-sdk not installed')
 @pytest.mark.parametrize(
-    'grpc_code,expected_exc,expected_status',
+    'grpc_code_name,expected_exc,expected_status',
     [
-        pytest.param(grpc.StatusCode.UNAVAILABLE, ModelHTTPError, 503, id='http_mappable'),
-        pytest.param(grpc.StatusCode.CANCELLED, ModelAPIError, None, id='unmapped'),
+        pytest.param('UNAVAILABLE', ModelHTTPError, 503, id='http_mappable'),
+        pytest.param('CANCELLED', ModelAPIError, None, id='unmapped'),
     ],
 )
 async def test_xai_request_error(
-    allow_model_requests: None, grpc_code: Any, expected_exc: type[Exception], expected_status: int | None
+    allow_model_requests: None, grpc_code_name: str, expected_exc: type[Exception], expected_status: int | None
 ):
     """gRPC errors during non-streaming request are wrapped correctly."""
-    error = _StubRpcError(grpc_code, 'gRPC error')
+    error = _StubRpcError(getattr(grpc.StatusCode, grpc_code_name), 'gRPC error')
     mock_client = MockXai.create_mock([error])
     m = XaiModel('grok-3-mini', provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
@@ -851,17 +835,17 @@ async def test_xai_request_error(
 
 @pytest.mark.skipif(not xai_imports(), reason='xai-sdk not installed')
 @pytest.mark.parametrize(
-    'grpc_code,expected_exc,expected_status',
+    'grpc_code_name,expected_exc,expected_status',
     [
-        pytest.param(grpc.StatusCode.UNAVAILABLE, ModelHTTPError, 503, id='http_mappable'),
-        pytest.param(grpc.StatusCode.CANCELLED, ModelAPIError, None, id='unmapped'),
+        pytest.param('UNAVAILABLE', ModelHTTPError, 503, id='http_mappable'),
+        pytest.param('CANCELLED', ModelAPIError, None, id='unmapped'),
     ],
 )
 async def test_xai_midstream_error(
-    allow_model_requests: None, grpc_code: Any, expected_exc: type[Exception], expected_status: int | None
+    allow_model_requests: None, grpc_code_name: str, expected_exc: type[Exception], expected_status: int | None
 ):
     """gRPC errors during stream iteration are wrapped correctly."""
-    error = _StubRpcError(grpc_code, 'gRPC error')
+    error = _StubRpcError(getattr(grpc.StatusCode, grpc_code_name), 'gRPC error')
     stream_data = [[get_grok_text_chunk('hello'), error]]
     mock_client = MockXai.create_mock_stream(stream_data)  # pyright: ignore[reportArgumentType]
     m = XaiModel('grok-3-mini', provider=XaiProvider(xai_client=mock_client))
