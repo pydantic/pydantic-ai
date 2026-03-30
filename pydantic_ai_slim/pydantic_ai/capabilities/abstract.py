@@ -419,7 +419,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         This is the error counterpart to
         [`after_tool_validate`][pydantic_ai.capabilities.AbstractCapability.after_tool_validate].
-        Fires for `ValidationError` (schema mismatch) and
+        Fires for [`ValidationError`][pydantic.ValidationError] (schema mismatch) and
         [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] (custom validator rejection).
 
         **Raise** the original `error` (or a different exception) to propagate it.
