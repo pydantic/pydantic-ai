@@ -103,7 +103,8 @@ class DBOSMCPToolset(WrapperToolset[AgentDepsT], ABC):
         return {name: self.tool_for_tool_def(tool_def) for name, tool_def in tool_defs.items()}
 
     async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> str | list[str] | None:
-        if not getattr(self.wrapped, 'include_instructions', False):
+        # Short-circuit when instructions are explicitly disabled on the wrapped MCP server.
+        if getattr(self.wrapped, 'include_instructions', None) is False:
             return None
         # If enabled but not yet initialized in this process, fetch inside a DBOS step.
         try:
