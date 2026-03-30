@@ -407,7 +407,7 @@ async def _get_instructions(
     if toolset_result:
         if isinstance(toolset_result, list):
             parts.extend(toolset_result)
-        else:
+        else:  # pragma: no cover — top-level toolset is always CombinedToolset which returns list[str]
             parts.append(toolset_result)
 
     return '\n\n'.join(parts).strip() if parts else None
