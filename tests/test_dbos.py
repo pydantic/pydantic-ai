@@ -1622,7 +1622,7 @@ _uninit_instructions_toolset = _TestDBOSMCPToolset(
 
 
 async def test_dbos_mcp_toolset_get_instructions_falls_back_to_step(dbos: DBOS):
-    """DBOS wrapper always fetches instructions inside a step."""
+    """When wrapped instructions are uninitialized, DBOS wrapper falls back to fetching via a step."""
     run_context = RunContext(
         deps=None,
         model=TestModel(),

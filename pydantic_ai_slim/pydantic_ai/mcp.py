@@ -500,9 +500,14 @@ class MCPServer(AbstractToolset[Any], ABC):
         Returns:
             The server's instructions if `include_instructions` is enabled, otherwise `None`.
         """
-        if self.include_instructions:
+        if not self.include_instructions:
+            return None
+        try:
             return self.instructions
-        return None
+        except AttributeError:
+            # Server not yet initialized — return None rather than propagating.
+            # Durable execution wrappers detect this and fetch via activity/step.
+            return None
 
     async def list_tools(self) -> list[mcp_types.Tool]:
         """Retrieve tools that are currently active on the server.

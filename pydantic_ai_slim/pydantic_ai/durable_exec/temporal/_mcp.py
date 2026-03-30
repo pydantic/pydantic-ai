@@ -103,16 +103,23 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
         if not workflow.in_workflow():  # pragma: no cover
             return await super().get_instructions(ctx)
 
-        serialized_run_context = self.run_context_type.serialize_run_context(ctx)
-        activity_config: ActivityConfig = {'summary': f'get instructions: {self.id}', **self.activity_config}
-        return await workflow.execute_activity(
-            activity=self.get_instructions_activity,
-            args=[
-                GetToolsParams(serialized_run_context=serialized_run_context),
-                ctx.deps,
-            ],
-            **activity_config,
-        )
+        # Try locally first (fast path: returns None when disabled or returns cached instructions).
+        result = await super().get_instructions(ctx)
+        if result is not None:
+            return result
+        # If instructions are enabled but the server isn't initialized locally, fetch via activity.
+        if getattr(self.wrapped, 'include_instructions', False):
+            serialized_run_context = self.run_context_type.serialize_run_context(ctx)
+            activity_config: ActivityConfig = {'summary': f'get instructions: {self.id}', **self.activity_config}
+            return await workflow.execute_activity(
+                activity=self.get_instructions_activity,
+                args=[
+                    GetToolsParams(serialized_run_context=serialized_run_context),
+                    ctx.deps,
+                ],
+                **activity_config,
+            )
+        return None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         if not workflow.in_workflow():  # pragma: no cover

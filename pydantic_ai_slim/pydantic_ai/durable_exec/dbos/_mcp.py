@@ -103,7 +103,14 @@ class DBOSMCPToolset(WrapperToolset[AgentDepsT], ABC):
         return {name: self.tool_for_tool_def(tool_def) for name, tool_def in tool_defs.items()}
 
     async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> str | list[str] | None:
-        return await self._dbos_wrapped_get_instructions_step(ctx)
+        # Try locally first (fast path: returns None when disabled or returns cached instructions).
+        result = await super().get_instructions(ctx)
+        if result is not None:
+            return result
+        # If instructions are enabled but the server isn't initialized locally, fetch via step.
+        if getattr(self.wrapped, 'include_instructions', False):
+            return await self._dbos_wrapped_get_instructions_step(ctx)
+        return None
 
     async def call_tool(
         self,
