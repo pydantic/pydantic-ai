@@ -4637,7 +4637,7 @@ class TestMultipleToolCalls:
             end_strategy='exhaustive',
         )
 
-        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries \\(1\\) for output validation'):
+        with pytest.raises(UnexpectedModelBehavior, match="Tool 'output_tool' exceeded max retries count of 1"):
             agent.run_sync('test')
 
     def test_multiple_final_result_are_validated_correctly(self):
