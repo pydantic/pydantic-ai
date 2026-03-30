@@ -3412,11 +3412,13 @@ class TestImageGenerationCapability:
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             # If we see a tool return, the image was generated — return final text
-            last = messages[-1]
-            if isinstance(last, ModelRequest):
-                for part in last.parts:
-                    if isinstance(part, ToolReturnPart):
-                        return ModelResponse(parts=[TextPart(content='Here is the generated image.')])
+            if any(
+                isinstance(part, ToolReturnPart)
+                for msg in messages
+                if isinstance(msg, ModelRequest)
+                for part in msg.parts
+            ):
+                return ModelResponse(parts=[TextPart(content='Here is the generated image.')])
 
             # First call: invoke the generate_image tool
             assert info.function_tools, 'Expected generate_image tool to be available'
