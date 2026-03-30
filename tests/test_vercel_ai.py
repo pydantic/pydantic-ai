@@ -29,6 +29,7 @@ from pydantic_ai.messages import (
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -4890,6 +4891,17 @@ async def test_adapter_load_messages_file_url_without_metadata():
                 ]
             )
         ]
+    )
+
+
+async def test_convert_user_prompt_part_text_content():
+    """Test converting a user prompt with only text content."""
+    from pydantic_ai.ui.vercel_ai._adapter import _convert_user_prompt_part  # pyright: ignore[reportPrivateUsage]
+
+    part = UserPromptPart(content=['Just some text', TextContent(content='More text', metadata={'key': 'value'})])
+    ui_parts = _convert_user_prompt_part(part)
+    assert ui_parts == snapshot(
+        [TextUIPart(text='Just some text', state='done'), TextUIPart(text='More text', state='done')]
     )
 
 
