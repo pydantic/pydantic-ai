@@ -85,8 +85,6 @@ else:
             yield
         formatted: list[str] = []
         for w in caught:
-            if issubclass(w.category, ResourceWarning):
-                continue
             parts: list[str] = []
             if include_file:
                 parts.append(w.filename)
