@@ -3272,22 +3272,29 @@ class TestWebFetchCapability:
         toolset = cap.get_toolset()
         assert toolset is not None
 
-    def test_webfetch_requires_builtin_with_constraints(self, allow_model_requests: None):
-        """WebFetch(blocked_domains=...) with non-supporting model → UserError."""
+    def test_webfetch_max_uses_requires_builtin(self, allow_model_requests: None):
+        """WebFetch(max_uses=...) with non-supporting model → UserError."""
         model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
-        agent = Agent(model, capabilities=[WebFetch(blocked_domains=['evil.com'])])
+        agent = Agent(model, capabilities=[WebFetch(max_uses=5)])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
+
+    def test_webfetch_domains_forwarded_to_local(self):
+        """WebFetch(allowed_domains=..., blocked_domains=...) forwards to local tool."""
+        cap = WebFetch(allowed_domains=['example.com'], blocked_domains=['evil.com'])
+        # Domains no longer require builtin — they are handled locally
+        assert not cap._requires_builtin()  # pyright: ignore[reportPrivateUsage]
+        assert cap.get_toolset() is not None
 
     def test_webfetch_both_false_raises(self):
         """WebFetch(builtin=False, local=False) → UserError at construction."""
         with pytest.raises(UserError, match='both builtin and local cannot be False'):
             WebFetch(builtin=False, local=False)
 
-    def test_webfetch_builtin_false_with_constraints_raises(self):
-        """WebFetch(builtin=False, allowed_domains=...) → UserError at construction."""
+    def test_webfetch_builtin_false_with_max_uses_raises(self):
+        """WebFetch(builtin=False, max_uses=...) → UserError at construction."""
         with pytest.raises(UserError, match='constraint fields require the builtin tool'):
-            WebFetch(builtin=False, allowed_domains=['example.com'])
+            WebFetch(builtin=False, max_uses=5)
 
     def test_webfetch_local_callable(self):
         """WebFetch(local=some_function) → bare callable wrapped in Tool."""
@@ -4283,7 +4290,7 @@ def test_web_fetch_with_constraints():
     assert tool.max_uses == 5
     assert tool.enable_citations is True
     assert tool.max_content_tokens == 1000
-    # Constraint fields require builtin
+    # Only max_uses requires builtin (domains are handled locally)
     assert cap._requires_builtin() is True  # pyright: ignore[reportPrivateUsage]
 
 

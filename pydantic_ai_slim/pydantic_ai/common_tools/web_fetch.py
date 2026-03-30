@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import KW_ONLY, dataclass
+from dataclasses import KW_ONLY, dataclass, field
+from urllib.parse import urlparse
 
 from typing_extensions import Any, TypedDict
 
 from pydantic_ai._ssrf import safe_download
+from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import BinaryContent
 from pydantic_ai.tools import Tool
 
@@ -55,6 +57,12 @@ class WebFetchLocalTool:
     timeout: int
     """Request timeout in seconds."""
 
+    allowed_domains: list[str] | None = field(default=None)
+    """Only fetch from these domains. Raises `ModelRetry` on violation."""
+
+    blocked_domains: list[str] | None = field(default=None)
+    """Never fetch from these domains. Raises `ModelRetry` on violation."""
+
     async def __call__(self, url: str) -> WebFetchResult | BinaryContent:
         """Fetches the content of a web page at the given URL and returns it as markdown.
 
@@ -70,6 +78,8 @@ class WebFetchLocalTool:
         Returns:
             The fetched page content.
         """
+        _check_domain(url, self.allowed_domains, self.blocked_domains)
+
         response = await safe_download(
             url,
             allow_local=self.allow_local_urls,
@@ -104,6 +114,17 @@ class WebFetchLocalTool:
             content = content[: self.max_content_length] + '\n\n[Content truncated]'
 
         return WebFetchResult(url=url, title=title, content=content)
+
+
+def _check_domain(url: str, allowed_domains: list[str] | None, blocked_domains: list[str] | None) -> None:
+    """Validate URL domain against allowed/blocked lists. Raises `ModelRetry` on violation."""
+    hostname = urlparse(url).hostname
+    if not hostname:
+        raise ModelRetry('Invalid URL: no hostname found.')
+    if allowed_domains is not None and hostname not in allowed_domains:
+        raise ModelRetry(f'Domain {hostname!r} is not in the allowed domains list. Allowed: {allowed_domains}')
+    if blocked_domains is not None and hostname in blocked_domains:
+        raise ModelRetry(f'Domain {hostname!r} is blocked. Try a different URL.')
 
 
 def _is_text_like_media_type(media_type: str) -> bool:
@@ -144,6 +165,8 @@ def web_fetch_tool(
     max_content_length: int | None = 50_000,
     allow_local_urls: bool = False,
     timeout: int = 30,
+    allowed_domains: list[str] | None = None,
+    blocked_domains: list[str] | None = None,
 ) -> Tool[Any]:
     """Creates a web fetch tool that fetches URLs and converts content to markdown.
 
@@ -155,12 +178,16 @@ def web_fetch_tool(
         allow_local_urls: Whether to allow fetching from private/local IP addresses.
             Defaults to `False`.
         timeout: Request timeout in seconds. Defaults to 30.
+        allowed_domains: Only fetch from these domains. Raises `ModelRetry` on violation.
+        blocked_domains: Never fetch from these domains. Raises `ModelRetry` on violation.
     """
     return Tool[Any](
         WebFetchLocalTool(
             max_content_length=max_content_length,
             allow_local_urls=allow_local_urls,
             timeout=timeout,
+            allowed_domains=allowed_domains,
+            blocked_domains=blocked_domains,
         ).__call__,
         name='web_fetch',
         description='Fetches the content of a web page at the given URL and returns it as markdown.',

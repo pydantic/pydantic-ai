@@ -77,9 +77,12 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
         try:
             from pydantic_ai.common_tools.web_fetch import web_fetch_tool
 
-            return web_fetch_tool()
+            return web_fetch_tool(
+                allowed_domains=self.allowed_domains,
+                blocked_domains=self.blocked_domains,
+            )
         except ImportError:
             return None
 
     def _requires_builtin(self) -> bool:
-        return self.allowed_domains is not None or self.blocked_domains is not None or self.max_uses is not None
+        return self.max_uses is not None
