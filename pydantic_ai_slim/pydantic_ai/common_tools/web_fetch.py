@@ -77,7 +77,7 @@ class WebFetchLocalTool:
         if _is_textual(content_type):
             text = response.text
 
-            if not content_type or content_type == 'text/html':
+            if not content_type or content_type in ('text/html', 'application/xhtml+xml'):
                 title = _extract_title(text)
                 content = md(text, strip=['img', 'script', 'style'])
             elif content_type == 'application/json':

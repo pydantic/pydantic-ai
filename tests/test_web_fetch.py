@@ -197,6 +197,25 @@ class TestWebFetchLocalTool:
         assert '<root>' in result['content']
         assert 'Hello' in result['content']
 
+    async def test_fetch_xhtml(self):
+        """XHTML content is converted to markdown like HTML."""
+        xhtml = '<html><head><title>XHTML Page</title></head><body><h1>Hello</h1><p>World</p></body></html>'
+        mock_response = httpx.Response(
+            200,
+            text=xhtml,
+            headers={'content-type': 'application/xhtml+xml'},
+            request=httpx.Request('GET', 'https://example.com'),
+        )
+
+        with patch('pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com')
+
+        assert result['title'] == 'XHTML Page'
+        assert 'Hello' in result['content']
+        # Should be converted to markdown, not raw XHTML
+        assert '<h1>' not in result['content']
+
     async def test_binary_content_type(self):
         """Binary content types return an error message."""
         mock_response = httpx.Response(
