@@ -1742,3 +1742,66 @@ async def test_attributes_and_metrics_empty_by_default():
     _, _, ctx = collector.calls[0]
     assert ctx.attributes == {}
     assert ctx.metrics == {}
+
+
+@pytest.mark.anyio
+async def test_online_eval_suppressed_inside_task_run():
+    """Online evaluation is suppressed when already inside a _CURRENT_TASK_RUN (e.g. Dataset.evaluate)."""
+    from pydantic_evals.dataset import _CURRENT_TASK_RUN, _TaskRun  # pyright: ignore[reportPrivateUsage]
+
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(AlwaysTrue())
+    async def my_func(x: int) -> int:
+        return x
+
+    # Simulate being inside Dataset.evaluate by setting _CURRENT_TASK_RUN
+    outer_task_run = _TaskRun()
+    token = _CURRENT_TASK_RUN.set(outer_task_run)
+    try:
+        result = await my_func(42)
+        assert result == 42
+    finally:
+        _CURRENT_TASK_RUN.reset(token)
+
+    await wait_for_evaluations()
+    # Online evaluation should have been suppressed
+    assert len(collector.calls) == 0
+
+
+@pytest.mark.anyio
+async def test_metadata_not_shared_between_contexts():
+    """config.metadata is copied so sinks can't corrupt the config."""
+    collected_contexts: list[EvaluatorContext[Any, Any, Any]] = []
+
+    async def capture_sink(
+        results: Sequence[EvaluationResult[Any]],
+        failures: Sequence[EvaluatorFailure],
+        context: EvaluatorContext[Any, Any, Any],
+    ) -> None:
+        collected_contexts.append(context)
+        # Mutate the context's metadata — should NOT affect the config
+        if context.metadata is not None:
+            context.metadata['injected'] = True
+
+    config = OnlineEvalConfig(
+        default_sink=capture_sink,
+        metadata={'service': 'test'},
+    )
+
+    @config.evaluate(AlwaysTrue())
+    async def my_func(x: int) -> int:
+        return x
+
+    await my_func(1)
+    await wait_for_evaluations()
+    await my_func(2)
+    await wait_for_evaluations()
+
+    assert len(collected_contexts) == 2
+    # Both contexts' metadata were mutated by the sink
+    assert collected_contexts[0].metadata == {'service': 'test', 'injected': True}
+    assert collected_contexts[1].metadata == {'service': 'test', 'injected': True}
+    # But config metadata should be untouched — the copies are independent
+    assert config.metadata == {'service': 'test'}

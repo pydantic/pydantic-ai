@@ -974,6 +974,36 @@ class _TaskRun:
         self.attributes[name] = value
 
 
+def _extract_span_tree_metrics(task_run: _TaskRun, span_tree: SpanTree) -> None:
+    """Extract standard metrics (requests, cost, token usage) from a span tree.
+
+    Iterates the span tree looking for LLM request spans (identified by the
+    ``gen_ai.request.model`` attribute) and extracts:
+
+    - ``requests``: count of ``gen_ai.operation.name == 'chat'`` spans
+    - ``cost``: sum of ``operation.cost`` values
+    - Token usage from ``gen_ai.usage.*`` and ``gen_ai.usage.details.*`` attributes
+    """
+    # Idea for making this more configurable: replace the following logic with a call to a user-provided function
+    #   of type Callable[[_TaskRun, SpanTree], None] or similar, (maybe no _TaskRun and just use the public APIs).
+    #   That way users can customize this logic. We'd default to a function that does the current thing but also
+    #   allow `None` to disable it entirely.
+    for node in span_tree:
+        if 'gen_ai.request.model' not in node.attributes:
+            continue  # we only want to count the below specifically for the individual LLM requests, not agent runs
+        for k, v in node.attributes.items():
+            if k == 'gen_ai.operation.name' and v == 'chat':
+                task_run.increment_metric('requests', 1)
+            elif not isinstance(v, int | float):
+                continue
+            elif k == 'operation.cost':
+                task_run.increment_metric('cost', v)
+            elif k.startswith('gen_ai.usage.details.'):
+                task_run.increment_metric(k.removeprefix('gen_ai.usage.details.'), v)
+            elif k.startswith('gen_ai.usage.'):
+                task_run.increment_metric(k.removeprefix('gen_ai.usage.'), v)
+
+
 async def _run_task(
     task: Callable[[InputsT], Awaitable[OutputT] | OutputT],
     case: Case[InputsT, OutputT, MetadataT],
@@ -1024,24 +1054,7 @@ async def _run_task(
     task_run, task_output, duration, span_tree = await _run_once()
 
     if isinstance(span_tree, SpanTree):  # pragma: no branch
-        # Idea for making this more configurable: replace the following logic with a call to a user-provided function
-        #   of type Callable[[_TaskRun, SpanTree], None] or similar, (maybe no _TaskRun and just use the public APIs).
-        #   That way users can customize this logic. We'd default to a function that does the current thing but also
-        #   allow `None` to disable it entirely.
-        for node in span_tree:
-            if 'gen_ai.request.model' not in node.attributes:
-                continue  # we only want to count the below specifically for the individual LLM requests, not agent runs
-            for k, v in node.attributes.items():
-                if k == 'gen_ai.operation.name' and v == 'chat':
-                    task_run.increment_metric('requests', 1)
-                elif not isinstance(v, int | float):
-                    continue
-                elif k == 'operation.cost':
-                    task_run.increment_metric('cost', v)
-                elif k.startswith('gen_ai.usage.details.'):
-                    task_run.increment_metric(k.removeprefix('gen_ai.usage.details.'), v)
-                elif k.startswith('gen_ai.usage.'):
-                    task_run.increment_metric(k.removeprefix('gen_ai.usage.'), v)
+        _extract_span_tree_metrics(task_run, span_tree)
 
     return EvaluatorContext[InputsT, OutputT, MetadataT](
         name=case.name,

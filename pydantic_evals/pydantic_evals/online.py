@@ -48,12 +48,14 @@ from typing_extensions import ParamSpec, TypeVar
 from ._utils import UNSET, Unset, logfire_span
 from .dataset import (
     _CURRENT_TASK_RUN as _CURRENT_TASK_RUN,  # pyright: ignore[reportPrivateUsage]
+    _extract_span_tree_metrics as _extract_span_tree_metrics,  # pyright: ignore[reportPrivateUsage]
     _TaskRun as _TaskRun,  # pyright: ignore[reportPrivateUsage]
 )
 from .evaluators._run_evaluator import run_evaluator
 from .evaluators.context import EvaluatorContext
 from .evaluators.evaluator import EvaluationResult, Evaluator, EvaluatorFailure
 from .otel._context_subtree import context_subtree
+from .otel.span_tree import SpanTree
 
 __all__ = (
     'CallbackSink',
@@ -755,8 +757,9 @@ def _wrap_async(
 
     @functools.wraps(func)
     async def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
-        # If evaluation is globally disabled, just run the function
-        if not config.enabled or _EVALUATION_DISABLED.get():
+        # If evaluation is globally disabled, or we're already inside an evaluation
+        # context (e.g. Dataset.evaluate), just run the function
+        if not config.enabled or _EVALUATION_DISABLED.get() or _CURRENT_TASK_RUN.get() is not None:
             return await func(*args, **kwargs)
 
         # Capture inputs early so sample_rate callables can use them
@@ -781,13 +784,18 @@ def _wrap_async(
         finally:
             _CURRENT_TASK_RUN.reset(token)
 
+        # Extract standard metrics (requests, cost, token usage) from the span tree
+        if isinstance(span_tree, SpanTree):
+            _extract_span_tree_metrics(task_run, span_tree)
+
         # Build context
+        metadata = dict(config.metadata) if config.metadata is not None else None
         context = EvaluatorContext(
             name=None,
             inputs=inputs,
             output=result,
             expected_output=None,
-            metadata=config.metadata,
+            metadata=metadata,
             duration=duration,
             _span_tree=span_tree,
             attributes=task_run.attributes,
@@ -815,8 +823,9 @@ def _wrap_sync(
 
     @functools.wraps(func)
     def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
-        # If evaluation is globally disabled, just run the function
-        if not config.enabled or _EVALUATION_DISABLED.get():
+        # If evaluation is globally disabled, or we're already inside an evaluation
+        # context (e.g. Dataset.evaluate), just run the function
+        if not config.enabled or _EVALUATION_DISABLED.get() or _CURRENT_TASK_RUN.get() is not None:
             return func(*args, **kwargs)
 
         # Capture inputs early so sample_rate callables can use them
@@ -841,13 +850,18 @@ def _wrap_sync(
         finally:
             _CURRENT_TASK_RUN.reset(token)
 
+        # Extract standard metrics (requests, cost, token usage) from the span tree
+        if isinstance(span_tree, SpanTree):
+            _extract_span_tree_metrics(task_run, span_tree)
+
         # Build context
+        metadata = dict(config.metadata) if config.metadata is not None else None
         context = EvaluatorContext(
             name=None,
             inputs=inputs,
             output=result,
             expected_output=None,
-            metadata=config.metadata,
+            metadata=metadata,
             duration=duration,
             _span_tree=span_tree,
             attributes=task_run.attributes,
