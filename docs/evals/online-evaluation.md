@@ -234,18 +234,18 @@ never = OnlineEvaluator(evaluator=QuickCheck(), sample_rate=0.0)
 
 ### Dynamic Sample Rates
 
-Pass a callable to enable runtime-configurable sampling. The callable returns a `float` (probability) or `bool` (always/never):
+Pass a callable to enable runtime-configurable or input-dependent sampling. The callable receives a [`SamplingContext`][pydantic_evals.online.SamplingContext] with the function inputs, config metadata, and evaluator name, and returns a `float` (probability) or `bool` (always/never):
 
 ```python
 from dataclasses import dataclass
 
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext
-from pydantic_evals.online import OnlineEvaluator
+from pydantic_evals.online import OnlineEvaluator, SamplingContext
 
 _CURRENT_RATE = 0.5
 
 
-def get_current_rate() -> float:
+def get_current_rate(ctx: SamplingContext) -> float:
     return _CURRENT_RATE
 
 
@@ -259,6 +259,29 @@ dynamic = OnlineEvaluator(evaluator=QuickCheck(), sample_rate=get_current_rate)
 ```
 
 This enables integration with feature flags, managed variables, or configuration systems — change `_CURRENT_RATE` at runtime without redeploying.
+
+You can also use the [`SamplingContext`][pydantic_evals.online.SamplingContext] to make sampling decisions based on the function inputs:
+
+```python
+from dataclasses import dataclass
+
+from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+from pydantic_evals.online import OnlineEvaluator, SamplingContext
+
+
+def sample_long_inputs(ctx: SamplingContext) -> bool:
+    """Only evaluate calls with long input text."""
+    return len(str(ctx.inputs.get('text', ''))) > 100
+
+
+@dataclass
+class QualityCheck(Evaluator):
+    def evaluate(self, ctx: EvaluatorContext) -> bool:
+        return len(str(ctx.output)) > 10
+
+
+expensive = OnlineEvaluator(evaluator=QualityCheck(), sample_rate=sample_long_inputs)
+```
 
 ### Disabling Evaluation
 
@@ -329,9 +352,9 @@ async def main():
 asyncio.run(main())
 ```
 
-## Conditional Evaluation (Gating)
+## Conditional Evaluation
 
-For cost control, expensive evaluators can be gated behind cheap checks. The `gate` parameter on [`OnlineEvaluator`][pydantic_evals.online.OnlineEvaluator] is a callable that receives the [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext] and returns whether the evaluator should run:
+For cost control, you can run expensive evaluation logic conditionally within a single custom evaluator. Return a mapping where you only include keys for checks that should run — checks that don't apply are simply omitted from the results:
 
 ```python
 import asyncio
@@ -346,7 +369,6 @@ from pydantic_evals.evaluators import (
 )
 from pydantic_evals.online import (
     OnlineEvalConfig,
-    OnlineEvaluator,
     wait_for_evaluations,
 )
 
@@ -359,45 +381,49 @@ async def log_sink(
     context: EvaluatorContext,
 ) -> None:
     for r in results:
-        results_log.append(r.name)
+        results_log.append(f'{r.name}={r.value}')
 
 
 @dataclass
-class DetailedAnalysis(Evaluator):
-    def evaluate(self, ctx: EvaluatorContext) -> float:
-        return len(str(ctx.output)) / 100.0
+class ConditionalAnalysis(Evaluator):
+    """Runs a cheap check on every call, and an expensive check only on long outputs."""
+
+    def evaluate(self, ctx: EvaluatorContext) -> dict[str, float | bool]:
+        output = str(ctx.output)
+        results: dict[str, float | bool] = {
+            'has_content': len(output) > 0,
+        }
+        # Only run the expensive analysis on long outputs
+        if len(output) > 20:
+            results['detail_score'] = len(output) / 100.0
+        return results
 
 
 config = OnlineEvalConfig(default_sink=log_sink)
 
 
-# Only run the expensive evaluator on long outputs
-@config.evaluate(
-    OnlineEvaluator(
-        evaluator=DetailedAnalysis(),
-        gate=lambda ctx: len(str(ctx.output)) > 20,
-    )
-)
+@config.evaluate(ConditionalAnalysis())
 async def generate(prompt: str) -> str:
     return f'Response to: {prompt}'
 
 
 async def main():
-    await generate('hi')  # output is 15 chars — gate blocks
+    await generate('hi')  # short output — only cheap check runs
     await wait_for_evaluations()
-    print(f'after short output: {len(results_log)} evaluations')
-    #> after short output: 0 evaluations
+    print(results_log)
+    #> ['has_content=True']
 
-    await generate('tell me a long story about dragons')  # output is 47 chars — gate allows
+    results_log.clear()
+    await generate('tell me a long story about dragons')  # long output — both checks run
     await wait_for_evaluations()
-    print(f'after long output: {len(results_log)} evaluations')
-    #> after long output: 1 evaluations
+    print(sorted(results_log))
+    #> ['detail_score=0.47', 'has_content=True']
 
 
 asyncio.run(main())
 ```
 
-The gate is checked **after** sampling, so it's only called for requests that were already sampled. Gates can be sync or async. If a gate raises an exception, the evaluator is skipped and the exception is passed to the [`on_error`](#error-handling) callback if configured, or silently suppressed otherwise.
+This pattern lets you combine cheap and expensive checks in one evaluator, avoiding unnecessary work when conditions aren't met.
 
 ## Sync Function Support
 
@@ -751,7 +777,7 @@ config = OnlineEvalConfig(on_max_concurrency=warn_on_drop)
 There are two types of error handling:
 
 - **`on_sampling_error`**: Called synchronously when a `sample_rate` callable raises. Receives the exception and the [`Evaluator`][pydantic_evals.evaluators.Evaluator]. Must be sync (not async). If set, the evaluator is skipped. If not set, the exception **propagates to the caller**.
-- **`on_error`**: Called when an exception occurs in a `gate`, `sink`, or `on_max_concurrency` callback. Receives the exception, [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext], [`Evaluator`][pydantic_evals.evaluators.Evaluator], and a location string. Can be sync or async. If not set, exceptions are **silently suppressed**.
+- **`on_error`**: Called when an exception occurs in a `sink` or `on_max_concurrency` callback. Receives the exception, [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext], [`Evaluator`][pydantic_evals.evaluators.Evaluator], and a location string. Can be sync or async. If not set, exceptions are **silently suppressed**.
 
 Set these on [`OnlineEvalConfig`][pydantic_evals.online.OnlineEvalConfig] for global defaults, or on [`OnlineEvaluator`][pydantic_evals.online.OnlineEvaluator] to override per-evaluator:
 
@@ -789,7 +815,7 @@ custom = OnlineEvaluator(evaluator=MyCheck(), on_error=log_errors)
 
 Key behaviors:
 
-- **Evaluator exceptions** are handled separately by [`run_evaluator`][pydantic_evals.evaluators._run_evaluator.run_evaluator], which converts them to [`EvaluatorFailure`][pydantic_evals.evaluators.EvaluatorFailure] objects passed to sinks — they do not go through `on_error`.
+- **Evaluator exceptions** are handled by converting them to [`EvaluatorFailure`][pydantic_evals.evaluators.EvaluatorFailure] objects passed to sinks — they do not go through `on_error`.
 - **One evaluator's error doesn't affect siblings** — each evaluator runs in its own task with isolated error handling.
 - **One sink's error doesn't affect other sinks** — each sink submission is wrapped individually.
 - **If `on_error` itself raises**, the exception is silently suppressed to protect sibling evaluators.
@@ -808,6 +834,7 @@ Key classes and functions:
 | [`disable_evaluation()`][pydantic_evals.online.disable_evaluation] | Context manager to suppress evaluation |
 | [`OnlineEvalConfig`][pydantic_evals.online.OnlineEvalConfig] | Cross-evaluator configuration |
 | [`OnlineEvaluator`][pydantic_evals.online.OnlineEvaluator] | Per-evaluator configuration wrapper |
+| [`SamplingContext`][pydantic_evals.online.SamplingContext] | Context available to `sample_rate` callables |
 | [`EvaluationSink`][pydantic_evals.online.EvaluationSink] | Protocol for result destinations |
 | [`CallbackSink`][pydantic_evals.online.CallbackSink] | Built-in sink wrapping a callable |
 | [`SpanReference`][pydantic_evals.online.SpanReference] | Identifies a span for result association |

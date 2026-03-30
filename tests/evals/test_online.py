@@ -12,6 +12,7 @@ import pytest
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
     from pydantic_evals.evaluators import EvaluationResult, Evaluator, EvaluatorContext, EvaluatorFailure
     from pydantic_evals.evaluators.evaluator import EvaluatorOutput
     from pydantic_evals.online import (
@@ -20,6 +21,7 @@ with try_import() as imports_successful:
         OnErrorLocation,
         OnlineEvalConfig,
         OnlineEvaluator,
+        SamplingContext,
         SpanReference,
         configure,
         disable_evaluation,
@@ -199,7 +201,6 @@ async def test_online_evaluator_defaults():
     assert online.sample_rate is None
     assert online.sink is None
     assert online.max_concurrency == 10
-    assert online.gate is None
 
 
 @pytest.mark.anyio
@@ -394,7 +395,7 @@ async def test_sample_rate_callable():
     call_count = 0
     collector = Collector()
 
-    def dynamic_rate() -> float:
+    def dynamic_rate(ctx: SamplingContext) -> float:
         nonlocal call_count
         call_count += 1
         return 1.0
@@ -418,7 +419,7 @@ async def test_sample_rate_callable_returning_bool():
     collector = Collector()
     config = OnlineEvalConfig(default_sink=collector)
 
-    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), sample_rate=lambda: False))
+    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), sample_rate=lambda ctx: False))
     async def my_func(x: int) -> int:
         return x
 
@@ -462,80 +463,6 @@ async def test_disable_evaluation_restores():
     await my_func(42)
     await wait_for_evaluations()
     assert len(collector.calls) == 1
-
-
-@pytest.mark.anyio
-async def test_gate_prevents_evaluation():
-    """Gate returning False prevents evaluation."""
-    collector = Collector()
-    config = OnlineEvalConfig(default_sink=collector)
-
-    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), gate=lambda ctx: False))
-    async def my_func(x: int) -> int:
-        return x
-
-    await my_func(42)
-    await wait_for_evaluations()
-    assert len(collector.calls) == 0
-
-
-@pytest.mark.anyio
-async def test_gate_allows_evaluation():
-    """Gate returning True allows evaluation."""
-    collector = Collector()
-    config = OnlineEvalConfig(default_sink=collector)
-
-    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), gate=lambda ctx: True))
-    async def my_func(x: int) -> int:
-        return x
-
-    await my_func(42)
-    await wait_for_evaluations()
-    assert len(collector.calls) == 1
-
-
-@pytest.mark.anyio
-async def test_gate_async():
-    """Async gate functions work."""
-    collector = Collector()
-
-    async def my_gate(ctx: EvaluatorContext[Any, Any, Any]) -> bool:
-        return ctx.output > 10
-
-    config = OnlineEvalConfig(default_sink=collector)
-
-    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), gate=my_gate))
-    async def my_func(x: int) -> int:
-        return x
-
-    await my_func(5)  # output=5, gate should block
-    await wait_for_evaluations()
-    assert len(collector.calls) == 0
-
-    await my_func(20)  # output=20, gate should allow
-    await wait_for_evaluations()
-    assert len(collector.calls) == 1
-
-
-@pytest.mark.anyio
-async def test_gate_exception_skips_evaluator():
-    """Gate that raises an exception skips the evaluator gracefully."""
-    collector = Collector()
-
-    def bad_gate(ctx: EvaluatorContext[Any, Any, Any]) -> bool:
-        raise ValueError('gate error')
-
-    config = OnlineEvalConfig(default_sink=collector)
-
-    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), gate=bad_gate))
-    async def my_func(x: int) -> int:
-        return x
-
-    result = await my_func(42)
-    assert result == 42
-
-    await wait_for_evaluations()
-    assert len(collector.calls) == 0
 
 
 @pytest.mark.anyio
@@ -914,7 +841,7 @@ async def test_sample_rate_callable_exception_propagates():
     """Exception in sample_rate callable propagates — it's the user's responsibility."""
     collector = Collector()
 
-    def bad_rate() -> float:
+    def bad_rate(ctx: SamplingContext) -> float:
         raise ValueError('rate error')
 
     config = OnlineEvalConfig(default_sink=collector)
@@ -937,7 +864,7 @@ async def test_sample_rate_callable_exception_calls_on_sampling_error():
 
     collector = Collector()
 
-    def bad_rate() -> float:
+    def bad_rate(ctx: SamplingContext) -> float:
         raise ValueError('rate error')
 
     config = OnlineEvalConfig(default_sink=collector, on_sampling_error=on_sampling_error)
@@ -962,7 +889,7 @@ async def test_on_sampling_error_handler_exception_suppressed():
     def bad_handler(exc: Exception, evaluator: Evaluator) -> None:
         raise RuntimeError('handler boom')
 
-    def bad_rate() -> float:
+    def bad_rate(ctx: SamplingContext) -> float:
         raise ValueError('rate error')
 
     config = OnlineEvalConfig(default_sink=collector, on_sampling_error=bad_handler)
@@ -1080,47 +1007,6 @@ async def test_sync_decorated_function_dispatch():
 
 
 @pytest.mark.anyio
-async def test_sync_decorated_function_gate():
-    """Sync gates work when called from async context."""
-    collector = Collector()
-    config = OnlineEvalConfig(default_sink=collector)
-
-    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), gate=lambda ctx: ctx.output > 10))
-    def my_func(x: int) -> int:
-        return x
-
-    my_func(5)  # gate blocks
-    await wait_for_evaluations()
-    assert len(collector.calls) == 0
-
-    my_func(20)  # gate allows
-    await wait_for_evaluations()
-    assert len(collector.calls) == 1
-
-
-@pytest.mark.anyio
-async def test_sync_decorated_function_async_gate():
-    """Async gates work with sync decorated functions."""
-    collector = Collector()
-    config = OnlineEvalConfig(default_sink=collector)
-
-    async def async_gate(ctx: EvaluatorContext[Any, Any, Any]) -> bool:
-        return ctx.output > 10
-
-    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), gate=async_gate))
-    def my_func(x: int) -> int:
-        return x
-
-    my_func(5)  # gate blocks
-    await wait_for_evaluations()
-    assert len(collector.calls) == 0
-
-    my_func(20)  # gate allows
-    await wait_for_evaluations()
-    assert len(collector.calls) == 1
-
-
-@pytest.mark.anyio
 async def test_sync_decorated_function_disabled():
     """Disabled config doesn't dispatch evaluators for sync decorated functions."""
     collector = Collector()
@@ -1144,26 +1030,6 @@ async def test_sync_decorated_function_sample_rate_zero():
     config = OnlineEvalConfig(default_sink=collector)
 
     @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), sample_rate=0.0))
-    def my_func(x: int) -> int:
-        return x
-
-    result = my_func(42)
-    assert result == 42
-
-    await wait_for_evaluations()
-    assert len(collector.calls) == 0
-
-
-@pytest.mark.anyio
-async def test_sync_decorated_function_gate_exception():
-    """Gate exception skips evaluator gracefully for sync decorated functions."""
-    collector = Collector()
-    config = OnlineEvalConfig(default_sink=collector)
-
-    def bad_gate(ctx: EvaluatorContext[Any, Any, Any]) -> bool:
-        raise ValueError('gate error')
-
-    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), gate=bad_gate))
     def my_func(x: int) -> int:
         return x
 
@@ -1370,42 +1236,6 @@ async def test_on_max_concurrency_evaluator_overrides_config():
 
 
 @pytest.mark.anyio
-async def test_on_error_gate_exception():
-    """on_error is called with 'gate' location when gate raises."""
-    errors: list[tuple[Exception, OnErrorLocation]] = []
-
-    def on_error(
-        exc: Exception,
-        ctx: EvaluatorContext[Any, Any, Any],
-        evaluator: Evaluator,
-        location: OnErrorLocation,
-    ) -> None:
-        errors.append((exc, location))
-
-    collector = Collector()
-    config = OnlineEvalConfig(default_sink=collector, on_error=on_error)
-
-    def bad_gate(ctx: EvaluatorContext[Any, Any, Any]) -> bool:
-        raise ValueError('gate boom')
-
-    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), gate=bad_gate))
-    async def my_func(x: int) -> int:
-        return x
-
-    result = await my_func(42)
-    assert result == 42
-
-    await wait_for_evaluations()
-
-    assert len(errors) == 1
-    assert isinstance(errors[0][0], ValueError)
-    assert str(errors[0][0]) == 'gate boom'
-    assert errors[0][1] == 'gate'
-    # Evaluator should not have run
-    assert len(collector.calls) == 0
-
-
-@pytest.mark.anyio
 async def test_on_error_sink_exception():
     """on_error is called with 'sink' location when sink raises."""
     errors: list[tuple[Exception, OnErrorLocation]] = []
@@ -1486,7 +1316,12 @@ async def test_on_error_on_max_concurrency_exception():
 @pytest.mark.anyio
 async def test_on_error_handler_exception_suppressed():
     """on_error handler that raises is silently suppressed."""
-    collector = Collector()
+
+    class FailingSink:
+        async def submit(self, **kwargs: Any) -> None:
+            raise ValueError('sink boom')
+
+    good_collector = Collector()
 
     def bad_on_error(
         exc: Exception,
@@ -1496,15 +1331,9 @@ async def test_on_error_handler_exception_suppressed():
     ) -> None:
         raise RuntimeError('handler boom')
 
-    def bad_gate(ctx: EvaluatorContext[Any, Any, Any]) -> bool:
-        raise ValueError('gate boom')
+    config = OnlineEvalConfig(default_sink=[FailingSink(), CallbackSink(good_collector)], on_error=bad_on_error)
 
-    config = OnlineEvalConfig(default_sink=collector, on_error=bad_on_error)
-
-    @config.evaluate(
-        AlwaysTrue(),  # this one should still run
-        OnlineEvaluator(evaluator=AlwaysFalse(), gate=bad_gate),  # gate fails, on_error fails
-    )
+    @config.evaluate(AlwaysTrue())
     async def my_func(x: int) -> int:
         return x
 
@@ -1513,14 +1342,18 @@ async def test_on_error_handler_exception_suppressed():
 
     await wait_for_evaluations()
 
-    # AlwaysTrue should still have run despite the other evaluator's error chain
-    assert len(collector.calls) >= 1
+    # Good sink should still have received results despite on_error raising
+    assert len(good_collector.calls) == 1
 
 
 @pytest.mark.anyio
 async def test_on_error_per_evaluator_overrides_config():
     """Per-evaluator on_error overrides the config default."""
     evaluator_errors: list[OnErrorLocation] = []
+
+    class FailingSink:
+        async def submit(self, **kwargs: Any) -> None:
+            raise ValueError('sink boom')
 
     def config_on_error(
         exc: Exception,
@@ -1538,14 +1371,10 @@ async def test_on_error_per_evaluator_overrides_config():
     ) -> None:
         evaluator_errors.append(location)
 
-    def bad_gate(ctx: EvaluatorContext[Any, Any, Any]) -> bool:
-        raise ValueError('gate boom')
-
-    collector = Collector()
-    config = OnlineEvalConfig(default_sink=collector, on_error=config_on_error)
+    config = OnlineEvalConfig(on_error=config_on_error)
 
     @config.evaluate(
-        OnlineEvaluator(evaluator=AlwaysTrue(), gate=bad_gate, on_error=evaluator_on_error),
+        OnlineEvaluator(evaluator=AlwaysTrue(), sink=FailingSink(), on_error=evaluator_on_error),
     )
     async def my_func(x: int) -> int:
         return x
@@ -1554,13 +1383,17 @@ async def test_on_error_per_evaluator_overrides_config():
     await wait_for_evaluations()
 
     assert len(evaluator_errors) == 1
-    assert evaluator_errors[0] == 'gate'
+    assert evaluator_errors[0] == 'sink'
 
 
 @pytest.mark.anyio
 async def test_on_error_async_callback():
     """Async on_error callback works."""
     errors: list[OnErrorLocation] = []
+
+    class FailingSink:
+        async def submit(self, **kwargs: Any) -> None:
+            raise ValueError('sink boom')
 
     async def async_on_error(
         exc: Exception,
@@ -1571,13 +1404,9 @@ async def test_on_error_async_callback():
         await asyncio.sleep(0)
         errors.append(location)
 
-    def bad_gate(ctx: EvaluatorContext[Any, Any, Any]) -> bool:
-        raise ValueError('gate boom')
+    config = OnlineEvalConfig(on_error=async_on_error)
 
-    collector = Collector()
-    config = OnlineEvalConfig(default_sink=collector, on_error=async_on_error)
-
-    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), gate=bad_gate))
+    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), sink=FailingSink()))
     async def my_func(x: int) -> int:
         return x
 
@@ -1585,32 +1414,7 @@ async def test_on_error_async_callback():
     await wait_for_evaluations()
 
     assert len(errors) == 1
-    assert errors[0] == 'gate'
-
-
-@pytest.mark.anyio
-async def test_gate_exception_does_not_cancel_sibling_evaluators():
-    """A gate exception in one evaluator doesn't prevent siblings from running."""
-    collector = Collector()
-
-    def bad_gate(ctx: EvaluatorContext[Any, Any, Any]) -> bool:
-        raise ValueError('gate boom')
-
-    config = OnlineEvalConfig(default_sink=collector)
-
-    @config.evaluate(
-        OnlineEvaluator(evaluator=AlwaysFalse(), gate=bad_gate),  # gate will fail
-        AlwaysTrue(),  # should still run
-    )
-    async def my_func(x: int) -> int:
-        return x
-
-    await my_func(42)
-    await wait_for_evaluations()
-
-    # AlwaysTrue should have run despite the sibling's gate failure
-    assert len(collector.calls) >= 1
-    assert any(r.value is True for results, _, _ in collector.calls for r in results)
+    assert errors[0] == 'sink'
 
 
 @pytest.mark.anyio
@@ -1652,3 +1456,166 @@ async def test_configure_on_error():
         assert DEFAULT_CONFIG.on_error is None
     finally:
         DEFAULT_CONFIG.on_error = original
+
+
+# --- SamplingContext tests ---
+
+
+@pytest.mark.anyio
+async def test_sampling_context_passed_to_callable():
+    """SamplingContext is passed to sample_rate callables with correct data."""
+    captured_contexts: list[SamplingContext] = []
+
+    def capture_rate(ctx: SamplingContext) -> bool:
+        captured_contexts.append(ctx)
+        return True
+
+    collector = Collector()
+    config = OnlineEvalConfig(
+        default_sink=collector,
+        metadata={'service': 'test'},
+    )
+
+    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), sample_rate=capture_rate))
+    async def my_func(x: int, y: str = 'hello') -> int:
+        return x
+
+    await my_func(42, y='world')
+    await wait_for_evaluations()
+
+    assert len(captured_contexts) == 1
+    ctx = captured_contexts[0]
+    assert ctx.inputs == {'x': 42, 'y': 'world'}
+    assert ctx.metadata == {'service': 'test'}
+    assert ctx.name == 'AlwaysTrue'
+
+
+@pytest.mark.anyio
+async def test_sampling_context_input_based_sampling():
+    """sample_rate callable can use inputs to decide whether to evaluate."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    def only_large_inputs(ctx: SamplingContext) -> bool:
+        return ctx.inputs.get('x', 0) > 10
+
+    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), sample_rate=only_large_inputs))
+    async def my_func(x: int) -> int:
+        return x
+
+    await my_func(5)  # should be skipped
+    await wait_for_evaluations()
+    assert len(collector.calls) == 0
+
+    await my_func(20)  # should be evaluated
+    await wait_for_evaluations()
+    assert len(collector.calls) == 1
+
+
+# --- attributes/metrics tests ---
+
+
+@pytest.mark.anyio
+async def test_set_eval_attribute_in_async_function():
+    """set_eval_attribute in an async decorated function propagates to EvaluatorContext."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(AlwaysTrue())
+    async def my_func(x: int) -> int:
+        set_eval_attribute('model', 'gpt-4o')
+        set_eval_attribute('region', 'us-east-1')
+        return x * 2
+
+    result = await my_func(21)
+    assert result == 42
+
+    await wait_for_evaluations()
+
+    assert len(collector.calls) == 1
+    _, _, ctx = collector.calls[0]
+    assert ctx.attributes == {'model': 'gpt-4o', 'region': 'us-east-1'}
+
+
+@pytest.mark.anyio
+async def test_increment_eval_metric_in_async_function():
+    """increment_eval_metric in an async decorated function propagates to EvaluatorContext."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(AlwaysTrue())
+    async def my_func(x: int) -> int:
+        increment_eval_metric('tokens', 150)
+        increment_eval_metric('tokens', 50)
+        increment_eval_metric('requests', 1)
+        return x
+
+    result = await my_func(42)
+    assert result == 42
+
+    await wait_for_evaluations()
+
+    assert len(collector.calls) == 1
+    _, _, ctx = collector.calls[0]
+    assert ctx.metrics == {'tokens': 200, 'requests': 1}
+
+
+@pytest.mark.anyio
+async def test_set_eval_attribute_in_sync_function():
+    """set_eval_attribute in a sync decorated function propagates to EvaluatorContext."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(AlwaysTrue())
+    def my_func(x: int) -> int:
+        set_eval_attribute('model', 'gpt-4o')
+        return x * 2
+
+    result = my_func(21)
+    assert result == 42
+
+    await wait_for_evaluations()
+
+    assert len(collector.calls) == 1
+    _, _, ctx = collector.calls[0]
+    assert ctx.attributes == {'model': 'gpt-4o'}
+
+
+@pytest.mark.anyio
+async def test_increment_eval_metric_in_sync_function():
+    """increment_eval_metric in a sync decorated function propagates to EvaluatorContext."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(AlwaysTrue())
+    def my_func(x: int) -> int:
+        increment_eval_metric('tokens', 100)
+        return x
+
+    result = my_func(42)
+    assert result == 42
+
+    await wait_for_evaluations()
+
+    assert len(collector.calls) == 1
+    _, _, ctx = collector.calls[0]
+    assert ctx.metrics == {'tokens': 100}
+
+
+@pytest.mark.anyio
+async def test_attributes_and_metrics_empty_by_default():
+    """When no attributes/metrics are set, context has empty dicts."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(AlwaysTrue())
+    async def my_func(x: int) -> int:
+        return x
+
+    await my_func(42)
+    await wait_for_evaluations()
+
+    assert len(collector.calls) == 1
+    _, _, ctx = collector.calls[0]
+    assert ctx.attributes == {}
+    assert ctx.metrics == {}

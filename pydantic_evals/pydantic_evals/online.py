@@ -46,13 +46,36 @@ from anyio.to_thread import run_sync
 from typing_extensions import ParamSpec, TypeVar
 
 from ._utils import UNSET, Unset, logfire_span
+from .dataset import (
+    _CURRENT_TASK_RUN as _CURRENT_TASK_RUN,  # pyright: ignore[reportPrivateUsage]
+    _TaskRun as _TaskRun,  # pyright: ignore[reportPrivateUsage]
+)
 from .evaluators._run_evaluator import run_evaluator
 from .evaluators.context import EvaluatorContext
 from .evaluators.evaluator import EvaluationResult, Evaluator, EvaluatorFailure
 from .otel._context_subtree import context_subtree
 
-OnErrorLocation = Literal['gate', 'sink', 'on_max_concurrency']
+OnErrorLocation = Literal['sink', 'on_max_concurrency']
 """The location within the online evaluation pipeline where an error occurred."""
+
+
+@dataclass(kw_only=True)
+class SamplingContext:
+    """Context available when deciding whether to sample an evaluator.
+
+    This is a subset of [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext] that
+    contains only the information available *before* the decorated function runs — specifically,
+    the function inputs, config metadata, and the evaluator name. The function's output and
+    duration are not yet available at sampling time.
+    """
+
+    name: str | None
+    """The name of the evaluator being sampled."""
+    inputs: Any
+    """The inputs to the decorated function."""
+    metadata: dict[str, Any] | None
+    """Metadata from the [`OnlineEvalConfig`][pydantic_evals.online.OnlineEvalConfig], if set."""
+
 
 OnMaxConcurrencyCallback = Callable[[EvaluatorContext], Any]
 """Callback invoked when an evaluation is dropped due to concurrency limits.
@@ -70,7 +93,7 @@ If set, the evaluator is skipped. If not set, the exception propagates to the ca
 
 OnErrorCallback = Callable[
     [Exception, EvaluatorContext, Evaluator, OnErrorLocation],
-    Any,
+    None | Awaitable[None],
 ]
 """Callback invoked when an exception occurs in the online evaluation pipeline.
 
@@ -89,6 +112,7 @@ __all__ = (
     'OnSamplingErrorCallback',
     'OnlineEvalConfig',
     'OnlineEvaluator',
+    'SamplingContext',
     'SinkCallback',
     'SpanReference',
     'configure',
@@ -285,8 +309,12 @@ class OnlineEvaluator:
 
     evaluator: Evaluator
     """The evaluator to run."""
-    sample_rate: float | Callable[[], float | bool] | None = None
+    sample_rate: float | Callable[[SamplingContext], float | bool] | None = None
     """Probability of running this evaluator (0.0–1.0), or a callable returning a float or bool.
+
+    When a callable, it receives a [`SamplingContext`][pydantic_evals.online.SamplingContext]
+    with the function inputs, config metadata, and evaluator name — but not the output or
+    duration (which aren't available yet at sampling time).
 
     Defaults to `None`, which uses the config's `default_sample_rate` at each call.
     Set explicitly to override.
@@ -296,11 +324,6 @@ class OnlineEvaluator:
 
     sink: EvaluationSink | Sequence[EvaluationSink | SinkCallback] | SinkCallback | None = None
     """Override sink(s) for this evaluator. If `None`, the config's `default_sink` is used."""
-    gate: Callable[[EvaluatorContext], bool | Awaitable[bool]] | None = None
-    """Optional predicate that receives the `EvaluatorContext` and returns whether the evaluator should run.
-
-    Called only for sampled requests. Can be sync or async.
-    """
 
     on_max_concurrency: OnMaxConcurrencyCallback | None = None
     """Called when an evaluation is dropped because `max_concurrency` was reached.
@@ -317,10 +340,10 @@ class OnlineEvaluator:
     propagates to the caller.
     """
     on_error: OnErrorCallback | None = None
-    """Called when an exception occurs in the gate, sink, or on_max_concurrency callback.
+    """Called when an exception occurs in a sink or on_max_concurrency callback.
 
     Receives the exception, evaluator context, evaluator instance, and a location string
-    (`'gate'`, `'sink'`, or `'on_max_concurrency'`). Can be sync or async.
+    (`'sink'` or `'on_max_concurrency'`). Can be sync or async.
     If `None`, uses the config's `on_error` default. If neither is set, exceptions are
     silently suppressed.
     """
@@ -407,28 +430,35 @@ async def run_evaluators(
 def _resolve_sample_rate_field(
     online_eval: OnlineEvaluator,
     config: OnlineEvalConfig,
-) -> float | Callable[[], float | bool]:
+) -> float | Callable[[SamplingContext], float | bool]:
     """Resolve an OnlineEvaluator's sample_rate, falling back to config default if None."""
     if online_eval.sample_rate is None:
         return config.default_sample_rate
     return online_eval.sample_rate
 
 
-def _resolve_sample_rate(rate: float | Callable[[], float | bool]) -> float | bool:
+def _resolve_sample_rate(
+    rate: float | Callable[[SamplingContext], float | bool],
+    sampling_context: SamplingContext,
+) -> float | bool:
     """Resolve a sample rate value, calling it if it's a callable."""
     if callable(rate):
-        return rate()
+        return rate(sampling_context)
     return rate
 
 
-def _should_evaluate(rate: float | Callable[[], float | bool], global_enabled: bool) -> bool:
+def _should_evaluate(
+    rate: float | Callable[[SamplingContext], float | bool],
+    global_enabled: bool,
+    sampling_context: SamplingContext,
+) -> bool:
     """Determine whether an evaluator should run based on sampling configuration."""
     if not global_enabled:  # pragma: no cover
         return False
     if _EVALUATION_DISABLED.get():  # pragma: no cover
         return False
 
-    resolved = _resolve_sample_rate(rate)
+    resolved = _resolve_sample_rate(rate, sampling_context)
 
     # Callable can return bool (True = always, False = never)
     if isinstance(resolved, bool):
@@ -445,6 +475,7 @@ def _should_evaluate(rate: float | Callable[[], float | bool], global_enabled: b
 def _sample_evaluators(
     online_evals: list[OnlineEvaluator],
     config: OnlineEvalConfig,
+    inputs: dict[str, Any],
 ) -> list[OnlineEvaluator]:
     """Determine which evaluators should run, handling sample_rate exceptions.
 
@@ -454,8 +485,13 @@ def _sample_evaluators(
     """
     sampled: list[OnlineEvaluator] = []
     for oe in online_evals:
+        sampling_ctx = SamplingContext(
+            name=oe.evaluator.__class__.__name__,
+            inputs=inputs,
+            metadata=config.metadata,
+        )
         try:
-            if _should_evaluate(_resolve_sample_rate_field(oe, config), config.enabled):
+            if _should_evaluate(_resolve_sample_rate_field(oe, config), config.enabled, sampling_ctx):
                 sampled.append(oe)
         except Exception as exc:
             handler = oe.on_sampling_error if oe.on_sampling_error is not None else config.on_sampling_error
@@ -467,14 +503,6 @@ def _sample_evaluators(
             else:
                 raise
     return sampled
-
-
-async def _check_gate(gate: Callable[[EvaluatorContext], bool | Awaitable[bool]], ctx: EvaluatorContext) -> bool:
-    """Check a gate condition, handling both sync and async gates."""
-    result = gate(ctx)
-    if inspect.isawaitable(result):
-        return await result
-    return result
 
 
 def _resolve_sinks(
@@ -547,17 +575,8 @@ async def _dispatch_single_evaluator(
     on_max_concurrency: Callable[[EvaluatorContext], Any] | None,
     on_error: OnErrorCallback | None,
 ) -> None:
-    """Run a single evaluator's gate check, evaluation, and sink submission."""
+    """Run a single evaluator's evaluation and sink submission."""
     evaluator = online_eval.evaluator
-
-    # Check gate in the background — never blocks the caller
-    if online_eval.gate is not None:
-        try:
-            if not await _check_gate(online_eval.gate, context):
-                return
-        except Exception as exc:
-            await _call_on_error(on_error, exc, context, evaluator, 'gate')
-            return
 
     if not online_eval.semaphore.acquire(blocking=False):
         if on_max_concurrency is not None:
@@ -637,7 +656,7 @@ class OnlineEvalConfig:
 
     default_sink: EvaluationSink | Sequence[EvaluationSink | SinkCallback] | SinkCallback | None = None
     """Default sink(s) for evaluators that don't specify their own."""
-    default_sample_rate: float | Callable[[], float | bool] = 1.0
+    default_sample_rate: float | Callable[[SamplingContext], float | bool] = 1.0
     """Default sample rate for evaluators that don't specify their own."""
     enabled: bool = True
     """Whether online evaluation is enabled for this config."""
@@ -659,10 +678,10 @@ class OnlineEvalConfig:
     Per-evaluator `OnlineEvaluator.on_sampling_error` overrides this default.
     """
     on_error: OnErrorCallback | None = None
-    """Default handler called when an exception occurs in a gate, sink, or on_max_concurrency callback.
+    """Default handler called when an exception occurs in a sink or on_max_concurrency callback.
 
     Receives the exception, evaluator context, evaluator instance, and a location string
-    (`'gate'`, `'sink'`, or `'on_max_concurrency'`). Can be sync or async.
+    (`'sink'` or `'on_max_concurrency'`). Can be sync or async.
     If `None` (the default), exceptions are silently suppressed.
     Per-evaluator `OnlineEvaluator.on_error` overrides this default.
     """
@@ -711,19 +730,27 @@ def _wrap_async(
         if not config.enabled or _EVALUATION_DISABLED.get():
             return await func(*args, **kwargs)
 
+        # Capture inputs early so sample_rate callables can use them
+        inputs = _capture_inputs(sig, args, kwargs)
+
         # Determine which evaluators are sampled (before running the function)
-        sampled = _sample_evaluators(online_evals, config)
+        sampled = _sample_evaluators(online_evals, config, inputs)
         if not sampled:
             return await func(*args, **kwargs)
 
-        # Capture inputs
-        inputs = _capture_inputs(sig, args, kwargs)
-
-        # Run the function with span tree capture
-        with logfire_span('evaluate {func_name}', func_name=func.__qualname__) as span, context_subtree() as span_tree:
-            t0 = time.perf_counter()
-            result = await func(*args, **kwargs)
-            duration = time.perf_counter() - t0
+        # Run the function with span tree capture and attribute/metric tracking
+        task_run = _TaskRun()
+        token = _CURRENT_TASK_RUN.set(task_run)
+        try:
+            with (
+                logfire_span('evaluate {func_name}', func_name=func.__qualname__) as span,
+                context_subtree() as span_tree,
+            ):
+                t0 = time.perf_counter()
+                result = await func(*args, **kwargs)
+                duration = time.perf_counter() - t0
+        finally:
+            _CURRENT_TASK_RUN.reset(token)
 
         # Build context
         context = EvaluatorContext(
@@ -734,8 +761,8 @@ def _wrap_async(
             metadata=config.metadata,
             duration=duration,
             _span_tree=span_tree,
-            attributes={},
-            metrics={},
+            attributes=task_run.attributes,
+            metrics=task_run.metrics,
         )
 
         # Extract span reference from the logfire span
@@ -763,19 +790,27 @@ def _wrap_sync(
         if not config.enabled or _EVALUATION_DISABLED.get():
             return func(*args, **kwargs)
 
+        # Capture inputs early so sample_rate callables can use them
+        inputs = _capture_inputs(sig, args, kwargs)
+
         # Determine which evaluators are sampled
-        sampled = _sample_evaluators(online_evals, config)
+        sampled = _sample_evaluators(online_evals, config, inputs)
         if not sampled:
             return func(*args, **kwargs)
 
-        # Capture inputs
-        inputs = _capture_inputs(sig, args, kwargs)
-
-        # Run the function with span tree capture
-        with logfire_span('evaluate {func_name}', func_name=func.__qualname__) as span, context_subtree() as span_tree:
-            t0 = time.perf_counter()
-            result = func(*args, **kwargs)
-            duration = time.perf_counter() - t0
+        # Run the function with span tree capture and attribute/metric tracking
+        task_run = _TaskRun()
+        token = _CURRENT_TASK_RUN.set(task_run)
+        try:
+            with (
+                logfire_span('evaluate {func_name}', func_name=func.__qualname__) as span,
+                context_subtree() as span_tree,
+            ):
+                t0 = time.perf_counter()
+                result = func(*args, **kwargs)
+                duration = time.perf_counter() - t0
+        finally:
+            _CURRENT_TASK_RUN.reset(token)
 
         # Build context
         context = EvaluatorContext(
@@ -786,8 +821,8 @@ def _wrap_sync(
             metadata=config.metadata,
             duration=duration,
             _span_tree=span_tree,
-            attributes={},
-            metrics={},
+            attributes=task_run.attributes,
+            metrics=task_run.metrics,
         )
 
         # Extract span reference
@@ -880,7 +915,7 @@ def evaluate(*evaluators: Evaluator | OnlineEvaluator) -> Callable[[Callable[_P,
 def configure(
     *,
     default_sink: EvaluationSink | Sequence[EvaluationSink | SinkCallback] | SinkCallback | None | Unset = UNSET,
-    default_sample_rate: float | Callable[[], float | bool] | Unset = UNSET,
+    default_sample_rate: float | Callable[[SamplingContext], float | bool] | Unset = UNSET,
     enabled: bool | Unset = UNSET,
     metadata: dict[str, Any] | None | Unset = UNSET,
     on_max_concurrency: OnMaxConcurrencyCallback | None | Unset = UNSET,
