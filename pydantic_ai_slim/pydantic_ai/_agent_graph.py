@@ -82,6 +82,22 @@ class GraphAgentState:
     last_max_tokens: int | None = None
     """Last-resolved `max_tokens` from model settings, used only in error messages."""
 
+    def check_incomplete_tool_call(self) -> None:
+        """Raise `IncompleteToolCall` if the last model response was truncated mid-tool-call."""
+        if (
+            self.message_history
+            and isinstance(model_response := self.message_history[-1], _messages.ModelResponse)
+            and model_response.finish_reason == 'length'
+            and model_response.parts
+            and isinstance(tool_call := model_response.parts[-1], _messages.ToolCallPart)
+        ):
+            try:
+                tool_call.args_as_dict(raise_if_invalid=True)
+            except Exception:
+                raise exceptions.IncompleteToolCall(
+                    f'Model token limit ({self.last_max_tokens or "provider default"}) exceeded while generating a tool call, resulting in incomplete arguments. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
+                )
+
     def increment_retries(
         self,
         max_result_retries: int,
@@ -89,19 +105,7 @@ class GraphAgentState:
     ) -> None:
         self.retries += 1
         if self.retries > max_result_retries:
-            if (
-                self.message_history
-                and isinstance(model_response := self.message_history[-1], _messages.ModelResponse)
-                and model_response.finish_reason == 'length'
-                and model_response.parts
-                and isinstance(tool_call := model_response.parts[-1], _messages.ToolCallPart)
-            ):
-                try:
-                    tool_call.args_as_dict(raise_if_invalid=True)
-                except Exception:
-                    raise exceptions.IncompleteToolCall(
-                        f'Model token limit ({self.last_max_tokens or "provider default"}) exceeded while generating a tool call, resulting in incomplete arguments. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
-                    )
+            self.check_incomplete_tool_call()
             message = f'Exceeded maximum retries ({max_result_retries}) for output validation'
             raise exceptions.UnexpectedModelBehavior(message) from error
 
@@ -1296,8 +1300,9 @@ async def process_tool_calls(  # noqa: C901
                     ):
                         yield event
                     continue
-                tool = tool_manager.tools.get(call.tool_name) if tool_manager.tools else None
-                max_retries = tool.max_retries if tool else ctx.deps.max_result_retries
+                ctx.state.check_incomplete_tool_call()  # pragma: lax no cover
+                tool = tool_manager.tools.get(call.tool_name) if tool_manager.tools else None  # pragma: lax no cover
+                max_retries = tool.max_retries if tool else ctx.deps.max_result_retries  # pragma: lax no cover
                 raise exceptions.UnexpectedModelBehavior(  # pragma: lax no cover
                     f'Exceeded maximum retries ({max_retries}) for output validation'
                 ) from (e.__cause__ or e)
@@ -1326,7 +1331,10 @@ async def process_tool_calls(  # noqa: C901
                     ):
                         yield event
                     continue
-                max_retries = validated.tool.max_retries if validated.tool else ctx.deps.max_result_retries
+                ctx.state.check_incomplete_tool_call()  # pragma: lax no cover
+                max_retries = (
+                    validated.tool.max_retries if validated.tool else ctx.deps.max_result_retries
+                )  # pragma: lax no cover
                 raise exceptions.UnexpectedModelBehavior(  # pragma: lax no cover
                     f'Exceeded maximum retries ({max_retries}) for output validation'
                 ) from (e.__cause__ or e)
