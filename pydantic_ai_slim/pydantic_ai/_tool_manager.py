@@ -8,7 +8,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal
 
-from opentelemetry.trace import Tracer
+from opentelemetry.trace import StatusCode, Tracer
 from pydantic import ValidationError
 from typing_extensions import deprecated
 
@@ -297,21 +297,32 @@ class ToolManager(Generic[AgentDepsT]):
         if cap is not None:
             tool_def = validated.tool.tool_def
 
-            # before_tool_execute
-            args = await cap.before_tool_execute(ctx, call=call, tool_def=tool_def, args=validated.validated_args)
-
-            # wrap_tool_execute wraps the execution; on_tool_execute_error on failure
             try:
-                tool_result = await cap.wrap_tool_execute(
-                    ctx, call=call, tool_def=tool_def, args=args, handler=do_execute
-                )
-            except (SkipToolExecution, CallDeferred, ApprovalRequired, ToolRetryError):
-                raise  # Control flow, not errors
-            except Exception as e:
-                tool_result = await cap.on_tool_execute_error(ctx, call=call, tool_def=tool_def, args=args, error=e)
+                # before_tool_execute
+                args = await cap.before_tool_execute(ctx, call=call, tool_def=tool_def, args=validated.validated_args)
 
-            # after_tool_execute
-            tool_result = await cap.after_tool_execute(ctx, call=call, tool_def=tool_def, args=args, result=tool_result)
+                # wrap_tool_execute wraps the execution; on_tool_execute_error on failure
+                try:
+                    tool_result = await cap.wrap_tool_execute(
+                        ctx, call=call, tool_def=tool_def, args=args, handler=do_execute
+                    )
+                except (SkipToolExecution, CallDeferred, ApprovalRequired, ToolRetryError):
+                    raise  # Control flow, not errors
+                except ModelRetry:
+                    raise  # Propagate to outer handler
+                except Exception as e:
+                    tool_result = await cap.on_tool_execute_error(ctx, call=call, tool_def=tool_def, args=args, error=e)
+
+                # after_tool_execute
+                tool_result = await cap.after_tool_execute(
+                    ctx, call=call, tool_def=tool_def, args=args, result=tool_result
+                )
+            except ModelRetry as e:
+                # Hook raised ModelRetry — convert to ToolRetryError for retry handling
+                name = call.tool_name
+                self._check_max_retries(name, validated.tool.max_retries, e)
+                self.failed_tools.add(name)
+                raise self._wrap_error_as_retry(name, call, e) from e
         else:
             tool_result = await do_execute(validated.validated_args)
 
@@ -541,22 +552,41 @@ class ToolManager(Generic[AgentDepsT]):
         with tracer.start_as_current_span(
             instrumentation_names.get_tool_span_name(call.tool_name),
             attributes=span_attributes,
+            record_exception=False,
+            set_status_on_exception=False,
         ) as span:
             try:
                 tool_result = await self._execute_tool_call_impl(validated, usage=usage)
+                if include_content and span.is_recording():
+                    span.set_attribute(
+                        instrumentation_names.tool_result_attr,
+                        tool_result
+                        if isinstance(tool_result, str)
+                        else _messages.tool_return_ta.dump_json(tool_result).decode(),
+                    )
+            except (CallDeferred, ApprovalRequired) as exc:
+                span.set_attribute(instrumentation_names.tool_deferral_name_attr, type(exc).__name__)
+                if include_content and span.is_recording() and exc.metadata is not None:
+                    try:
+                        metadata_str = json.dumps(exc.metadata)
+                    except (TypeError, ValueError):
+                        metadata_str = repr(exc.metadata)
+                    span.set_attribute(instrumentation_names.tool_deferral_metadata_attr, metadata_str)
+                if instrumentation_version < 5:
+                    span.record_exception(exc, escaped=True)
+                    span.set_status(StatusCode.ERROR)
+                raise
             except ToolRetryError as e:
                 part = e.tool_retry
                 if include_content and span.is_recording():
                     span.set_attribute(instrumentation_names.tool_result_attr, part.model_response())
+                span.record_exception(e, escaped=True)
+                span.set_status(StatusCode.ERROR)
                 raise
-
-            if include_content and span.is_recording():
-                span.set_attribute(
-                    instrumentation_names.tool_result_attr,
-                    tool_result
-                    if isinstance(tool_result, str)
-                    else _messages.tool_return_ta.dump_json(tool_result).decode(),
-                )
+            except BaseException as e:
+                span.record_exception(e, escaped=True)
+                span.set_status(StatusCode.ERROR)
+                raise
 
         return tool_result
 
