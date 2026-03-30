@@ -3253,7 +3253,9 @@ class TestWebFetchCapability:
 
         model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
         agent = Agent(model, capabilities=[WebFetch()])
-        with patch('pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response):
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
+        ):
             result = agent.run_sync('fetch something')
         # Should have used the markdownify-based fallback tool
         assert 'Tool result' in result.output
