@@ -1,5 +1,8 @@
 from __future__ import annotations as _annotations
 
+from collections.abc import Mapping
+from typing import get_type_hints
+
 import pytest
 from pytest_mock import MockerFixture
 
@@ -8,6 +11,7 @@ from ..conftest import BinaryContent, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.settings import ModelSettings
+    from pydantic_evals.evaluators import EvaluationReason, EvaluatorContext, LLMJudge
     from pydantic_evals.evaluators.llm_as_a_judge import (
         GradingOutput,
         _stringify,  # pyright: ignore[reportPrivateUsage]
@@ -67,6 +71,37 @@ def test_stringify():
 
     obj = NonSerializable()
     assert _stringify(obj) == 'NonSerializable()'
+
+
+def test_llmjudge_evaluate_return_type_is_mapping() -> None:
+    return_type = get_type_hints(LLMJudge.evaluate)['return']
+
+    assert return_type == Mapping[str, bool | int | float | str | EvaluationReason]
+
+
+@pytest.mark.anyio
+async def test_llmjudge_evaluate_returns_mapping(mocker: MockerFixture) -> None:
+    mock_result = mocker.MagicMock()
+    mock_result.output = GradingOutput(reason='Looks good', pass_=True, score=1.0)
+    mocker.patch('pydantic_ai.agent.AbstractAgent.run', return_value=mock_result)
+
+    judge = LLMJudge(rubric='Output is correct', score={'include_reason': False})
+    result = await judge.evaluate(
+        EvaluatorContext(
+            name='case-1',
+            inputs='input',
+            metadata=None,
+            expected_output=None,
+            output='output',
+            duration=0.1,
+            _span_tree=mocker.MagicMock(),
+            attributes={},
+            metrics={},
+        )
+    )
+
+    assert isinstance(result, dict)
+    assert result == {'LLMJudge_score': 1.0, 'LLMJudge_pass': EvaluationReason(value=True, reason='Looks good')}
 
 
 @pytest.mark.anyio
