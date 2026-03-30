@@ -9,7 +9,7 @@ Users need to emit custom events (progress updates, intermediate results, state 
 - Boilerplate with anyio streams to manually bridge events (kadosh1000, jiachengzz)
 - Can't show real-time progress during long operations (kadosh1000, hudyweas)
 - Unnatural workarounds with state patches (voorhs)
-- 'Monstrosity' code to stream from graphs called by tools (ggozad)
+- "Monstrosity" code to stream from graphs called by tools (ggozad)
 
 **Douwe's direction** (PR #3114): tools as `AsyncIterator` yielding `CustomEvent` and `Return[T]`. PR is stale but philosophy is sound.
 
@@ -46,7 +46,7 @@ async def long_task(query: str) -> AsyncIterator[CustomEvent | Return[str]]:
 ```
 
 - Follows Douwe's PR #3114 philosophy
-- Cleaner for tools that are 'event-first' (many events, simple return)
+- Cleaner for tools that are "event-first" (many events, simple return)
 - Requires async generator detection + `Return` sentinel type
 - Can layer on top of the same queue mechanism from Phase 1
 
@@ -133,23 +133,30 @@ Add `CustomEvent`, `CustomToolEvent`, `Return` to `pydantic_ai/__init__.py` and 
 
 ### Phase 1: `ctx.emit()` + event pipeline
 
-#### 1a. `_run_context.py` — add emit method + queue field
+#### 1a. `_run_context.py` — callback-based emit
+
+Use a **callback** instead of a queue, so the transport is pluggable (queue for in-process, buffer for Temporal, etc.):
 
 ```python
-custom_event_queue: asyncio.Queue[Any] | None = field(default=None, init=False, repr=False)
+EventEmitter: TypeAlias = Callable[['CustomToolEvent'], Awaitable[None]]
 
-async def emit(self, event: CustomEvent) -> None:
-    '''Emit a custom event during tool execution.'''
-    if self.custom_event_queue is not None:
-        from .messages import CustomToolEvent
-        await self.custom_event_queue.put(CustomToolEvent(
-            event=event,
-            tool_name=self.tool_name or '',
-            tool_call_id=self.tool_call_id or '',
-        ))
+@dataclass
+class RunContext(Generic[AgentDepsT]):
+    ...
+    _event_emitter: EventEmitter | None = field(default=None, init=False, repr=False)
+
+    async def emit(self, event: CustomEvent) -> None:
+        '''Emit a custom event during tool execution.'''
+        if self._event_emitter is not None:
+            from .messages import CustomToolEvent
+            await self._event_emitter(CustomToolEvent(
+                event=event,
+                tool_name=self.tool_name or '',
+                tool_call_id=self.tool_call_id or '',
+            ))
 ```
 
-`custom_event_queue` is set by the framework in `_call_tools()`, not by users. `init=False` keeps it out of constructors.
+`_event_emitter` is set by the framework in `_call_tools()` (queue-based) or by durable exec wrappers (buffer-based). `init=False` + underscore prefix keeps it internal. No Temporal or framework-specific imports in core code.
 
 #### 1b. `_agent_graph.py` — queue injection + event multiplexing in `_call_tools()`
 
@@ -160,20 +167,28 @@ async def emit(self, event: CustomEvent) -> None:
 Add helpers:
 
 ```python
-def _inject_event_queue(
-    validated_calls: dict[str, ValidatedToolCall[DepsT]],
+def _make_queue_emitter(
     queue: asyncio.Queue[_messages.CustomToolEvent],
+) -> EventEmitter:
+    '''Create a callback that puts events on the shared queue.'''
+    async def emitter(event: _messages.CustomToolEvent) -> None:
+        await queue.put(event)
+    return emitter
+
+def _inject_event_emitter(
+    validated_calls: dict[str, ValidatedToolCall[DepsT]],
+    emitter: EventEmitter,
 ) -> None:
-    '''Set the custom event queue on all validated tool call contexts.'''
+    '''Set the event emitter on all validated tool call contexts.'''
     for vc in validated_calls.values():
-        vc.ctx.custom_event_queue = queue
+        vc.ctx._event_emitter = emitter
 ```
 
 Modify `_call_tools()` — for **sequential mode**:
 
 ```python
 event_queue: asyncio.Queue[_messages.CustomToolEvent] = asyncio.Queue()
-_inject_event_queue(validated_calls, event_queue)
+_inject_event_emitter(validated_calls, _make_queue_emitter(event_queue))
 
 for index, call in enumerate(tool_calls):
     tool_task = asyncio.create_task(
@@ -203,7 +218,7 @@ For **parallel mode** — same queue, multiplex across all tasks:
 
 ```python
 event_queue: asyncio.Queue[_messages.CustomToolEvent] = asyncio.Queue()
-_inject_event_queue(validated_calls, event_queue)
+_inject_event_emitter(validated_calls, _make_queue_emitter(event_queue))
 
 tasks = [asyncio.create_task(_call_tool(...), name=call.tool_name) for call in tool_calls]
 
@@ -243,7 +258,7 @@ else:  # 'parallel' — yield results as they complete
         yield event_queue.get_nowait()
 ```
 
-`_call_tool()` itself needs **no changes** — the queue lives on `RunContext`, and `emit()` puts events on it.
+`_call_tool()` itself needs **no changes** — the emitter lives on `RunContext`, and `emit()` calls it.
 
 #### 1c. `ui/_event_stream.py` — base dispatch
 
@@ -366,37 +381,96 @@ Pass `is_async_gen` to `FunctionSchema(...)`.
 
 ## Durable Execution
 
+The callback-based `_event_emitter` design makes this pluggable: each framework provides the appropriate transport for its execution model.
+
 ### Temporal (`durable_exec/temporal/`)
 
-Tools run in activities (separate processes). `RunContext` is serialized via `TemporalRunContext.serialize_run_context()` — the `custom_event_queue` field is `None` after deserialization (queues aren't serializable). `ctx.emit()` silently no-ops when queue is `None`.
+Tools run in activities (separate processes). `_event_emitter` is a callback and can't be serialized across process boundaries. Two strategies exist:
 
-**Behavior**: Events silently dropped in Temporal activities. Tool still returns its value. This is acceptable — Temporal activities are meant for durable results, not ephemeral UI events.
+#### Strategy: Buffer + Return (recommended for v1)
 
-**Optional follow-up**: Buffer events in the activity and return them via `ToolReturn.metadata` alongside the result, so they're emitted post-completion rather than dropped entirely. Requires extending `CallToolResult` union in `_toolset.py`.
+Activity buffers events during tool execution, returns them alongside the tool result. Workflow-side code emits them via the normal callback after activity completes.
+
+**Activity side** — extend `_ToolReturn` in `_toolset.py`:
+
+```python
+@dataclass
+class _ToolReturn:
+    result: Any
+    buffered_events: list[Any] = field(default_factory=list)
+```
+
+In `_call_tool_in_activity()`, set up a buffer-based emitter:
+
+```python
+async def _call_tool_in_activity(name, tool_args, ctx, tool):
+    buffered_events: list[CustomToolEvent] = []
+
+    async def buffer_emitter(event: CustomToolEvent) -> None:
+        buffered_events.append(event)
+
+    ctx._event_emitter = buffer_emitter
+    result = await toolset.call_tool(name, tool_args, ctx, tool)
+    return _ToolReturn(result=result, buffered_events=buffered_events)
+```
+
+**Workflow side** — in `TemporalWrapperToolset.call_tool()`, after activity returns:
+
+```python
+async def call_tool(self, name, tool_args, ctx, tool):
+    if not workflow.in_workflow():
+        return await super().call_tool(name, tool_args, ctx, tool)
+
+    result = await workflow.execute_activity(...)
+
+    if isinstance(result, _ToolReturn):
+        # Emit buffered events through the workflow's normal callback
+        # (which IS set — it's the queue-based emitter from _call_tools())
+        for event in result.buffered_events:
+            if ctx._event_emitter is not None:
+                await ctx._event_emitter(event)
+        return result.result
+    ...
+```
+
+**Behavior**: Events arrive in a batch when the tool activity completes, then appear in the event stream before the `FunctionToolResultEvent`. Not truly real-time, but **no events are dropped**.
+
+**Tradeoff**: For a tool that runs 30s and emits 5 progress events, all 5 arrive at t=30s instead of at t=5s, t=10s, etc. For most UIs this is acceptable — the alternative (Temporal signals) is significantly more complex.
+
+#### Strategy: Signals (future enhancement for real-time delivery)
+
+For use cases requiring truly real-time events across activity boundaries:
+
+1. Activity obtains a `temporalio.client.Client` (from deps or environment)
+2. Activity calls `client.get_workflow_handle(activity.info().workflow_id).signal('pydantic_ai_custom_event', event)` for each event
+3. Workflow has a `@workflow.signal` handler that calls `ctx._event_emitter(event)` to put events on the queue
+
+**Why deferred**: Requires Client access in activities (additional config), adds events to workflow history (10K limit per workflow), high-rate signals cause workflow lock contention. Buffer approach covers majority of use cases with zero additional setup.
 
 ### DBOS (`durable_exec/dbos/`)
 
-Steps run in-process. The `RunContext` with its queue reference survives through `@DBOS.step()`. **Events work natively, no changes needed.**
+Steps run in-process. The `_event_emitter` callback reference survives through `@DBOS.step()`. **Events work natively, no changes needed.**
 
 On replay: step return value is used without re-execution, so events won't re-emit. Acceptable — events are ephemeral.
 
 ### Prefect (`durable_exec/prefect/`)
 
-In-process tasks: events work natively (queue reference survives).
-Remote tasks: same degradation as Temporal (queue is `None` after serialization).
+In-process tasks: `_event_emitter` callback survives, events work natively.
+Remote tasks: same buffer approach as Temporal — buffer events in the task, return them alongside result, emit on the orchestrator side.
 
-**No changes needed** for default in-process case.
+**No changes needed** for default in-process case. Remote task buffering follows the same `_ToolReturn` pattern as Temporal.
 
 ## Backward Compatibility
 
 | Concern | Analysis |
 |---------|----------|
-| **Existing tools** | Unaffected. `FunctionSchema.call()` checks `is_async_gen` first; existing sync/async tools take unchanged paths. `emit()` method on RunContext is additive. |
+| **Existing tools** | Unaffected. `FunctionSchema.call()` checks `is_async_gen` first; existing sync/async tools take unchanged paths. `emit()` method on RunContext is additive. `_event_emitter` is `None` unless explicitly set by the framework. |
 | **Existing event consumers** | `HandleResponseEvent` is discriminated union. New `custom_tool_event` kind hits `case _: pass` in existing match statements. Base `UIEventStream.handle_event` has default case. |
 | **Existing adapters** | Base `handle_custom_tool_event` is a no-op. Third-party adapters silently ignore the event. |
 | **Existing `ToolReturn.metadata` pattern** | Fully preserved. Tools can still use `ToolReturn(return_value=..., metadata=[BaseEvent(...)])` for post-completion events. |
 | **Frontend compatibility** | AG-UI: `CustomEvent` is already part of the AG-UI protocol. Vercel AI: `DataChunk` is an existing chunk type. No frontend changes needed. |
 | **Message history** | `CustomToolEvent` is ephemeral (stream-only). Not persisted in `ModelRequest`/`ModelResponse` message parts. No serialization impact. |
+| **Durable execution** | No events dropped. Temporal/remote Prefect: events buffered in activity and emitted on return. DBOS/in-process Prefect: events work natively via callback. |
 | **Type safety** | `CustomEvent` uses `Any` for `data` initially. Generic `CustomEventDataT` on `Agent` can be added as follow-up without breaking changes. |
 
 ## API Stability Considerations
@@ -420,19 +494,20 @@ Remote tasks: same degradation as Temporal (queue is `None` after serialization)
 - Parallel mode: events from multiple concurrent tools all appear
 - Mixed: one streaming + one regular tool in parallel
 - Error mid-stream: tool raises after yielding events — prior events visible, error propagates
-- No `Return`: generator finishes without `Return` -> `None` return value
+- No `Return`: generator finishes without `Return` → `None` return value
 - AG-UI adapter: SSE output includes `CUSTOM` events with correct name/value
 - Vercel AI adapter: output includes `data-{name}` chunks
 - `event_stream_handler` receives `CustomToolEvent` alongside other events
 - Capability hooks: `wrap_run_event_stream` can observe/filter `CustomToolEvent`
 
 ### Durable exec tests
-- Temporal: streaming tool in activity -> events dropped, return value preserved
-- DBOS: streaming tool in step -> events emitted normally
+- Temporal: streaming tool in activity → events buffered, returned with result, emitted on workflow side
+- Temporal: verify `_ToolReturn.buffered_events` serialization round-trip
+- DBOS: streaming tool in step → events emitted normally via callback
 
 ## Documentation Updates
 
-- `docs/tools.md` or `docs/tools-advanced.md`: 'Streaming Custom Events' section
+- `docs/tools.md` or `docs/tools-advanced.md`: "Streaming Custom Events" section
 - `docs/ui/ag-ui.md`: custom events mapping
 - `docs/ui/vercel-ai.md`: custom events mapping
 - API docs: `CustomEvent`, `CustomToolEvent`, `Return`, `RunContext.emit()`
@@ -443,7 +518,7 @@ Remote tasks: same degradation as Temporal (queue is `None` after serialization)
 1. **Phase 1 vs Phase 2 priority**: Is `ctx.emit()` alone sufficient for a first PR, or should the generator approach be included from the start?
 2. **Strict yield validation**: Should yielding a non-`CustomEvent`/`Return` from a generator raise `UserError`, or auto-wrap in `CustomEvent(name='custom', data=value)` (as Douwe's PR description suggests)?
 3. **`CustomEventDataT` generic**: Should this be planned for v1 or explicitly deferred? Default `Never` (strict) vs `object` (permissive)?
-4. **Temporal buffering**: Worth implementing event buffering in activities for post-completion emission, or acceptable to silently drop?
+4. **Temporal signal follow-up**: Buffer+return covers most use cases, but real-time delivery via Temporal signals is possible (requires Client access in activities, adds to workflow history). Worth planning for v2?
 5. **Sync generator tools**: Support `def tool() -> Iterator[...]` alongside async? Or async-only for v1?
 6. **Event ordering guarantee**: In parallel mode, should `CustomToolEvent` be ordered by emission time, or is arbitrary interleaving acceptable?
 
@@ -451,7 +526,7 @@ Remote tasks: same degradation as Temporal (queue is `None` after serialization)
 
 ### Core (Phase 1)
 - `pydantic_ai_slim/pydantic_ai/messages.py` — `CustomEvent`, `CustomToolEvent`, `HandleResponseEvent` union
-- `pydantic_ai_slim/pydantic_ai/_run_context.py` — `custom_event_queue` field, `emit()` method
+- `pydantic_ai_slim/pydantic_ai/_run_context.py` — `_event_emitter` callback field, `emit()` method
 - `pydantic_ai_slim/pydantic_ai/_agent_graph.py` — queue injection in `_call_tools()`, event multiplexing
 - `pydantic_ai_slim/pydantic_ai/ui/_event_stream.py` — `handle_custom_tool_event` dispatch
 - `pydantic_ai_slim/pydantic_ai/ui/ag_ui/_event_stream.py` — AG-UI `CustomEvent` mapping
@@ -462,6 +537,10 @@ Remote tasks: same degradation as Temporal (queue is `None` after serialization)
 - `pydantic_ai_slim/pydantic_ai/_utils.py` — `is_async_gen_callable()`
 - `pydantic_ai_slim/pydantic_ai/_function_schema.py` — `is_async_gen` field, `_call_async_gen()`
 - `pydantic_ai_slim/pydantic_ai/messages.py` — `Return[T]`
+
+### Durable Execution
+- `pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py` — `_ToolReturn.buffered_events`, buffer emitter in `_call_tool_in_activity()`, emit on workflow side
+- `pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_toolset.py` — same buffer pattern for remote tasks (if applicable)
 
 ### Tests
 - `tests/test_streaming.py` or new `tests/test_custom_events.py`
