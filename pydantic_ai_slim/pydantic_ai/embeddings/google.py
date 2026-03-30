@@ -47,6 +47,7 @@ GoogleEmbeddingModelName = str | LatestGoogleEmbeddingModelNames
 
 _MAX_INPUT_TOKENS: dict[GoogleEmbeddingModelName, int] = {
     'gemini-embedding-001': 2048,
+    'gemini-embedding-2-preview': 8192,
     'text-embedding-005': 2048,
     'text-multilingual-embedding-002': 2048,
 }
