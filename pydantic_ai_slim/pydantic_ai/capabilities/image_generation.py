@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic_ai.builtin_tools import ImageAspectRatio, ImageGenerationTool
@@ -151,8 +151,6 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
         overrides = self._image_gen_kwargs()
         if not overrides:
             return base
-
-        from dataclasses import asdict
 
         merged = {k: v for k, v in asdict(base).items() if k != 'kind'}
         merged.update(overrides)
