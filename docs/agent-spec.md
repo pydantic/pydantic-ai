@@ -34,7 +34,7 @@ from pydantic_ai import Agent
 agent = Agent.from_file('agent.yaml')
 ```
 
-[`Agent.from_spec`][pydantic_ai.agent.Agent.from_spec] accepts a dict or [`AgentSpec`](#agentspec-reference) instance and supports additional keyword arguments that supplement or override the spec:
+[`Agent.from_spec`][pydantic_ai.agent.Agent.from_spec] accepts a dict or [`AgentSpec`][pydantic_ai.agent.spec.AgentSpec] instance and supports additional keyword arguments that supplement or override the spec:
 
 ```python {title="from_spec_example.py"}
 from dataclasses import dataclass
@@ -117,7 +117,7 @@ See [Publishing capabilities](capabilities.md#publishing-capabilities) for how t
 
 ## `AgentSpec` reference
 
-The [`AgentSpec`](#agentspec-reference) model represents the full spec structure:
+The [`AgentSpec`][pydantic_ai.agent.spec.AgentSpec] model represents the full spec structure:
 
 | Field | Type | Description |
 |---|---|---|
