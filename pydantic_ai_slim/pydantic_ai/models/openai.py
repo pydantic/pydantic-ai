@@ -187,12 +187,16 @@ _OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = _utils.get_args(_OPENAI_IM
 class _ChatCompletion(chat.ChatCompletion):
     """Relaxes strict Literal validation on fields that OpenAI-compatible providers may return non-standard values for."""
 
+    model_config = {'title': 'ChatCompletion'}
+
     service_tier: str | None = None  # type: ignore[reportIncompatibleVariableOverride]
     """OpenAI-compatible providers can return arbitrary ``service_tier`` values (e.g. ``"standard"``, ``"on_demand"``)."""
 
 
 class _ChatCompletionChunk(ChatCompletionChunk):  # pyright: ignore[reportUnusedClass] — subclassed in openrouter.py
     """Relaxes strict Literal validation on fields that OpenAI-compatible providers may return non-standard values for."""
+
+    model_config = {'title': 'ChatCompletionChunk'}
 
     service_tier: str | None = None  # type: ignore[reportIncompatibleVariableOverride]
     """OpenAI-compatible providers can return arbitrary ``service_tier`` values (e.g. ``"standard"``, ``"on_demand"``)."""

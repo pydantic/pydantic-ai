@@ -3532,7 +3532,7 @@ async def test_invalid_response(allow_model_requests: None):
     with pytest.raises(UnexpectedModelBehavior) as exc_info:
         await agent.run('What is the capital of France?')
     assert exc_info.value.message.startswith(
-        'Invalid response from openai chat completions endpoint: 4 validation errors for _ChatCompletion'
+        'Invalid response from openai chat completions endpoint: 4 validation errors for ChatCompletion'
     )
 
 
