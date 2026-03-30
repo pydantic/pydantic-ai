@@ -18,6 +18,7 @@ from pydantic_ai import (
     ModelRetry,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -39,8 +40,10 @@ with try_import() as imports_successful:
         AsyncClientV2,
         ChatResponse,
         TextAssistantMessageResponseContentItem,
+        TextContent as CohereTextContent,
         ToolCallV2,
         ToolCallV2Function,
+        UserChatMessageV2,
     )
     from cohere.core.api_error import ApiError
 
@@ -389,6 +392,34 @@ async def test_request_tool_call(allow_model_requests: None):
             details={'input_tokens': 4, 'output_tokens': 2},
             tool_calls=1,
         )
+    )
+
+
+def test_text_content_in_request(allow_model_requests: None):
+    req = ModelRequest(
+        parts=[
+            UserPromptPart(
+                content=[
+                    'Hello there!',
+                    TextContent(
+                        content='This is some additional text content that should be included in the request.',
+                        metadata={'format': 'markdown'},
+                    ),
+                ]
+            )
+        ]
+    )
+    assert list(CohereModel._map_user_message(req)) == snapshot(  # pyright: ignore[reportPrivateUsage]
+        [
+            UserChatMessageV2(
+                content=[
+                    CohereTextContent(text='Hello there!'),
+                    CohereTextContent(
+                        text='This is some additional text content that should be included in the request.'
+                    ),
+                ]
+            )
+        ]
     )
 
 

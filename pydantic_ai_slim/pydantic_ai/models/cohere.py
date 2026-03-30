@@ -21,6 +21,7 @@ from ..messages import (
     ModelResponsePart,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -39,8 +40,10 @@ try:
         AsyncClientV2,
         ChatFinishReason,
         ChatMessageV2,
+        Content as CohereContent,
         SystemChatMessageV2,
         TextAssistantMessageV2ContentOneItem,
+        TextContent as CohereTextContent,
         ThinkingAssistantMessageV2ContentOneItem,
         ToolCallV2,
         ToolCallV2Function,
@@ -306,7 +309,13 @@ class CohereModel(Model):
                 if isinstance(part.content, str):
                     yield UserChatMessageV2(role='user', content=part.content)
                 else:
-                    raise RuntimeError('Cohere does not yet support multi-modal inputs.')
+                    cohere_content: list[CohereContent] = []
+                    for c in part.content:
+                        if isinstance(c, str | TextContent):
+                            cohere_content.append(CohereTextContent(text=c if isinstance(c, str) else c.content))
+                        else:
+                            raise RuntimeError('Cohere does not yet support multi-modal inputs.')
+                    yield UserChatMessageV2(role='user', content=cohere_content)
             elif isinstance(part, ToolReturnPart):
                 yield ToolChatMessageV2(
                     role='tool',

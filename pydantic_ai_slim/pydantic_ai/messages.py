@@ -462,7 +462,7 @@ class DocumentUrl(FileUrl):
             raise ValueError(f'Unknown document media type: {media_type}') from e
 
 
-@pydantic_dataclass(repr=False)
+@dataclass(repr=False)
 class TextContent:
     """String content that is tagged with additional metadata.
 
