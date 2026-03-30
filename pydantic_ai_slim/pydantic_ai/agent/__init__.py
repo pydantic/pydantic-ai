@@ -1268,8 +1268,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instrumentation_settings.version if instrumentation_settings else DEFAULT_INSTRUMENTATION_VERSION
         )
 
-        # generate a ULID for gen_ai.conversation.id
-
         span_attributes: dict[str, str] = {
             'model_name': model_used.model_name if model_used else 'no-model',
             'agent_name': agent_name,
@@ -1287,11 +1285,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instrumentation_names.get_agent_run_span_name(agent_name),
             attributes=span_attributes,
         )
-        # run id is a ULID formatted as a hex string, use that directly as the conversation id
-        run_id = state.run_id
-        # Propagate gen_ai.agent.name and gen_ai.conversation.id as baggage
-        # We use this to correlate LLM and tool calls to the specific agent and run that made them
-
         run_metadata: dict[str, Any] | None = None
         try:
             async with AsyncExitStack() as stack:
@@ -1299,7 +1292,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     logfire_api.set_baggage(
                         **{
                             'gen_ai.agent.name': agent_name,
-                            'gen_ai.conversation.id': run_id,
+                            'gen_ai.conversation.id': state.run_id,
                         }
                     )
                 )
@@ -2439,7 +2432,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             self._entered_count += 1
         return self
 
-    async def __aexit__(self, *args: object) -> bool | None:
+    async def __aexit__(self, *args: Any) -> bool | None:
         async with self._enter_lock:
             self._entered_count -= 1
             if self._entered_count == 0 and self._exit_stack is not None:
