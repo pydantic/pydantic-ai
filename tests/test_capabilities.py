@@ -62,7 +62,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsStr
+from .conftest import IsDatetime, IsInstance, IsStr
 
 pytestmark = [
     pytest.mark.anyio,
@@ -3292,6 +3292,8 @@ class TestImageGenerationCapability:
         assert cap.get_toolset() is None
 
     @pytest.mark.vcr()
+    @pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
+    @pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
     async def test_image_generation_local_fallback(self, allow_model_requests: None, openai_api_key: str):
         """ImageGeneration(fallback_model=...) with non-supporting outer model uses subagent fallback."""
         from pydantic_ai.messages import BinaryImage
@@ -3321,18 +3323,49 @@ class TestImageGenerationCapability:
         )
         result = await agent.run('Generate an image of a cute baby sea otter')
         assert result.output == 'Here is the generated image.'
-
-        # Verify the tool return contains a BinaryImage
-        messages = result.all_messages()
-        tool_return_parts = [
-            part
-            for msg in messages
-            if isinstance(msg, ModelRequest)
-            for part in msg.parts
-            if isinstance(part, ToolReturnPart)
-        ]
-        assert len(tool_return_parts) == 1
-        assert isinstance(tool_return_parts[0].content, BinaryImage)
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(content='Generate an image of a cute baby sea otter', timestamp=IsDatetime())
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='generate_image',
+                            args='{"prompt": "A cute baby sea otter"}',
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=59, output_tokens=9),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='generate_image',
+                            content=IsInstance(BinaryImage),
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='Here is the generated image.')],
+                    usage=RequestUsage(input_tokens=59, output_tokens=15),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
 
 try:

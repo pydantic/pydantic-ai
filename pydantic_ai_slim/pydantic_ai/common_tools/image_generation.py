@@ -55,6 +55,9 @@ class ImageGenerationLocalTool:
                 result = await result
             model = result
 
+        if model is None:
+            raise ModelRetry('The fallback model callable returned None; cannot generate an image.')
+
         agent = Agent(model, output_type=BinaryImage, builtin_tools=[self.builtin])
         try:
             result = await agent.run(prompt)
