@@ -7,12 +7,13 @@ from typing import TYPE_CHECKING, Any
 from pydantic_ai.builtin_tools import ImageGenerationTool
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import BinaryImage
+from pydantic_ai.models import Model
 from pydantic_ai.tools import RunContext, Tool
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from pydantic_ai.models import KnownModelName, Model
+    from pydantic_ai.models import KnownModelName
 
     FallbackModelFunc = Callable[
         [RunContext[Any]],
@@ -35,7 +36,7 @@ class ImageGenerationLocalTool:
     generation natively.
     """
 
-    model: Model | KnownModelName | str | FallbackModelFunc
+    model: Model | str | FallbackModelFunc
     """The model to use for image generation, or a callable that returns one."""
 
     builtin: ImageGenerationTool
@@ -69,7 +70,7 @@ class ImageGenerationLocalTool:
 
 
 def image_generation_tool(
-    model: Model | KnownModelName | str | FallbackModelFunc,
+    model: Model | str | FallbackModelFunc,
     builtin: ImageGenerationTool,
 ) -> Tool[Any]:
     """Creates an image generation tool backed by a subagent.
