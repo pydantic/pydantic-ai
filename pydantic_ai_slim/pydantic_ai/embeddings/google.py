@@ -12,7 +12,7 @@ from .settings import EmbeddingSettings
 
 try:
     from google.genai import Client, errors
-    from google.genai.types import ContentListUnion, EmbedContentConfig, EmbedContentResponse
+    from google.genai.types import Content, ContentListUnion, EmbedContentConfig, EmbedContentResponse, Part
 except ImportError as _import_error:
     raise ImportError(
         'Please install `google-genai` to use the Google embeddings model, '
@@ -47,6 +47,7 @@ GoogleEmbeddingModelName = str | LatestGoogleEmbeddingModelNames
 
 _MAX_INPUT_TOKENS: dict[GoogleEmbeddingModelName, int] = {
     'gemini-embedding-001': 2048,
+    'gemini-embedding-2-preview': 8192,
     'text-embedding-005': 2048,
     'text-multilingual-embedding-002': 2048,
 }
@@ -163,10 +164,12 @@ class GoogleEmbeddingModel(EmbeddingModel):
             title=settings.get('google_title'),
         )
 
+        contents: ContentListUnion = [Content(parts=[Part(text=text)]) for text in inputs]
+
         try:
             response = await self._client.aio.models.embed_content(
                 model=self._model_name,
-                contents=cast(ContentListUnion, inputs),
+                contents=contents,
                 config=config,
             )
         except errors.APIError as e:
