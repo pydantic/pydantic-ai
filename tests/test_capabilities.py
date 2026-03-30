@@ -3361,7 +3361,7 @@ class TestImageGenerationCapability:
 
         inner_model = FunctionModel(inner_model_fn, profile=ModelProfile(supports_image_output=True))
 
-        def model_factory(ctx: RunContext[None]) -> FunctionModel:
+        async def model_factory(ctx: RunContext[None]) -> FunctionModel:
             return inner_model
 
         tool = ImageGenerationLocalTool(model=model_factory, builtin=ImageGenerationTool())
