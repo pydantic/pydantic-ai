@@ -104,8 +104,10 @@ class GraphAgentState:
                     )
             message = f'Exceeded maximum retries ({max_result_retries}) for output validation'
             if error:
-                if isinstance(error, exceptions.UnexpectedModelBehavior) and error.__cause__ is not None:
-                    error = error.__cause__
+                if (
+                    isinstance(error, exceptions.UnexpectedModelBehavior) and error.__cause__ is not None
+                ):  # pragma: no cover
+                    error = error.__cause__  # pragma: no cover
                 raise exceptions.UnexpectedModelBehavior(message) from error
             else:
                 raise exceptions.UnexpectedModelBehavior(message)
