@@ -37,7 +37,7 @@ import warnings
 from collections.abc import Awaitable, Callable, Coroutine, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Literal, Protocol, runtime_checkable
 
 import anyio
@@ -55,6 +55,28 @@ from .evaluators.context import EvaluatorContext
 from .evaluators.evaluator import EvaluationResult, Evaluator, EvaluatorFailure
 from .otel._context_subtree import context_subtree
 
+__all__ = (
+    'CallbackSink',
+    'DEFAULT_CONFIG',
+    'EvaluationSink',
+    'EvaluatorContextSource',
+    'OnErrorCallback',
+    'OnErrorLocation',
+    'OnMaxConcurrencyCallback',
+    'OnSamplingErrorCallback',
+    'OnlineEvalConfig',
+    'OnlineEvaluator',
+    'SamplingContext',
+    'SamplingMode',
+    'SinkCallback',
+    'SpanReference',
+    'configure',
+    'disable_evaluation',
+    'evaluate',
+    'run_evaluators',
+    'wait_for_evaluations',
+)
+
 OnErrorLocation = Literal['sink', 'on_max_concurrency']
 """The location within the online evaluation pipeline where an error occurred."""
 
@@ -69,7 +91,6 @@ SamplingMode = Literal['independent', 'correlated']
 """
 
 
-# TODO: Should this be generic in the
 @dataclass(kw_only=True)
 class SamplingContext:
     """Context available when deciding whether to sample an evaluator.
@@ -94,13 +115,13 @@ class SamplingContext:
     """
 
 
-OnMaxConcurrencyCallback = Callable[[EvaluatorContext], Any]
+OnMaxConcurrencyCallback = Callable[[EvaluatorContext], None | Awaitable[None]]
 """Callback invoked when an evaluation is dropped due to concurrency limits.
 
 Receives the `EvaluatorContext` that would have been evaluated. Can be sync or async.
 """
 
-OnSamplingErrorCallback = Callable[[Exception, Evaluator], Any]
+OnSamplingErrorCallback = Callable[[Exception, Evaluator], None]
 """Callback invoked when a `sample_rate` callable raises an exception.
 
 Called synchronously before the decorated function runs. Receives the exception
@@ -117,29 +138,6 @@ OnErrorCallback = Callable[
 Receives the exception, the evaluator context, the evaluator instance, and a
 location string indicating where the error occurred. Can be sync or async.
 """
-
-__all__ = (
-    'CallbackSink',
-    'DEFAULT_CONFIG',
-    'EvaluationSink',
-    'EvaluatorContextSource',
-    'OnErrorCallback',
-    'OnErrorLocation',
-    'OnMaxConcurrencyCallback',
-    'OnSamplingErrorCallback',
-    'OnlineEvalConfig',
-    'OnlineEvaluator',
-    'SamplingContext',
-    'SamplingMode',
-    'SinkCallback',
-    'SpanReference',
-    'configure',
-    'disable_evaluation',
-    'evaluate',
-    'run_evaluators',
-    'wait_for_evaluations',
-)
-
 
 _P = ParamSpec('_P')
 _R = TypeVar('_R')
@@ -366,13 +364,6 @@ class OnlineEvaluator:
     silently suppressed.
     """
 
-    semaphore: threading.Semaphore = field(init=False, repr=False)
-    """Thread-safe semaphore for per-evaluator concurrency limiting.
-
-    Uses `threading.Semaphore` (not `anyio.Semaphore`) because evaluators may be
-    dispatched from multiple background threads when decorating sync functions.
-    """
-
     def __post_init__(self) -> None:
         self.semaphore = threading.Semaphore(self.max_concurrency)
 
@@ -394,7 +385,7 @@ class EvaluatorContextSource(Protocol):
         Returns:
             The evaluator context for the span.
         """
-        ...
+        return (await self.fetch_many([span]))[0]
 
     async def fetch_many(self, spans: Sequence[SpanReference]) -> list[EvaluatorContext]:
         """Fetch evaluator contexts for multiple spans in a single batch.

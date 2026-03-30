@@ -242,11 +242,9 @@ from dataclasses import dataclass
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 from pydantic_evals.online import OnlineEvaluator, SamplingContext
 
-_CURRENT_RATE = 0.5
-
 
 def get_current_rate(ctx: SamplingContext) -> float:
-    return _CURRENT_RATE
+    return 0.5
 
 
 @dataclass
@@ -258,7 +256,7 @@ class QuickCheck(Evaluator):
 dynamic = OnlineEvaluator(evaluator=QuickCheck(), sample_rate=get_current_rate)
 ```
 
-This enables integration with feature flags, managed variables, or configuration systems — change `_CURRENT_RATE` at runtime without redeploying.
+This enables integration with feature flags, managed variables, or configuration systems — for example, you could replace `get_current_rate` with a function that returns the value of a float-valued [managed variable](?? TODO: need a link here..) at runtime to be able to change the probability without redeploying the application.
 
 You can also use the [`SamplingContext`][pydantic_evals.online.SamplingContext] to make sampling decisions based on the function inputs:
 
@@ -285,7 +283,7 @@ expensive = OnlineEvaluator(evaluator=QualityCheck(), sample_rate=sample_long_in
 
 ### Correlated Sampling
 
-By default, each evaluator samples independently. With three evaluators each at 10%, roughly 27% of calls incur evaluation overhead (``1 − 0.9³``). If you'd prefer that the same 10% of calls run *all* evaluators, set `sampling_mode='correlated'`:
+By default, each evaluator samples independently. With three evaluators each at 10%, roughly 27% of calls incur evaluation overhead (`1 − 0.9³`). If you'd prefer that the *same* 10% of calls run *all* evaluators, set `sampling_mode='correlated'`:
 
 ```python
 from dataclasses import dataclass
@@ -316,13 +314,13 @@ check_a = OnlineEvaluator(evaluator=CheckA(), sample_rate=0.1)
 check_b = OnlineEvaluator(evaluator=CheckB(), sample_rate=0.1)
 ```
 
-In correlated mode, a single random `call_seed` is generated per function call and shared across all evaluators. An evaluator runs when `call_seed < sample_rate`, so lower-rate evaluators' calls are always a subset of higher-rate ones, and the total overhead probability equals the maximum rate rather than accumulating.
+In correlated mode, a single random `call_seed` (uniformly distributed between 0.0 and 1.0) is generated per function call and shared across all evaluators. An evaluator runs when `call_seed < sample_rate`, so lower-rate evaluators' calls are always a subset of higher-rate ones, and the total overhead probability equals the maximum rate rather than accumulating.
 
 The `call_seed` is also available on [`SamplingContext`][pydantic_evals.online.SamplingContext] for custom `sample_rate` callables that want to implement their own correlated logic regardless of mode.
 
 ### Disabling Evaluation
 
-Use [`disable_evaluation()`][pydantic_evals.online.disable_evaluation] to suppress all online evaluation in a scope. This is especially useful in tests:
+Use [`disable_evaluation()`][pydantic_evals.online.disable_evaluation] to suppress all online evaluation in a scope. This may be useful in tests:
 
 ```python
 import asyncio
@@ -391,7 +389,7 @@ asyncio.run(main())
 
 ## Conditional Evaluation
 
-For cost control, you can run expensive evaluation logic conditionally within a single custom evaluator. Return a mapping where you only include keys for checks that should run — checks that don't apply are simply omitted from the results:
+For cost control, you can run expensive evaluation logic conditionally within a single custom evaluator. Return a mapping where you only include keys for checks that have run — checks you don't want to perform can simply be omitted from the results:
 
 ```python
 import asyncio
@@ -432,6 +430,7 @@ class ConditionalAnalysis(Evaluator):
         }
         # Only run the expensive analysis on long outputs
         if len(output) > 20:
+            # pretend the following line is expensive..
             results['detail_score'] = len(output) / 100.0
         return results
 
@@ -523,7 +522,7 @@ Sync decorated functions work from both sync and async contexts. When a running 
 
 ## Per-Evaluator Sink Overrides
 
-Individual evaluators can override the config's default sink. This is useful when different evaluators need to send results to different destinations:
+Individual evaluators can override the config's default sink. This is useful if different evaluators need to send results to different destinations:
 
 ```python
 import asyncio
@@ -636,7 +635,8 @@ class HasKeyword(Evaluator):
 async def main():
     # Build a context manually (in practice, you'd get this from stored data)
     # Normally EvaluatorContext would not be manually constructed —
-    # it is built automatically by the @evaluate decorator or OnlineEvaluation capability.
+    # it is built automatically by the @evaluate decorator or OnlineEvaluation capability,
+    # or from an EvaluatorContextSource (see below).
     ctx = EvaluatorContext(
         name='example',
         inputs={'query': 'greet the user'},
@@ -763,7 +763,7 @@ from pydantic_evals.online import OnlineEvaluator
 @dataclass
 class ExpensiveCheck(Evaluator):
     async def evaluate(self, ctx: EvaluatorContext) -> bool:
-        # Imagine this calls an LLM
+        # Imagine this makes a slow call to an LLM
         return True
 
 
@@ -861,23 +861,6 @@ Key behaviors:
 ## API Reference
 
 The complete API for the `pydantic_evals.online` module is documented in the [API reference](../api/pydantic_evals/online.md).
-
-Key classes and functions:
-
-| Name | Description |
-|------|-------------|
-| [`evaluate()`][pydantic_evals.online.evaluate] | Decorator to attach evaluators (uses global config) |
-| [`configure()`][pydantic_evals.online.configure] | Configure the global default config |
-| [`disable_evaluation()`][pydantic_evals.online.disable_evaluation] | Context manager to suppress evaluation |
-| [`OnlineEvalConfig`][pydantic_evals.online.OnlineEvalConfig] | Cross-evaluator configuration |
-| [`OnlineEvaluator`][pydantic_evals.online.OnlineEvaluator] | Per-evaluator configuration wrapper |
-| [`SamplingContext`][pydantic_evals.online.SamplingContext] | Context available to `sample_rate` callables |
-| [`SamplingMode`][pydantic_evals.online.SamplingMode] | `'independent'` or `'correlated'` sampling strategy |
-| [`EvaluationSink`][pydantic_evals.online.EvaluationSink] | Protocol for result destinations |
-| [`CallbackSink`][pydantic_evals.online.CallbackSink] | Built-in sink wrapping a callable |
-| [`SpanReference`][pydantic_evals.online.SpanReference] | Identifies a span for result association |
-| [`run_evaluators()`][pydantic_evals.online.run_evaluators] | Run evaluators on a context directly |
-| [`EvaluatorContextSource`][pydantic_evals.online.EvaluatorContextSource] | Protocol for fetching stored context data |
 
 ## Next Steps
 
