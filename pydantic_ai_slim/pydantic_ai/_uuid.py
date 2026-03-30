@@ -9,12 +9,14 @@ Replace with `uuid.uuid7()` once Python 3.14 is the minimum supported version.
 from __future__ import annotations
 
 import os
+import threading
 import time
 import uuid
 
 # Global state for sub-millisecond monotonicity (Method 1, RFC 9562 §6.2).
 _last_timestamp_v7: int | None = None
 _last_counter_v7: int = 0  # 42-bit counter
+_lock_v7 = threading.Lock()
 
 # version = 0b0111, variant = 0b10
 _RFC_4122_VERSION_7_FLAGS = 0x0000_0000_0000_7000_8000_0000_0000_0000
@@ -53,20 +55,24 @@ def uuid7() -> uuid.UUID:
     nanoseconds = time.time_ns()
     timestamp_ms = nanoseconds // 1_000_000
 
-    if _last_timestamp_v7 is None or timestamp_ms > _last_timestamp_v7:
-        counter, tail = _uuid7_get_counter_and_tail()
-    else:
-        if timestamp_ms < _last_timestamp_v7:
-            timestamp_ms = _last_timestamp_v7 + 1
-        # advance the 42-bit counter
-        counter = _last_counter_v7 + 1
-        if counter > 0x3FF_FFFF_FFFF:
-            # advance the 48-bit timestamp
-            timestamp_ms += 1
+    with _lock_v7:
+        if _last_timestamp_v7 is None or timestamp_ms > _last_timestamp_v7:
             counter, tail = _uuid7_get_counter_and_tail()
         else:
-            # 32-bit random data
-            tail = int.from_bytes(os.urandom(4), 'big')
+            if timestamp_ms < _last_timestamp_v7:
+                timestamp_ms = _last_timestamp_v7 + 1
+            # advance the 42-bit counter
+            counter = _last_counter_v7 + 1
+            if counter > 0x3FF_FFFF_FFFF:
+                # advance the 48-bit timestamp
+                timestamp_ms += 1
+                counter, tail = _uuid7_get_counter_and_tail()
+            else:
+                # 32-bit random data
+                tail = int.from_bytes(os.urandom(4), 'big')
+
+        _last_timestamp_v7 = timestamp_ms
+        _last_counter_v7 = counter
 
     unix_ts_ms = timestamp_ms & 0xFFFF_FFFF_FFFF
     counter_hi = (counter >> 30) & 0x0FFF
@@ -78,7 +84,4 @@ def uuid7() -> uuid.UUID:
     int_uuid_7 |= tail & 0xFFFF_FFFF
     int_uuid_7 |= _RFC_4122_VERSION_7_FLAGS
 
-    # defer global update until all computations are done
-    _last_timestamp_v7 = timestamp_ms
-    _last_counter_v7 = counter
     return uuid.UUID(int=int_uuid_7)

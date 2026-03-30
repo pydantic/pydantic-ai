@@ -1,13 +1,30 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
+
+from opentelemetry.baggage import get_baggage
 
 if TYPE_CHECKING:
     from typing_extensions import Self
 
 DEFAULT_INSTRUMENTATION_VERSION = 2
 """Default instrumentation version for `InstrumentationSettings`."""
+
+AGENT_NAME_BAGGAGE_KEY = 'gen_ai.agent.name'
+RUN_ID_BAGGAGE_KEY = 'pydantic_ai.run_id'
+
+
+def get_agent_run_baggage_attributes() -> dict[str, Any]:
+    """Read agent name and run ID from OTel baggage and return as span attributes."""
+    attrs: dict[str, Any] = {}
+    agent_name = get_baggage(AGENT_NAME_BAGGAGE_KEY)
+    if agent_name is not None:
+        attrs[AGENT_NAME_BAGGAGE_KEY] = agent_name
+    run_id = get_baggage(RUN_ID_BAGGAGE_KEY)
+    if run_id is not None:
+        attrs[RUN_ID_BAGGAGE_KEY] = run_id
+    return attrs
 
 
 @dataclass(frozen=True)
