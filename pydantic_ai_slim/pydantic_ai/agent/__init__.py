@@ -1272,6 +1272,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             'model_name': model_used.model_name if model_used else 'no-model',
             'agent_name': agent_name,
             'gen_ai.agent.name': agent_name,
+            # TODO: run_id is per-run, not per-conversation. Replace with a proper
+            # session/conversation ID once we have one.
             'gen_ai.conversation.id': state.run_id,
             'logfire.msg': f'{agent_name} run',
         }
@@ -1288,14 +1290,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         run_metadata: dict[str, Any] | None = None
         try:
             async with AsyncExitStack() as stack:
-                stack.enter_context(
-                    logfire_api.set_baggage(
-                        **{
-                            'gen_ai.agent.name': agent_name,
-                            'gen_ai.conversation.id': state.run_id,
-                        }
+                if run_span.is_recording():
+                    stack.enter_context(
+                        logfire_api.set_baggage(
+                            **{
+                                'gen_ai.agent.name': agent_name,
+                                'gen_ai.conversation.id': state.run_id,
+                            }
+                        )
                     )
-                )
                 await stack.enter_async_context(
                     _concurrency.get_concurrency_context(self._concurrency_limiter, f'agent:{agent_name}')
                 )
