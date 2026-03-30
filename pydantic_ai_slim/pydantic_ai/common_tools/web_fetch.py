@@ -24,6 +24,8 @@ except ImportError as _import_error:
 
 __all__ = ('web_fetch_tool',)
 
+_EXCESSIVE_NEWLINES_RE = re.compile(r'\n{3,}')
+
 
 class WebFetchResult(TypedDict):
     """Result of fetching a web page."""
@@ -131,7 +133,7 @@ def _extract_title(html: str) -> str:
 
 def _clean_whitespace(text: str) -> str:
     """Collapse runs of 3+ newlines into 2 newlines."""
-    return re.sub(r'\n{3,}', '\n\n', text).strip()
+    return _EXCESSIVE_NEWLINES_RE.sub('\n\n', text).strip()
 
 
 def web_fetch_tool(
