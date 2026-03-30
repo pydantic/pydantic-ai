@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic_ai.builtin_tools import ImageAspectRatio, ImageGenerationTool
@@ -110,28 +110,21 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
         self.aspect_ratio = aspect_ratio
         self.__post_init__()
 
+    _IMAGE_GEN_FIELDS = (
+        'background',
+        'input_fidelity',
+        'moderation',
+        'output_compression',
+        'output_format',
+        'partial_images',
+        'quality',
+        'size',
+        'aspect_ratio',
+    )
+
     def _image_gen_kwargs(self) -> dict[str, Any]:
         """Collect non-None ImageGenerationTool config fields."""
-        kwargs: dict[str, Any] = {}
-        if self.background is not None:
-            kwargs['background'] = self.background
-        if self.input_fidelity is not None:
-            kwargs['input_fidelity'] = self.input_fidelity
-        if self.moderation is not None:
-            kwargs['moderation'] = self.moderation
-        if self.output_compression is not None:
-            kwargs['output_compression'] = self.output_compression
-        if self.output_format is not None:
-            kwargs['output_format'] = self.output_format
-        if self.partial_images is not None:
-            kwargs['partial_images'] = self.partial_images
-        if self.quality is not None:
-            kwargs['quality'] = self.quality
-        if self.size is not None:
-            kwargs['size'] = self.size
-        if self.aspect_ratio is not None:
-            kwargs['aspect_ratio'] = self.aspect_ratio
-        return kwargs
+        return {f: v for f in self._IMAGE_GEN_FIELDS if (v := getattr(self, f)) is not None}
 
     def _default_builtin(self) -> ImageGenerationTool:
         return ImageGenerationTool(**self._image_gen_kwargs())
@@ -141,20 +134,11 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
 
     def _resolved_builtin(self) -> ImageGenerationTool:
         """Get the ImageGenerationTool for the fallback, with capability-level overrides applied."""
-        # Start from the explicit builtin instance if available, otherwise use defaults
-        if isinstance(self.builtin, ImageGenerationTool):
-            base = self.builtin
-        else:
-            base = ImageGenerationTool()
-
-        # Apply capability-level overrides
+        base = self.builtin if isinstance(self.builtin, ImageGenerationTool) else ImageGenerationTool()
         overrides = self._image_gen_kwargs()
         if not overrides:
             return base
-
-        merged = {k: v for k, v in asdict(base).items() if k != 'kind'}
-        merged.update(overrides)
-        return ImageGenerationTool(**merged)
+        return replace(base, **overrides)
 
     def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
         if self.fallback_model is None:
