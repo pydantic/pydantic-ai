@@ -43,7 +43,6 @@ from .._agent_graph import (
 )
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
-from .._template import TemplateStr, validate_from_spec_args
 from .._tool_manager import ParallelExecutionMode, ToolManager
 from ..builtin_tools import AbstractBuiltinTool
 from ..capabilities import AbstractCapability, CombinedCapability
@@ -53,6 +52,7 @@ from ..models.instrumented import InstrumentationSettings, InstrumentedModel, in
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings, merge_model_settings
+from ..template import TemplateStr, validate_from_spec_args as _validate_from_spec_args
 from ..tools import (
     AgentBuiltinTool,
     AgentDepsT,
@@ -2595,7 +2595,7 @@ def _capabilities_from_spec(
         args: tuple[Any, ...],
         kwargs: dict[str, Any],
     ) -> AbstractCapability[Any]:
-        args, kwargs = validate_from_spec_args(cap_cls, args, kwargs, template_context)
+        args, kwargs = _validate_from_spec_args(cap_cls, args, kwargs, template_context)
         return cap_cls.from_spec(*args, **kwargs)
 
     # Set context so nested from_spec calls (e.g. PrefixTools) can reuse the registry

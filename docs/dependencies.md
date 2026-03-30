@@ -98,7 +98,7 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
-Dependency fields can also be referenced in instructions and descriptions via [template strings](agent-spec.md#template-strings) — for example, `TemplateStr('Hello {{name}}')` renders `name` from the deps object at runtime. This is especially useful in [agent specs](agent-spec.md) where callables aren't available.
+Dependency fields can also be referenced in instructions and descriptions via [template strings](agent-spec.md#template-strings) — for example, [`TemplateStr('Hello {{name}}')`][pydantic_ai.TemplateStr] renders `name` from the deps object at runtime. This is especially useful in [agent specs](agent-spec.md) where callables aren't available.
 
 ### Asynchronous vs. Synchronous dependencies
 

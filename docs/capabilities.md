@@ -385,7 +385,7 @@ print(result.output)
 #> The current time is 3:45 PM.
 ```
 
-Instructions can also use [template strings](agent-spec.md#template-strings) (`TemplateStr('Hello {{name}}')`) for Handlebars-style templates rendered against the agent's [dependencies](dependencies.md). In Python code, a callable with [`RunContext`][pydantic_ai.tools.RunContext] is generally preferred for IDE autocomplete.
+Instructions can also use [template strings](agent-spec.md#template-strings) ([`TemplateStr('Hello {{name}}')`][pydantic_ai.TemplateStr]) for Handlebars-style templates rendered against the agent's [dependencies](dependencies.md). In Python code, a callable with [`RunContext`][pydantic_ai.tools.RunContext] is generally preferred for IDE autocomplete.
 
 ### Providing model settings
 

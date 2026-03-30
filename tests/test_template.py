@@ -12,11 +12,11 @@ pytest.importorskip('pydantic_handlebars', reason='pydantic-handlebars not insta
 
 from pydantic_ai import Agent, TemplateStr
 from pydantic_ai._run_context import RunContext
-from pydantic_ai._template import validate_from_spec_args
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import RunUsage
+from pydantic_ai.template import validate_from_spec_args as _validate_from_spec_args
 
 
 @dataclass
@@ -122,7 +122,7 @@ class TestTemplateStrPydanticValidation:
         assert isinstance(result, TemplateStr)
 
 
-# --- validate_from_spec_args ---
+# --- _validate_from_spec_args ---
 
 
 @dataclass
@@ -139,18 +139,18 @@ class _TemplateCap(AbstractCapability[Any]):
 class TestValidateFromSpecArgs:
     def test_resolves_template_in_positional_arg(self) -> None:
         ctx: dict[str, Any] = {'deps_type': MyDeps}
-        args, _kwargs = validate_from_spec_args(_TemplateCap, ('Hello {{name}}',), {}, ctx)
+        args, _kwargs = _validate_from_spec_args(_TemplateCap, ('Hello {{name}}',), {}, ctx)
         assert len(args) == 1
         assert isinstance(args[0], TemplateStr)
 
     def test_resolves_template_in_keyword_arg(self) -> None:
         ctx: dict[str, Any] = {'deps_type': MyDeps}
-        _args, kwargs = validate_from_spec_args(_TemplateCap, (), {'text': 'Hello {{name}}'}, ctx)
+        _args, kwargs = _validate_from_spec_args(_TemplateCap, (), {'text': 'Hello {{name}}'}, ctx)
         assert isinstance(kwargs['text'], TemplateStr)
 
     def test_plain_string_unchanged(self) -> None:
         ctx: dict[str, Any] = {'deps_type': MyDeps}
-        args, _kwargs = validate_from_spec_args(_TemplateCap, ('Hello world',), {}, ctx)
+        args, _kwargs = _validate_from_spec_args(_TemplateCap, ('Hello world',), {}, ctx)
         assert args == ('Hello world',)
         assert isinstance(args[0], str)
         assert not isinstance(args[0], TemplateStr)
@@ -167,7 +167,7 @@ class TestValidateFromSpecArgs:
                 return cls(value=value)  # pragma: lax no cover
 
         ctx: dict[str, Any] = {'deps_type': MyDeps}
-        args, _kwargs = validate_from_spec_args(PlainCap, ('Hello {{name}}',), {}, ctx)
+        args, _kwargs = _validate_from_spec_args(PlainCap, ('Hello {{name}}',), {}, ctx)
         # Should not be converted since the hint is `str`, not `TemplateStr | str`
         assert args == ('Hello {{name}}',)
         assert isinstance(args[0], str)
@@ -175,7 +175,7 @@ class TestValidateFromSpecArgs:
     def test_with_deps_schema(self) -> None:
         schema = {'type': 'object', 'properties': {'name': {'type': 'string'}}, 'required': ['name']}
         ctx: dict[str, Any] = {'deps_schema': schema}
-        args, _kwargs = validate_from_spec_args(_TemplateCap, ('Hello {{name}}',), {}, ctx)
+        args, _kwargs = _validate_from_spec_args(_TemplateCap, ('Hello {{name}}',), {}, ctx)
         assert isinstance(args[0], TemplateStr)
 
 
@@ -348,7 +348,7 @@ class TestValidateFromSpecArgsMixedParams:
     def test_skips_non_template_params_in_mixed_signature(self) -> None:
         """When from_spec has both TemplateStr and non-TemplateStr params, non-template params are skipped."""
         ctx: dict[str, Any] = {'deps_type': MyDeps}
-        args, _kwargs = validate_from_spec_args(_MixedCap, ('my-label', 'Hello {{name}}'), {}, ctx)
+        args, _kwargs = _validate_from_spec_args(_MixedCap, ('my-label', 'Hello {{name}}'), {}, ctx)
         # label (str hint) should be unchanged
         assert args[0] == 'my-label'
         assert isinstance(args[0], str)
@@ -359,7 +359,7 @@ class TestValidateFromSpecArgsMixedParams:
     def test_omitted_template_param_is_skipped(self) -> None:
         """When a TemplateStr param is omitted (has a default), it's left alone."""
         ctx: dict[str, Any] = {'deps_type': MyDeps}
-        args, kwargs = validate_from_spec_args(_MixedCap, ('my-label',), {}, ctx)
+        args, kwargs = _validate_from_spec_args(_MixedCap, ('my-label',), {}, ctx)
         # Only the positional label was passed; template was omitted entirely
         assert args == ('my-label',)
         assert kwargs == {}

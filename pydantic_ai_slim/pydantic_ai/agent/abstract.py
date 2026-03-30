@@ -27,13 +27,13 @@ from .. import (
 )
 from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
-from .._template import TemplateStr
 from .._tool_manager import ToolManager
 from ..builtin_tools import AbstractBuiltinTool
 from ..output import OutputDataT, OutputSpec
 from ..result import AgentStream, FinalResult, StreamedRunResult
 from ..run import AgentRun, AgentRunResult, AgentRunResultEvent
 from ..settings import ModelSettings
+from ..template import TemplateStr
 from ..tools import (
     AgentBuiltinTool,
     AgentDepsT,

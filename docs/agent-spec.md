@@ -71,7 +71,7 @@ For more control over spec loading, use [`AgentSpec.from_file`][pydantic_ai.agen
 
 ## Template strings
 
-`TemplateStr` provides Handlebars-style templates (`{{variable}}`) that are rendered against the agent's [dependencies](dependencies.md) at runtime. In spec files, strings containing `{{` are automatically converted to template strings:
+[`TemplateStr`][pydantic_ai.TemplateStr] provides Handlebars-style templates (`{{variable}}`) that are rendered against the agent's [dependencies](dependencies.md) at runtime. In spec files, strings containing `{{` are automatically converted to template strings:
 
 ```yaml {test="skip"}
 instructions: "You are assisting {{name}}, who is a {{role}}."
@@ -79,7 +79,7 @@ instructions: "You are assisting {{name}}, who is a {{role}}."
 
 Template variables are resolved from the fields of the `deps` object. When a `deps_type` (or [`deps_schema`](#deps_schema)) is provided, template variable names are validated at construction time.
 
-In Python code, `TemplateStr` can be used explicitly, but a callable with [`RunContext`][pydantic_ai.tools.RunContext] is generally preferred for IDE autocomplete and type checking:
+In Python code, [`TemplateStr`][pydantic_ai.TemplateStr] can be used explicitly, but a callable with [`RunContext`][pydantic_ai.tools.RunContext] is generally preferred for IDE autocomplete and type checking:
 
 ```python {title="template_instructions.py"}
 from dataclasses import dataclass

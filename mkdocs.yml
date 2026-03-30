@@ -179,6 +179,7 @@ nav:
           - api/retries.md
           - api/run.md
           - api/settings.md
+          - api/template.md
           - api/tools.md
           - api/toolsets.md
           - api/ui/ag_ui.md
