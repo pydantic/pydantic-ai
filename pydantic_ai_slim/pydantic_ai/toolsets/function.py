@@ -420,19 +420,19 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
         Example:
-            ```python
-                from pydantic_ai import FunctionToolset, RunContext
+        ```python
+        from pydantic_ai import FunctionToolset, RunContext
 
-                toolset = FunctionToolset[int]()
+        toolset = FunctionToolset[int]()
 
-                @toolset.instructions
-                def my_instructions(ctx: RunContext[int]) -> str:
-                    return 'Always use the search tool when looking for information.'
+        @toolset.instructions
+        def my_instructions(ctx: RunContext[int]) -> str:
+            return 'Always use the search tool when looking for information.'
 
-                @toolset.tool
-                def search(ctx: RunContext[int], query: str) -> str:
-                    return f'Results for: {query}'
-                ```
+        @toolset.tool
+        def search(ctx: RunContext[int], query: str) -> str:
+            return f'Results for: {query}'
+        ```
 
         Args:
             func: The instructions function to register.

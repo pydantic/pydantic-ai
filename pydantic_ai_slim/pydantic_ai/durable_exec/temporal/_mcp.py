@@ -100,10 +100,12 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
         return [self.get_instructions_activity, self.get_tools_activity, self.call_tool_activity]
 
     async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> str | list[str] | None:
+        if not getattr(self.wrapped, 'include_instructions', False):
+            return None
+
         if not workflow.in_workflow():  # pragma: no cover
             return await super().get_instructions(ctx)
 
-        # When instructions are disabled, base delegation returns `None` directly.
         # If enabled but not yet initialized in the workflow process, we must fetch
         # instructions inside an activity where the wrapped MCP toolset can be entered.
         try:
