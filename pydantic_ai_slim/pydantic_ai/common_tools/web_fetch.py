@@ -81,7 +81,7 @@ class WebFetchLocalTool:
 
         title = ''
 
-        if _is_textual(content_type):
+        if _is_text_like_media_type(content_type):
             text = response.text
 
             if not content_type or content_type in ('text/html', 'application/xhtml+xml'):
@@ -106,20 +106,17 @@ class WebFetchLocalTool:
         return WebFetchResult(url=url, title=title, content=content)
 
 
-_TEXTUAL_CONTENT_TYPES = frozenset(
-    {
-        'application/json',
-        'application/xml',
-        'application/xhtml+xml',
-        'application/javascript',
-        'application/x-javascript',
-    }
-)
-
-
-def _is_textual(content_type: str) -> bool:
-    """Check if a content type represents text content."""
-    return not content_type or content_type.startswith('text/') or content_type in _TEXTUAL_CONTENT_TYPES
+def _is_text_like_media_type(media_type: str) -> bool:
+    """Check if a media type represents text-like content."""
+    return (
+        not media_type
+        or media_type.startswith('text/')
+        or media_type == 'application/json'
+        or media_type.endswith('+json')
+        or media_type == 'application/xml'
+        or media_type.endswith('+xml')
+        or media_type in ('application/x-yaml', 'application/yaml')
+    )
 
 
 def _extract_title(html: str) -> str:
