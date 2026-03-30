@@ -65,8 +65,10 @@ try:
     from .. import MessagesBuilder, UIAdapter, UIEventStream
     from ._event_stream import (
         BUILTIN_TOOL_CALL_ID_PREFIX,
+        DEFAULT_AG_UI_VERSION,
         REASONING_VERSION,
         AGUIEventStream,
+        AGUIVersion,
         parse_ag_ui_version,
         thinking_encrypted_metadata,
     )
@@ -143,10 +145,12 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     """UI adapter for the Agent-User Interaction (AG-UI) protocol."""
 
     _: KW_ONLY
-    ag_ui_version: str = '0.1.10'
+    ag_ui_version: AGUIVersion = DEFAULT_AG_UI_VERSION
     """AG-UI protocol version controlling thinking/reasoning event format.
 
-    - `'0.1.10'` (default): emits `THINKING_*` events during streaming, drops `ThinkingPart`
+    Defaults to the version detected from the installed `ag-ui-protocol` package.
+
+    - `'0.1.10'`: emits `THINKING_*` events during streaming, drops `ThinkingPart`
       from `dump_messages` output. Compatible with AG-UI frontends that don't support reasoning events.
     - `'0.1.13'`: emits `REASONING_*` events with encrypted metadata during streaming, and
       includes `ThinkingPart` as `ReasoningMessage` in `dump_messages` output for full round-trip
@@ -156,16 +160,15 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     """
 
     preserve_file_data: bool = False
-    """Whether to preserve file and uploaded-file data in AG-UI message conversion.
+    """Whether to preserve agent-generated files and uploaded files in AG-UI message conversion.
 
-    When `True`, `FilePart` round-trips as `ActivityMessage(activity_type='pydantic_ai_file')`
-    and `UploadedFile` round-trips as `ActivityMessage(activity_type='pydantic_ai_uploaded_file')`.
-    When `False` (default), these are silently dropped from `dump_messages` output
-    and their corresponding `ActivityMessage` types are ignored by `load_messages`.
+    When `True`, agent-generated files and uploaded files are stored as
+    [activity messages](https://docs.ag-ui.com/concepts/activities) during `dump_messages`
+    and restored during `load_messages`, enabling full round-trip fidelity.
+    When `False` (default), they are silently dropped.
 
-    If your AG-UI frontend uses [activities](https://docs.ag-ui.com/concepts/activities),
-    be aware that `pydantic_ai_*` activity types are reserved for internal round-trip use
-    and should be ignored by frontend activity handlers.
+    If your AG-UI frontend uses activities, be aware that `pydantic_ai_*` activity types
+    are reserved for internal round-trip use and should be ignored by frontend activity handlers.
     """
 
     @classmethod
@@ -183,7 +186,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         request: Request,
         *,
         agent: AbstractAgent[AgentDepsT, OutputDataT],
-        ag_ui_version: str = '0.1.10',
+        ag_ui_version: AGUIVersion = DEFAULT_AG_UI_VERSION,
         preserve_file_data: bool = False,
         **kwargs: Any,
     ) -> AGUIAdapter[AgentDepsT, OutputDataT]:
@@ -459,7 +462,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
     @staticmethod
     def _dump_response_parts(  # noqa: C901
-        msg: ModelResponse, *, ag_ui_version: str = '0.1.10', preserve_file_data: bool = False
+        msg: ModelResponse, *, ag_ui_version: AGUIVersion = DEFAULT_AG_UI_VERSION, preserve_file_data: bool = False
     ) -> list[Message]:
         """Convert a `ModelResponse` into AG-UI messages.
 
@@ -563,7 +566,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         cls,
         messages: Sequence[ModelMessage],
         *,
-        ag_ui_version: str = '0.1.10',
+        ag_ui_version: AGUIVersion = DEFAULT_AG_UI_VERSION,
         preserve_file_data: bool = False,
     ) -> list[Message]:
         """Transform Pydantic AI messages into AG-UI messages.
@@ -577,8 +580,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         - `BuiltinToolReturnPart.provider_details` is lost.
         - `RetryPromptPart` becomes `ToolReturnPart` (or `UserPromptPart`) on reload.
         - `CachePoint` and `UploadedFile` content items are dropped (unless `preserve_file_data=True`).
-        - `ThinkingPart` is dropped when `ag_ui_version='0.1.10'` (default).
+        - `ThinkingPart` is dropped when `ag_ui_version='0.1.10'`.
         - `FilePart` is silently dropped unless `preserve_file_data=True`.
+        - `UploadedFile` in a multi-item `UserPromptPart` is split into a separate activity message
+          when `preserve_file_data=True`, which reloads as a separate `UserPromptPart`.
         - Part ordering within a `ModelResponse` may change when text follows tool calls.
 
         Args:

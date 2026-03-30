@@ -6,10 +6,11 @@ enabling streaming event-based communication for interactive AI applications.
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
-from typing import Any, Final
+from typing import Any, Final, Literal
 from uuid import uuid4
 
 from ..._utils import now_utc
@@ -66,21 +67,51 @@ except ImportError as e:  # pragma: no cover
         'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
     ) from e
 
+AGUIVersion = Literal['0.1.10', '0.1.13']
+"""Supported AG-UI protocol versions.
+
+- `'0.1.10'`: emits `THINKING_*` events, drops `ThinkingPart` from `dump_messages`.
+- `'0.1.13'`: emits `REASONING_*` events with encrypted metadata, preserves `ThinkingPart`
+  as `ReasoningMessage` in `dump_messages` for full round-trip fidelity.
+"""
+
+REASONING_VERSION = (0, 1, 13)
+"""AG-UI version that introduced REASONING_* events (replacing THINKING_*)."""
+
+
+def parse_ag_ui_version(version: str) -> tuple[int, ...]:
+    """Parse an AG-UI version string (e.g. `'0.1.13'`) into a comparable tuple."""
+    from ...exceptions import UserError
+
+    try:
+        return tuple(int(x) for x in version.split('.'))
+    except ValueError:
+        raise UserError(f"Invalid AG-UI version {version!r}: expected a dotted numeric version like '0.1.13'") from None
+
+
+def _detect_ag_ui_version() -> AGUIVersion:
+    """Detect installed ag-ui-protocol version and map to the nearest supported `AGUIVersion`."""
+    try:
+        installed = importlib.metadata.version('ag-ui-protocol')
+        if parse_ag_ui_version(installed) >= REASONING_VERSION:
+            return '0.1.13'
+    except importlib.metadata.PackageNotFoundError:
+        pass
+    return '0.1.10'
+
+
+DEFAULT_AG_UI_VERSION: AGUIVersion = _detect_ag_ui_version()
+"""The default AG-UI version, auto-detected from the installed `ag-ui-protocol` package."""
+
+
 __all__ = [
     'AGUIEventStream',
+    'AGUIVersion',
+    'DEFAULT_AG_UI_VERSION',
     'RunAgentInput',
     'RunStartedEvent',
     'RunFinishedEvent',
 ]
-
-
-def parse_ag_ui_version(version: str) -> tuple[int, ...]:
-    """Parse an AG-UI version string into a comparable tuple."""
-    return tuple(int(x) for x in version.split('.'))
-
-
-REASONING_VERSION = (0, 1, 13)
-"""AG-UI version that introduced REASONING_* events (replacing THINKING_*)."""
 
 BUILTIN_TOOL_CALL_ID_PREFIX: Final[str] = 'pyd_ai_builtin'
 
@@ -103,14 +134,18 @@ def thinking_encrypted_metadata(part: ThinkingPart) -> dict[str, Any]:
 class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]):
     """UI event stream transformer for the Agent-User Interaction (AG-UI) protocol."""
 
-    ag_ui_version: str = '0.1.10'
+    ag_ui_version: AGUIVersion = DEFAULT_AG_UI_VERSION
 
+    _use_reasoning: bool = field(default=False, init=False)
     _reasoning_message_id: str | None = None
     _reasoning_started: bool = False
     _reasoning_text: bool = False
     _builtin_tool_call_ids: dict[str, str] = field(default_factory=dict[str, str])
     _ended_tool_call_ids: set[str] = field(default_factory=set[str])
     _error: bool = False
+
+    def __post_init__(self) -> None:
+        self._use_reasoning = parse_ag_ui_version(self.ag_ui_version) >= REASONING_VERSION
 
     @property
     def _event_encoder(self) -> EventEncoder:
@@ -184,7 +219,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         self._reasoning_message_id = str(uuid4())
         self._reasoning_started = False
 
-        if parse_ag_ui_version(self.ag_ui_version) >= REASONING_VERSION:
+        if self._use_reasoning:
             if part.content:
                 yield ReasoningStartEvent(message_id=self._reasoning_message_id)
                 self._reasoning_started = True
@@ -207,7 +242,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             'handle_thinking_start must be called before handle_thinking_delta'
         )
 
-        if parse_ag_ui_version(self.ag_ui_version) >= REASONING_VERSION:
+        if self._use_reasoning:
             message_id = self._reasoning_message_id
 
             if not self._reasoning_started:
@@ -235,7 +270,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     ) -> AsyncIterator[BaseEvent]:
         assert self._reasoning_message_id is not None, 'handle_thinking_start must be called before handle_thinking_end'
 
-        if parse_ag_ui_version(self.ag_ui_version) >= REASONING_VERSION:
+        if self._use_reasoning:
             message_id = self._reasoning_message_id
             encrypted = thinking_encrypted_metadata(part)
 

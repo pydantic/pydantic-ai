@@ -30,6 +30,7 @@ try:
 
     from .ui import SSE_CONTENT_TYPE, OnCompleteFunc, StateDeps, StateHandler
     from .ui.ag_ui import AGUIAdapter
+    from .ui.ag_ui._event_stream import DEFAULT_AG_UI_VERSION, AGUIVersion
     from .ui.ag_ui.app import AGUIApp
 except ImportError as e:  # pragma: no cover
     raise ImportError(
@@ -53,7 +54,8 @@ async def handle_ag_ui_request(
     agent: AbstractAgent[AgentDepsT, Any],
     request: Request,
     *,
-    ag_ui_version: str = '0.1.10',
+    ag_ui_version: AGUIVersion = DEFAULT_AG_UI_VERSION,
+    preserve_file_data: bool = False,
     output_type: OutputSpec[Any] | None = None,
     message_history: Sequence[ModelMessage] | None = None,
     deferred_tool_results: DeferredToolResults | None = None,
@@ -73,6 +75,8 @@ async def handle_ag_ui_request(
         agent: The agent to run.
         request: The Starlette request (e.g. from FastAPI) containing the AG-UI run input.
         ag_ui_version: AG-UI protocol version controlling thinking/reasoning event format.
+        preserve_file_data: Whether to preserve agent-generated files and uploaded files
+            in AG-UI message conversion. See [`AGUIAdapter.preserve_file_data`][pydantic_ai.ui.ag_ui.AGUIAdapter.preserve_file_data].
 
         output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
             output validators since output validators would expect an argument that matches the agent's output type.
@@ -97,6 +101,7 @@ async def handle_ag_ui_request(
         request,
         agent=agent,
         ag_ui_version=ag_ui_version,
+        preserve_file_data=preserve_file_data,
         deps=deps,
         output_type=output_type,
         message_history=message_history,
@@ -117,7 +122,8 @@ def run_ag_ui(
     run_input: RunAgentInput,
     accept: str = SSE_CONTENT_TYPE,
     *,
-    ag_ui_version: str = '0.1.10',
+    ag_ui_version: AGUIVersion = DEFAULT_AG_UI_VERSION,
+    preserve_file_data: bool = False,
     output_type: OutputSpec[Any] | None = None,
     message_history: Sequence[ModelMessage] | None = None,
     deferred_tool_results: DeferredToolResults | None = None,
@@ -138,6 +144,8 @@ def run_ag_ui(
         run_input: The AG-UI run input containing thread_id, run_id, messages, etc.
         accept: The accept header value for the run.
         ag_ui_version: AG-UI protocol version controlling thinking/reasoning event format.
+        preserve_file_data: Whether to preserve agent-generated files and uploaded files
+            in AG-UI message conversion. See [`AGUIAdapter.preserve_file_data`][pydantic_ai.ui.ag_ui.AGUIAdapter.preserve_file_data].
 
         output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
             output validators since output validators would expect an argument that matches the agent's output type.
@@ -158,7 +166,13 @@ def run_ag_ui(
     Yields:
         Streaming event chunks encoded as strings according to the accept header value.
     """
-    adapter = AGUIAdapter(agent=agent, run_input=run_input, accept=accept, ag_ui_version=ag_ui_version)
+    adapter = AGUIAdapter(
+        agent=agent,
+        run_input=run_input,
+        accept=accept,
+        ag_ui_version=ag_ui_version,
+        preserve_file_data=preserve_file_data,
+    )
     return adapter.encode_stream(
         adapter.run_stream(
             output_type=output_type,

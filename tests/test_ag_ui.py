@@ -3462,7 +3462,7 @@ def test_dump_messages_v010_drops_thinking() -> None:
         ),
     ]
 
-    ag_ui_msgs = AGUIAdapter.dump_messages(messages)  # default 0.1.10
+    ag_ui_msgs = AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.10')
     # No ReasoningMessage in output
     assert not any(isinstance(m, ReasoningMessage) for m in ag_ui_msgs)
     # Text still present
