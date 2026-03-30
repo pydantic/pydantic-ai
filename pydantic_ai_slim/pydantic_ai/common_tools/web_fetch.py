@@ -86,18 +86,18 @@ class WebFetchLocalTool:
             timeout=self.timeout,
         )
 
-        content_type = response.headers.get('content-type', '')
-        content_type = content_type.split(';')[0].strip().lower()
+        media_type = response.headers.get('content-type', '')
+        media_type = media_type.split(';')[0].strip().lower()
 
         title = ''
 
-        if _is_text_like_media_type(content_type):
+        if _is_text_like_media_type(media_type):
             text = response.text
 
-            if not content_type or content_type in ('text/html', 'application/xhtml+xml'):
+            if not media_type or media_type in ('text/html', 'application/xhtml+xml'):
                 title = _extract_title(text)
                 content = md(text, strip=['img', 'script', 'style'])
-            elif content_type == 'application/json':
+            elif media_type == 'application/json':
                 try:
                     parsed = json.loads(text)
                     content = f'```json\n{json.dumps(parsed, indent=2)}\n```'
@@ -106,7 +106,7 @@ class WebFetchLocalTool:
             else:
                 content = text
         else:
-            return BinaryContent(data=response.content, media_type=content_type or 'application/octet-stream')
+            return BinaryContent(data=response.content, media_type=media_type or 'application/octet-stream')
 
         content = _clean_whitespace(content)
 
