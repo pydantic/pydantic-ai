@@ -2096,9 +2096,9 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
-                        ToolReturnPart(
+                        RetryPromptPart(
+                            content='Second output validation failed',
                             tool_name='second_output',
-                            content='Output tool not used - output function execution failed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),

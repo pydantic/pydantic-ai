@@ -103,14 +103,7 @@ class GraphAgentState:
                         f'Model token limit ({self.last_max_tokens or "provider default"}) exceeded while generating a tool call, resulting in incomplete arguments. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
                     )
             message = f'Exceeded maximum retries ({max_result_retries}) for output validation'
-            if error:
-                if (
-                    isinstance(error, exceptions.UnexpectedModelBehavior) and error.__cause__ is not None
-                ):  # pragma: no cover
-                    error = error.__cause__  # pragma: no cover
-                raise exceptions.UnexpectedModelBehavior(message) from error
-            else:
-                raise exceptions.UnexpectedModelBehavior(message)
+            raise exceptions.UnexpectedModelBehavior(message) from error
 
 
 @dataclasses.dataclass(kw_only=True)

@@ -648,44 +648,187 @@ def test_tool_output_max_retries_overrides_agent_retries():
 
 def test_tool_output_max_retries_per_tool():
     """Multiple ToolOutputs with different max_retries are tracked independently. Regression test for #4678."""
-    retries_log: list[int] = []
-    max_retries_log: list[int] = []
+    a_max_retries_seen: list[int] = []
+    b_max_retries_seen: list[int] = []
 
     def output_a(ctx: RunContext[None], value: str) -> str:
-        retries_log.append(ctx.retry)
-        max_retries_log.append(ctx.max_retries)
-        if ctx.retry < 5:
+        a_max_retries_seen.append(ctx.max_retries)
+        if ctx.retry < 3:
             raise ModelRetry(f'Retry A {ctx.retry}')
         return f'A: {value}'
 
-    def output_b(ctx: RunContext[None], value: str) -> str:  # pragma: no cover
-        raise ModelRetry('Should not be called enough to succeed')
+    def output_b(ctx: RunContext[None], value: str) -> str:
+        b_max_retries_seen.append(ctx.max_retries)
+        raise ModelRetry(f'Retry B {ctx.retry}')
 
+    tool_names: dict[str, str] = {}
     call_count = 0
 
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal call_count
         call_count += 1
         assert info.output_tools is not None
-        # Always call output_a — it has max_retries=5, so it should succeed after 5 retries
-        tool_name = next(t.name for t in info.output_tools if 'output_a' in t.name)
-        return ModelResponse(parts=[ToolCallPart(tool_name, '{"value": "hello"}')])
+        for t in info.output_tools:
+            if 'output_a' in t.name:
+                tool_names['a'] = t.name
+            elif 'output_b' in t.name:
+                tool_names['b'] = t.name
 
-    # output_a gets 5 retries, output_b gets 2 — agent default is 1
-    # output_a should succeed on its 6th call despite agent retries=1
+        # First call output_b to verify it sees max_retries=1, then switch to output_a
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_names['b'], '{"value": "x"}')])
+        return ModelResponse(parts=[ToolCallPart(tool_names['a'], '{"value": "hello"}')])
+
+    # output_a gets 3 retries, output_b gets 1 — agent default is 0
     agent = Agent(
         FunctionModel(return_model),
         output_type=[
-            ToolOutput(output_a, max_retries=5),
-            ToolOutput(output_b, max_retries=2),
+            ToolOutput(output_a, max_retries=3),
+            ToolOutput(output_b, max_retries=1),
         ],
-        retries=1,
+        retries=0,
     )
 
     result = agent.run_sync('Hello')
     assert result.output == 'A: hello'
-    assert retries_log == [0, 1, 2, 3, 4, 5]
-    assert max_retries_log == [5] * 6
+    # output_b was called once and saw its own max_retries=1
+    assert b_max_retries_seen == [1]
+    # output_a was called 4 times (retries 0-3) and saw its own max_retries=3
+    assert a_max_retries_seen == [3, 3, 3, 3]
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result_output_b',
+                        args='{"value": "x"}',
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=5),
+                model_name='function:return_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Retry B 0',
+                        tool_name='final_result_output_b',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result_output_a',
+                        args='{"value": "hello"}',
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(input_tokens=61, output_tokens=10),
+                model_name='function:return_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Retry A 0',
+                        tool_name='final_result_output_a',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result_output_a',
+                        args='{"value": "hello"}',
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(input_tokens=71, output_tokens=15),
+                model_name='function:return_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Retry A 1',
+                        tool_name='final_result_output_a',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result_output_a',
+                        args='{"value": "hello"}',
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(input_tokens=81, output_tokens=20),
+                model_name='function:return_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Retry A 2',
+                        tool_name='final_result_output_a',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result_output_a',
+                        args='{"value": "hello"}',
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(input_tokens=91, output_tokens=25),
+                model_name='function:return_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result_output_a',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 class TestPartialOutput:
@@ -4561,9 +4704,9 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
-                        ToolReturnPart(
+                        RetryPromptPart(
+                            content='Second output validation failed',
                             tool_name='second_output',
-                            content='Output tool not used - output function execution failed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),

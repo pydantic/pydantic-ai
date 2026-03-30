@@ -969,13 +969,12 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         return "the agent's output tools"
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        # max_retries should always be set by the Agent before get_tools() is called
-        assert self.max_retries is not None, 'OutputToolset.max_retries must be set before get_tools() is called'
+        max_retries = self.max_retries or 1
         return {
             tool_def.name: ToolsetTool(
                 toolset=self,
                 tool_def=tool_def,
-                max_retries=self._max_retries_overrides.get(tool_def.name, self.max_retries),
+                max_retries=self._max_retries_overrides.get(tool_def.name, max_retries),
                 args_validator=self.processors[tool_def.name].validator,
             )
             for tool_def in self._tool_defs
