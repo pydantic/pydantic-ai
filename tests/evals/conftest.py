@@ -4,8 +4,6 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from pydantic_evals.online import wait_for_evaluations
-
 
 @pytest.fixture(autouse=True)
 async def _cleanup_background_evaluations() -> AsyncIterator[None]:
@@ -14,4 +12,8 @@ async def _cleanup_background_evaluations() -> AsyncIterator[None]:
     Prevents leaked tasks from a failed test from affecting subsequent tests.
     """
     yield
+    try:
+        from pydantic_evals.online import wait_for_evaluations
+    except ImportError:
+        return
     await wait_for_evaluations()
