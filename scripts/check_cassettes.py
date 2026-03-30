@@ -5,6 +5,10 @@ This script verifies that every VCR cassette file in the test suite has a
 corresponding test function. Orphaned cassettes (cassettes without tests)
 indicate dead code that should be removed.
 
+The script doesn't handle custom cassette names passed as args
+e.g. `@pytest.mark.vcr('custom_cassette.yaml')`
+Instead, all cassettes _should_ follow the file path set up in conftest.py
+
 Usage:
     python scripts/check_cassettes.py [--verbose]
 """
