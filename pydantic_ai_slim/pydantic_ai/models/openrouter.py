@@ -480,6 +480,13 @@ class _OpenRouterChatCompletion(chat.ChatCompletion):
     error: _OpenRouterError | None = None
     """OpenRouter specific error attribute."""
 
+    service_tier: Literal['auto', 'default', 'flex', 'scale', 'priority', 'standard'] | None = None
+    """The service tier that was used for this request.
+
+    OpenRouter can return "standard" when using Claude through the Anthropic provider,
+    which is not included in the stricter OpenAI type definition.
+    """
+
     usage: _OpenRouterUsage | None = None  # type: ignore[reportIncompatibleVariableOverride]
     """OpenRouter specific usage attribute."""
 
@@ -742,6 +749,13 @@ class _OpenRouterChatCompletionChunk(chat.ChatCompletionChunk):
 
     choices: list[_OpenRouterChunkChoice]  # type: ignore[reportIncompatibleVariableOverride]
     """A list of chat completion chunk choices modified with OpenRouter specific attributes."""
+
+    service_tier: Literal['auto', 'default', 'flex', 'scale', 'priority', 'standard'] | None = None
+    """The service tier that was used for this request.
+
+    OpenRouter can return "standard" when using Claude through the Anthropic provider,
+    which is not included in the stricter OpenAI type definition.
+    """
 
     usage: _OpenRouterUsage | None = None  # type: ignore[reportIncompatibleVariableOverride]
     """Usage statistics for the completion request."""
