@@ -13,7 +13,8 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
 
-import logfire_api
+from opentelemetry.baggage import set_baggage as _otel_set_baggage
+from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Self, TypeVar, deprecated
@@ -1289,14 +1290,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         try:
             async with AsyncExitStack() as stack:
                 if run_span.is_recording():
-                    stack.enter_context(
-                        logfire_api.set_baggage(
-                            **{
-                                'gen_ai.agent.name': agent_name,
-                                'pydantic_ai.run_id': state.run_id,
-                            }
-                        )
-                    )
+                    ctx = _otel_set_baggage('gen_ai.agent.name', agent_name)
+                    ctx = _otel_set_baggage('pydantic_ai.run_id', state.run_id, context=ctx)
+                    token = _otel_attach(ctx)
+                    stack.callback(_otel_detach, token)
                 await stack.enter_async_context(
                     _concurrency.get_concurrency_context(self._concurrency_limiter, f'agent:{agent_name}')
                 )
