@@ -1771,46 +1771,37 @@ class ModelResponse:
         Uses [`genai-prices`](https://github.com/pydantic/genai-prices).
         """
         assert self.model_name, 'Model name is required to calculate price'
-        # Try matching on provider_api_url first as this is more specific, then fall back to provider_id.
-        if self.provider_url:
-            try:
-                return calc_price(
-                    self.usage,
-                    self.model_name,
-                    provider_api_url=self.provider_url,
-                    genai_request_timestamp=self.timestamp,
-                )
-            except LookupError:
-                pass
-        try:
-            return calc_price(
-                self.usage,
-                self.model_name,
-                provider_id=self.provider_name,
-                genai_request_timestamp=self.timestamp,
-            )
-        except LookupError:
-            pass
-        # Some providers (e.g. OpenRouter) return model names with a date suffix
-        # like "openai/gpt-5.2-20251211". Strip the suffix and retry.
-        normalized = _strip_model_date_suffix(self.model_name)
-        if normalized != self.model_name:
+
+        def _try_calc(model_name: str) -> genai_types.PriceCalculation | None:
+            """Try calculating price with provider_api_url first, then provider_id."""
             if self.provider_url:
                 try:
                     return calc_price(
                         self.usage,
-                        normalized,
+                        model_name,
                         provider_api_url=self.provider_url,
                         genai_request_timestamp=self.timestamp,
                     )
                 except LookupError:
                     pass
-            return calc_price(
-                self.usage,
-                normalized,
-                provider_id=self.provider_name,
-                genai_request_timestamp=self.timestamp,
-            )
+            try:
+                return calc_price(
+                    self.usage,
+                    model_name,
+                    provider_id=self.provider_name,
+                    genai_request_timestamp=self.timestamp,
+                )
+            except LookupError:
+                return None
+
+        if result := _try_calc(self.model_name):
+            return result
+        # Some providers (e.g. OpenRouter) return model names with a date suffix
+        # like "openai/gpt-5.2-20251211". Strip the suffix and retry.
+        normalized = _strip_model_date_suffix(self.model_name)
+        if normalized != self.model_name:
+            if result := _try_calc(normalized):
+                return result
         raise LookupError(f'Could not find pricing for model {self.model_name!r}')
 
     def otel_events(self, settings: InstrumentationSettings) -> list[LogRecord]:
