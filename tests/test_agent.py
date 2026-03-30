@@ -668,16 +668,15 @@ def test_tool_output_max_retries_per_tool():
         nonlocal call_count
         call_count += 1
         assert info.output_tools is not None
-        for t in info.output_tools:
-            if 'output_a' in t.name:
-                tool_names['a'] = t.name
-            elif 'output_b' in t.name:
-                tool_names['b'] = t.name
+        tool_names.update({t.name: t.name for t in info.output_tools})
+
+        name_a = next(n for n in tool_names if 'output_a' in n)
+        name_b = next(n for n in tool_names if 'output_b' in n)
 
         # First call output_b to verify it sees max_retries=1, then switch to output_a
         if call_count == 1:
-            return ModelResponse(parts=[ToolCallPart(tool_names['b'], '{"value": "x"}')])
-        return ModelResponse(parts=[ToolCallPart(tool_names['a'], '{"value": "hello"}')])
+            return ModelResponse(parts=[ToolCallPart(name_b, '{"value": "x"}')])
+        return ModelResponse(parts=[ToolCallPart(name_a, '{"value": "hello"}')])
 
     # output_a gets 3 retries, output_b gets 1 — agent default is 0
     agent = Agent(
