@@ -292,6 +292,36 @@ class TestWebFetchLocalTool:
 
         mock_dl.assert_called_once_with('http://localhost:8080', allow_local=True, timeout=60)
 
+    async def test_safe_download_error_raises_model_retry(self):
+        """Errors from safe_download are converted to ModelRetry."""
+        from pydantic_ai.exceptions import ModelRetry
+
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download',
+            new_callable=AsyncMock,
+            side_effect=ValueError('DNS resolution failed'),
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            with pytest.raises(ModelRetry, match='Failed to fetch'):
+                await tool('https://nonexistent.invalid')
+
+    async def test_http_error_raises_model_retry(self):
+        """HTTP errors are converted to ModelRetry."""
+        import httpx
+
+        from pydantic_ai.exceptions import ModelRetry
+
+        request = httpx.Request('GET', 'https://example.com')
+        response = httpx.Response(404, request=request)
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download',
+            new_callable=AsyncMock,
+            side_effect=httpx.HTTPStatusError('Not Found', request=request, response=response),
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            with pytest.raises(ModelRetry, match='Failed to fetch'):
+                await tool('https://example.com/missing')
+
     async def test_invalid_url_no_hostname(self):
         """URL without hostname raises ModelRetry."""
         from pydantic_ai.exceptions import ModelRetry

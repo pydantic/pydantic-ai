@@ -11,6 +11,7 @@ import re
 from dataclasses import KW_ONLY, dataclass, field
 from urllib.parse import urlparse
 
+import httpx
 from typing_extensions import Any, TypedDict
 
 from pydantic_ai._ssrf import safe_download
@@ -80,11 +81,14 @@ class WebFetchLocalTool:
         """
         _check_domain(url, self.allowed_domains, self.blocked_domains)
 
-        response = await safe_download(
-            url,
-            allow_local=self.allow_local_urls,
-            timeout=self.timeout,
-        )
+        try:
+            response = await safe_download(
+                url,
+                allow_local=self.allow_local_urls,
+                timeout=self.timeout,
+            )
+        except (ValueError, httpx.HTTPStatusError) as e:
+            raise ModelRetry(f'Failed to fetch {url}: {e}') from e
 
         media_type = response.headers.get('content-type', '')
         media_type = media_type.split(';')[0].strip().lower()
