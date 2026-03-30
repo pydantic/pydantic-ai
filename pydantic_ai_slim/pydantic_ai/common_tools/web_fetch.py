@@ -23,7 +23,7 @@ except ImportError as _import_error:
         'you can use the `web-fetch` optional group — `pip install "pydantic-ai-slim[web-fetch]"`'
     ) from _import_error
 
-__all__ = ('web_fetch_tool',)
+__all__ = ('WebFetchResult', 'web_fetch_tool')
 
 _EXCESSIVE_NEWLINES_RE = re.compile(r'\n{3,}')
 
