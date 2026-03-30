@@ -39,6 +39,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -1223,9 +1224,10 @@ class AnthropicModel(Model):
                 yield BetaTextBlockParam(text=part.content, type='text')
         else:
             for item in part.content:
-                if isinstance(item, str):
-                    if item:  # Only yield non-empty text
-                        yield BetaTextBlockParam(text=item, type='text')
+                if isinstance(item, str | TextContent):
+                    text = item if isinstance(item, str) else item.content
+                    if text:  # Only yield non-empty text
+                        yield BetaTextBlockParam(text=text, type='text')
                 elif isinstance(item, CachePoint):
                     yield item
                 elif isinstance(item, UploadedFile):
