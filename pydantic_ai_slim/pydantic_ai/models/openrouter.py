@@ -474,6 +474,9 @@ class _OpenRouterChatCompletion(chat.ChatCompletion):
     provider: str
     """The downstream provider that was used by OpenRouter."""
 
+    service_tier: str | None = None  # type: ignore[reportIncompatibleVariableOverride]
+    """The provider-specific service tier returned by OpenRouter, if any."""
+
     choices: list[_OpenRouterChoice]  # type: ignore[reportIncompatibleVariableOverride]
     """A list of chat completion choices modified with OpenRouter specific attributes."""
 
@@ -739,6 +742,9 @@ class _OpenRouterChatCompletionChunk(chat.ChatCompletionChunk):
 
     provider: str
     """The downstream provider that was used by OpenRouter."""
+
+    service_tier: str | None = None  # type: ignore[reportIncompatibleVariableOverride]
+    """The provider-specific service tier returned by OpenRouter, if any."""
 
     choices: list[_OpenRouterChunkChoice]  # type: ignore[reportIncompatibleVariableOverride]
     """A list of chat completion chunk choices modified with OpenRouter specific attributes."""

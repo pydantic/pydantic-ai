@@ -35,8 +35,10 @@ from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from openai.types.chat import ChatCompletion
+    from openai.types.chat import ChatCompletion, ChatCompletionChunk
     from openai.types.chat.chat_completion import Choice
+    from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice, ChoiceDelta
+    from openai.types.completion_usage import CompletionUsage
 
     from pydantic_ai.models.openrouter import (
         OpenRouterModel,
@@ -44,6 +46,7 @@ with try_import() as imports_successful:
         _map_openrouter_provider_details,  # pyright: ignore[reportPrivateUsage]
         _openrouter_settings_to_openai_settings,  # pyright: ignore[reportPrivateUsage]
         _OpenRouterChatCompletion,  # pyright: ignore[reportPrivateUsage]
+        _OpenRouterChatCompletionChunk,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
@@ -528,6 +531,67 @@ async def test_openrouter_validate_error_response(openrouter_api_key: str) -> No
     assert str(exc_info.value) == snapshot(
         'status_code: 200, model_name: test, body: This response has an error attribute'
     )
+
+
+@pytest.mark.parametrize('service_tier', ['standard', 'custom-tier'])
+async def test_openrouter_accepts_provider_specific_service_tier_response(
+    openrouter_api_key: str, service_tier: str
+) -> None:
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=provider)
+
+    choice = Choice.model_construct(
+        index=0,
+        message={'role': 'assistant', 'content': 'hello'},
+        finish_reason='stop',
+        native_finish_reason='stop',
+    )
+    response = ChatCompletion.model_construct(
+        id='test',
+        choices=[choice],
+        created=1704067200,
+        object='chat.completion',
+        model='anthropic/claude-sonnet-4.6',
+        provider='Anthropic',
+        service_tier=service_tier,
+    )
+
+    result = model._process_response(response)  # type: ignore[reportPrivateUsage]
+    text_part = cast(TextPart, result.parts[0])
+
+    assert text_part.content == 'hello'
+    assert result.provider_details == snapshot(
+        {
+            'downstream_provider': 'Anthropic',
+            'finish_reason': 'stop',
+            'timestamp': datetime.datetime(2024, 1, 1, 0, 0, tzinfo=datetime.timezone.utc),
+        }
+    )
+
+
+@pytest.mark.parametrize('service_tier', ['standard', 'custom-tier'])
+def test_openrouter_accepts_provider_specific_service_tier_stream_chunk(service_tier: str) -> None:
+    chunk = ChatCompletionChunk.model_construct(
+        id='chunk-123',
+        choices=[
+            ChunkChoice(
+                index=0,
+                delta=ChoiceDelta(content='hello', role='assistant'),
+                finish_reason=None,
+            )
+        ],
+        created=1704067200,
+        model='anthropic/claude-sonnet-4.6',
+        object='chat.completion.chunk',
+        provider='Anthropic',
+        service_tier=service_tier,
+        usage=CompletionUsage(completion_tokens=1, prompt_tokens=2, total_tokens=3),
+    )
+
+    validated_chunk = _OpenRouterChatCompletionChunk.model_validate(chunk.model_dump())
+
+    assert validated_chunk.service_tier == service_tier
+    assert validated_chunk.provider == 'Anthropic'
 
 
 async def test_openrouter_with_provider_details_but_no_parent_details(openrouter_api_key: str) -> None:
