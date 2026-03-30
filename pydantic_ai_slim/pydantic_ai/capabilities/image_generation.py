@@ -6,25 +6,22 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic_ai.builtin_tools import ImageAspectRatio, ImageGenerationTool
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
 from .builtin_or_local import BuiltinOrLocalTool
 
 if TYPE_CHECKING:
-    from pydantic_ai import models
+    from pydantic_ai.models import KnownModelName
 
     FallbackModelFunc = Callable[
         [RunContext[AgentDepsT]],
-        Awaitable[models.Model | models.KnownModelName | str | None]
-        | models.Model
-        | models.KnownModelName
-        | str
-        | None,
+        Awaitable[Model | KnownModelName | str | None] | Model | KnownModelName | str | None,
     ]
     """Callable that resolves a fallback model dynamically per-run."""
 
-    FallbackModel = models.Model | models.KnownModelName | str | FallbackModelFunc[AgentDepsT] | None
+    FallbackModel = Model | KnownModelName | str | FallbackModelFunc[AgentDepsT] | None
     """Type for the ``fallback_model`` parameter: a model, model name, factory callable, or None."""
 
 
@@ -84,7 +81,7 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
         | Callable[[RunContext[AgentDepsT]], Awaitable[ImageGenerationTool | None] | ImageGenerationTool | None]
         | bool = True,
         local: Tool[AgentDepsT] | Callable[..., Any] | Literal[False] | None = None,
-        fallback_model: FallbackModel[AgentDepsT] = None,
+        fallback_model: Model | str | Callable[..., Any] | None = None,
         background: Literal['transparent', 'opaque', 'auto'] | None = None,
         input_fidelity: Literal['high', 'low'] | None = None,
         moderation: Literal['auto', 'low'] | None = None,

@@ -772,6 +772,52 @@ Supported by:
                             'title': 'Builtin',
                         },
                         'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'fallback_model': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Fallback Model'},
+                        'background': {
+                            'anyOf': [{'enum': ['transparent', 'opaque', 'auto'], 'type': 'string'}, {'type': 'null'}],
+                            'title': 'Background',
+                        },
+                        'input_fidelity': {
+                            'anyOf': [{'enum': ['high', 'low'], 'type': 'string'}, {'type': 'null'}],
+                            'title': 'Input Fidelity',
+                        },
+                        'moderation': {
+                            'anyOf': [{'enum': ['auto', 'low'], 'type': 'string'}, {'type': 'null'}],
+                            'title': 'Moderation',
+                        },
+                        'output_compression': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'title': 'Output Compression',
+                        },
+                        'output_format': {
+                            'anyOf': [{'enum': ['png', 'webp', 'jpeg'], 'type': 'string'}, {'type': 'null'}],
+                            'title': 'Output Format',
+                        },
+                        'partial_images': {'anyOf': [{'type': 'integer'}, {'type': 'null'}], 'title': 'Partial Images'},
+                        'quality': {
+                            'anyOf': [{'enum': ['low', 'medium', 'high', 'auto'], 'type': 'string'}, {'type': 'null'}],
+                            'title': 'Quality',
+                        },
+                        'size': {
+                            'anyOf': [
+                                {
+                                    'enum': ['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'],
+                                    'type': 'string',
+                                },
+                                {'type': 'null'},
+                            ],
+                            'title': 'Size',
+                        },
+                        'aspect_ratio': {
+                            'anyOf': [
+                                {
+                                    'enum': ['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '2:3', '5:4', '4:5'],
+                                    'type': 'string',
+                                },
+                                {'type': 'null'},
+                            ],
+                            'title': 'Aspect Ratio',
+                        },
                     },
                     'title': 'spec_params_ImageGeneration',
                     'type': 'object',
