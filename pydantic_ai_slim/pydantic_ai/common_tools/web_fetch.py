@@ -58,10 +58,10 @@ class WebFetchLocalTool:
     """Request timeout in seconds."""
 
     allowed_domains: list[str] | None = field(default=None)
-    """Only fetch from these domains. Raises `ModelRetry` on violation."""
+    """Only fetch from these domains (exact hostname match). Raises `ModelRetry` on violation."""
 
     blocked_domains: list[str] | None = field(default=None)
-    """Never fetch from these domains. Raises `ModelRetry` on violation."""
+    """Never fetch from these domains (exact hostname match). Raises `ModelRetry` on violation."""
 
     async def __call__(self, url: str) -> WebFetchResult | BinaryContent:
         """Fetches the content of a web page at the given URL and returns it as markdown.
@@ -172,8 +172,8 @@ def web_fetch_tool(
         allow_local_urls: Whether to allow fetching from private/local IP addresses.
             Defaults to `False`.
         timeout: Request timeout in seconds. Defaults to 30.
-        allowed_domains: Only fetch from these domains. Raises `ModelRetry` on violation.
-        blocked_domains: Never fetch from these domains. Raises `ModelRetry` on violation.
+        allowed_domains: Only fetch from these domains (exact hostname match). Raises `ModelRetry` on violation.
+        blocked_domains: Never fetch from these domains (exact hostname match). Raises `ModelRetry` on violation.
     """
     return Tool[Any](
         WebFetchLocalTool(
