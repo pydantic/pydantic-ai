@@ -626,7 +626,10 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(
                     content=e.errors(include_url=False),
+                    tool_name=run_context.tool_name,
                 )
+                if run_context.tool_call_id:
+                    m.tool_call_id = run_context.tool_call_id
                 raise ToolRetryError(m) from e
             else:
                 raise

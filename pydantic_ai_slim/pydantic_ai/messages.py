@@ -1316,7 +1316,7 @@ class RetryPromptPart:
     tool_name: str | None = None
     """The name of the tool that was called, if any."""
 
-    tool_call_id: str = field(default_factory=_generate_tool_call_id)
+    tool_call_id: str | None = None
     """The tool call identifier, this is used by some models including OpenAI.
 
     In case the tool call id is not provided by the model, Pydantic AI will generate a random one.
@@ -1350,30 +1350,36 @@ class RetryPromptPart:
                 body={'content': self.model_response(), 'role': 'user'},
             )
         else:
+            attributes = {'event.name': 'gen_ai.tool.message'}
+            body = {
+                **({'content': self.model_response()} if settings.include_content else {}),
+                'role': 'tool',
+                'name': self.tool_name,
+            }
+            if self.tool_call_id is not None:
+                body['id'] = self.tool_call_id
             return LogRecord(
-                attributes={'event.name': 'gen_ai.tool.message'},
-                body={
-                    **({'content': self.model_response()} if settings.include_content else {}),
-                    'role': 'tool',
-                    'id': self.tool_call_id,
-                    'name': self.tool_name,
-                },
+                attributes=attributes,
+                body=body,
             )
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         if self.tool_name is None:
             return [_otel_messages.TextPart(type='text', content=self.model_response())]
         else:
-            part = _otel_messages.ToolCallResponsePart(
-                type='tool_call_response',
-                id=self.tool_call_id,
-                name=self.tool_name,
-            )
+            if self.tool_call_id is not None:
+                part = _otel_messages.ToolCallResponsePart(
+                    type='tool_call_response',
+                    id=self.tool_call_id,
+                    name=self.tool_name,
+                )
 
-            if settings.include_content:
-                part['result'] = self.model_response()
+                if settings.include_content:
+                    part['result'] = self.model_response()
 
-            return [part]
+                return [part]
+            else:
+                return [_otel_messages.TextPart(type='text', content=self.model_response())]
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -2389,7 +2395,7 @@ class FunctionToolResultEvent:
     """Event type identifier, used as a discriminator."""
 
     @property
-    def tool_call_id(self) -> str:
+    def tool_call_id(self) -> str | None:
         """An ID used to match the result to its original call."""
         return self.result.tool_call_id
 

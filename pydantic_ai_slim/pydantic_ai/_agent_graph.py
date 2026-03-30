@@ -326,11 +326,12 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         if last_model_request:
             for part in last_model_request.parts:
                 if isinstance(part, _messages.ToolReturnPart | _messages.RetryPromptPart):
-                    if part.tool_call_id in tool_call_results:
-                        raise exceptions.UserError(
-                            f'Tool call {part.tool_call_id!r} was already executed and its result cannot be overridden.'
-                        )
-                    tool_call_results[part.tool_call_id] = 'skip'
+                    if part.tool_call_id is not None:
+                        if part.tool_call_id in tool_call_results:
+                            raise exceptions.UserError(
+                                f'Tool call {part.tool_call_id!r} was already executed and its result cannot be overridden.'
+                            )
+                        tool_call_results[part.tool_call_id] = 'skip'
 
         # Skip ModelRequestNode and go directly to CallToolsNode
         return CallToolsNode[DepsT, NodeRunEndT](
@@ -879,7 +880,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         Increments the retry counter and creates a new request with a RetryPromptPart.
         """
         ctx.state.increment_retries(ctx.deps.max_result_retries, error=error)
-        m = _messages.RetryPromptPart(content=error.message)
+        m = _messages.RetryPromptPart(content=error.message, tool_name=run_context.tool_name)
+        if run_context.tool_call_id:
+            m.tool_call_id = run_context.tool_call_id
         instructions = await ctx.deps.get_instructions(run_context)
         retry_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[m], instructions=instructions))
         self._result = retry_node
