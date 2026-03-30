@@ -1272,9 +1272,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             'model_name': model_used.model_name if model_used else 'no-model',
             'agent_name': agent_name,
             'gen_ai.agent.name': agent_name,
-            # TODO: run_id is per-run, not per-conversation. Replace with a proper
-            # session/conversation ID once we have one.
-            'gen_ai.conversation.id': state.run_id,
+            'pydantic_ai.run_id': state.run_id,
             'logfire.msg': f'{agent_name} run',
         }
         if self._description is not None:
@@ -1295,7 +1293,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         logfire_api.set_baggage(
                             **{
                                 'gen_ai.agent.name': agent_name,
-                                'gen_ai.conversation.id': state.run_id,
+                                'pydantic_ai.run_id': state.run_id,
                             }
                         )
                     )
