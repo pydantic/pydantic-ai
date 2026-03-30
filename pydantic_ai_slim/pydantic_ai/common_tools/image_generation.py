@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai.builtin_tools import ImageGenerationTool
-from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import Model
 from pydantic_ai.tools import RunContext, Tool
@@ -25,6 +25,27 @@ if TYPE_CHECKING:
     """Type for the fallback model: a model, model name, factory callable, or None."""
 
 __all__ = ('image_generation_tool',)
+
+# Known image-only model names that don't support the conversational Agent loop
+# required by the subagent fallback, mapped to suggested LLM alternatives.
+_IMAGE_ONLY_MODELS: dict[str, str] = {
+    'gpt-image-1': 'gpt-4o',
+    'dall-e-3': 'gpt-4o',
+    'dall-e-2': 'gpt-4o',
+}
+
+
+def _check_image_only_model(model: str) -> None:
+    """Raise UserError if the model is a known image-only model."""
+    from pydantic_ai.models import parse_model_id
+
+    _, model_name = parse_model_id(model)
+    if suggestion := _IMAGE_ONLY_MODELS.get(model_name):
+        raise UserError(
+            f'{model_name!r} is a dedicated image generation model that cannot be used as '
+            f'`fallback_model` directly. Use a conversational model with image generation '
+            f'support instead, e.g. {suggestion!r}.'
+        )
 
 
 @dataclass
@@ -60,6 +81,9 @@ class ImageGenerationLocalTool:
 
         if model is None:
             raise ModelRetry('The fallback model callable returned None; cannot generate an image.')
+
+        if isinstance(model, str):
+            _check_image_only_model(model)
 
         agent = Agent(model, output_type=BinaryImage, builtin_tools=[self.builtin])
         try:

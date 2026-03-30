@@ -3457,6 +3457,20 @@ class TestImageGenerationCapability:
             for p in m.parts
         )
 
+    async def test_image_generation_rejects_image_only_model(self, allow_model_requests: None):
+        """Using a dedicated image model like gpt-image-1 raises a clear error."""
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
+
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        agent = Agent(
+            outer_model,
+            capabilities=[ImageGeneration(fallback_model='openai-responses:gpt-image-1')],
+        )
+        with pytest.raises(UserError, match="'gpt-image-1' is a dedicated image generation model"):
+            await agent.run('Generate a test image')
+
     @pytest.mark.vcr()
     @pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
     @pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
