@@ -60,7 +60,7 @@ with try_import() as bedrock_imports:
             self._error = error
             self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub')
 
-        def converse(self, **_: Any) -> None:
+        def converse(self, **_: Any) -> None:  # pragma: no cover
             raise self._error
 
         def converse_stream(self, **_: Any) -> None:
@@ -75,7 +75,7 @@ with try_import() as bedrock_imports:
             return 'bedrock-stub'
 
         @property
-        def base_url(self) -> str:
+        def base_url(self) -> str:  # pragma: no cover
             return 'https://bedrock.stub'
 
         @property
