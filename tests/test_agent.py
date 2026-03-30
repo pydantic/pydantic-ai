@@ -4704,9 +4704,9 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
-                        RetryPromptPart(
-                            content='Second output validation failed',
+                        ToolReturnPart(
                             tool_name='second_output',
+                            content='Output tool not used - output function execution failed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
@@ -4824,6 +4824,83 @@ class TestMultipleToolCalls:
 
         with pytest.raises(UnexpectedModelBehavior, match="Tool 'output_tool' exceeded max retries count of 1"):
             agent.run_sync('test')
+
+    def test_exhaustive_skips_output_tool_exceeding_retries_on_validation(self):
+        """Exhaustive strategy skips an output tool that exceeds its per-tool retry limit during validation,
+        when another output tool already produced a valid result."""
+
+        def process_first(output: OutputType) -> OutputType:
+            return output
+
+        def process_second(output: OutputType) -> OutputType:  # pragma: no cover
+            assert False
+
+        call_count = 0
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    # First tool gets valid args, second gets invalid args
+                    ToolCallPart('first_output', {'value': 'valid'}),
+                    ToolCallPart('second_output', {'invalid': 'bad'}),
+                ],
+            )
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=[
+                ToolOutput(process_first, name='first_output'),
+                ToolOutput(process_second, name='second_output', max_retries=0),
+            ],
+            end_strategy='exhaustive',
+        )
+
+        # First tool succeeds, second fails validation and exceeds max_retries=0
+        # The run should succeed with the first tool's result
+        result = agent.run_sync('test')
+        assert isinstance(result.output, OutputType)
+        assert result.output.value == 'valid'
+
+    def test_exhaustive_skips_output_tool_exceeding_retries_on_execution(self):
+        """Exhaustive strategy skips an output tool that exceeds its per-tool retry limit during execution,
+        when another output tool already produced a valid result."""
+
+        def process_first(output: OutputType) -> OutputType:
+            return output
+
+        def process_second(ctx: RunContext[None], value: str) -> str:
+            raise ModelRetry('always fails')
+
+        call_count = 0
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('first_output', {'value': 'valid'}),
+                    ToolCallPart('second_output', '{"value": "hello"}'),
+                ],
+            )
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=[
+                ToolOutput(process_first, name='first_output'),
+                ToolOutput(process_second, name='second_output', max_retries=0),
+            ],
+            end_strategy='exhaustive',
+        )
+
+        # First tool succeeds, second passes validation but fails execution and exceeds max_retries=0
+        # The run should succeed with the first tool's result
+        result = agent.run_sync('test')
+        assert isinstance(result.output, OutputType)
+        assert result.output.value == 'valid'
 
     def test_multiple_final_result_are_validated_correctly(self):
         """Tests that if multiple final results are returned, but one fails validation, the other is used."""

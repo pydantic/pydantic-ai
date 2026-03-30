@@ -969,7 +969,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         return "the agent's output tools"
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        max_retries = self.max_retries or 1
+        max_retries = self.max_retries if self.max_retries is not None else 1
         return {
             tool_def.name: ToolsetTool(
                 toolset=self,
