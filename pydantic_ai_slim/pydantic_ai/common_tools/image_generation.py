@@ -14,6 +14,15 @@ if TYPE_CHECKING:
 
     from pydantic_ai.models import KnownModelName, Model
 
+    FallbackModelFunc = Callable[
+        [RunContext[Any]],
+        Awaitable[Model | KnownModelName | str | None] | Model | KnownModelName | str | None,
+    ]
+    """Callable that resolves a fallback model dynamically per-run."""
+
+    FallbackModel = Model | KnownModelName | str | FallbackModelFunc | None
+    """Type for the fallback model: a model, model name, factory callable, or None."""
+
 __all__ = ('image_generation_tool',)
 
 
@@ -26,14 +35,7 @@ class ImageGenerationLocalTool:
     generation natively.
     """
 
-    model: (
-        Model
-        | KnownModelName
-        | str
-        | Callable[
-            [RunContext[Any]], Awaitable[Model | KnownModelName | str | None] | Model | KnownModelName | str | None
-        ]
-    )
+    model: Model | KnownModelName | str | FallbackModelFunc
     """The model to use for image generation, or a callable that returns one."""
 
     builtin: ImageGenerationTool
@@ -67,10 +69,7 @@ class ImageGenerationLocalTool:
 
 
 def image_generation_tool(
-    model: Model
-    | KnownModelName
-    | str
-    | Callable[[RunContext[Any]], Awaitable[Model | KnownModelName | str | None] | Model | KnownModelName | str | None],
+    model: Model | KnownModelName | str | FallbackModelFunc,
     builtin: ImageGenerationTool,
 ) -> Tool[Any]:
     """Creates an image generation tool backed by a subagent.

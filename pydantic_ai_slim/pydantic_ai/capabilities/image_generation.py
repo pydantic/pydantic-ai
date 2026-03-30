@@ -14,6 +14,19 @@ from .builtin_or_local import BuiltinOrLocalTool
 if TYPE_CHECKING:
     from pydantic_ai import models
 
+    FallbackModelFunc = Callable[
+        [RunContext[AgentDepsT]],
+        Awaitable[models.Model | models.KnownModelName | str | None]
+        | models.Model
+        | models.KnownModelName
+        | str
+        | None,
+    ]
+    """Callable that resolves a fallback model dynamically per-run."""
+
+    FallbackModel = models.Model | models.KnownModelName | str | FallbackModelFunc[AgentDepsT] | None
+    """Type for the ``fallback_model`` parameter: a model, model name, factory callable, or None."""
+
 
 @dataclass(init=False)
 class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
@@ -22,22 +35,14 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
     Uses the model's builtin image generation when available. When the model doesn't
     support it and ``fallback_model`` is provided, falls back to a local tool that
     delegates to a subagent running the specified image-capable model.
+
+    Image generation settings (``quality``, ``size``, etc.) are forwarded to the
+    ``ImageGenerationTool`` used by both the builtin and the local fallback subagent.
+    When passing a custom ``builtin`` instance, set these fields on the capability
+    as well if you want them to apply to the fallback.
     """
 
-    fallback_model: (
-        models.Model
-        | models.KnownModelName
-        | str
-        | Callable[
-            [RunContext[AgentDepsT]],
-            Awaitable[models.Model | models.KnownModelName | str | None]
-            | models.Model
-            | models.KnownModelName
-            | str
-            | None,
-        ]
-        | None
-    )
+    fallback_model: FallbackModel[AgentDepsT]
     """Model to use for image generation when the agent's model doesn't support it natively.
 
     Must be a model that supports image generation (e.g. ``'openai-responses:gpt-image-1'``).
@@ -79,20 +84,7 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
         | Callable[[RunContext[AgentDepsT]], Awaitable[ImageGenerationTool | None] | ImageGenerationTool | None]
         | bool = True,
         local: Tool[AgentDepsT] | Callable[..., Any] | Literal[False] | None = None,
-        fallback_model: (
-            models.Model
-            | models.KnownModelName
-            | str
-            | Callable[
-                [RunContext[AgentDepsT]],
-                Awaitable[models.Model | models.KnownModelName | str | None]
-                | models.Model
-                | models.KnownModelName
-                | str
-                | None,
-            ]
-            | None
-        ) = None,
+        fallback_model: FallbackModel[AgentDepsT] = None,
         background: Literal['transparent', 'opaque', 'auto'] | None = None,
         input_fidelity: Literal['high', 'low'] | None = None,
         moderation: Literal['auto', 'low'] | None = None,
@@ -103,7 +95,7 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
         size: Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'] | None = None,
         aspect_ratio: ImageAspectRatio | None = None,
     ) -> None:
-        if fallback_model is not None and local is not None and local is not False:
+        if fallback_model is not None and local is not None:
             raise UserError(
                 'ImageGeneration: cannot specify both `fallback_model` and `local` — '
                 'use `fallback_model` for the default subagent fallback, or `local` for a custom tool'

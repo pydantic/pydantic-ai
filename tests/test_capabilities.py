@@ -3286,10 +3286,9 @@ class TestImageGenerationCapability:
             ImageGeneration(fallback_model='openai-responses:gpt-image-1', local=my_gen)
 
     def test_image_generation_fallback_model_with_local_false(self):
-        """ImageGeneration(fallback_model=..., local=False) is allowed."""
-        cap = ImageGeneration(fallback_model='openai-responses:gpt-image-1', local=False)
-        assert cap.local is False
-        assert cap.get_toolset() is None
+        """ImageGeneration(fallback_model=..., local=False) raises UserError."""
+        with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
+            ImageGeneration(fallback_model='openai-responses:gpt-image-1', local=False)
 
     @pytest.mark.vcr()
     @pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
