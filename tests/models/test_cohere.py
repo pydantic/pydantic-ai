@@ -10,6 +10,7 @@ import pytest
 
 from pydantic_ai import (
     Agent,
+    CachePoint,
     ImageUrl,
     ModelAPIError,
     ModelHTTPError,
@@ -417,6 +418,19 @@ def test_text_content_in_request(allow_model_requests: None):
                     CohereTextContent(
                         text='This is some additional text content that should be included in the request.'
                     ),
+                ]
+            )
+        ]
+    )
+
+
+def test_cache_point_silently_skipped_user_prompt_part(allow_model_requests: None):
+    req = ModelRequest(parts=[UserPromptPart(content=['Hello there!', CachePoint()])])
+    assert list(CohereModel._map_user_message(req)) == snapshot(  # pyright: ignore[reportPrivateUsage]
+        [
+            UserChatMessageV2(
+                content=[
+                    CohereTextContent(text='Hello there!'),
                 ]
             )
         ]

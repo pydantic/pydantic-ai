@@ -13,6 +13,7 @@ from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool
 from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     FilePart,
     FinishReason,
     ModelMessage,
@@ -313,6 +314,8 @@ class CohereModel(Model):
                     for c in part.content:
                         if isinstance(c, str | TextContent):
                             cohere_content.append(CohereTextContent(text=c if isinstance(c, str) else c.content))
+                        elif isinstance(c, CachePoint):
+                            continue
                         else:
                             raise RuntimeError('Cohere does not yet support multi-modal inputs.')
                     yield UserChatMessageV2(role='user', content=cohere_content)
