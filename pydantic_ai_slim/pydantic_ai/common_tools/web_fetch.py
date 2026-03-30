@@ -140,19 +140,13 @@ def _is_text_like_media_type(media_type: str) -> bool:
     )
 
 
+_TITLE_RE = re.compile(r'<title[^>]*>(.*?)</title>', re.IGNORECASE | re.DOTALL)
+
+
 def _extract_title(html: str) -> str:
     """Extract the <title> from HTML."""
-    lower = html.lower()
-    start = lower.find('<title')
-    if start == -1:
-        return ''
-    start = lower.find('>', start)
-    if start == -1:
-        return ''
-    end = lower.find('</title>', start)
-    if end == -1:
-        return ''
-    return html[start + 1 : end].strip()
+    match = _TITLE_RE.search(html)
+    return match.group(1).strip() if match else ''
 
 
 def _clean_whitespace(text: str) -> str:
