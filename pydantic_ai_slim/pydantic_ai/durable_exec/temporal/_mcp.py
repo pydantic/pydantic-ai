@@ -100,10 +100,6 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
         return [self.get_instructions_activity, self.get_tools_activity, self.call_tool_activity]
 
     async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> str | list[str] | None:
-        # Short-circuit when instructions are explicitly disabled on the wrapped MCP server.
-        if getattr(self.wrapped, 'include_instructions', None) is False:
-            return None
-
         if not workflow.in_workflow():  # pragma: no cover
             return await super().get_instructions(ctx)
 

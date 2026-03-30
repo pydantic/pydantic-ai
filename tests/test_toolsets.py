@@ -1328,12 +1328,13 @@ async def test_resume_without_prompt_dynamic_toolset_with_tool_calls_resolve_onc
         message_history=[ModelResponse(parts=[ToolCallPart(tool_name='greet', args={'name': 'Alice'})])]
     )
 
-    # After resuming with tool calls, the toolset should be resolved for the next request step (step 1)
-    # for the pre-check. Any subsequent resolutions should also be at step 1.
-    # We verify that step 1 appears at the start (pre-check) and only the step 1 resolutions are tracked
-    # for the next request preparation (any step 0 calls are from tool processing which shouldn't affect
-    # the instructions for the next request).
-    assert 1 in run_steps
+    # The toolset factory is evaluated multiple times:
+    # - step 1: UserPromptNode pre-check (aligned with upcoming request step)
+    # - step 0: CallToolsNode._handle_tool_calls (current run_step before increment)
+    # - step 1: ModelRequestNode._prepare_request (after run_step increment)
+    # The important thing is that the first and last evaluations use step 1.
+    assert run_steps[0] == 1
+    assert run_steps[-1] == 1
 
     requests = [m for m in result.all_messages() if isinstance(m, ModelRequest)]
     # The last request should have instructions prepared at step 1

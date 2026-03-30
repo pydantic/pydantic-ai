@@ -769,7 +769,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         run_context = build_run_context(ctx)
 
-        # This will raise errors for any tool name conflicts
+        # This will raise errors for any tool name conflicts.
+        # Note: for_run_step may already have been called by UserPromptNode for the
+        # resume-without-prompt path; ToolManager.for_run_step is a no-op for the same step.
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
         # Fetch instructions now that dynamic toolsets have been resolved by for_run_step
