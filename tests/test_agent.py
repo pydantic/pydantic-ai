@@ -646,6 +646,48 @@ def test_tool_output_max_retries_overrides_agent_retries():
     )
 
 
+def test_tool_output_max_retries_per_tool():
+    """Multiple ToolOutputs with different max_retries are tracked independently. Regression test for #4678."""
+    retries_log: list[int] = []
+    max_retries_log: list[int] = []
+
+    def output_a(ctx: RunContext[None], value: str) -> str:
+        retries_log.append(ctx.retry)
+        max_retries_log.append(ctx.max_retries)
+        if ctx.retry < 5:
+            raise ModelRetry(f'Retry A {ctx.retry}')
+        return f'A: {value}'
+
+    def output_b(ctx: RunContext[None], value: str) -> str:  # pragma: no cover
+        raise ModelRetry('Should not be called enough to succeed')
+
+    call_count = 0
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        assert info.output_tools is not None
+        # Always call output_a — it has max_retries=5, so it should succeed after 5 retries
+        tool_name = next(t.name for t in info.output_tools if 'output_a' in t.name)
+        return ModelResponse(parts=[ToolCallPart(tool_name, '{"value": "hello"}')])
+
+    # output_a gets 5 retries, output_b gets 2 — agent default is 1
+    # output_a should succeed on its 6th call despite agent retries=1
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=[
+            ToolOutput(output_a, max_retries=5),
+            ToolOutput(output_b, max_retries=2),
+        ],
+        retries=1,
+    )
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'A: hello'
+    assert retries_log == [0, 1, 2, 3, 4, 5]
+    assert max_retries_log == [5] * 6
+
+
 class TestPartialOutput:
     """Tests for `ctx.partial_output` flag in output validators and output functions."""
 
