@@ -11,7 +11,7 @@ from pydantic import Json, TypeAdapter, ValidationError
 from pydantic_core import SchemaValidator, to_json
 from typing_extensions import Self, TypedDict, TypeVar
 
-from pydantic_ai._instrumentation import InstrumentationNames
+from pydantic_ai._instrumentation import InstrumentationNames, get_agent_run_baggage_attributes
 from pydantic_ai._utils import get_function_type_hints
 
 from . import _function_schema, _utils, messages as _messages
@@ -102,6 +102,7 @@ async def execute_traced_output_function(
     tool_name = run_context.tool_name or getattr(function_schema.function, '__name__', 'output_function')
     attributes = {
         'gen_ai.tool.name': tool_name,
+        **get_agent_run_baggage_attributes(),
         'logfire.msg': f'running output function: {tool_name}',
     }
     if run_context.tool_call_id:
