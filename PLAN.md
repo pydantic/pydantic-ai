@@ -385,67 +385,59 @@ The callback-based `_event_emitter` design makes this pluggable: each framework 
 
 ### Temporal (`durable_exec/temporal/`)
 
-Tools run in activities (separate processes). `_event_emitter` is a callback and can't be serialized across process boundaries. Two strategies exist:
+Tools run in activities (separate processes). `_event_emitter` is a callback and can't be serialized across process boundaries. Solution: use **Temporal signals** to send events from activity → workflow in real-time.
 
-#### Strategy: Buffer + Return (recommended for v1)
+#### How it works
 
-Activity buffers events during tool execution, returns them alongside the tool result. Workflow-side code emits them via the normal callback after activity completes.
-
-**Activity side** — extend `_ToolReturn` in `_toolset.py`:
+**Activity side** — the emitter callback signals the parent workflow:
 
 ```python
-@dataclass
-class _ToolReturn:
-    result: Any
-    buffered_events: list[Any] = field(default_factory=list)
-```
+# In _call_tool_in_activity() or equivalent setup code
+from temporalio import activity
 
-In `_call_tool_in_activity()`, set up a buffer-based emitter:
+async def _call_tool_in_activity(name, tool_args, ctx, tool, client: Client):
+    info = activity.info()
+    wf_handle = client.get_workflow_handle(info.workflow_id)
 
-```python
-async def _call_tool_in_activity(name, tool_args, ctx, tool):
-    buffered_events: list[CustomToolEvent] = []
+    async def signal_emitter(event: CustomToolEvent) -> None:
+        await wf_handle.signal('pydantic_ai_custom_event', event)
 
-    async def buffer_emitter(event: CustomToolEvent) -> None:
-        buffered_events.append(event)
-
-    ctx._event_emitter = buffer_emitter
+    ctx._event_emitter = signal_emitter
     result = await toolset.call_tool(name, tool_args, ctx, tool)
-    return _ToolReturn(result=result, buffered_events=buffered_events)
+    return _ToolReturn(result=result)
 ```
 
-**Workflow side** — in `TemporalWrapperToolset.call_tool()`, after activity returns:
+**Workflow side** — signal handler puts events on the queue:
 
 ```python
-async def call_tool(self, name, tool_args, ctx, tool):
-    if not workflow.in_workflow():
-        return await super().call_tool(name, tool_args, ctx, tool)
-
-    result = await workflow.execute_activity(...)
-
-    if isinstance(result, _ToolReturn):
-        # Emit buffered events through the workflow's normal callback
-        # (which IS set — it's the queue-based emitter from _call_tools())
-        for event in result.buffered_events:
-            if ctx._event_emitter is not None:
-                await ctx._event_emitter(event)
-        return result.result
-    ...
+# In the workflow class (created by TemporalAgent)
+@workflow.signal
+async def pydantic_ai_custom_event(self, event: CustomToolEvent) -> None:
+    # ctx._event_emitter on the workflow side IS the queue-based emitter
+    # from _call_tools() — signals bridge the activity→workflow gap
+    if self._custom_event_emitter is not None:
+        await self._custom_event_emitter(event)
 ```
 
-**Behavior**: Events arrive in a batch when the tool activity completes, then appear in the event stream before the `FunctionToolResultEvent`. Not truly real-time, but **no events are dropped**.
+The workflow stores a reference to the queue-based emitter (set by `_call_tools()` via `_inject_event_emitter`) so the signal handler can forward events into the normal multiplexing pipeline. Events appear in the stream in real-time, same as in-process tools.
 
-**Tradeoff**: For a tool that runs 30s and emits 5 progress events, all 5 arrive at t=30s instead of at t=5s, t=10s, etc. For most UIs this is acceptable — the alternative (Temporal signals) is significantly more complex.
+#### Client access in activities
 
-#### Strategy: Signals (future enhancement for real-time delivery)
+The Worker already has a `Client` — activities run in the same process. Options to make it accessible:
 
-For use cases requiring truly real-time events across activity boundaries:
+1. **Module-level storage** set during plugin/worker setup — simplest, matches existing closure patterns in the integration
+2. **Parameter on `TemporalAgent`** — explicit, `TemporalAgent(agent, client=client)`
+3. **Extract from Worker** via the plugin's `configure_worker()` hook
 
-1. Activity obtains a `temporalio.client.Client` (from deps or environment)
-2. Activity calls `client.get_workflow_handle(activity.info().workflow_id).signal('pydantic_ai_custom_event', event)` for each event
-3. Workflow has a `@workflow.signal` handler that calls `ctx._event_emitter(event)` to put events on the queue
+The exact injection mechanism is an implementation detail. The key point: the Client is already in the worker process, no new connections needed.
 
-**Why deferred**: Requires Client access in activities (additional config), adds events to workflow history (10K limit per workflow), high-rate signals cause workflow lock contention. Buffer approach covers majority of use cases with zero additional setup.
+#### Signal volume is not a concern
+
+Temporal's signal limit is 10K per workflow execution. A realistic agent run emits maybe 5-50 custom events total (a few per tool call, a handful of tool calls per run). Even heavy usage is orders of magnitude below the limit.
+
+#### Fallback: Buffer + Return (simpler alternative)
+
+For environments where signals aren't set up, a buffer-based emitter can be used instead — events are collected in a list during the activity and returned alongside the tool result. The workflow emits them in a batch after the activity completes. This is less code but not real-time.
 
 ### DBOS (`durable_exec/dbos/`)
 
@@ -470,7 +462,7 @@ Remote tasks: same buffer approach as Temporal — buffer events in the task, re
 | **Existing `ToolReturn.metadata` pattern** | Fully preserved. Tools can still use `ToolReturn(return_value=..., metadata=[BaseEvent(...)])` for post-completion events. |
 | **Frontend compatibility** | AG-UI: `CustomEvent` is already part of the AG-UI protocol. Vercel AI: `DataChunk` is an existing chunk type. No frontend changes needed. |
 | **Message history** | `CustomToolEvent` is ephemeral (stream-only). Not persisted in `ModelRequest`/`ModelResponse` message parts. No serialization impact. |
-| **Durable execution** | No events dropped. Temporal/remote Prefect: events buffered in activity and emitted on return. DBOS/in-process Prefect: events work natively via callback. |
+| **Durable execution** | No events dropped. Temporal: real-time via signals (activity → workflow). DBOS/in-process Prefect: callback survives natively. Remote Prefect: buffer fallback. |
 | **Type safety** | `CustomEvent` uses `Any` for `data` initially. Generic `CustomEventDataT` on `Agent` can be added as follow-up without breaking changes. |
 
 ## API Stability Considerations
@@ -501,8 +493,9 @@ Remote tasks: same buffer approach as Temporal — buffer events in the task, re
 - Capability hooks: `wrap_run_event_stream` can observe/filter `CustomToolEvent`
 
 ### Durable exec tests
-- Temporal: streaming tool in activity → events buffered, returned with result, emitted on workflow side
-- Temporal: verify `_ToolReturn.buffered_events` serialization round-trip
+- Temporal: tool in activity calls `ctx.emit()` → signal reaches workflow → event appears in stream
+- Temporal: verify `CustomToolEvent` serialization round-trip through signal
+- Temporal: buffer fallback when signals not configured
 - DBOS: streaming tool in step → events emitted normally via callback
 
 ## Documentation Updates
@@ -518,7 +511,7 @@ Remote tasks: same buffer approach as Temporal — buffer events in the task, re
 1. **Phase 1 vs Phase 2 priority**: Is `ctx.emit()` alone sufficient for a first PR, or should the generator approach be included from the start?
 2. **Strict yield validation**: Should yielding a non-`CustomEvent`/`Return` from a generator raise `UserError`, or auto-wrap in `CustomEvent(name='custom', data=value)` (as Douwe's PR description suggests)?
 3. **`CustomEventDataT` generic**: Should this be planned for v1 or explicitly deferred? Default `Never` (strict) vs `object` (permissive)?
-4. **Temporal signal follow-up**: Buffer+return covers most use cases, but real-time delivery via Temporal signals is possible (requires Client access in activities, adds to workflow history). Worth planning for v2?
+4. **Temporal Client injection**: What's the preferred mechanism for making the Client accessible to activities — module-level storage, `TemporalAgent(client=...)` param, or plugin hook?
 5. **Sync generator tools**: Support `def tool() -> Iterator[...]` alongside async? Or async-only for v1?
 6. **Event ordering guarantee**: In parallel mode, should `CustomToolEvent` be ordered by emission time, or is arbitrary interleaving acceptable?
 
@@ -539,8 +532,10 @@ Remote tasks: same buffer approach as Temporal — buffer events in the task, re
 - `pydantic_ai_slim/pydantic_ai/messages.py` — `Return[T]`
 
 ### Durable Execution
-- `pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py` — `_ToolReturn.buffered_events`, buffer emitter in `_call_tool_in_activity()`, emit on workflow side
-- `pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_toolset.py` — same buffer pattern for remote tasks (if applicable)
+- `pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py` — signal-based emitter in `_call_tool_in_activity()`, Client access
+- `pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py` — `@workflow.signal` handler for `pydantic_ai_custom_event`, wire emitter reference
+- `pydantic_ai_slim/pydantic_ai/durable_exec/temporal/__init__.py` — Client storage/injection mechanism
+- `pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_toolset.py` — buffer pattern for remote tasks (if applicable)
 
 ### Tests
 - `tests/test_streaming.py` or new `tests/test_custom_events.py`
