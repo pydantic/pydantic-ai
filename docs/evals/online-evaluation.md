@@ -748,9 +748,12 @@ config = OnlineEvalConfig(on_max_concurrency=warn_on_drop)
 
 ## Error Handling
 
-Exceptions in gates, sinks, and `on_max_concurrency` callbacks are caught and either routed to an `on_error` handler or silently suppressed. Note that exceptions in `sample_rate` callables are *not* caught — it is the user's responsibility to ensure these do not raise.
+Exceptions in the evaluation pipeline are caught and either routed to an `on_error` handler or handled according to the default behavior for each location:
 
-Set `on_error` on [`OnlineEvalConfig`][pydantic_evals.online.OnlineEvalConfig] for a global default, or on [`OnlineEvaluator`][pydantic_evals.online.OnlineEvaluator] to override per-evaluator. The callback receives the exception, the [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext], the [`Evaluator`][pydantic_evals.evaluators.Evaluator] instance, and a location string (`'gate'`, `'sink'`, or `'on_max_concurrency'`):
+- **`sample_rate`**: If `on_error` is set, the exception is reported and the evaluator is skipped. If not, the exception **propagates to the caller** — a broken `sample_rate` callable is a configuration bug that should fail loudly.
+- **`gate`**, **`sink`**, **`on_max_concurrency`**: If `on_error` is set, the exception is reported. If not, exceptions are **silently suppressed** — background evaluation should not crash the user's function.
+
+Set `on_error` on [`OnlineEvalConfig`][pydantic_evals.online.OnlineEvalConfig] for a global default, or on [`OnlineEvaluator`][pydantic_evals.online.OnlineEvaluator] to override per-evaluator. The callback receives the exception, the [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext] (or `None` for `sample_rate` errors), the [`Evaluator`][pydantic_evals.evaluators.Evaluator] instance, and a location string (`'sample_rate'`, `'gate'`, `'sink'`, or `'on_max_concurrency'`):
 
 ```python
 from dataclasses import dataclass
@@ -761,7 +764,7 @@ from pydantic_evals.online import OnErrorLocation, OnlineEvalConfig, OnlineEvalu
 
 def log_errors(
     exc: Exception,
-    ctx: EvaluatorContext,
+    ctx: EvaluatorContext | None,
     evaluator: Evaluator,
     location: OnErrorLocation,
 ) -> None:

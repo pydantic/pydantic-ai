@@ -928,6 +928,38 @@ async def test_sample_rate_callable_exception_propagates():
 
 
 @pytest.mark.anyio
+async def test_sample_rate_callable_exception_calls_on_error():
+    """When on_error is set, sample_rate exceptions are routed there instead of propagating."""
+    errors: list[tuple[Exception, OnErrorLocation]] = []
+
+    def on_error(
+        exc: Exception,
+        ctx: EvaluatorContext[Any, Any, Any] | None,
+        evaluator: Evaluator,
+        location: OnErrorLocation,
+    ) -> None:
+        errors.append((exc, location))
+
+    collector = Collector()
+
+    def bad_rate() -> float:
+        raise ValueError('rate error')
+
+    config = OnlineEvalConfig(default_sink=collector, on_error=on_error)
+
+    @config.evaluate(OnlineEvaluator(evaluator=AlwaysTrue(), sample_rate=bad_rate))
+    async def my_func(x: int) -> int:
+        return x
+
+    result = await my_func(42)
+    assert result == 42
+
+    assert len(errors) == 1
+    assert isinstance(errors[0][0], ValueError)
+    assert errors[0][1] == 'sample_rate'
+
+
+@pytest.mark.anyio
 async def test_sink_exception_does_not_propagate():
     """Exception in a sink is logged but does not break other sinks."""
 
@@ -1327,7 +1359,7 @@ async def test_on_error_gate_exception():
 
     def on_error(
         exc: Exception,
-        ctx: EvaluatorContext[Any, Any, Any],
+        ctx: EvaluatorContext[Any, Any, Any] | None,
         evaluator: Evaluator,
         location: OnErrorLocation,
     ) -> None:
@@ -1363,7 +1395,7 @@ async def test_on_error_sink_exception():
 
     def on_error(
         exc: Exception,
-        ctx: EvaluatorContext[Any, Any, Any],
+        ctx: EvaluatorContext[Any, Any, Any] | None,
         evaluator: Evaluator,
         location: OnErrorLocation,
     ) -> None:
@@ -1396,7 +1428,7 @@ async def test_on_error_on_max_concurrency_exception():
 
     def on_error(
         exc: Exception,
-        ctx: EvaluatorContext[Any, Any, Any],
+        ctx: EvaluatorContext[Any, Any, Any] | None,
         evaluator: Evaluator,
         location: OnErrorLocation,
     ) -> None:
@@ -1441,7 +1473,7 @@ async def test_on_error_handler_exception_suppressed():
 
     def bad_on_error(
         exc: Exception,
-        ctx: EvaluatorContext[Any, Any, Any],
+        ctx: EvaluatorContext[Any, Any, Any] | None,
         evaluator: Evaluator,
         location: OnErrorLocation,
     ) -> None:
@@ -1475,7 +1507,7 @@ async def test_on_error_per_evaluator_overrides_config():
 
     def config_on_error(
         exc: Exception,
-        ctx: EvaluatorContext[Any, Any, Any],
+        ctx: EvaluatorContext[Any, Any, Any] | None,
         evaluator: Evaluator,
         location: OnErrorLocation,
     ) -> None:
@@ -1483,7 +1515,7 @@ async def test_on_error_per_evaluator_overrides_config():
 
     def evaluator_on_error(
         exc: Exception,
-        ctx: EvaluatorContext[Any, Any, Any],
+        ctx: EvaluatorContext[Any, Any, Any] | None,
         evaluator: Evaluator,
         location: OnErrorLocation,
     ) -> None:
@@ -1515,7 +1547,7 @@ async def test_on_error_async_callback():
 
     async def async_on_error(
         exc: Exception,
-        ctx: EvaluatorContext[Any, Any, Any],
+        ctx: EvaluatorContext[Any, Any, Any] | None,
         evaluator: Evaluator,
         location: OnErrorLocation,
     ) -> None:
@@ -1572,7 +1604,7 @@ async def test_configure_on_error():
 
         def handler(
             exc: Exception,
-            ctx: EvaluatorContext[Any, Any, Any],
+            ctx: EvaluatorContext[Any, Any, Any] | None,
             evaluator: Evaluator,
             location: OnErrorLocation,
         ) -> None:

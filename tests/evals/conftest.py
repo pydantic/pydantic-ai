@@ -14,6 +14,6 @@ async def _cleanup_background_evaluations() -> AsyncIterator[None]:
     yield
     try:
         from pydantic_evals.online import wait_for_evaluations
-    except ImportError:
+    except ImportError:  # pragma: no cover
         return
     await wait_for_evaluations()
