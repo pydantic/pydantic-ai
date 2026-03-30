@@ -40,6 +40,7 @@ from pydantic_ai import (
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -5032,6 +5033,19 @@ async def test_file_url_in_tool_return_on_vertex(
     result = await model._map_file_to_function_response_part(file_url)  # pyright: ignore[reportPrivateUsage]
 
     assert result == expected
+
+
+async def test_map_user_prompt_with_text_content(mocker: MockerFixture):
+    """Test that _map_user_prompt correctly handles a mix of text content and str."""
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-gla')
+
+    user_prompt_part = UserPromptPart(
+        content=['Hi', TextContent(content='This is some context', metadata={'source': 'user'})]
+    )
+    content = await model._map_user_prompt(user_prompt_part)  # pyright: ignore[reportPrivateUsage]
+
+    assert content == snapshot([{'text': 'Hi'}, {'text': 'This is some context'}])
 
 
 async def test_thinking_with_tool_calls_from_other_model(

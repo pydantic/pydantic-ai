@@ -36,6 +36,7 @@ from pydantic_ai._spec import build_registry, build_schema_types, load_from_regi
 from pydantic_evals._utils import get_event_loop
 
 from ._utils import get_unwrapped_function_name, logfire_span, task_group_gather
+from ._warnings import PydanticEvalsDeprecationWarning
 from .evaluators import EvaluationResult, Evaluator
 from .evaluators._base import BaseEvaluator
 from .evaluators._run_evaluator import run_evaluator
@@ -196,6 +197,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             return ctx.output == ctx.expected_output
 
     dataset = Dataset(
+        name='uppercase_tests',
         cases=[
             Case(name='test1', inputs={'text': 'Hello'}, expected_output='HELLO'),
             Case(name='test2', inputs={'text': 'World'}, expected_output='WORLD'),
@@ -226,7 +228,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     """
 
     name: str | None = None
-    """Optional name of the dataset."""
+    """Name of the dataset. Required in future versions."""
     cases: list[Case[InputsT, OutputT, MetadataT]]
     """List of test cases in the dataset."""
     evaluators: list[Evaluator[InputsT, OutputT, MetadataT]] = []
@@ -245,11 +247,18 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         """Initialize a new dataset with test cases and optional evaluators.
 
         Args:
-            name: Optional name for the dataset.
+            name: Name for the dataset. Omitting this is deprecated and will raise an error in a future version.
             cases: Sequence of test cases to include in the dataset.
             evaluators: Optional sequence of evaluators to apply to all cases in the dataset.
             report_evaluators: Optional sequence of report evaluators that run on the full evaluation report.
         """
+        if name is None:
+            warnings.warn(
+                'Omitting the `name` parameter is deprecated. Please provide a name for your `Dataset`.',
+                PydanticEvalsDeprecationWarning,
+                stacklevel=2,
+            )
+
         case_names = set[str]()
         for case in cases:
             if case.name is None:
@@ -727,9 +736,9 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             cases.append(row)
         if errors:
             raise ExceptionGroup(f'{len(errors)} error(s) loading evaluators from registry', errors[:3])
-        result = cls(name=dataset_model.name, cases=cases, report_evaluators=report_evaluators)
-        if result.name is None:
-            result.name = default_name
+        # Use default_name if no name was provided in the serialized data
+        name = dataset_model.name if dataset_model.name is not None else default_name
+        result = cls(name=name, cases=cases, report_evaluators=report_evaluators)
         result.evaluators = dataset_evaluators
         return result
 

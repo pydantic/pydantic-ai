@@ -44,6 +44,7 @@ with try_import() as imports_successful:
         _map_openrouter_provider_details,  # pyright: ignore[reportPrivateUsage]
         _openrouter_settings_to_openai_settings,  # pyright: ignore[reportPrivateUsage]
         _OpenRouterChatCompletion,  # pyright: ignore[reportPrivateUsage]
+        _OpenRouterChatCompletionChunk,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
@@ -830,6 +831,52 @@ async def test_openrouter_url_citation_annotation_validation(openrouter_api_key:
     result = model._process_response(response)  # type: ignore[reportPrivateUsage]
     text_part = cast(TextPart, result.parts[0])
     assert text_part.content == 'According to the source, this is the answer.'
+
+
+async def test_openrouter_service_tier_completion(openrouter_api_key: str) -> None:
+    """OpenRouter providers can return service_tier values outside the OpenAI Literal."""
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('google/gemini-2.5-flash', provider=provider)
+
+    message = ChatCompletionMessage.model_construct(role='assistant', content='hi')
+    choice = Choice.model_construct(index=0, message=message, finish_reason='stop', native_finish_reason='stop')
+    response = ChatCompletion.model_construct(
+        id='gen-123',
+        choices=[choice],
+        created=1234567890,
+        object='chat.completion',
+        model='google/gemini-2.5-flash',
+        provider='Google',
+        service_tier='standard',
+    )
+
+    result = model._process_response(response)  # type: ignore[reportPrivateUsage]
+    text_part = cast(TextPart, result.parts[0])
+    assert text_part.content == 'hi'
+
+
+async def test_openrouter_service_tier_chunk() -> None:
+    """OpenRouter streaming chunks can return service_tier values outside the OpenAI Literal."""
+    data = {
+        'id': 'gen-123',
+        'choices': [
+            {
+                'index': 0,
+                'delta': {'role': 'assistant', 'content': 'hi'},
+                'finish_reason': 'stop',
+                'native_finish_reason': 'stop',
+            }
+        ],
+        'created': 1234567890,
+        'model': 'google/gemini-2.5-flash',
+        'object': 'chat.completion.chunk',
+        'provider': 'Google',
+        'service_tier': 'on_demand',
+    }
+    result = _OpenRouterChatCompletionChunk.model_validate(data)
+    assert result.service_tier == 'on_demand'
 
 
 async def test_openrouter_document_url_no_force_download(

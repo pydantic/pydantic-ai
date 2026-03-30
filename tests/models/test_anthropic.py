@@ -34,6 +34,7 @@ from pydantic_ai import (
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -1638,6 +1639,48 @@ async def test_stream_structured(allow_model_requests: None):
                 )
 
 
+async def test_text_content_input(allow_model_requests: None, anthropic_api_key: str):
+    """Test that _map_message correctly maps a user message with TextContent."""
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    messages = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='System instructions.'),
+                UserPromptPart(
+                    content=[
+                        'Hello Pydantic AI!',
+                        TextContent(content='This is awesome', metadata={'font': 'bold'}),
+                        TextContent(content='', metadata={'font': 'italic'}),  # Empty content would be filtered out
+                    ]
+                ),
+            ],
+        ),
+        ModelResponse(
+            parts=[TextPart(content='Hello Human!')],
+        ),
+    ]
+    m = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        {},
+    )
+    assert m == snapshot(
+        (
+            'System instructions.',
+            [
+                {
+                    'role': 'user',
+                    'content': [
+                        {'text': 'Hello Pydantic AI!', 'type': 'text'},
+                        {'text': 'This is awesome', 'type': 'text'},
+                    ],
+                },
+                {'role': 'assistant', 'content': [{'text': 'Hello Human!', 'type': 'text'}]},
+            ],
+        )
+    )
+
+
 async def test_image_url_input(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
@@ -3009,6 +3052,89 @@ async def test_anthropic_opus_46_features(
     if has_thinking:
         assert any(isinstance(p, ThinkingPart) for p in response.parts)
     assert any(isinstance(p, TextPart) for p in response.parts)
+
+
+@pytest.mark.parametrize(
+    'thinking_value,expected_thinking,expected_effort',
+    [
+        pytest.param(True, {'type': 'adaptive'}, None, id='true-adaptive'),
+        pytest.param('high', {'type': 'adaptive'}, 'high', id='high-adaptive-with-effort'),
+        pytest.param('low', {'type': 'adaptive'}, 'low', id='low-adaptive-with-effort'),
+        pytest.param('medium', {'type': 'adaptive'}, 'medium', id='medium-adaptive-with-effort'),
+        pytest.param('xhigh', {'type': 'adaptive'}, 'max', id='xhigh-maps-to-max'),
+    ],
+)
+async def test_anthropic_unified_thinking_adaptive_model(
+    allow_model_requests: None,
+    thinking_value: bool | str,
+    expected_thinking: dict[str, str],
+    expected_effort: str | None,
+):
+    """Verify that unified thinking on adaptive models sends {type: 'adaptive'} + output_config effort."""
+    from anthropic._types import omit as OMIT
+
+    responses = [
+        completion_message(
+            [BetaTextBlock(text='4', type='text')],
+            usage=BetaUsage(input_tokens=10, output_tokens=1),
+        ),
+    ]
+    mock_client = MockAnthropic.create_mock(responses)
+    m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, model_settings=ModelSettings(thinking=thinking_value))  # pyright: ignore[reportArgumentType]
+
+    await agent.run('What is 2+2?')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['thinking'] == expected_thinking
+
+    if expected_effort is not None:
+        assert kwargs['output_config'] == {'effort': expected_effort}
+    else:
+        assert kwargs.get('output_config') is None or kwargs['output_config'] is OMIT
+
+
+async def test_anthropic_unified_thinking_non_adaptive_model(allow_model_requests: None):
+    """Verify that unified thinking on non-adaptive models sends {type: 'enabled', budget_tokens: N}."""
+    from anthropic._types import omit as OMIT
+
+    responses = [
+        completion_message(
+            [BetaTextBlock(text='4', type='text')],
+            usage=BetaUsage(input_tokens=10, output_tokens=1),
+        ),
+    ]
+    mock_client = MockAnthropic.create_mock(responses)
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, model_settings=ModelSettings(thinking='high'))
+
+    await agent.run('What is 2+2?')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['thinking'] == {'type': 'enabled', 'budget_tokens': 16384}
+    # Non-adaptive models don't support effort
+    assert kwargs.get('output_config') is None or kwargs['output_config'] is OMIT
+
+
+async def test_anthropic_unified_thinking_false_omits_param(allow_model_requests: None):
+    """Verify that thinking=False does not send a thinking parameter at all."""
+    from anthropic._types import omit as OMIT
+
+    responses = [
+        completion_message(
+            [BetaTextBlock(text='4', type='text')],
+            usage=BetaUsage(input_tokens=10, output_tokens=1),
+        ),
+    ]
+    mock_client = MockAnthropic.create_mock(responses)
+    m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, model_settings=ModelSettings(thinking=False))
+
+    await agent.run('What is 2+2?')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    # thinking=False on always-thinking model is silently ignored — thinking param is OMIT
+    assert kwargs.get('thinking') is OMIT
 
 
 async def test_anthropic_opus_46_adaptive_thinking_rejects_tool_output(allow_model_requests: None):
