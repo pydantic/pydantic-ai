@@ -3221,6 +3221,43 @@ class TestWebFetchCapability:
         assert cap.local is not None
         assert cap.get_toolset() is not None
 
+    def test_webfetch_default_with_nonsupporting_model(self, allow_model_requests: None):
+        """WebFetch() with a model that doesn't support builtin → markdownify fallback used."""
+        from unittest.mock import AsyncMock, patch
+
+        import httpx
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return ModelResponse(parts=[TextPart(content=f'Tool result: {part.content}')])
+            if info.function_tools:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name=info.function_tools[0].name,
+                            args='{"url": "https://example.com"}',
+                            tool_call_id='c1',
+                        )
+                    ]
+                )
+            return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
+
+        mock_response = httpx.Response(
+            200,
+            text='<html><head><title>Test</title></head><body><p>Hello</p></body></html>',
+            headers={'content-type': 'text/html'},
+            request=httpx.Request('GET', 'https://example.com'),
+        )
+
+        model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        agent = Agent(model, capabilities=[WebFetch()])
+        with patch('pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response):
+            result = agent.run_sync('fetch something')
+        # Should have used the markdownify-based fallback tool
+        assert 'Tool result' in result.output
+
     def test_webfetch_requires_builtin_with_constraints(self, allow_model_requests: None):
         """WebFetch(blocked_domains=...) with non-supporting model → UserError."""
         model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
