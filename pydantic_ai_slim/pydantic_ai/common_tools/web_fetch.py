@@ -71,20 +71,22 @@ class WebFetchLocalTool:
         content_type = response.headers.get('content-type', '')
         content_type = content_type.split(';')[0].strip().lower()
 
-        text = response.text
         title = ''
 
-        if not content_type or content_type == 'text/html':
-            title = _extract_title(text)
-            content = md(text, strip=['img', 'script', 'style'])
-        elif content_type == 'application/json':
-            try:
-                parsed = json.loads(text)
-                content = f'```json\n{json.dumps(parsed, indent=2)}\n```'
-            except (json.JSONDecodeError, ValueError):
+        if _is_textual(content_type):
+            text = response.text
+
+            if not content_type or content_type == 'text/html':
+                title = _extract_title(text)
+                content = md(text, strip=['img', 'script', 'style'])
+            elif content_type == 'application/json':
+                try:
+                    parsed = json.loads(text)
+                    content = f'```json\n{json.dumps(parsed, indent=2)}\n```'
+                except (json.JSONDecodeError, ValueError):
+                    content = text
+            else:
                 content = text
-        elif content_type.startswith('text/'):
-            content = text
         else:
             content = f'[Binary content of type {content_type} cannot be displayed as text]'
 
@@ -94,6 +96,22 @@ class WebFetchLocalTool:
             content = content[: self.max_content_length] + '\n\n[Content truncated]'
 
         return WebFetchResult(url=url, title=title, content=content)
+
+
+_TEXTUAL_CONTENT_TYPES = frozenset(
+    {
+        'application/json',
+        'application/xml',
+        'application/xhtml+xml',
+        'application/javascript',
+        'application/x-javascript',
+    }
+)
+
+
+def _is_textual(content_type: str) -> bool:
+    """Check if a content type represents text content."""
+    return not content_type or content_type.startswith('text/') or content_type in _TEXTUAL_CONTENT_TYPES
 
 
 def _extract_title(html: str) -> str:

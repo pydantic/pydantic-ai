@@ -164,6 +164,23 @@ class TestWebFetchLocalTool:
 
         assert len(result['content']) == 100_000
 
+    async def test_fetch_xml(self):
+        """XML content types are treated as text."""
+        xml = '<?xml version="1.0"?><root><item>Hello</item></root>'
+        mock_response = httpx.Response(
+            200,
+            text=xml,
+            headers={'content-type': 'application/xml'},
+            request=httpx.Request('GET', 'https://example.com/feed.xml'),
+        )
+
+        with patch('pydantic_ai._ssrf.safe_download', new_callable=AsyncMock, return_value=mock_response):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com/feed.xml')
+
+        assert '<root>' in result['content']
+        assert 'Hello' in result['content']
+
     async def test_binary_content_type(self):
         """Binary content types return an error message."""
         mock_response = httpx.Response(
