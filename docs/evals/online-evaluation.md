@@ -748,12 +748,12 @@ config = OnlineEvalConfig(on_max_concurrency=warn_on_drop)
 
 ## Error Handling
 
-Exceptions in the evaluation pipeline are caught and either routed to an `on_error` handler or handled according to the default behavior for each location:
+There are two types of error handling:
 
-- **`sample_rate`**: If `on_error` is set, the exception is reported and the evaluator is skipped. If not, the exception **propagates to the caller** — a broken `sample_rate` callable is a configuration bug that should fail loudly.
-- **`gate`**, **`sink`**, **`on_max_concurrency`**: If `on_error` is set, the exception is reported. If not, exceptions are **silently suppressed** — background evaluation should not crash the user's function.
+- **`on_sampling_error`**: Called synchronously when a `sample_rate` callable raises. Receives the exception and the [`Evaluator`][pydantic_evals.evaluators.Evaluator]. Must be sync (not async). If set, the evaluator is skipped. If not set, the exception **propagates to the caller**.
+- **`on_error`**: Called when an exception occurs in a `gate`, `sink`, or `on_max_concurrency` callback. Receives the exception, [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext], [`Evaluator`][pydantic_evals.evaluators.Evaluator], and a location string. Can be sync or async. If not set, exceptions are **silently suppressed**.
 
-Set `on_error` on [`OnlineEvalConfig`][pydantic_evals.online.OnlineEvalConfig] for a global default, or on [`OnlineEvaluator`][pydantic_evals.online.OnlineEvaluator] to override per-evaluator. The callback receives the exception, the [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext] (or `None` for `sample_rate` errors), the [`Evaluator`][pydantic_evals.evaluators.Evaluator] instance, and a location string (`'sample_rate'`, `'gate'`, `'sink'`, or `'on_max_concurrency'`):
+Set these on [`OnlineEvalConfig`][pydantic_evals.online.OnlineEvalConfig] for global defaults, or on [`OnlineEvaluator`][pydantic_evals.online.OnlineEvaluator] to override per-evaluator:
 
 ```python
 from dataclasses import dataclass
@@ -764,7 +764,7 @@ from pydantic_evals.online import OnErrorLocation, OnlineEvalConfig, OnlineEvalu
 
 def log_errors(
     exc: Exception,
-    ctx: EvaluatorContext | None,
+    ctx: EvaluatorContext,
     evaluator: Evaluator,
     location: OnErrorLocation,
 ) -> None:

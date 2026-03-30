@@ -51,7 +51,7 @@ from .evaluators.context import EvaluatorContext
 from .evaluators.evaluator import EvaluationResult, Evaluator, EvaluatorFailure
 from .otel._context_subtree import context_subtree
 
-OnErrorLocation = Literal['sample_rate', 'gate', 'sink', 'on_max_concurrency']
+OnErrorLocation = Literal['gate', 'sink', 'on_max_concurrency']
 """The location within the online evaluation pipeline where an error occurred."""
 
 OnMaxConcurrencyCallback = Callable[[EvaluatorContext], Any]
@@ -60,15 +60,22 @@ OnMaxConcurrencyCallback = Callable[[EvaluatorContext], Any]
 Receives the `EvaluatorContext` that would have been evaluated. Can be sync or async.
 """
 
+OnSamplingErrorCallback = Callable[[Exception, Evaluator], Any]
+"""Callback invoked when a `sample_rate` callable raises an exception.
+
+Called synchronously before the decorated function runs. Receives the exception
+and the evaluator whose `sample_rate` failed. Must be sync (not async).
+If set, the evaluator is skipped. If not set, the exception propagates to the caller.
+"""
+
 OnErrorCallback = Callable[
-    [Exception, EvaluatorContext | None, Evaluator, OnErrorLocation],
+    [Exception, EvaluatorContext, Evaluator, OnErrorLocation],
     Any,
 ]
 """Callback invoked when an exception occurs in the online evaluation pipeline.
 
-Receives the exception, the evaluator context (or `None` for `sample_rate` errors,
-since the context has not yet been built), the evaluator instance, and a location
-string indicating where the error occurred. Can be sync or async.
+Receives the exception, the evaluator context, the evaluator instance, and a
+location string indicating where the error occurred. Can be sync or async.
 """
 
 __all__ = (
@@ -79,6 +86,7 @@ __all__ = (
     'OnErrorCallback',
     'OnErrorLocation',
     'OnMaxConcurrencyCallback',
+    'OnSamplingErrorCallback',
     'OnlineEvalConfig',
     'OnlineEvaluator',
     'SinkCallback',
@@ -300,17 +308,21 @@ class OnlineEvaluator:
     Receives the `EvaluatorContext` that would have been evaluated. Can be sync or async.
     If `None` (the default), dropped evaluations are silently ignored.
     """
+    on_sampling_error: OnSamplingErrorCallback | None = None
+    """Called synchronously when a `sample_rate` callable raises an exception.
+
+    Receives the exception and the evaluator. Must be sync (not async), since sampling
+    runs before the decorated function. If set, the evaluator is skipped. If `None`,
+    uses the config's `on_sampling_error` default. If neither is set, the exception
+    propagates to the caller.
+    """
     on_error: OnErrorCallback | None = None
-    """Called when an exception occurs in the evaluation pipeline.
+    """Called when an exception occurs in the gate, sink, or on_max_concurrency callback.
 
-    Receives the exception, evaluator context (or `None` for `sample_rate` errors),
-    evaluator instance, and a location string (`'sample_rate'`, `'gate'`, `'sink'`,
-    or `'on_max_concurrency'`). Can be sync or async.
-
-    If `None`, uses the config's `on_error` default. If neither is set:
-
-    - For `sample_rate` errors: the exception propagates to the caller.
-    - For `gate`, `sink`, and `on_max_concurrency` errors: exceptions are silently suppressed.
+    Receives the exception, evaluator context, evaluator instance, and a location string
+    (`'gate'`, `'sink'`, or `'on_max_concurrency'`). Can be sync or async.
+    If `None`, uses the config's `on_error` default. If neither is set, exceptions are
+    silently suppressed.
     """
 
     semaphore: threading.Semaphore = field(init=False, repr=False)
@@ -436,9 +448,9 @@ def _sample_evaluators(
 ) -> list[OnlineEvaluator]:
     """Determine which evaluators should run, handling sample_rate exceptions.
 
-    If a sample_rate callable raises and the evaluator (or config) has an on_error
-    callback, the error is reported there and the evaluator is skipped. If no on_error
-    is configured, the exception propagates to the caller.
+    If a sample_rate callable raises and the evaluator (or config) has an
+    `on_sampling_error` callback, the error is reported there and the evaluator
+    is skipped. If no callback is configured, the exception propagates to the caller.
     """
     sampled: list[OnlineEvaluator] = []
     for oe in online_evals:
@@ -446,16 +458,12 @@ def _sample_evaluators(
             if _should_evaluate(_resolve_sample_rate_field(oe, config), config.enabled):
                 sampled.append(oe)
         except Exception as exc:
-            on_error = oe.on_error if oe.on_error is not None else config.on_error
-            if on_error is not None:
+            handler = oe.on_sampling_error if oe.on_sampling_error is not None else config.on_sampling_error
+            if handler is not None:
                 try:
-                    result = on_error(exc, None, oe.evaluator, 'sample_rate')
-                    if inspect.iscoroutine(result):
-                        # We're in a sync context (sampling happens before async dispatch),
-                        # so we can't await here. Close the coroutine to avoid warnings.
-                        result.close()
+                    handler(exc, oe.evaluator)
                 except Exception:
-                    pass  # on_error itself failed — suppress to protect other evaluators
+                    pass  # Handler itself failed — suppress to protect other evaluators
             else:
                 raise
     return sampled
@@ -500,7 +508,7 @@ def _normalize_single_sink(sink: EvaluationSink | SinkCallback) -> EvaluationSin
 async def _call_on_error(
     on_error: OnErrorCallback | None,
     exc: Exception,
-    context: EvaluatorContext | None,
+    context: EvaluatorContext,
     evaluator: Evaluator,
     location: OnErrorLocation,
 ) -> None:
@@ -642,18 +650,20 @@ class OnlineEvalConfig:
     If `None` (the default), dropped evaluations are silently ignored.
     Per-evaluator `OnlineEvaluator.on_max_concurrency` overrides this default.
     """
+    on_sampling_error: OnSamplingErrorCallback | None = None
+    """Default handler called synchronously when a `sample_rate` callable raises.
+
+    Receives the exception and the evaluator. Must be sync (not async).
+    If set, the evaluator is skipped. If `None` (the default), the exception
+    propagates to the caller.
+    Per-evaluator `OnlineEvaluator.on_sampling_error` overrides this default.
+    """
     on_error: OnErrorCallback | None = None
-    """Default handler called when an exception occurs in the evaluation pipeline.
+    """Default handler called when an exception occurs in a gate, sink, or on_max_concurrency callback.
 
-    Receives the exception, evaluator context (or `None` for `sample_rate` errors),
-    evaluator instance, and a location string (`'sample_rate'`, `'gate'`, `'sink'`,
-    or `'on_max_concurrency'`). Can be sync or async.
-
-    If `None` (the default):
-
-    - For `sample_rate` errors: the exception propagates to the caller.
-    - For `gate`, `sink`, and `on_max_concurrency` errors: exceptions are silently suppressed.
-
+    Receives the exception, evaluator context, evaluator instance, and a location string
+    (`'gate'`, `'sink'`, or `'on_max_concurrency'`). Can be sync or async.
+    If `None` (the default), exceptions are silently suppressed.
     Per-evaluator `OnlineEvaluator.on_error` overrides this default.
     """
 
@@ -873,13 +883,15 @@ def configure(
     default_sample_rate: float | Callable[[], float | bool] | Unset = UNSET,
     enabled: bool | Unset = UNSET,
     metadata: dict[str, Any] | None | Unset = UNSET,
-    on_max_concurrency: Callable[[EvaluatorContext], Any] | None | Unset = UNSET,
+    on_max_concurrency: OnMaxConcurrencyCallback | None | Unset = UNSET,
+    on_sampling_error: OnSamplingErrorCallback | None | Unset = UNSET,
     on_error: OnErrorCallback | None | Unset = UNSET,
 ) -> None:
     """Configure the global default `OnlineEvalConfig`.
 
     Only provided values are updated; unset arguments are ignored.
-    Pass `None` explicitly to clear `default_sink`, `metadata`, `on_max_concurrency`, or `on_error`.
+    Pass `None` explicitly to clear `default_sink`, `metadata`, `on_max_concurrency`,
+    `on_sampling_error`, or `on_error`.
 
     Args:
         default_sink: Default sink(s) for evaluators. Pass `None` to clear.
@@ -887,6 +899,7 @@ def configure(
         enabled: Whether online evaluation is enabled.
         metadata: Metadata to include in evaluator contexts. Pass `None` to clear.
         on_max_concurrency: Default handler for dropped evaluations. Pass `None` to clear.
+        on_sampling_error: Default handler for sample_rate exceptions. Pass `None` to clear.
         on_error: Default handler for pipeline exceptions. Pass `None` to clear.
     """
     if not isinstance(default_sink, Unset):
@@ -899,6 +912,8 @@ def configure(
         DEFAULT_CONFIG.metadata = metadata
     if not isinstance(on_max_concurrency, Unset):
         DEFAULT_CONFIG.on_max_concurrency = on_max_concurrency
+    if not isinstance(on_sampling_error, Unset):
+        DEFAULT_CONFIG.on_sampling_error = on_sampling_error
     if not isinstance(on_error, Unset):
         DEFAULT_CONFIG.on_error = on_error
 
