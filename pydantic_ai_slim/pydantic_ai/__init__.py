@@ -53,6 +53,7 @@ from .exceptions import (
     UserError,
 )
 from .format_prompt import format_as_xml
+from .memory import AbstractMemoryStore, InMemoryStore, MemoryScope, SQLiteMemoryStore
 from .messages import (
     AgentStreamEvent,
     AudioFormat,
@@ -153,6 +154,10 @@ __all__ = (
     'AgentModelSettings',
     'AgentSpec',
     'EndStrategy',
+    'AbstractMemoryStore',
+    'InMemoryStore',
+    'MemoryScope',
+    'SQLiteMemoryStore',
     'CallToolsNode',
     'ModelRequestNode',
     'UserPromptNode',

@@ -49,6 +49,7 @@ from ..builtin_tools import AbstractBuiltinTool
 from ..capabilities import AbstractCapability, CombinedCapability
 from ..capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
 from ..capabilities.history_processor import HistoryProcessor as HistoryProcessorCap
+from ..memory import AbstractMemoryStore, MemoryScope
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
@@ -207,6 +208,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     _concurrency_limiter: _concurrency.AbstractConcurrencyLimiter | None = dataclasses.field(repr=False)
 
+    _memory: AbstractMemoryStore | None = dataclasses.field(repr=False)
+
     _enter_lock: Lock = dataclasses.field(repr=False)
     _entered_count: int = dataclasses.field(repr=False)
     _exit_stack: AsyncExitStack | None = dataclasses.field(repr=False)
@@ -240,6 +243,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+        memory: AbstractMemoryStore | None = None,
     ) -> None: ...
 
     @overload
@@ -272,6 +276,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+        memory: AbstractMemoryStore | None = None,
     ) -> None: ...
 
     def __init__(
@@ -302,6 +307,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+        memory: AbstractMemoryStore | None = None,
         **_deprecated_kwargs: Any,
     ):
         """Create an agent.
@@ -380,6 +386,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 multiple agents, or None (default) for no limiting. When the limit is reached, additional calls
                 to `run()` or `iter()` will wait until a slot becomes available.
             capabilities: Optional list of [capabilities](https://ai.pydantic.dev/capabilities/) to configure the agent with.
+            memory: Optional memory store for cross-run conversation persistence.
+                When set, pass ``session_id`` or ``memory_scope`` on each ``run()`` call
+                to automatically load and save message history.
                 Custom capabilities can be created by subclassing
                 [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability].
         """
@@ -467,6 +476,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._event_stream_handler = event_stream_handler
 
         self._concurrency_limiter = _concurrency.normalize_to_limiter(max_concurrency)
+
+        self._memory = memory
 
         self._override_name: ContextVar[_utils.Option[str]] = ContextVar('_override_name', default=None)
         self._override_deps: ContextVar[_utils.Option[AgentDepsT]] = ContextVar('_override_deps', default=None)
@@ -905,6 +916,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         output_type: None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
+        session_id: str | None = None,
+        memory_scope: MemoryScope | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[AgentDepsT] = None,
@@ -926,6 +939,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         output_type: OutputSpec[RunOutputDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
+        session_id: str | None = None,
+        memory_scope: MemoryScope | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[AgentDepsT] = None,
@@ -941,12 +956,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
-    async def iter(  # noqa: C901
+    async def iter(  # noqa: C901, D417
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[Any] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
+        session_id: str | None = None,
+        memory_scope: MemoryScope | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[AgentDepsT] = None,
@@ -1048,6 +1065,46 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
+        # ------------------------------------------------------
+        # Memory: validate args and resolve session key
+        # ------------------------------------------------------
+        if memory_scope is not None and session_id is not None:
+            raise exceptions.UserError('Pass either `session_id` or `memory_scope`, not both.')
+        if memory_scope is not None:
+            session_id = memory_scope.session_id()
+
+        if message_history is not None and session_id is not None:
+            raise exceptions.UserError(
+                'Cannot pass both `message_history` and `session_id` — '
+                'when providing `message_history`, `session_id` would be '
+                'ignored. Provide only one.'
+            )
+        if session_id is not None and self._memory is None:
+            raise exceptions.UserError(
+                '`session_id` was provided, but no `memory` store is '
+                'configured on this agent. Either configure `memory=...` '
+                'when creating the agent, or pass `message_history=...` explicitly.'
+            )
+
+        # ------------------------------------------------------
+        # Tiered load: recent messages + optional long-term summary
+        # ------------------------------------------------------
+        loaded_message_history: Sequence[_messages.ModelMessage] | None = None
+        if message_history is None and session_id is not None and self._memory is not None:
+            recent = await self._memory.load_recent(session_id, limit=20)
+            summary = await self._memory.load_summary(session_id)
+
+            if summary:
+                # Inject summary as a synthetic system-level context block so
+                # the agent has long-term memory without burning the whole
+                # context window on verbatim old messages.
+                summary_msg = _messages.ModelRequest(
+                    parts=[_messages.SystemPromptPart(content=f'[Memory summary of prior sessions]\n{summary}')]
+                )
+                loaded_message_history = [summary_msg, *recent]
+            else:
+                loaded_message_history = recent
+
         # Resolve spec contributions (additive at run time)
         resolved = self._resolve_spec(spec)
         if resolved is not None:
@@ -1109,8 +1166,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Build the initial state
         usage = usage or _usage.RunUsage()
+        effective_message_history = loaded_message_history if loaded_message_history is not None else message_history
         state = _agent_graph.GraphAgentState(
-            message_history=list(message_history) if message_history else [],
+            message_history=list(effective_message_history) if effective_message_history else [],
             usage=usage,
             retries=0,
             run_step=0,
@@ -1234,7 +1292,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,
             prompt=user_prompt,
-            new_message_index=len(message_history) if message_history else 0,
+            new_message_index=len(effective_message_history) if effective_message_history else 0,
             resumed_request=None,
             model=model_used,
             get_model_settings=get_model_settings,
@@ -1439,6 +1497,39 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                             _var.reset(_token)
 
                     final_result = agent_run.result
+
+                    # ------------------------------------------
+                    # Memory: persist after a successful run
+                    # ------------------------------------------
+                    if (
+                        message_history is None
+                        and session_id is not None
+                        and self._memory is not None
+                        and final_result is not None
+                    ):
+                        try:
+                            await self._memory.save(session_id, final_result.all_messages())
+                        except Exception as e:
+                            raise exceptions.UserError(
+                                'Agent run completed successfully, but saving '
+                                'message history to the configured memory store '
+                                f'failed for session_id={session_id!r}.'
+                            ) from e
+                    elif (
+                        message_history is None
+                        and session_id is not None
+                        and self._memory is not None
+                        and final_result is None
+                    ):
+                        warnings.warn(
+                            'An agent run was started with `session_id` or '
+                            '`memory_scope`, but no final result was produced, '
+                            'so message history was not saved. This can happen '
+                            'when using streaming APIs and the stream is not '
+                            'fully consumed.',
+                            stacklevel=2,
+                        )
+
                     if (
                         instrumentation_settings
                         and instrumentation_settings.include_content

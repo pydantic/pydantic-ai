@@ -30,6 +30,7 @@ from .._output import types_from_output_spec
 from .._template import TemplateStr
 from .._tool_manager import ToolManager
 from ..builtin_tools import AbstractBuiltinTool
+from ..memory import MemoryScope
 from ..output import OutputDataT, OutputSpec
 from ..result import AgentStream, FinalResult, StreamedRunResult
 from ..run import AgentRun, AgentRunResult, AgentRunResultEvent
@@ -173,6 +174,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         *,
         output_type: None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
+        session_id: str | None = None,
+        memory_scope: MemoryScope | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
@@ -195,6 +198,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         *,
         output_type: OutputSpec[RunOutputDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
+        session_id: str | None = None,
+        memory_scope: MemoryScope | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
@@ -216,6 +221,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
+        session_id: str | None = None,
+        memory_scope: MemoryScope | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
@@ -251,7 +258,12 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             user_prompt: User input to start/continue the conversation.
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
+                       message_history: History of the conversation so far.
             message_history: History of the conversation so far.
+            session_id: Optional session key for memory-backed conversation persistence.
+                Mutually exclusive with ``memory_scope`` and ``message_history``.
+            memory_scope: Structured alternative to ``session_id`` for multi-user or
+                multi-agent scoping. Mutually exclusive with ``session_id``.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
@@ -281,6 +293,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             user_prompt=user_prompt,
             output_type=output_type,
             message_history=message_history,
+            session_id=session_id,
+            memory_scope=memory_scope,
             deferred_tool_results=deferred_tool_results,
             model=model,
             instructions=instructions,
@@ -339,6 +353,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         *,
         output_type: None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
+        session_id: str | None = None,  
+        memory_scope: MemoryScope | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
@@ -382,6 +398,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
+        session_id: str | None = None,
+        memory_scope: MemoryScope | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
@@ -417,6 +435,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
+            session_id: Optional session key for memory-backed conversation persistence.
+                Mutually exclusive with ``memory_scope`` and ``message_history``.
+            memory_scope: Structured alternative to ``session_id`` for multi-user or
+                multi-agent scoping. Mutually exclusive with ``session_id``.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
@@ -445,6 +467,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 user_prompt,
                 output_type=output_type,
                 message_history=message_history,
+                session_id=session_id,
+                memory_scope=memory_scope,
                 deferred_tool_results=deferred_tool_results,
                 model=model,
                 instructions=instructions,
