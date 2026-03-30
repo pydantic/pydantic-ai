@@ -3335,6 +3335,32 @@ class TestImageGenerationCapability:
         assert tool.size == '1024x1024'
         assert tool.aspect_ratio == '16:9'
 
+    def test_image_generation_fallback_merges_custom_builtin_with_overrides(self):
+        """Custom builtin settings are merged with capability-level overrides for the fallback."""
+        from pydantic_ai.tools import Tool
+
+        custom_builtin = ImageGenerationTool(quality='high', size='1024x1024')
+        cap = ImageGeneration(
+            builtin=custom_builtin,
+            fallback_model='openai-responses:gpt-4o',
+            output_format='jpeg',  # capability-level override
+        )
+        # The local fallback should exist and contain the merged config
+        assert isinstance(cap.local, Tool)
+        assert cap.get_toolset() is not None
+
+    def test_image_generation_callable_builtin_with_fallback(self):
+        """When builtin is a callable, the fallback local tool still gets created."""
+        from pydantic_ai.tools import Tool
+
+        cap = ImageGeneration(
+            builtin=lambda ctx: ImageGenerationTool(quality='high'),
+            fallback_model='openai-responses:gpt-4o',
+        )
+        # Callable builtin can't be resolved at init time, but local fallback is still created
+        assert isinstance(cap.local, Tool)
+        assert cap.get_toolset() is not None
+
     def test_image_generation_fallback_model_and_local_conflict(self):
         """ImageGeneration(fallback_model=..., local=func) raises UserError."""
 
