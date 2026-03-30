@@ -3310,17 +3310,30 @@ class TestImageGenerationCapability:
 
     def test_image_generation_forwards_config_to_builtin(self):
         """ImageGeneration config fields are forwarded to the ImageGenerationTool builtin."""
-        cap = ImageGeneration(quality='high', size='1024x1024', output_format='jpeg')
+        cap = ImageGeneration(
+            background='opaque',
+            input_fidelity='high',
+            moderation='low',
+            output_compression=80,
+            output_format='jpeg',
+            partial_images=2,
+            quality='high',
+            size='1024x1024',
+            aspect_ratio='16:9',
+        )
         builtins = cap.get_builtin_tools()
         assert len(builtins) == 1
         tool = builtins[0]
         assert isinstance(tool, ImageGenerationTool)
+        assert tool.background == 'opaque'
+        assert tool.input_fidelity == 'high'
+        assert tool.moderation == 'low'
+        assert tool.output_compression == 80
+        assert tool.output_format == 'jpeg'
+        assert tool.partial_images == 2
         assert tool.quality == 'high'
         assert tool.size == '1024x1024'
-        assert tool.output_format == 'jpeg'
-        # Unset fields use ImageGenerationTool defaults
-        assert tool.background == 'auto'
-        assert tool.moderation == 'auto'
+        assert tool.aspect_ratio == '16:9'
 
     def test_image_generation_fallback_model_and_local_conflict(self):
         """ImageGeneration(fallback_model=..., local=func) raises UserError."""
@@ -3335,6 +3348,58 @@ class TestImageGenerationCapability:
         """ImageGeneration(fallback_model=..., local=False) raises UserError."""
         with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
             ImageGeneration(fallback_model='openai-responses:gpt-image-1', local=False)
+
+    async def test_image_generation_callable_fallback_model(self, allow_model_requests: None):
+        """ImageGeneration with callable fallback_model resolves the model per-run."""
+        from pydantic_ai.common_tools.image_generation import ImageGenerationLocalTool
+        from pydantic_ai.messages import BinaryImage, FilePart
+
+        image_data = b'\x89PNG\r\n\x1a\n'  # minimal PNG header
+
+        def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[FilePart(content=BinaryImage(data=image_data, media_type='image/png'))])
+
+        inner_model = FunctionModel(inner_model_fn, profile=ModelProfile(supports_image_output=True))
+
+        def model_factory(ctx: RunContext[None]) -> FunctionModel:
+            return inner_model
+
+        tool = ImageGenerationLocalTool(model=model_factory, builtin=ImageGenerationTool())
+        result = await tool(
+            RunContext(deps=None, model=TestModel(), usage=RunUsage()),
+            'A test image',
+        )
+        assert isinstance(result, BinaryImage)
+
+    async def test_image_generation_callable_returns_none(self, allow_model_requests: None):
+        """Callable fallback_model returning None raises ModelRetry."""
+        from pydantic_ai.common_tools.image_generation import ImageGenerationLocalTool
+
+        def model_factory(ctx: RunContext[None]) -> None:
+            return None
+
+        tool = ImageGenerationLocalTool(model=model_factory, builtin=ImageGenerationTool())
+        with pytest.raises(ModelRetry, match='fallback model callable returned None'):
+            await tool(
+                RunContext(deps=None, model=TestModel(), usage=RunUsage()),
+                'A test image',
+            )
+
+    async def test_image_generation_subagent_error_becomes_model_retry(self, allow_model_requests: None):
+        """UnexpectedModelBehavior from subagent is caught and re-raised as ModelRetry."""
+        from pydantic_ai.common_tools.image_generation import ImageGenerationLocalTool
+
+        # FunctionModel that returns text but no image — triggers UnexpectedModelBehavior
+        def no_image_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='No image generated.')])
+
+        inner_model = FunctionModel(no_image_model_fn, profile=ModelProfile(supports_image_output=True))
+        tool = ImageGenerationLocalTool(model=inner_model, builtin=ImageGenerationTool())
+        with pytest.raises(ModelRetry):
+            await tool(
+                RunContext(deps=None, model=TestModel(), usage=RunUsage()),
+                'A test image',
+            )
 
     @pytest.mark.vcr()
     @pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
