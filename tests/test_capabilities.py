@@ -3251,6 +3251,89 @@ class TestImageGenerationCapability:
         assert isinstance(cap.local, Tool)
         assert cap.get_toolset() is not None
 
+    def test_image_generation_with_fallback_model(self):
+        """ImageGeneration(fallback_model=...) creates a local fallback tool."""
+        from pydantic_ai.tools import Tool
+
+        cap = ImageGeneration(fallback_model='openai-responses:gpt-image-1')
+        assert isinstance(cap.local, Tool)
+        assert cap.get_toolset() is not None
+        builtins = cap.get_builtin_tools()
+        assert len(builtins) == 1
+        assert isinstance(builtins[0], ImageGenerationTool)
+
+    def test_image_generation_forwards_config_to_builtin(self):
+        """ImageGeneration config fields are forwarded to the ImageGenerationTool builtin."""
+        cap = ImageGeneration(quality='high', size='1024x1024', output_format='jpeg')
+        builtins = cap.get_builtin_tools()
+        assert len(builtins) == 1
+        tool = builtins[0]
+        assert isinstance(tool, ImageGenerationTool)
+        assert tool.quality == 'high'
+        assert tool.size == '1024x1024'
+        assert tool.output_format == 'jpeg'
+        # Unset fields use ImageGenerationTool defaults
+        assert tool.background == 'auto'
+        assert tool.moderation == 'auto'
+
+    def test_image_generation_fallback_model_and_local_conflict(self):
+        """ImageGeneration(fallback_model=..., local=func) raises UserError."""
+
+        def my_gen(prompt: str) -> str:
+            return 'image_url'  # pragma: no cover
+
+        with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
+            ImageGeneration(fallback_model='openai-responses:gpt-image-1', local=my_gen)
+
+    def test_image_generation_fallback_model_with_local_false(self):
+        """ImageGeneration(fallback_model=..., local=False) is allowed."""
+        cap = ImageGeneration(fallback_model='openai-responses:gpt-image-1', local=False)
+        assert cap.local is False
+        assert cap.get_toolset() is None
+
+    @pytest.mark.vcr()
+    async def test_image_generation_local_fallback(self, allow_model_requests: None, openai_api_key: str):
+        """ImageGeneration(fallback_model=...) with non-supporting outer model uses subagent fallback."""
+        from pydantic_ai.messages import BinaryImage
+        from pydantic_ai.models.openai import OpenAIResponsesModel
+        from pydantic_ai.providers.openai import OpenAIProvider
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            # If we see a tool return, the image was generated — return final text
+            last = messages[-1]
+            if isinstance(last, ModelRequest):
+                for part in last.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return ModelResponse(parts=[TextPart(content='Here is the generated image.')])
+
+            # First call: invoke the generate_image tool
+            assert info.function_tools, 'Expected generate_image tool to be available'
+            tool = info.function_tools[0]
+            return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args='{"prompt": "A cute baby sea otter"}')])
+
+        inner_model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+        outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        agent = Agent(
+            outer_model,
+            capabilities=[
+                ImageGeneration(fallback_model=inner_model),
+            ],
+        )
+        result = await agent.run('Generate an image of a cute baby sea otter')
+        assert result.output == 'Here is the generated image.'
+
+        # Verify the tool return contains a BinaryImage
+        messages = result.all_messages()
+        tool_return_parts = [
+            part
+            for msg in messages
+            if isinstance(msg, ModelRequest)
+            for part in msg.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        assert len(tool_return_parts) == 1
+        assert isinstance(tool_return_parts[0].content, BinaryImage)
+
 
 try:
     import mcp as _mcp
