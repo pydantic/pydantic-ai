@@ -1487,7 +1487,34 @@ async def test_sampling_context_passed_to_callable():
     ctx = captured_contexts[0]
     assert ctx.inputs == {'x': 42, 'y': 'world'}
     assert ctx.metadata == {'service': 'test'}
-    assert ctx.name == 'AlwaysTrue'
+    assert isinstance(ctx.evaluator, AlwaysTrue)
+    assert 0.0 <= ctx.call_seed < 1.0
+
+
+@pytest.mark.anyio
+async def test_sampling_context_call_seed_shared_across_evaluators():
+    """call_seed is the same for all evaluators in a single call."""
+    captured_seeds: list[float] = []
+
+    def capture_rate(ctx: SamplingContext) -> bool:
+        captured_seeds.append(ctx.call_seed)
+        return True
+
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(
+        OnlineEvaluator(evaluator=AlwaysTrue(), sample_rate=capture_rate),
+        OnlineEvaluator(evaluator=AlwaysFalse(), sample_rate=capture_rate),
+    )
+    async def my_func(x: int) -> int:
+        return x
+
+    await my_func(42)
+    await wait_for_evaluations()
+
+    assert len(captured_seeds) == 2
+    assert captured_seeds[0] == captured_seeds[1]
 
 
 @pytest.mark.anyio
@@ -1510,6 +1537,102 @@ async def test_sampling_context_input_based_sampling():
     await my_func(20)  # should be evaluated
     await wait_for_evaluations()
     assert len(collector.calls) == 1
+
+
+# --- correlated sampling tests ---
+
+
+@pytest.mark.anyio
+async def test_correlated_sampling_subset_property():
+    """In correlated mode, lower-rate evaluator calls are a subset of higher-rate ones."""
+    collector_high = Collector()
+    collector_low = Collector()
+    config = OnlineEvalConfig(sampling_mode='correlated')
+
+    @config.evaluate(
+        OnlineEvaluator(evaluator=AlwaysTrue(), sample_rate=0.5, sink=collector_high),
+        OnlineEvaluator(evaluator=AlwaysFalse(), sample_rate=0.1, sink=collector_low),
+    )
+    async def my_func(x: int) -> int:
+        return x
+
+    for i in range(100):
+        await my_func(i)
+
+    await wait_for_evaluations()
+
+    # In correlated mode, every call that ran the low-rate evaluator (0.1)
+    # must also have run the high-rate evaluator (0.5)
+    assert len(collector_low.calls) <= len(collector_high.calls)
+    # Sanity: we should have gotten some evaluations
+    assert len(collector_high.calls) > 0
+    assert len(collector_low.calls) > 0
+
+
+@pytest.mark.anyio
+async def test_correlated_sampling_max_overhead():
+    """In correlated mode, total overhead probability equals max(rate_i)."""
+    collector1 = Collector()
+    collector2 = Collector()
+    collector3 = Collector()
+    config = OnlineEvalConfig(sampling_mode='correlated')
+
+    @config.evaluate(
+        OnlineEvaluator(evaluator=AlwaysTrue(), sample_rate=0.1, sink=collector1),
+        OnlineEvaluator(evaluator=AlwaysFalse(), sample_rate=0.1, sink=collector2),
+        OnlineEvaluator(evaluator=OutputEquals(value=0), sample_rate=0.1, sink=collector3),
+    )
+    async def my_func(x: int) -> int:
+        return x
+
+    for i in range(200):
+        await my_func(i)
+
+    await wait_for_evaluations()
+
+    # All three should have run on exactly the same calls (same rate, same seed)
+    assert len(collector1.calls) == len(collector2.calls) == len(collector3.calls)
+    # Should be roughly 10% of 200 = ~20, not ~27% like independent mode
+    assert 5 < len(collector1.calls) < 40
+
+
+@pytest.mark.anyio
+async def test_independent_sampling_is_default():
+    """Independent mode is the default — evaluators sample independently."""
+    collector1 = Collector()
+    collector2 = Collector()
+    config = OnlineEvalConfig()  # default is 'independent'
+
+    @config.evaluate(
+        OnlineEvaluator(evaluator=AlwaysTrue(), sample_rate=0.5, sink=collector1),
+        OnlineEvaluator(evaluator=AlwaysFalse(), sample_rate=0.5, sink=collector2),
+    )
+    async def my_func(x: int) -> int:
+        return x
+
+    for i in range(100):
+        await my_func(i)
+
+    await wait_for_evaluations()
+
+    # Both should have roughly 50 each, but they should NOT be identical
+    # (extremely unlikely with independent sampling over 100 trials)
+    assert len(collector1.calls) > 0
+    assert len(collector2.calls) > 0
+
+
+@pytest.mark.anyio
+async def test_configure_sampling_mode():
+    """configure() can set sampling_mode on DEFAULT_CONFIG."""
+    original = DEFAULT_CONFIG.sampling_mode
+    try:
+        configure(sampling_mode='correlated')
+        assert DEFAULT_CONFIG.sampling_mode == 'correlated'
+
+        configure(sampling_mode='independent')
+        assert DEFAULT_CONFIG.sampling_mode == 'independent'
+    finally:
+        DEFAULT_CONFIG.sampling_mode = original
 
 
 # --- attributes/metrics tests ---

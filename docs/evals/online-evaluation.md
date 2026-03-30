@@ -234,7 +234,7 @@ never = OnlineEvaluator(evaluator=QuickCheck(), sample_rate=0.0)
 
 ### Dynamic Sample Rates
 
-Pass a callable to enable runtime-configurable or input-dependent sampling. The callable receives a [`SamplingContext`][pydantic_evals.online.SamplingContext] with the function inputs, config metadata, and evaluator name, and returns a `float` (probability) or `bool` (always/never):
+Pass a callable to enable runtime-configurable or input-dependent sampling. The callable receives a [`SamplingContext`][pydantic_evals.online.SamplingContext] with the evaluator instance, function inputs, config metadata, and a per-call random seed, and returns a `float` (probability) or `bool` (always/never):
 
 ```python
 from dataclasses import dataclass
@@ -282,6 +282,43 @@ class QualityCheck(Evaluator):
 
 expensive = OnlineEvaluator(evaluator=QualityCheck(), sample_rate=sample_long_inputs)
 ```
+
+### Correlated Sampling
+
+By default, each evaluator samples independently. With three evaluators each at 10%, roughly 27% of calls incur evaluation overhead (``1 − 0.9³``). If you'd prefer that the same 10% of calls run *all* evaluators, set `sampling_mode='correlated'`:
+
+```python
+from dataclasses import dataclass
+
+from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+from pydantic_evals.online import OnlineEvalConfig, OnlineEvaluator
+
+
+@dataclass
+class CheckA(Evaluator):
+    def evaluate(self, ctx: EvaluatorContext) -> bool:
+        return True
+
+
+@dataclass
+class CheckB(Evaluator):
+    def evaluate(self, ctx: EvaluatorContext) -> bool:
+        return True
+
+
+config = OnlineEvalConfig(
+    default_sink=lambda results, failures, ctx: None,
+    sampling_mode='correlated',
+)
+
+# Both run on the same ~10% of calls
+check_a = OnlineEvaluator(evaluator=CheckA(), sample_rate=0.1)
+check_b = OnlineEvaluator(evaluator=CheckB(), sample_rate=0.1)
+```
+
+In correlated mode, a single random `call_seed` is generated per function call and shared across all evaluators. An evaluator runs when `call_seed < sample_rate`, so lower-rate evaluators' calls are always a subset of higher-rate ones, and the total overhead probability equals the maximum rate rather than accumulating.
+
+The `call_seed` is also available on [`SamplingContext`][pydantic_evals.online.SamplingContext] for custom `sample_rate` callables that want to implement their own correlated logic regardless of mode.
 
 ### Disabling Evaluation
 
@@ -835,6 +872,7 @@ Key classes and functions:
 | [`OnlineEvalConfig`][pydantic_evals.online.OnlineEvalConfig] | Cross-evaluator configuration |
 | [`OnlineEvaluator`][pydantic_evals.online.OnlineEvaluator] | Per-evaluator configuration wrapper |
 | [`SamplingContext`][pydantic_evals.online.SamplingContext] | Context available to `sample_rate` callables |
+| [`SamplingMode`][pydantic_evals.online.SamplingMode] | `'independent'` or `'correlated'` sampling strategy |
 | [`EvaluationSink`][pydantic_evals.online.EvaluationSink] | Protocol for result destinations |
 | [`CallbackSink`][pydantic_evals.online.CallbackSink] | Built-in sink wrapping a callable |
 | [`SpanReference`][pydantic_evals.online.SpanReference] | Identifies a span for result association |

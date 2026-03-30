@@ -58,23 +58,40 @@ from .otel._context_subtree import context_subtree
 OnErrorLocation = Literal['sink', 'on_max_concurrency']
 """The location within the online evaluation pipeline where an error occurred."""
 
+SamplingMode = Literal['independent', 'correlated']
+"""Controls how per-evaluator sample rates interact across evaluators for a single call.
 
+- `'independent'` (default): Each evaluator flips its own coin. With N evaluators each at
+  rate *r*, the probability of *any* evaluation overhead is ``1 − (1−r)^N``.
+- `'correlated'`: A single random seed is generated per call and shared across evaluators.
+  An evaluator runs when ``call_seed < rate``, so lower-rate evaluators' calls are always
+  a subset of higher-rate ones. The probability of *any* overhead equals ``max(rate_i)``.
+"""
+
+
+# TODO: Should this be generic in the
 @dataclass(kw_only=True)
 class SamplingContext:
     """Context available when deciding whether to sample an evaluator.
 
-    This is a subset of [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext] that
-    contains only the information available *before* the decorated function runs — specifically,
-    the function inputs, config metadata, and the evaluator name. The function's output and
-    duration are not yet available at sampling time.
+    Contains the information available *before* the decorated function runs — the evaluator
+    instance, function inputs, config metadata, and a per-call random seed. The function's
+    output and duration are not yet available at sampling time.
     """
 
-    name: str | None
-    """The name of the evaluator being sampled."""
+    evaluator: Evaluator
+    """The evaluator being sampled."""
     inputs: Any
     """The inputs to the decorated function."""
     metadata: dict[str, Any] | None
     """Metadata from the [`OnlineEvalConfig`][pydantic_evals.online.OnlineEvalConfig], if set."""
+    call_seed: float
+    """A uniform random value in [0, 1) generated once per decorated function call.
+
+    Shared across all evaluators for the same call. In `'correlated'` sampling mode this is
+    used automatically; in `'independent'` mode it is available for custom `sample_rate`
+    callables that want to implement their own correlated logic.
+    """
 
 
 OnMaxConcurrencyCallback = Callable[[EvaluatorContext], Any]
@@ -113,6 +130,7 @@ __all__ = (
     'OnlineEvalConfig',
     'OnlineEvaluator',
     'SamplingContext',
+    'SamplingMode',
     'SinkCallback',
     'SpanReference',
     'configure',
@@ -451,6 +469,7 @@ def _should_evaluate(
     rate: float | Callable[[SamplingContext], float | bool],
     global_enabled: bool,
     sampling_context: SamplingContext,
+    sampling_mode: SamplingMode,
 ) -> bool:
     """Determine whether an evaluator should run based on sampling configuration."""
     if not global_enabled:  # pragma: no cover
@@ -469,7 +488,13 @@ def _should_evaluate(
         return True
     if resolved <= 0.0:
         return False
-    return random.random() < resolved
+
+    if sampling_mode == 'correlated':
+        # Use the shared per-call seed so all evaluators correlate
+        return sampling_context.call_seed < resolved
+    else:
+        # Independent: each evaluator rolls its own random check
+        return random.random() < resolved
 
 
 def _sample_evaluators(
@@ -483,15 +508,19 @@ def _sample_evaluators(
     `on_sampling_error` callback, the error is reported there and the evaluator
     is skipped. If no callback is configured, the exception propagates to the caller.
     """
+    call_seed = random.random()
     sampled: list[OnlineEvaluator] = []
     for oe in online_evals:
         sampling_ctx = SamplingContext(
-            name=oe.evaluator.__class__.__name__,
+            evaluator=oe.evaluator,
             inputs=inputs,
             metadata=config.metadata,
+            call_seed=call_seed,
         )
         try:
-            if _should_evaluate(_resolve_sample_rate_field(oe, config), config.enabled, sampling_ctx):
+            if _should_evaluate(
+                _resolve_sample_rate_field(oe, config), config.enabled, sampling_ctx, config.sampling_mode
+            ):
                 sampled.append(oe)
         except Exception as exc:
             handler = oe.on_sampling_error if oe.on_sampling_error is not None else config.on_sampling_error
@@ -658,6 +687,15 @@ class OnlineEvalConfig:
     """Default sink(s) for evaluators that don't specify their own."""
     default_sample_rate: float | Callable[[SamplingContext], float | bool] = 1.0
     """Default sample rate for evaluators that don't specify their own."""
+    sampling_mode: SamplingMode = 'independent'
+    """Controls how per-evaluator sample rates interact for a single call.
+
+    - `'independent'` (default): each evaluator decides independently.
+    - `'correlated'`: a shared random seed is used so that lower-rate evaluators'
+      calls are a subset of higher-rate ones, minimising total overhead.
+
+    See [`SamplingMode`][pydantic_evals.online.SamplingMode] for details.
+    """
     enabled: bool = True
     """Whether online evaluation is enabled for this config."""
     metadata: dict[str, Any] | None = None
@@ -916,6 +954,7 @@ def configure(
     *,
     default_sink: EvaluationSink | Sequence[EvaluationSink | SinkCallback] | SinkCallback | None | Unset = UNSET,
     default_sample_rate: float | Callable[[SamplingContext], float | bool] | Unset = UNSET,
+    sampling_mode: SamplingMode | Unset = UNSET,
     enabled: bool | Unset = UNSET,
     metadata: dict[str, Any] | None | Unset = UNSET,
     on_max_concurrency: OnMaxConcurrencyCallback | None | Unset = UNSET,
@@ -931,6 +970,7 @@ def configure(
     Args:
         default_sink: Default sink(s) for evaluators. Pass `None` to clear.
         default_sample_rate: Default sample rate for evaluators.
+        sampling_mode: Sampling mode (`'independent'` or `'correlated'`).
         enabled: Whether online evaluation is enabled.
         metadata: Metadata to include in evaluator contexts. Pass `None` to clear.
         on_max_concurrency: Default handler for dropped evaluations. Pass `None` to clear.
@@ -941,6 +981,8 @@ def configure(
         DEFAULT_CONFIG.default_sink = default_sink
     if not isinstance(default_sample_rate, Unset):
         DEFAULT_CONFIG.default_sample_rate = default_sample_rate
+    if not isinstance(sampling_mode, Unset):
+        DEFAULT_CONFIG.sampling_mode = sampling_mode
     if not isinstance(enabled, Unset):
         DEFAULT_CONFIG.enabled = enabled
     if not isinstance(metadata, Unset):
