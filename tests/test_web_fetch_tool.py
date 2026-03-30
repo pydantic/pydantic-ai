@@ -9,55 +9,27 @@ import pytest
 
 from pydantic_ai.common_tools.web_fetch import (
     WebFetchLocalTool,
-    _clean_whitespace,  # pyright: ignore[reportPrivateUsage]
-    _extract_title,  # pyright: ignore[reportPrivateUsage]
     web_fetch_tool,
 )
 
 pytestmark = [pytest.mark.anyio]
 
 
-class TestExtractTitle:
-    def test_basic_title(self):
-        assert _extract_title('<html><head><title>Hello World</title></head></html>') == 'Hello World'
-
-    def test_no_title(self):
-        assert _extract_title('<html><head></head></html>') == ''
-
-    def test_title_with_whitespace(self):
-        assert _extract_title('<title>  Hello  </title>') == 'Hello'
-
-    def test_empty_title(self):
-        assert _extract_title('<title></title>') == ''
-
-    def test_unclosed_title(self):
-        assert _extract_title('<title>Hello') == ''
-
-    def test_title_tag_no_close_bracket(self):
-        assert _extract_title('<title') == ''
-
-
-class TestCleanWhitespace:
-    def test_collapses_multiple_newlines(self):
-        assert _clean_whitespace('a\n\n\n\nb') == 'a\n\nb'
-
-    def test_preserves_double_newlines(self):
-        assert _clean_whitespace('a\n\nb') == 'a\n\nb'
-
-    def test_strips_leading_trailing(self):
-        assert _clean_whitespace('\n\na\n\n') == 'a'
+def _html_response(html: str, *, content_type: str = 'text/html; charset=utf-8') -> httpx.Response:
+    """Helper to create a mock HTML response."""
+    return httpx.Response(
+        200,
+        text=html,
+        headers={'content-type': content_type},
+        request=httpx.Request('GET', 'https://example.com'),
+    )
 
 
 class TestWebFetchLocalTool:
     async def test_fetch_html(self):
         """Fetches HTML and converts to markdown."""
         html = '<html><head><title>Test Page</title></head><body><h1>Hello</h1><p>World</p></body></html>'
-        mock_response = httpx.Response(
-            200,
-            text=html,
-            headers={'content-type': 'text/html; charset=utf-8'},
-            request=httpx.Request('GET', 'https://example.com'),
-        )
+        mock_response = _html_response(html)
 
         with patch('pydantic_ai._ssrf.safe_download', new_callable=AsyncMock, return_value=mock_response):
             tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
@@ -67,6 +39,55 @@ class TestWebFetchLocalTool:
         assert result['title'] == 'Test Page'
         assert 'Hello' in result['content']
         assert 'World' in result['content']
+
+    async def test_fetch_html_title_with_whitespace(self):
+        """Title whitespace is stripped."""
+        html = '<html><head><title>  Hello  </title></head><body><p>Content</p></body></html>'
+        mock_response = _html_response(html)
+
+        with patch('pydantic_ai._ssrf.safe_download', new_callable=AsyncMock, return_value=mock_response):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com')
+
+        assert result['title'] == 'Hello'
+
+    async def test_fetch_html_no_title(self):
+        """HTML without title returns empty string."""
+        html = '<html><head></head><body><p>Content</p></body></html>'
+        mock_response = _html_response(html)
+
+        with patch('pydantic_ai._ssrf.safe_download', new_callable=AsyncMock, return_value=mock_response):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com')
+
+        assert result['title'] == ''
+        assert 'Content' in result['content']
+
+    async def test_fetch_html_empty_title(self):
+        """Empty title tag returns empty string."""
+        html = '<html><head><title></title></head><body><p>Content</p></body></html>'
+        mock_response = _html_response(html)
+
+        with patch('pydantic_ai._ssrf.safe_download', new_callable=AsyncMock, return_value=mock_response):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com')
+
+        assert result['title'] == ''
+
+    async def test_fetch_html_collapses_excessive_newlines(self):
+        """Excessive newlines in converted content are collapsed."""
+        # Multiple block elements produce multiple newlines after markdownify conversion
+        html = '<html><body><p>A</p><br><br><br><br><p>B</p></body></html>'
+        mock_response = _html_response(html)
+
+        with patch('pydantic_ai._ssrf.safe_download', new_callable=AsyncMock, return_value=mock_response):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com')
+
+        assert 'A' in result['content']
+        assert 'B' in result['content']
+        # No runs of 3+ consecutive newlines
+        assert '\n\n\n' not in result['content']
 
     async def test_fetch_json(self):
         """Fetches JSON and returns formatted."""
@@ -135,12 +156,7 @@ class TestWebFetchLocalTool:
     async def test_content_truncation(self):
         """Content exceeding max_content_length is truncated."""
         html = '<html><body><p>' + 'x' * 200 + '</p></body></html>'
-        mock_response = httpx.Response(
-            200,
-            text=html,
-            headers={'content-type': 'text/html'},
-            request=httpx.Request('GET', 'https://example.com'),
-        )
+        mock_response = _html_response(html)
 
         with patch('pydantic_ai._ssrf.safe_download', new_callable=AsyncMock, return_value=mock_response):
             tool = WebFetchLocalTool(max_content_length=50, allow_local_urls=False, timeout=30)
