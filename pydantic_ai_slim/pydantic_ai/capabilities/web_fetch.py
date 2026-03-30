@@ -20,10 +20,10 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
     """
 
     allowed_domains: list[str] | None
-    """Only fetch from these domains. Requires builtin support."""
+    """Only fetch from these domains. Enforced locally when builtin is unavailable."""
 
     blocked_domains: list[str] | None
-    """Never fetch from these domains. Requires builtin support."""
+    """Never fetch from these domains. Enforced locally when builtin is unavailable."""
 
     max_uses: int | None
     """Maximum number of fetches per run. Requires builtin support."""
