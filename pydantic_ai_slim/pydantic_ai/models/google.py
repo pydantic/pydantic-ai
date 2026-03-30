@@ -38,6 +38,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -909,8 +910,9 @@ class GoogleModel(Model):
         else:
             content: list[PartDict] = []
             for item in part.content:
-                if isinstance(item, str):
-                    content.append({'text': item})
+                if isinstance(item, str | TextContent):
+                    text = item if isinstance(item, str) else item.content
+                    content.append({'text': text})
                 elif isinstance(item, (BinaryContent, FileUrl, UploadedFile)):
                     file_part = await self._map_file_to_part(item)
                     content.append(file_part)

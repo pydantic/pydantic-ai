@@ -31,10 +31,12 @@ from pydantic_ai import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
     _utils,
@@ -43,7 +45,7 @@ from pydantic_ai import (
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.builtin_tools import AbstractBuiltinTool, CodeExecutionTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
-from pydantic_ai.messages import UploadedFile, is_multi_modal_content
+from pydantic_ai.messages import is_multi_modal_content
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
 from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP
 from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
@@ -1018,8 +1020,9 @@ class BedrockConverseModel(Model):
             content.append({'text': part.content})
         else:
             for item in part.content:
-                if isinstance(item, str):
-                    content.append({'text': item})
+                if isinstance(item, str | TextContent):
+                    text = item if isinstance(item, str) else item.content
+                    content.append({'text': text})
                 elif isinstance(item, (BinaryContent, ImageUrl, DocumentUrl, VideoUrl)):
                     content.append(await BedrockConverseModel._map_file_to_content_block(item, document_count))
                 elif isinstance(item, AudioUrl):
