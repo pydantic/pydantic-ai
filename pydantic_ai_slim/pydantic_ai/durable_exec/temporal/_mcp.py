@@ -103,11 +103,7 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
         if not workflow.in_workflow():  # pragma: no cover
             return await super().get_instructions(ctx)
 
-        # Try locally first (fast path: returns None when disabled or returns cached instructions).
-        result = await super().get_instructions(ctx)
-        if result is not None:
-            return result
-        # If instructions are enabled but the server isn't initialized locally, fetch via activity.
+        # If instructions are enabled, fetch via activity (the server isn't initialized locally in workflows).
         if getattr(self.wrapped, 'include_instructions', False):
             serialized_run_context = self.run_context_type.serialize_run_context(ctx)
             activity_config: ActivityConfig = {'summary': f'get instructions: {self.id}', **self.activity_config}
