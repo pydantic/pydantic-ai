@@ -1024,8 +1024,13 @@ def test_openrouter_nested_provider_null_name() -> None:
     )
 
     result = model._process_response(completion)  # type: ignore[reportPrivateUsage]
-    details = result.provider_details or {}
-    assert details.get('downstream_provider') == 'unknown'
+    assert result.provider_details == snapshot(
+        {
+            'downstream_provider': 'unknown',
+            'finish_reason': 'STOP',
+            'timestamp': datetime.datetime(2009, 2, 13, 23, 31, 30, tzinfo=datetime.timezone.utc),
+        }
+    )
 
 
 def test_openrouter_provider_dict_without_choices_raises() -> None:
