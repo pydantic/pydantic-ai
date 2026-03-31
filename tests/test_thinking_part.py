@@ -93,6 +93,11 @@ from ._inline_snapshot import snapshot
             'before<think>',
             [TextPart(content='before'), ThinkingPart(content='')],
         ),
+        (
+            ('<think>', ''),
+            '',
+            [],
+        ),
         # both tags empty
         (
             ('', ''),

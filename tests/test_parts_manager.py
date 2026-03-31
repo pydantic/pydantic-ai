@@ -299,6 +299,24 @@ def test_empty_start_think_tag_without_vendor_id_can_start_closed():
     )
 
 
+def test_empty_start_think_tag_with_vendor_id_can_start_closed():
+    manager = ModelResponsePartsManager()
+    thinking_tags = ('', '</think>')
+
+    events = list(manager.handle_text_delta(vendor_part_id='content', content='</think>', thinking_tags=thinking_tags))
+    assert events == snapshot(
+        [PartStartEvent(index=0, part=ThinkingPart(content='', part_kind='thinking'), event_kind='part_start')]
+    )
+
+    event = next(manager.handle_text_delta(vendor_part_id='content', content='visible', thinking_tags=thinking_tags))
+    assert event == snapshot(
+        PartStartEvent(index=1, part=TextPart(content='visible', part_kind='text'), event_kind='part_start')
+    )
+    assert manager.get_parts() == snapshot(
+        [ThinkingPart(content='', part_kind='thinking'), TextPart(content='visible', part_kind='text')]
+    )
+
+
 def test_handle_text_delta_ignores_empty_thinking_tags():
     manager = ModelResponsePartsManager()
 
