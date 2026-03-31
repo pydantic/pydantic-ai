@@ -1430,7 +1430,13 @@ class ModelRequest:
     timestamp: datetime | None = None
     """The timestamp when the request was sent to the model."""
 
-    instructions: str | None = None
+    instructions: Annotated[
+        str | None,
+        # `instructions` is serialized for backward compat but is derived from `instruction_parts`
+        # when available. On deserialization of old messages without `instruction_parts`, the string
+        # is used to synthesize a single static InstructionPart in __post_init__.
+        pydantic.Field(validation_alias=pydantic.AliasChoices('instructions')),
+    ] = None
     """The joined instructions string, derived from `instruction_parts` when available."""
 
     instruction_parts: list[InstructionPart] | None = field(default=None, repr=False, compare=False)

@@ -776,9 +776,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # resume-without-prompt path; ToolManager.for_run_step is a no-op for the same step.
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
-        # Fetch instructions now that dynamic toolsets have been resolved by for_run_step
+        # Fetch instructions now that dynamic toolsets have been resolved by for_run_step.
+        # Sort static before dynamic to match __post_init__ behavior (which doesn't re-run on mutation).
         instruction_parts = await _get_instructions(ctx, run_context)
-        self.request.instruction_parts = instruction_parts
+        if instruction_parts:
+            instruction_parts = sorted(instruction_parts, key=lambda p: p.dynamic)
+        self.request.instruction_parts = instruction_parts or None
         self.request.instructions = _messages.InstructionPart.join(instruction_parts) if instruction_parts else None
 
         # Validate after instructions are resolved; self.request was appended above so [:-1] is prior history

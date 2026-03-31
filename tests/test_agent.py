@@ -6088,9 +6088,7 @@ Your task is to greet people.\
         ModelRequest(
             parts=[UserPromptPart(content='Hello again!', timestamp=IsDatetime())],
             timestamp=IsNow(tz=timezone.utc),
-            instructions="""\
-You are a helpful assistant.\
-""",
+            instructions='You are a helpful assistant.',
             run_id=IsStr(),
         )
     )
@@ -7177,8 +7175,8 @@ async def test_thinking_only_response_retry():
                         timestamp=IsDatetime(),
                     ),
                 ],
-                instructions='You are a helpful assistant.',
                 timestamp=IsNow(tz=timezone.utc),
+                instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -7196,8 +7194,8 @@ async def test_thinking_only_response_retry():
                         timestamp=IsDatetime(),
                     )
                 ],
-                instructions='You are a helpful assistant.',
                 timestamp=IsNow(tz=timezone.utc),
+                instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
             ModelResponse(

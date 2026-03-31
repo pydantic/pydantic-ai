@@ -986,13 +986,14 @@ class Model(ABC):
         return parts or None
 
     @staticmethod
-    def _get_instructions(
+    def _get_joined_instructions(
         messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters | None = None
     ) -> str | None:
         """Get the joined instructions string from the most recent ModelRequest.
 
         This is a convenience wrapper around `_get_instruction_parts` that returns the instructions
-        as a single joined string, for models that don't need the structured parts.
+        as a single joined string, for models that need a single string (e.g. OpenAI Responses API,
+        function model, instrumented model).
         """
         parts = Model._get_instruction_parts(messages, model_request_parameters)
         if parts:

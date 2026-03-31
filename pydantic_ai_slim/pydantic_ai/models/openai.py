@@ -2221,7 +2221,7 @@ class OpenAIResponsesModel(Model):
                         assert_never(item)
             else:
                 assert_never(message)
-        instructions = self._get_instructions(messages, model_request_parameters) or OMIT
+        instructions = self._get_joined_instructions(messages, model_request_parameters) or OMIT
         return instructions, openai_messages
 
     def _map_json_schema(self, o: OutputObjectDefinition) -> responses.ResponseFormatTextJSONSchemaConfigParam:

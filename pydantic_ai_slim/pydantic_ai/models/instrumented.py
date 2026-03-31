@@ -208,7 +208,7 @@ class InstrumentationSettings:
             A list of OpenTelemetry events.
         """
         events: list[LogRecord] = []
-        instructions = InstrumentedModel._get_instructions(messages, parameters)  # pyright: ignore [reportPrivateUsage]
+        instructions = InstrumentedModel._get_joined_instructions(messages, parameters)  # pyright: ignore [reportPrivateUsage]
         if instructions is not None:
             events.append(
                 LogRecord(
@@ -287,7 +287,7 @@ class InstrumentationSettings:
             assert len(output_messages) == 1
             output_message = output_messages[0]
 
-            instructions = InstrumentedModel._get_instructions(input_messages, parameters)  # pyright: ignore [reportPrivateUsage]
+            instructions = InstrumentedModel._get_joined_instructions(input_messages, parameters)  # pyright: ignore [reportPrivateUsage]
             system_instructions_attributes = self.system_instructions_attributes(instructions)
 
             attributes: dict[str, AttributeValue] = {

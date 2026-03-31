@@ -138,7 +138,7 @@ class FunctionModel(Model):
             output_tools=model_request_parameters.output_tools,
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
-            instructions=self._get_instructions(messages, model_request_parameters),
+            instructions=self._get_joined_instructions(messages, model_request_parameters),
         )
 
         assert self.function is not None, 'FunctionModel must receive a `function` to support non-streamed requests'
@@ -173,7 +173,7 @@ class FunctionModel(Model):
             output_tools=model_request_parameters.output_tools,
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
-            instructions=self._get_instructions(messages, model_request_parameters),
+            instructions=self._get_joined_instructions(messages, model_request_parameters),
         )
 
         assert self.stream_function is not None, (
