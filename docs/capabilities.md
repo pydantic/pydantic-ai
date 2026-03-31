@@ -101,7 +101,7 @@ agent = Agent(
         # Builtin URL fetching; provide local= for fallback
         WebFetch(),
         # Builtin when the model supports it; falls back to a subagent
-        # running the specified model when it doesn't
+        # running the specified LLM with image generation support
         ImageGeneration(fallback_model='openai-responses:gpt-5.4'),
         # Auto-detects transport from URL
         MCP(url='https://mcp.example.com/api'),

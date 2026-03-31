@@ -3454,68 +3454,6 @@ class TestImageGenerationCapability:
             ]
         )
 
-    async def test_image_generation_callable_returns_none(self, allow_model_requests: None):
-        """Callable fallback_model returning None results in a retry prompt to the outer model."""
-
-        def model_factory(ctx: RunContext[None]) -> None:
-            return None
-
-        call_count = 0
-
-        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
-            # After retry, just return text
-            return ModelResponse(parts=[TextPart(content='gave up')])
-
-        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
-        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=model_factory)])
-        result = await agent.run('Generate a test image')
-        assert result.output == 'gave up'
-        assert result.all_messages() == snapshot(
-            [
-                ModelRequest(
-                    parts=[UserPromptPart(content='Generate a test image', timestamp=IsDatetime())],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[
-                        ToolCallPart(
-                            tool_name='generate_image',
-                            args='{"prompt": "test"}',
-                            tool_call_id=IsStr(),
-                        )
-                    ],
-                    usage=RequestUsage(input_tokens=54, output_tokens=5),
-                    model_name='function:outer_model_fn:',
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                ),
-                ModelRequest(
-                    parts=[
-                        RetryPromptPart(
-                            content='The fallback model callable returned None; cannot generate an image.',
-                            tool_name='generate_image',
-                            tool_call_id=IsStr(),
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[TextPart(content='gave up')],
-                    usage=RequestUsage(input_tokens=71, output_tokens=7),
-                    model_name='function:outer_model_fn:',
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                ),
-            ]
-        )
-
     async def test_image_generation_callable_returns_image_only_model(self, allow_model_requests: None):
         """Callable fallback_model returning an image-only model name is caught at call time."""
 

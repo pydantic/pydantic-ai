@@ -1,23 +1,21 @@
 from __future__ import annotations
 
 import inspect
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai.builtin_tools import ImageGenerationTool
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import BinaryImage
-from pydantic_ai.models import Model
+from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import RunContext, Tool
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from pydantic_ai.models import KnownModelName
-
     FallbackModelFunc = Callable[
         [RunContext[Any]],
-        Awaitable[Model | KnownModelName | str | None] | Model | KnownModelName | str | None,
+        Awaitable[Model | KnownModelName | str] | Model | KnownModelName | str,
     ]
     """Callable that resolves a fallback model dynamically per-run."""
 
@@ -29,9 +27,11 @@ __all__ = ('image_generation_tool',)
 # Known image-only model names that don't support the conversational Agent loop
 # required by the subagent fallback, mapped to suggested LLM alternatives.
 _IMAGE_ONLY_MODELS: dict[str, str] = {
-    'gpt-image-1': 'gpt-5.4',
-    'dall-e-3': 'gpt-5.4',
-    'dall-e-2': 'gpt-5.4',
+    'gpt-image-1': 'openai-responses:gpt-5.4',
+    'dall-e-3': 'openai-responses:gpt-5.4',
+    'dall-e-2': 'openai-responses:gpt-5.4',
+    'imagen-3.0-generate-002': 'google-gla:gemini-3-pro-image-preview',
+    'imagen-3.0-fast-generate-001': 'google-gla:gemini-3-pro-image-preview',
 }
 
 
@@ -57,10 +57,12 @@ class ImageGenerationLocalTool:
     generation natively.
     """
 
-    model: Model | str | FallbackModelFunc
+    model: Model | KnownModelName | str | FallbackModelFunc
     """The model to use for image generation, or a callable that returns one."""
 
-    builtin: ImageGenerationTool
+    _: KW_ONLY
+
+    builtin_tool: ImageGenerationTool
     """The image generation tool configuration to pass to the subagent."""
 
     async def __call__(self, ctx: RunContext[Any], prompt: str) -> BinaryImage:
@@ -79,9 +81,6 @@ class ImageGenerationLocalTool:
                 result = await result
             model = result
 
-        if model is None:
-            raise ModelRetry('The fallback model callable returned None; cannot generate an image.')
-
         if isinstance(model, str) and callable(self.model):
             # Only check at call time for dynamically resolved models;
             # static strings are already validated at factory time
@@ -90,7 +89,7 @@ class ImageGenerationLocalTool:
         agent = Agent(
             model,
             output_type=BinaryImage,
-            builtin_tools=[self.builtin],
+            builtin_tools=[self.builtin_tool],
             instructions='Generate an image based on the user prompt. Do not ask clarifying questions.',
         )
         try:
@@ -101,20 +100,20 @@ class ImageGenerationLocalTool:
 
 
 def image_generation_tool(
-    model: Model | str | FallbackModelFunc,
-    builtin: ImageGenerationTool,
+    model: Model | KnownModelName | str | FallbackModelFunc,
+    builtin_tool: ImageGenerationTool,
 ) -> Tool[Any]:
     """Creates an image generation tool backed by a subagent.
 
     Args:
         model: The model to use for image generation (e.g. `'openai-responses:gpt-5.4'`),
             or a callable taking `RunContext` that returns a model.
-        builtin: The image generation tool configuration to pass to the subagent.
+        builtin_tool: The image generation tool configuration to pass to the subagent.
     """
     if isinstance(model, str):
         _check_image_only_model(model)
     return Tool[Any](
-        ImageGenerationLocalTool(model=model, builtin=builtin).__call__,
+        ImageGenerationLocalTool(model=model, builtin_tool=builtin_tool).__call__,
         name='generate_image',
         description='Generate an image based on the given prompt.',
     )
