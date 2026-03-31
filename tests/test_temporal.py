@@ -2652,6 +2652,8 @@ def test_temporal_run_context_serializes_metadata():
 
 def test_temporal_run_context_excludes_agent():
     """agent is not serialized but defaults to None after deserialization."""
+    from pydantic_ai.durable_exec.temporal._run_context import deserialize_run_context_with_agent
+
     agent = Agent('test', name='test_agent')
     ctx = RunContext(
         deps=None,
@@ -2664,8 +2666,14 @@ def test_temporal_run_context_excludes_agent():
     serialized = TemporalRunContext.serialize_run_context(ctx)
     assert 'agent' not in serialized
 
-    reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
+    # Without agent — e.g. when _agent was never set on a temporal wrapper
+    reconstructed = deserialize_run_context_with_agent(TemporalRunContext, serialized, deps=None, agent=None)
     assert reconstructed.agent is None
+
+    # With agent — as used by TemporalAgent's wrappers
+    reconstructed = deserialize_run_context_with_agent(TemporalRunContext, serialized, deps=None, agent=agent)
+    assert reconstructed.agent is agent
+    assert agent.name == 'test_agent'
 
 
 def test_temporal_run_context_serializes_usage():
