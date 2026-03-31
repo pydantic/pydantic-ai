@@ -397,6 +397,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         )
 
                 case _:
+                    # this might crash if a user is using the latest AG-UI protocol with new message types
+                    # in that case we can easily push a patch handling the new message type as a placeholder while we plan the actual implementation
                     assert_never(msg)
 
         return builder.messages
