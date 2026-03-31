@@ -1,28 +1,35 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 from .._run_context import AgentDepsT, RunContext
-from .abstract import ToolsetTool
-from .wrapper import WrapperToolset
+from ..tools import ToolDefinition, ToolsPrepareFunc
+from .abstract import AbstractToolset
+from .prepared import PreparedToolset
 
 
-@dataclass
-class DeferredLoadingToolset(WrapperToolset[AgentDepsT]):
+@dataclass(init=False)
+class DeferredLoadingToolset(PreparedToolset[AgentDepsT]):
     """A toolset that marks tools for deferred loading, hiding them from the model until discovered via tool search.
 
     See [toolset docs](../toolsets.md#deferred-loading) for more information.
     """
 
+    prepare_func: ToolsPrepareFunc[AgentDepsT] = field(init=False, repr=False)
     tool_names: frozenset[str] | None = None
     """Optional set of tool names to mark for deferred loading. If `None`, all tools are marked for deferred loading."""
 
-    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        tools = await super().get_tools(ctx)
-        result: dict[str, ToolsetTool[AgentDepsT]] = {}
-        for name, tool in tools.items():
-            if self.tool_names is None or name in self.tool_names:
-                result[name] = replace(tool, tool_def=replace(tool.tool_def, defer_loading=True))
-            else:
-                result[name] = tool
-        return result
+    def __init__(
+        self,
+        wrapped: AbstractToolset[AgentDepsT],
+        *,
+        tool_names: frozenset[str] | None = None,
+    ):
+        self.tool_names = tool_names
+        names = tool_names
+
+        async def _mark_deferred(_ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+            return [replace(td, defer_loading=True) if (names is None or td.name in names) else td for td in tool_defs]
+
+        self.wrapped = wrapped
+        self.prepare_func = _mark_deferred

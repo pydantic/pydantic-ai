@@ -40,16 +40,17 @@ _SEARCH_TOOL_SCHEMA['title'] = 'SearchToolArgs'
 
 
 @dataclass(kw_only=True)
-class _SearchToolIndex:
+class _SearchIndexEntry:
     name: str
     name_lower: str
     description: str | None
     description_lower: str | None
+    response_dict: dict[str, str | None]
 
 
 @dataclass(kw_only=True)
 class _SearchTool(ToolsetTool[AgentDepsT]):
-    search_index: list[_SearchToolIndex]
+    search_index: list[_SearchIndexEntry]
 
 
 @dataclass
@@ -88,11 +89,12 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             return all_tools
 
         search_index = [
-            _SearchToolIndex(
+            _SearchIndexEntry(
                 name=name,
                 name_lower=name.lower(),
                 description=tool.tool_def.description,
                 description_lower=tool.tool_def.description.lower() if tool.tool_def.description else None,
+                response_dict={'name': name, 'description': tool.tool_def.description},
             )
             for name, tool in deferred.items()
             if name not in discovered
@@ -132,14 +134,13 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         for msg in ctx.messages:
             if isinstance(msg, ModelRequest):
                 for part in msg.parts:
-                    if isinstance(part, ToolReturnPart) and part.tool_name == _SEARCH_TOOLS_NAME:
-                        metadata = part.metadata
-                        if isinstance(metadata, dict):
-                            tool_names = metadata.get(_DISCOVERED_TOOLS_METADATA_KEY)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-                            if isinstance(tool_names, list):
-                                for item in tool_names:  # pyright: ignore[reportUnknownVariableType]
-                                    if isinstance(item, str):
-                                        discovered.add(item)
+                    if (
+                        isinstance(part, ToolReturnPart)
+                        and part.tool_name == _SEARCH_TOOLS_NAME
+                        and isinstance(metadata := part.metadata, dict)
+                        and isinstance(tool_names := metadata.get(_DISCOVERED_TOOLS_METADATA_KEY), list)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+                    ):
+                        discovered.update(item for item in tool_names if isinstance(item, str))  # pyright: ignore[reportUnknownVariableType]
         return discovered
 
     async def call_tool(
@@ -166,7 +167,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         for entry in search_tool.search_index:
             searchable = entry.name_lower + (' ' + entry.description_lower if entry.description_lower else '')
             if any(term in searchable for term in terms):
-                matches.append({'name': entry.name, 'description': entry.description})
+                matches.append(entry.response_dict)
                 if len(matches) >= _MAX_SEARCH_RESULTS:
                     break
 

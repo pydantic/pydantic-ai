@@ -18,12 +18,12 @@ interactions:
       messages:
       - content: What is the current exchange rate from USD to EUR?
         role: user
-      model: gpt-5-mini
+      model: gpt-5.4-mini
       stream: false
       tool_choice: auto
       tools:
       - function:
-          description: There are 3 additional tools not yet visible to you. When you need a capability not provided by your
+          description: There are additional tools not yet visible to you. When you need a capability not provided by your
             current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
             is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
             retry.
@@ -63,13 +63,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '810'
+      - '801'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '1382'
+      - '481'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -89,28 +89,28 @@ interactions:
           role: assistant
           tool_calls:
           - function:
-              arguments: '{"keywords":"exchange rate currency USD EUR forex rate"}'
+              arguments: '{"keywords":"exchange rate currency USD EUR"}'
               name: search_tools
-            id: call_YVACoIWWfinyvlVPlzfq3Clo
+            id: call_YJT3HXwq06KgTc6ZeGaKtLsZ
             type: function
-      created: 1773893539
-      id: chatcmpl-DKz23WML5XHG7R4QhbxCRbl2qDENO
-      model: gpt-5-mini-2025-08-07
+      created: 1774971120
+      id: chatcmpl-DPVMOaxmpjGNNrcAQrP5ywnudG8Hn
+      model: gpt-5.4-mini-2026-03-17
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 29
+        completion_tokens: 21
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 243
+        prompt_tokens: 241
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 272
+        total_tokens: 262
     status:
       code: 200
       message: OK
@@ -123,11 +123,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1965'
+      - '1954'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=hRLa8p5L_Mjo5kBG7fZdYTXhnNmH4SCEhE5MflbhVTI-1773893539.6454182-1.0.1.1-AE3s8EmRSYjV3iUA5O83HA4rLJsqZIsIxmzbqg7x5F_GiAPP7hMuKpsPckIcCUHiRtJAik9wejUHW3k3gzykT657yvMnEsAucwMvTYMrHNILglfnKAw.6OwlC2LdWY_a
+      - __cf_bm=BiDv2wScz2emvARuHDAFNoRYX5cRIv5Sth0bmuaqMOQ-1774971120.2865405-1.0.1.1-a_fjRzhnTuom1zTkjAIW884oVsIENyn.IxnjF0hHNJ.2flP8pyW_n2fGS1UZf70NYyOny8BuOqObun3Vck.WTbAUSmwGxZp_Dy6kasWmgkm1IDCB87gA63ks3SRWuzrA
       host:
       - api.openai.com
     method: POST
@@ -139,19 +139,19 @@ interactions:
         role: assistant
         tool_calls:
         - function:
-            arguments: '{"keywords":"exchange rate currency USD EUR forex rate"}'
+            arguments: '{"keywords":"exchange rate currency USD EUR"}'
             name: search_tools
-          id: call_YVACoIWWfinyvlVPlzfq3Clo
+          id: call_YJT3HXwq06KgTc6ZeGaKtLsZ
           type: function
       - content: '[{"name":"get_exchange_rate","description":"Look up the current exchange rate between two currencies."}]'
         role: tool
-        tool_call_id: call_YVACoIWWfinyvlVPlzfq3Clo
-      model: gpt-5-mini
+        tool_call_id: call_YJT3HXwq06KgTc6ZeGaKtLsZ
+      model: gpt-5.4-mini
       stream: false
       tool_choice: auto
       tools:
       - function:
-          description: There are 2 additional tools not yet visible to you. When you need a capability not provided by your
+          description: There are additional tools not yet visible to you. When you need a capability not provided by your
             current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
             is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
             retry.
@@ -207,13 +207,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '809'
+      - '808'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '774'
+      - '399'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -233,28 +233,28 @@ interactions:
           role: assistant
           tool_calls:
           - function:
-              arguments: '{"from_currency": "USD", "to_currency": "EUR"}'
+              arguments: '{"from_currency":"USD","to_currency":"EUR"}'
               name: get_exchange_rate
-            id: call_O6cV0KcblrakNohCbEZp0FU9
+            id: call_a4Esau7B6fHEOZi2ytRjNaDj
             type: function
-      created: 1773893541
-      id: chatcmpl-DKz25Jo0u9UAWsd9uzTdCqcKyf3Ce
-      model: gpt-5-mini-2025-08-07
+      created: 1774971121
+      id: chatcmpl-DPVMPwCzIsfwwUuIZ0XwDJyOxFgR7
+      model: gpt-5.4-mini-2026-03-17
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 40
+        completion_tokens: 24
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 329
+        prompt_tokens: 325
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 369
+        total_tokens: 349
     status:
       code: 200
       message: OK
@@ -267,11 +267,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2294'
+      - '2280'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=hRLa8p5L_Mjo5kBG7fZdYTXhnNmH4SCEhE5MflbhVTI-1773893539.6454182-1.0.1.1-AE3s8EmRSYjV3iUA5O83HA4rLJsqZIsIxmzbqg7x5F_GiAPP7hMuKpsPckIcCUHiRtJAik9wejUHW3k3gzykT657yvMnEsAucwMvTYMrHNILglfnKAw.6OwlC2LdWY_a
+      - __cf_bm=BiDv2wScz2emvARuHDAFNoRYX5cRIv5Sth0bmuaqMOQ-1774971120.2865405-1.0.1.1-a_fjRzhnTuom1zTkjAIW884oVsIENyn.IxnjF0hHNJ.2flP8pyW_n2fGS1UZf70NYyOny8BuOqObun3Vck.WTbAUSmwGxZp_Dy6kasWmgkm1IDCB87gA63ks3SRWuzrA
       host:
       - api.openai.com
     method: POST
@@ -283,30 +283,30 @@ interactions:
         role: assistant
         tool_calls:
         - function:
-            arguments: '{"keywords":"exchange rate currency USD EUR forex rate"}'
+            arguments: '{"keywords":"exchange rate currency USD EUR"}'
             name: search_tools
-          id: call_YVACoIWWfinyvlVPlzfq3Clo
+          id: call_YJT3HXwq06KgTc6ZeGaKtLsZ
           type: function
       - content: '[{"name":"get_exchange_rate","description":"Look up the current exchange rate between two currencies."}]'
         role: tool
-        tool_call_id: call_YVACoIWWfinyvlVPlzfq3Clo
+        tool_call_id: call_YJT3HXwq06KgTc6ZeGaKtLsZ
       - content: null
         role: assistant
         tool_calls:
         - function:
-            arguments: '{"from_currency": "USD", "to_currency": "EUR"}'
+            arguments: '{"from_currency":"USD","to_currency":"EUR"}'
             name: get_exchange_rate
-          id: call_O6cV0KcblrakNohCbEZp0FU9
+          id: call_a4Esau7B6fHEOZi2ytRjNaDj
           type: function
       - content: 1 USD = 0.92 EUR
         role: tool
-        tool_call_id: call_O6cV0KcblrakNohCbEZp0FU9
-      model: gpt-5-mini
+        tool_call_id: call_a4Esau7B6fHEOZi2ytRjNaDj
+      model: gpt-5.4-mini
       stream: false
       tool_choice: auto
       tools:
       - function:
-          description: There are 2 additional tools not yet visible to you. When you need a capability not provided by your
+          description: There are additional tools not yet visible to you. When you need a capability not provided by your
             current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
             is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
             retry.
@@ -362,13 +362,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '797'
+      - '662'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '2716'
+      - '343'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -383,30 +383,27 @@ interactions:
         index: 0
         message:
           annotations: []
-          content: |-
-            1 USD = 0.92 EUR.
-
-            If you want, I can convert a specific amount for you. Note that market rates fluctuate and the rate you get from a bank or card may differ due to fees and spreads.
+          content: The current exchange rate is **1 USD = 0.92 EUR**.
           refusal: null
           role: assistant
-      created: 1773893542
-      id: chatcmpl-DKz26jzLN0uGwxWRTGrSFXIk3oc77
-      model: gpt-5-mini-2025-08-07
+      created: 1774971122
+      id: chatcmpl-DPVMQqh5CvhpbLMrWe48RcQ4SF2hR
+      model: gpt-5.4-mini-2026-03-17
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 247
+        completion_tokens: 19
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 192
+          reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 373
+        prompt_tokens: 369
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 620
+        total_tokens: 388
     status:
       code: 200
       message: OK
@@ -423,7 +420,7 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=hRLa8p5L_Mjo5kBG7fZdYTXhnNmH4SCEhE5MflbhVTI-1773893539.6454182-1.0.1.1-AE3s8EmRSYjV3iUA5O83HA4rLJsqZIsIxmzbqg7x5F_GiAPP7hMuKpsPckIcCUHiRtJAik9wejUHW3k3gzykT657yvMnEsAucwMvTYMrHNILglfnKAw.6OwlC2LdWY_a
+      - __cf_bm=BiDv2wScz2emvARuHDAFNoRYX5cRIv5Sth0bmuaqMOQ-1774971120.2865405-1.0.1.1-a_fjRzhnTuom1zTkjAIW884oVsIENyn.IxnjF0hHNJ.2flP8pyW_n2fGS1UZf70NYyOny8BuOqObun3Vck.WTbAUSmwGxZp_Dy6kasWmgkm1IDCB87gA63ks3SRWuzrA
       host:
       - api.openai.com
     method: POST
@@ -431,12 +428,12 @@ interactions:
       messages:
       - content: What is the current stock price for AAPL?
         role: user
-      model: gpt-5-mini
+      model: gpt-5.4-mini
       stream: false
       tool_choice: auto
       tools:
       - function:
-          description: There are 3 additional tools not yet visible to you. When you need a capability not provided by your
+          description: There are additional tools not yet visible to you. When you need a capability not provided by your
             current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
             is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
             retry.
@@ -476,13 +473,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '806'
+      - '808'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '1175'
+      - '553'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -502,28 +499,28 @@ interactions:
           role: assistant
           tool_calls:
           - function:
-              arguments: '{"keywords":"stock AAPL price finance market quote"}'
+              arguments: '{"keywords":"stock price market quote finance AAPL"}'
               name: search_tools
-            id: call_ZLYUJKbTuNNaQ3DmB9ARqOUb
+            id: call_3THg2zExDs3Be7m3ehieCnAR
             type: function
-      created: 1773893545
-      id: chatcmpl-DKz29dpMm0JyhK97q4IfvHmmpWC5z
-      model: gpt-5-mini-2025-08-07
+      created: 1774971123
+      id: chatcmpl-DPVMRMSWVBv8a9GjZdg32ZoYsAXf0
+      model: gpt-5.4-mini-2026-03-17
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 29
+        completion_tokens: 23
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 242
+        prompt_tokens: 240
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 271
+        total_tokens: 263
     status:
       code: 200
       message: OK
@@ -540,7 +537,7 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=hRLa8p5L_Mjo5kBG7fZdYTXhnNmH4SCEhE5MflbhVTI-1773893539.6454182-1.0.1.1-AE3s8EmRSYjV3iUA5O83HA4rLJsqZIsIxmzbqg7x5F_GiAPP7hMuKpsPckIcCUHiRtJAik9wejUHW3k3gzykT657yvMnEsAucwMvTYMrHNILglfnKAw.6OwlC2LdWY_a
+      - __cf_bm=BiDv2wScz2emvARuHDAFNoRYX5cRIv5Sth0bmuaqMOQ-1774971120.2865405-1.0.1.1-a_fjRzhnTuom1zTkjAIW884oVsIENyn.IxnjF0hHNJ.2flP8pyW_n2fGS1UZf70NYyOny8BuOqObun3Vck.WTbAUSmwGxZp_Dy6kasWmgkm1IDCB87gA63ks3SRWuzrA
       host:
       - api.openai.com
     method: POST
@@ -552,19 +549,19 @@ interactions:
         role: assistant
         tool_calls:
         - function:
-            arguments: '{"keywords":"stock AAPL price finance market quote"}'
+            arguments: '{"keywords":"stock price market quote finance AAPL"}'
             name: search_tools
-          id: call_ZLYUJKbTuNNaQ3DmB9ARqOUb
+          id: call_3THg2zExDs3Be7m3ehieCnAR
           type: function
       - content: '[{"name":"stock_lookup","description":"Look up stock price by ticker symbol."}]'
         role: tool
-        tool_call_id: call_ZLYUJKbTuNNaQ3DmB9ARqOUb
-      model: gpt-5-mini
+        tool_call_id: call_3THg2zExDs3Be7m3ehieCnAR
+      model: gpt-5.4-mini
       stream: false
       tool_choice: auto
       tools:
       - function:
-          description: There are 2 additional tools not yet visible to you. When you need a capability not provided by your
+          description: There are additional tools not yet visible to you. When you need a capability not provided by your
             current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
             is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
             retry.
@@ -617,13 +614,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '771'
+      - '773'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '616'
+      - '445'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -645,11 +642,11 @@ interactions:
           - function:
               arguments: '{"symbol":"AAPL"}'
               name: stock_lookup
-            id: call_XGtgVldobpCB4g3ahV9lP3rY
+            id: call_gsAeW7tpEd2wz8s6PumwpdGO
             type: function
-      created: 1773893547
-      id: chatcmpl-DKz2BvhpqhY2wlHaYNPeV301L7aXv
-      model: gpt-5-mini-2025-08-07
+      created: 1774971124
+      id: chatcmpl-DPVMSzoZlR04jLweILjCXruSjE476
+      model: gpt-5.4-mini-2026-03-17
       object: chat.completion
       service_tier: default
       system_fingerprint: null
@@ -660,11 +657,11 @@ interactions:
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 316
+        prompt_tokens: 314
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 334
+        total_tokens: 332
     status:
       code: 200
       message: OK
@@ -681,7 +678,7 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=hRLa8p5L_Mjo5kBG7fZdYTXhnNmH4SCEhE5MflbhVTI-1773893539.6454182-1.0.1.1-AE3s8EmRSYjV3iUA5O83HA4rLJsqZIsIxmzbqg7x5F_GiAPP7hMuKpsPckIcCUHiRtJAik9wejUHW3k3gzykT657yvMnEsAucwMvTYMrHNILglfnKAw.6OwlC2LdWY_a
+      - __cf_bm=BiDv2wScz2emvARuHDAFNoRYX5cRIv5Sth0bmuaqMOQ-1774971120.2865405-1.0.1.1-a_fjRzhnTuom1zTkjAIW884oVsIENyn.IxnjF0hHNJ.2flP8pyW_n2fGS1UZf70NYyOny8BuOqObun3Vck.WTbAUSmwGxZp_Dy6kasWmgkm1IDCB87gA63ks3SRWuzrA
       host:
       - api.openai.com
     method: POST
@@ -693,30 +690,30 @@ interactions:
         role: assistant
         tool_calls:
         - function:
-            arguments: '{"keywords":"stock AAPL price finance market quote"}'
+            arguments: '{"keywords":"stock price market quote finance AAPL"}'
             name: search_tools
-          id: call_ZLYUJKbTuNNaQ3DmB9ARqOUb
+          id: call_3THg2zExDs3Be7m3ehieCnAR
           type: function
       - content: '[{"name":"stock_lookup","description":"Look up stock price by ticker symbol."}]'
         role: tool
-        tool_call_id: call_ZLYUJKbTuNNaQ3DmB9ARqOUb
+        tool_call_id: call_3THg2zExDs3Be7m3ehieCnAR
       - content: null
         role: assistant
         tool_calls:
         - function:
             arguments: '{"symbol":"AAPL"}'
             name: stock_lookup
-          id: call_XGtgVldobpCB4g3ahV9lP3rY
+          id: call_gsAeW7tpEd2wz8s6PumwpdGO
           type: function
       - content: 'Stock AAPL: $150.00'
         role: tool
-        tool_call_id: call_XGtgVldobpCB4g3ahV9lP3rY
-      model: gpt-5-mini
+        tool_call_id: call_gsAeW7tpEd2wz8s6PumwpdGO
+      model: gpt-5.4-mini
       stream: false
       tool_choice: auto
       tools:
       - function:
-          description: There are 2 additional tools not yet visible to you. When you need a capability not provided by your
+          description: There are additional tools not yet visible to you. When you need a capability not provided by your
             current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
             is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
             retry.
@@ -769,13 +766,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '814'
+      - '642'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '3431'
+      - '469'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -790,28 +787,27 @@ interactions:
         index: 0
         message:
           annotations: []
-          content: "The current price for AAPL is $150.00 USD. \n\nNote: this quote may be delayed depending on the data source.
-            Would you like a real-time quote, intraday chart, recent change (day %), or historical data?"
+          content: AAPL is currently **$150.00**.
           refusal: null
           role: assistant
-      created: 1773893547
-      id: chatcmpl-DKz2B4xFJ4XGGb30Utkj4wr1BLWtI
-      model: gpt-5-mini-2025-08-07
+      created: 1774971125
+      id: chatcmpl-DPVMTOu4J5uPytgy8YHBqASKRgUM2
+      model: gpt-5.4-mini-2026-03-17
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 250
+        completion_tokens: 14
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 192
+          reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 353
+        prompt_tokens: 351
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 603
+        total_tokens: 365
     status:
       code: 200
       message: OK
@@ -828,7 +824,7 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=hRLa8p5L_Mjo5kBG7fZdYTXhnNmH4SCEhE5MflbhVTI-1773893539.6454182-1.0.1.1-AE3s8EmRSYjV3iUA5O83HA4rLJsqZIsIxmzbqg7x5F_GiAPP7hMuKpsPckIcCUHiRtJAik9wejUHW3k3gzykT657yvMnEsAucwMvTYMrHNILglfnKAw.6OwlC2LdWY_a
+      - __cf_bm=BiDv2wScz2emvARuHDAFNoRYX5cRIv5Sth0bmuaqMOQ-1774971120.2865405-1.0.1.1-a_fjRzhnTuom1zTkjAIW884oVsIENyn.IxnjF0hHNJ.2flP8pyW_n2fGS1UZf70NYyOny8BuOqObun3Vck.WTbAUSmwGxZp_Dy6kasWmgkm1IDCB87gA63ks3SRWuzrA
       host:
       - api.openai.com
     method: POST
@@ -836,12 +832,12 @@ interactions:
       messages:
       - content: Translate 'hello, how are you?' to French.
         role: user
-      model: gpt-5-mini
+      model: gpt-5.4-mini
       stream: false
       tool_choice: auto
       tools:
       - function:
-          description: There are 3 additional tools not yet visible to you. When you need a capability not provided by your
+          description: There are additional tools not yet visible to you. When you need a capability not provided by your
             current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
             is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
             retry.
@@ -881,13 +877,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '700'
+      - '697'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '1403'
+      - '483'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -902,30 +898,27 @@ interactions:
         index: 0
         message:
           annotations: []
-          content: |-
-            "Bonjour, comment ça va ?" (informal)
-
-            Formal: "Bonjour, comment allez-vous ?"
+          content: '"Hello, how are you?" in French is: **« Bonjour, comment ça va ? »**'
           refusal: null
           role: assistant
-      created: 1773893551
-      id: chatcmpl-DKz2FOsDNakaYGTsLlhvysh5XUw0m
-      model: gpt-5-mini-2025-08-07
+      created: 1774971126
+      id: chatcmpl-DPVMUAleuig8g2Heo5aFYx7ydGSoI
+      model: gpt-5.4-mini-2026-03-17
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 93
+        completion_tokens: 24
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 64
+          reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 243
+        prompt_tokens: 241
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 336
+        total_tokens: 265
     status:
       code: 200
       message: OK
@@ -942,7 +935,7 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=hRLa8p5L_Mjo5kBG7fZdYTXhnNmH4SCEhE5MflbhVTI-1773893539.6454182-1.0.1.1-AE3s8EmRSYjV3iUA5O83HA4rLJsqZIsIxmzbqg7x5F_GiAPP7hMuKpsPckIcCUHiRtJAik9wejUHW3k3gzykT657yvMnEsAucwMvTYMrHNILglfnKAw.6OwlC2LdWY_a
+      - __cf_bm=BiDv2wScz2emvARuHDAFNoRYX5cRIv5Sth0bmuaqMOQ-1774971120.2865405-1.0.1.1-a_fjRzhnTuom1zTkjAIW884oVsIENyn.IxnjF0hHNJ.2flP8pyW_n2fGS1UZf70NYyOny8BuOqObun3Vck.WTbAUSmwGxZp_Dy6kasWmgkm1IDCB87gA63ks3SRWuzrA
       host:
       - api.openai.com
     method: POST
@@ -950,12 +943,12 @@ interactions:
       messages:
       - content: Book a flight from New York to London for next week.
         role: user
-      model: gpt-5-mini
+      model: gpt-5.4-mini
       stream: false
       tool_choice: auto
       tools:
       - function:
-          description: There are 3 additional tools not yet visible to you. When you need a capability not provided by your
+          description: There are additional tools not yet visible to you. When you need a capability not provided by your
             current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
             is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
             retry.
@@ -995,13 +988,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1955'
+      - '1016'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '11387'
+      - '1098'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -1017,40 +1010,36 @@ interactions:
         message:
           annotations: []
           content: |-
-            I can help -- do you want me to search for options and prepare choices, or actually make the booking for you? (I can't process payments or handle personal/credit-card data, but I can find the best flights and give step‐by‐step booking links or a prepared booking summary you can use.)
+            I can help plan it, but I can't actually book flights from here.
 
-            A few quick questions so I can find the right flights:
-            1. Dates -- what day do you want to depart next week, and do you want a return? If return, which date? Are your dates flexible (+/- days)?
-            2. Passengers -- how many people, adults/children/infants?
-            3. One‐way or round trip?
-            4. Preferred departure airport in New York (JFK, EWR, LGA, or "any") and arrival airport in London (LHR, LGW, LCY, or "any")?
-            5. Cabin class -- Economy, Premium Economy, Business, First?
-            6. Any preferred airlines or alliances? Any you want to avoid?
-            7. Baggage needs (carry‐on only, 1 checked bag each, etc.) or special assistance?
-            8. Budget or priority (cheapest, fastest/direct flights only, best balance)?
-            9. Do you need help with passports/visa/entry requirements or travel insurance?
+            If you want, I can help you narrow it down by:
+            - departure airport in New York: JFK, LGA, or EWR
+            - arrival airport in London: LHR, LGW, LTN, STN, or LCY
+            - exact dates next week
+            - one-way or round-trip
+            - preferred budget, airline, and cabin class
 
-            If you're unsure, a common default is round‐trip, JFK→LHR, Economy, one adult, flexible dates by ±1-2 days. Tell me which options you want and I'll search and return a few flight options with times, duration, stops, and booking links.
+            If you send those details, I can help you build the best search and booking plan.
           refusal: null
           role: assistant
-      created: 1773893553
-      id: chatcmpl-DKz2H7HptEvoRoI8FHIiVOlzlwuOQ
-      model: gpt-5-mini-2025-08-07
+      created: 1774971126
+      id: chatcmpl-DPVMUf2MZpzVarcq3V5Saer4WxMYf
+      model: gpt-5.4-mini-2026-03-17
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 844
+        completion_tokens: 111
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 512
+          reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 244
+        prompt_tokens: 242
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 1088
+        total_tokens: 353
     status:
       code: 200
       message: OK

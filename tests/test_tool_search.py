@@ -70,7 +70,6 @@ class EvalOutput(BaseModel):
 
 class EvalMetadata(BaseModel):
     expected_tools: list[str]
-    scenario: str
 
 
 # --- Evaluators ---
@@ -200,28 +199,28 @@ if evals_available():
                 Case(
                     name='exchange_rate',
                     inputs='What is the current exchange rate from USD to EUR?',
-                    metadata=EvalMetadata(expected_tools=['get_exchange_rate'], scenario='exchange_rate'),
+                    metadata=EvalMetadata(expected_tools=['get_exchange_rate']),
                 ),
                 Case(
                     name='stock_price',
                     inputs='What is the current stock price for AAPL?',
-                    metadata=EvalMetadata(expected_tools=['stock_lookup'], scenario='stock_price'),
+                    metadata=EvalMetadata(expected_tools=['stock_lookup']),
                 ),
                 Case(
                     name='translation',
                     inputs="Translate 'hello, how are you?' to French.",
-                    metadata=EvalMetadata(expected_tools=[], scenario='translation'),
+                    metadata=EvalMetadata(expected_tools=[]),
                 ),
                 Case(
                     name='no_matching_tool',
                     inputs='Book a flight from New York to London for next week.',
-                    metadata=EvalMetadata(expected_tools=[], scenario='no_matching_tool'),
+                    metadata=EvalMetadata(expected_tools=[]),
                 ),
             ],
             evaluators=[
                 UsedSearchTools(),
                 FoundExpectedTools(),
-                ReasonableToolUsage(max_calls=10),
+                ReasonableToolUsage(max_calls=5),
                 KeywordCount(),
             ],
         )
@@ -255,15 +254,15 @@ class ModelCase:
 
 _CASES = [
     ModelCase(
-        model_name='openai:gpt-5-mini',
+        model_name='openai:gpt-5.4-mini',
         scenario_summary=snapshot(
             {
                 'exchange_rate': {
-                    'keywords': 'exchange rate currency USD EUR forex rate',
+                    'keywords': 'exchange rate currency USD EUR',
                     'tool_calls': ['search_tools', 'get_exchange_rate'],
                 },
                 'stock_price': {
-                    'keywords': 'stock AAPL price finance market quote',
+                    'keywords': 'stock price market quote finance AAPL',
                     'tool_calls': ['search_tools', 'stock_lookup'],
                 },
                 'translation': {'keywords': None, 'tool_calls': []},
@@ -277,12 +276,15 @@ _CASES = [
         scenario_summary=snapshot(
             {
                 'exchange_rate': {
-                    'keywords': 'exchange rate currency conversion USD EUR',
+                    'keywords': 'exchange rate currency USD EUR',
                     'tool_calls': ['search_tools', 'get_exchange_rate'],
                 },
                 'stock_price': {'keywords': 'stock price quote ticker', 'tool_calls': ['search_tools', 'stock_lookup']},
                 'translation': {'keywords': 'translate translation language French', 'tool_calls': ['search_tools']},
-                'no_matching_tool': {'keywords': 'flight booking travel reservation', 'tool_calls': ['search_tools']},
+                'no_matching_tool': {
+                    'keywords': 'flight booking reservation travel airline',
+                    'tool_calls': ['search_tools'],
+                },
             }
         ),
     ),
@@ -292,15 +294,15 @@ _CASES = [
         scenario_summary=snapshot(
             {
                 'exchange_rate': {
-                    'keywords': 'exchange rate USD to EUR',
+                    'keywords': 'USD to EUR exchange rate current',
                     'tool_calls': ['search_tools', 'get_exchange_rate'],
                 },
                 'stock_price': {
-                    'keywords': 'stock price financial data AAPL',
+                    'keywords': 'stock price finance market',
                     'tool_calls': ['search_tools', 'stock_lookup'],
                 },
                 'translation': {'keywords': None, 'tool_calls': []},
-                'no_matching_tool': {'keywords': 'flight booking travel', 'tool_calls': ['search_tools']},
+                'no_matching_tool': {'keywords': 'flight booking search reservation', 'tool_calls': ['search_tools']},
             }
         ),
     ),

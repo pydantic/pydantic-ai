@@ -388,27 +388,14 @@ _(This example is complete, it can be run "as is")_
 
 [`DeferredLoadingToolset`][pydantic_ai.toolsets.DeferredLoadingToolset] wraps a toolset and marks its tools for deferred loading, hiding them from the model until discovered via [tool search](tools-advanced.md#tool-search). This is useful for large toolsets (e.g. MCP servers with many endpoints) where loading all tool definitions into the model's context would be wasteful.
 
-To easily chain different modifications, you can also call [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] on any toolset instead of directly constructing a `DeferredLoadingToolset`. Pass a list of tool names to hide only specific tools, or `None` (the default) to hide all.
+[`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] also accepts `defer_loading=True` in its constructor to mark all tools for deferred loading. For other toolsets, call [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] — pass a list of tool names to hide only specific tools, or `None` (the default) to hide all.
 
-```python {title="deferred_loading_toolset.py"}
-from pydantic_ai import Agent, FunctionToolset
+```python {title="deferred_loading_toolset.py" lint="skip" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerHTTP
 
-toolset: FunctionToolset[None] = FunctionToolset()
-
-
-@toolset.tool_plain
-def get_weather(city: str) -> str:
-    """Get current weather for a city."""
-    return f'Sunny in {city}'
-
-
-@toolset.tool_plain
-def stock_price(ticker: str) -> str:
-    """Get current stock price for a ticker symbol."""
-    return f'{ticker}: $150.00'
-
-
-agent = Agent('openai:gpt-5.2', toolsets=[toolset.defer_loading(['stock_price'])])
+mcp = MCPServerHTTP('http://localhost:8000/mcp')
+agent = Agent('openai:gpt-5.2', toolsets=[mcp.defer_loading()])
 ```
 
 ### Changing Tool Execution
