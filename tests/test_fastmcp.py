@@ -246,11 +246,8 @@ class TestFastMCPToolsetInstructions:
         instruction_client = Client(transport=instruction_server)
         toolset = FastMCPToolset(instruction_client, include_instructions=True)
 
-        # Before entering, no initialization has happened.
-        with pytest.raises(
-            AttributeError, match='The `FastMCPToolset.instructions` is only available after initialization.'
-        ):
-            await toolset.get_instructions(run_context)
+        # Before entering, no initialization has happened — returns None gracefully.
+        assert await toolset.get_instructions(run_context) is None
 
         async with toolset:
             assert toolset.instructions == 'Be a helpful assistant.'

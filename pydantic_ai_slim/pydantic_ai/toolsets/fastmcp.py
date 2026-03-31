@@ -164,9 +164,13 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         Returns:
             The server's instructions if `include_instructions` is enabled, otherwise `None`.
         """
-        if self.include_instructions:
+        if not self.include_instructions:
+            return None
+        try:
             return self.instructions
-        return None
+        except AttributeError:
+            # Server not yet initialized — return None rather than propagating.
+            return None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         async with self:
