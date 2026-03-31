@@ -3257,8 +3257,16 @@ class TestWebFetchCapability:
             'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
         ):
             result = agent.run_sync('fetch something')
-        # Should have used the markdownify-based fallback tool
-        assert 'Tool result' in result.output
+        # Verify the web_fetch fallback tool was actually called
+        tool_calls = [
+            part
+            for msg in result.all_messages()
+            if isinstance(msg, ModelResponse)
+            for part in msg.parts
+            if isinstance(part, ToolCallPart)
+        ]
+        assert len(tool_calls) == 1
+        assert tool_calls[0].tool_name == 'web_fetch'
 
     def test_webfetch_local_false_with_nonsupporting_model(self, allow_model_requests: None):
         """WebFetch(local=False) with non-supporting model → UserError."""
@@ -3281,12 +3289,52 @@ class TestWebFetchCapability:
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
 
-    def test_webfetch_domains_forwarded_to_local(self):
-        """WebFetch(allowed_domains=..., blocked_domains=...) forwards to local tool."""
-        cap = WebFetch(allowed_domains=['example.com'], blocked_domains=['evil.com'])
-        # Domains no longer require builtin — they are handled locally
-        assert not cap._requires_builtin()  # pyright: ignore[reportPrivateUsage]
-        assert cap.get_toolset() is not None
+    def test_webfetch_domains_forwarded_to_local(self, allow_model_requests: None):
+        """WebFetch(allowed_domains=...) with non-supporting model → falls back to local with domain filtering."""
+        from unittest.mock import AsyncMock, patch
+
+        import httpx
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return ModelResponse(parts=[TextPart(content=f'Tool result: {part.content}')])
+            if info.function_tools:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name=info.function_tools[0].name,
+                            args='{"url": "https://example.com"}',
+                            tool_call_id='c1',
+                        )
+                    ]
+                )
+            return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
+
+        mock_response = httpx.Response(
+            200,
+            text='<html><body><p>Hello</p></body></html>',
+            headers={'content-type': 'text/html'},
+            request=httpx.Request('GET', 'https://example.com'),
+        )
+
+        model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        agent = Agent(model, capabilities=[WebFetch(allowed_domains=['example.com'])])
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
+        ):
+            result = agent.run_sync('fetch example.com')
+        # Verify the web_fetch fallback tool was actually called with domain filtering
+        tool_calls = [
+            part
+            for msg in result.all_messages()
+            if isinstance(msg, ModelResponse)
+            for part in msg.parts
+            if isinstance(part, ToolCallPart)
+        ]
+        assert len(tool_calls) == 1
+        assert tool_calls[0].tool_name == 'web_fetch'
 
     def test_webfetch_both_false_raises(self):
         """WebFetch(builtin=False, local=False) → UserError at construction."""
