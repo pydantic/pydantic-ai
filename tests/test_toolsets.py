@@ -1768,8 +1768,8 @@ async def test_custom_toolset_returning_plain_str_instructions():
 
     class PlainStrToolset(AbstractToolset[None]):
         @property
-        def id(self) -> str:
-            return 'plain-str'
+        def id(self) -> None:
+            return None
 
         async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
             return {}
