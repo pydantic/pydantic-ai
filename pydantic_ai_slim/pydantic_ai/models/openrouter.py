@@ -421,10 +421,10 @@ class _OpenRouterChoice(chat_completion.Choice):
     native_finish_reason: str | None = None
     """The provided finish reason by the downstream provider from OpenRouter."""
 
-    finish_reason: Literal['stop', 'length', 'tool_calls', 'content_filter', 'error'] | None = None  # type: ignore[reportIncompatibleVariableOverride]
+    finish_reason: Literal['stop', 'length', 'tool_calls', 'content_filter', 'error']  # type: ignore[reportIncompatibleVariableOverride]
     """OpenRouter specific finish reasons.
 
-    Notably, removes 'function_call' and adds 'error'  finish reasons.
+    Notably, removes 'function_call' and adds 'error' finish reasons.
     """
 
     message: _OpenRouterCompletionMessage  # type: ignore[reportIncompatibleVariableOverride]
@@ -544,14 +544,13 @@ def _normalize_openrouter_response(
 
 
 def _openrouter_settings_to_openai_settings(
-    model_settings: OpenRouterModelSettings, model_request_parameters: ModelRequestParameters | None = None
+    model_settings: OpenRouterModelSettings, model_request_parameters: ModelRequestParameters
 ) -> OpenAIChatModelSettings:
     """Transforms a 'OpenRouterModelSettings' object into an 'OpenAIChatModelSettings' object.
 
     Args:
         model_settings: The 'OpenRouterModelSettings' object to transform.
-        model_request_parameters: Optional request parameters used to inject builtin tool settings
-            (e.g. web search plugins) into the request body.
+        model_request_parameters: The 'ModelRequestParameters' object to use for the transformation.
 
     Returns:
         An 'OpenAIChatModelSettings' object with equivalent settings.
@@ -571,11 +570,10 @@ def _openrouter_settings_to_openai_settings(
     if usage := model_settings.pop('openrouter_usage', None):
         extra_body['usage'] = usage
 
-    if model_request_parameters is not None:
-        for builtin_tool in model_request_parameters.builtin_tools:
-            if isinstance(builtin_tool, WebSearchTool):
-                extra_body.setdefault('plugins', []).append({'id': 'web'})
-                extra_body['web_search_options'] = {'search_context_size': builtin_tool.search_context_size}
+    for builtin_tool in model_request_parameters.builtin_tools:
+        if isinstance(builtin_tool, WebSearchTool):
+            extra_body.setdefault('plugins', []).append({'id': 'web'})
+            extra_body['web_search_options'] = {'search_context_size': builtin_tool.search_context_size}
 
     model_settings['extra_body'] = extra_body
 
@@ -633,20 +631,20 @@ class OpenRouterModel(OpenAIChatModel):
     def _validate_completion(self, response: chat.ChatCompletion) -> _OpenRouterChatCompletion:
         response_dict = response.model_dump()
 
-        # Surface structured errors before normalization so we get a clean ModelHTTPError.
+        # Surface structured errors before normalization so we get a clean ModelHTTPError
+        # instead of a confusing ValidationError when choices is null.
         if response_dict.get('choices') is None and (error_data := response_dict.get('error')):
             try:
                 error = _OpenRouterError.model_validate(error_data)
+            except (TypeError, ValueError, ValidationError):
+                # Malformed error_data — fall through and let model_validate produce a clearer error.
+                pass
+            else:
                 raise ModelHTTPError(
                     status_code=error.code,
                     model_name=response_dict.get('model') or self.model_name,
                     body=error.message,
                 )
-            except ModelHTTPError:
-                raise
-            except (TypeError, ValueError, ValidationError):
-                # Malformed error_data — fall through and let model_validate produce a clearer error.
-                pass
 
         response_dict = _normalize_openrouter_response(response_dict, self.model_name, 'chat.completion')
         validated = _OpenRouterChatCompletion.model_validate(response_dict)
