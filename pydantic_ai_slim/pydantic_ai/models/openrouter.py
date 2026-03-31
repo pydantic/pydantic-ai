@@ -513,8 +513,7 @@ def _map_openrouter_provider_details(
 ) -> dict[str, Any]:
     provider_details: dict[str, Any] = {}
 
-    if response.provider is not None:
-        provider_details['downstream_provider'] = response.provider
+    provider_details['downstream_provider'] = response.provider
     if native_finish_reason := response.choices[0].native_finish_reason:
         provider_details['finish_reason'] = native_finish_reason
 
