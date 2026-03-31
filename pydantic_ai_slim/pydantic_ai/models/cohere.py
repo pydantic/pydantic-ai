@@ -268,8 +268,9 @@ class CohereModel(Model):
             else:
                 assert_never(message)
         if instructions := self._get_instructions(messages, model_request_parameters):
-            system_prompt_count = self._count_leading_system_messages(
-                cohere_messages, lambda mapped_message: isinstance(mapped_message, SystemChatMessageV2)
+            system_prompt_count = next(
+                (i for i, m in enumerate(cohere_messages) if not isinstance(m, SystemChatMessageV2)),
+                len(cohere_messages),
             )
             cohere_messages.insert(system_prompt_count, SystemChatMessageV2(role='system', content=instructions))
         return cohere_messages

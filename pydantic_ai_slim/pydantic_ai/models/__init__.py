@@ -1000,16 +1000,6 @@ class Model(ABC):
 
         return instructions
 
-    @staticmethod
-    def _count_leading_system_messages(messages: Sequence[Any], is_system_message: Callable[[Any], bool]) -> int:
-        """Count only the system messages at the start of a mapped message history."""
-        system_prompt_count = 0
-        for message in messages:
-            if not is_system_message(message):
-                break
-            system_prompt_count += 1
-        return system_prompt_count
-
 
 @dataclass
 class StreamedResponse(ABC):

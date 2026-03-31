@@ -1,9 +1,6 @@
 import os
 import warnings
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
 from importlib import import_module
-from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -386,48 +383,3 @@ def test_custom_provider_instance_method_model_profile():
     # Instance call should still work
     profile = provider.model_profile('some-model')
     assert isinstance(profile, ModelProfile)
-
-
-def test_count_leading_system_messages_stops_before_mid_history_system_message():
-    class ModelForTest(Model):
-        @staticmethod
-        def count_leading_system_messages(messages: Sequence[Any], is_system_message: Callable[[Any], bool]) -> int:
-            return ModelForTest._count_leading_system_messages(messages, is_system_message)
-
-    messages: Sequence[Any] = [
-        {'role': 'system'},
-        {'role': 'system'},
-        {'role': 'assistant'},
-        {'role': 'system'},
-    ]
-
-    def is_system_message(message: Any) -> bool:
-        return cast(dict[str, str], message).get('role') == 'system'
-
-    count = ModelForTest.count_leading_system_messages(messages, is_system_message)
-
-    assert count == 2
-
-
-def test_count_leading_system_messages_supports_object_messages():
-    @dataclass
-    class MessageObject:
-        role: str
-
-    class ModelForTest(Model):
-        @staticmethod
-        def count_leading_system_messages(messages: Sequence[Any], is_system_message: Callable[[Any], bool]) -> int:
-            return ModelForTest._count_leading_system_messages(messages, is_system_message)
-
-    messages: Sequence[Any] = [
-        MessageObject(role='system'),
-        MessageObject(role='user'),
-        MessageObject(role='system'),
-    ]
-
-    def is_system_message(message: Any) -> bool:
-        return cast(MessageObject, message).role == 'system'
-
-    count = ModelForTest.count_leading_system_messages(messages, is_system_message)
-
-    assert count == 1
