@@ -83,7 +83,7 @@ class ImageGenerationLocalTool:
             raise ModelRetry('The fallback model callable returned None; cannot generate an image.')
 
         if isinstance(model, str):
-            _check_image_only_model(model)
+            _check_image_only_model(model)  # also checked at factory time for static strings
 
         agent = Agent(model, output_type=BinaryImage, builtin_tools=[self.builtin])
         try:
@@ -104,6 +104,8 @@ def image_generation_tool(
             or a callable taking ``RunContext`` that returns a model.
         builtin: The image generation tool configuration to pass to the subagent.
     """
+    if isinstance(model, str):
+        _check_image_only_model(model)
     return Tool[Any](
         ImageGenerationLocalTool(model=model, builtin=builtin).__call__,
         name='generate_image',

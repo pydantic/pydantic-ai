@@ -3398,6 +3398,47 @@ class TestImageGenerationCapability:
         agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=model_factory)])
         result = await agent.run('Generate a test image')
         assert result.output == 'done'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='Generate a test image', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='generate_image',
+                            args='{"prompt": "test"}',
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=54, output_tokens=5),
+                    model_name='function:outer_model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='generate_image',
+                            content=BinaryImage(data=b'\x89PNG\r\n\x1a\n', media_type='image/png'),
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='done')],
+                    usage=RequestUsage(input_tokens=54, output_tokens=6),
+                    model_name='function:outer_model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_image_generation_callable_returns_none(self, allow_model_requests: None):
         """Callable fallback_model returning None results in a retry prompt to the outer model."""
@@ -3419,12 +3460,46 @@ class TestImageGenerationCapability:
         agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=model_factory)])
         result = await agent.run('Generate a test image')
         assert result.output == 'gave up'
-        # Verify a retry prompt was sent
-        assert any(
-            isinstance(p, RetryPromptPart) and 'fallback model callable returned None' in str(p.content)
-            for m in result.all_messages()
-            if isinstance(m, ModelRequest)
-            for p in m.parts
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='Generate a test image', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='generate_image',
+                            args='{"prompt": "test"}',
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=54, output_tokens=5),
+                    model_name='function:outer_model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='The fallback model callable returned None; cannot generate an image.',
+                            tool_name='generate_image',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='gave up')],
+                    usage=RequestUsage(input_tokens=71, output_tokens=7),
+                    model_name='function:outer_model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
         )
 
     async def test_image_generation_subagent_error_becomes_model_retry(self, allow_model_requests: None):
@@ -3449,27 +3524,52 @@ class TestImageGenerationCapability:
         agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=inner_model)])
         result = await agent.run('Generate a test image')
         assert result.output == 'gave up'
-        # Verify a retry prompt was sent from the caught UnexpectedModelBehavior
-        assert any(
-            isinstance(p, RetryPromptPart)
-            for m in result.all_messages()
-            if isinstance(m, ModelRequest)
-            for p in m.parts
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='Generate a test image', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='generate_image',
+                            args='{"prompt": "test"}',
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=54, output_tokens=5),
+                    model_name='function:outer_model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Exceeded maximum retries (1) for output validation',
+                            tool_name='generate_image',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='gave up')],
+                    usage=RequestUsage(input_tokens=68, output_tokens=7),
+                    model_name='function:outer_model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
         )
 
-    async def test_image_generation_rejects_image_only_model(self, allow_model_requests: None):
-        """Using a dedicated image model like gpt-image-1 raises a clear error."""
-
-        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
-
-        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
-        agent = Agent(
-            outer_model,
-            capabilities=[ImageGeneration(fallback_model='openai-responses:gpt-image-1')],
-        )
+    def test_image_generation_rejects_image_only_model(self):
+        """Using a dedicated image model like gpt-image-1 raises a clear error at construction."""
         with pytest.raises(UserError, match="'gpt-image-1' is a dedicated image generation model"):
-            await agent.run('Generate a test image')
+            ImageGeneration(fallback_model='openai-responses:gpt-image-1')
 
     @pytest.mark.vcr()
     @pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
