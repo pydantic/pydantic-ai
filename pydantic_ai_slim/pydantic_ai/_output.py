@@ -788,7 +788,11 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             processor = self._processors[kind]
         except KeyError as e:  # pragma: no cover
             if wrap_validation_errors:
-                m = _messages.RetryPromptPart(content=f'Invalid kind: {kind}', tool_call_id=None)
+                m = _messages.RetryPromptPart(
+                    content=f'Invalid kind: {kind}',
+                    tool_name=run_context.tool_name,
+                    tool_call_id=run_context.tool_call_id,
+                )
                 raise ToolRetryError(m) from e
             else:
                 raise
