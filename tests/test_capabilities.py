@@ -3495,7 +3495,7 @@ class TestImageGenerationCapability:
             tool = info.function_tools[0]
             return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args='{"prompt": "A cute baby sea otter"}')])
 
-        inner_model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+        inner_model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
         outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
         agent = Agent(
             outer_model,
@@ -3503,6 +3503,71 @@ class TestImageGenerationCapability:
                 ImageGeneration(fallback_model=inner_model),
             ],
         )
+        result = await agent.run('Generate an image of a cute baby sea otter')
+        assert result.output == 'Here is the generated image.'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(content='Generate an image of a cute baby sea otter', timestamp=IsDatetime())
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='generate_image',
+                            args='{"prompt": "A cute baby sea otter"}',
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=59, output_tokens=9),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='generate_image',
+                            content=IsInstance(BinaryImage),
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='Here is the generated image.')],
+                    usage=RequestUsage(input_tokens=59, output_tokens=15),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    @pytest.mark.vcr()
+    @pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
+    @pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
+    async def test_image_generation_local_fallback_google(self, allow_model_requests: None, gemini_api_key: str):
+        """ImageGeneration fallback with Google image model."""
+        from pydantic_ai.messages import BinaryImage
+        from pydantic_ai.models.google import GoogleModel
+        from pydantic_ai.providers.google import GoogleProvider
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
+                return ModelResponse(parts=[TextPart(content='Here is the generated image.')])
+            assert info.function_tools, 'Expected generate_image tool to be available'
+            tool = info.function_tools[0]
+            return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args='{"prompt": "A cute baby sea otter"}')])
+
+        inner_model = GoogleModel('gemini-3-pro-image-preview', provider=GoogleProvider(api_key=gemini_api_key))
+        outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=inner_model)])
         result = await agent.run('Generate an image of a cute baby sea otter')
         assert result.output == 'Here is the generated image.'
         assert result.all_messages() == snapshot(
