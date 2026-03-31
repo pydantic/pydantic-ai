@@ -492,7 +492,6 @@ The temperature in London on 1st January 2022 was 30°C.\
                                 'ctx': {'error': 'expected value at line 2 column 1'},
                             }
                         ],
-                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
                 ],

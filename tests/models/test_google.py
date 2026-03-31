@@ -3649,7 +3649,6 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
                 parts=[
                     RetryPromptPart(
                         content='Please return text.',
-                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
                 ],
