@@ -1782,7 +1782,7 @@ async def test_metadata_not_shared_between_contexts():
     ) -> None:
         collected_contexts.append(context)
         # Mutate the context's metadata — should NOT affect the config
-        if context.metadata is not None:
+        if context.metadata is not None:  # pragma: no branch
             context.metadata['injected'] = True
 
     config = OnlineEvalConfig(

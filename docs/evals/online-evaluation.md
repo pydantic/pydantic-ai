@@ -256,7 +256,7 @@ class QuickCheck(Evaluator):
 dynamic = OnlineEvaluator(evaluator=QuickCheck(), sample_rate=get_current_rate)
 ```
 
-This enables integration with feature flags, managed variables, or configuration systems — for example, you could replace `get_current_rate` with a function that returns the value of a float-valued [managed variable](?? TODO: need a link here..) at runtime to be able to change the probability without redeploying the application.
+This enables integration with feature flags, managed variables, or configuration systems — for example, you could replace `get_current_rate` with a function that reads from a remote config service at runtime, allowing you to change the probability without redeploying the application.
 
 You can also use the [`SamplingContext`][pydantic_evals.online.SamplingContext] to make sampling decisions based on the function inputs:
 

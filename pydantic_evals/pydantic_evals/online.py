@@ -785,7 +785,7 @@ def _wrap_async(
             _CURRENT_TASK_RUN.reset(token)
 
         # Extract standard metrics (requests, cost, token usage) from the span tree
-        if isinstance(span_tree, SpanTree):
+        if isinstance(span_tree, SpanTree):  # pragma: no branch
             _extract_span_tree_metrics(task_run, span_tree)
 
         # Build context
@@ -851,7 +851,7 @@ def _wrap_sync(
             _CURRENT_TASK_RUN.reset(token)
 
         # Extract standard metrics (requests, cost, token usage) from the span tree
-        if isinstance(span_tree, SpanTree):
+        if isinstance(span_tree, SpanTree):  # pragma: no branch
             _extract_span_tree_metrics(task_run, span_tree)
 
         # Build context
