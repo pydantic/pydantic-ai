@@ -89,6 +89,7 @@ class ContainsKeyword(Evaluator):
 
 # Usage
 dataset = Dataset(
+    name='keyword_check',
     cases=[Case(name='test', inputs='This is important')],
     evaluators=[
         ContainsKeyword(keyword='important', case_sensitive=False),

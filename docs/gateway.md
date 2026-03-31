@@ -178,6 +178,52 @@ Replace `YOUR_GATEWAY_API_KEY` with the API key from your Logfire organization's
 
 Launch Claude Code by typing `claude`. All requests will now route through the Pydantic AI Gateway.
 
+### Codex
+
+Codex uses the OpenAI Responses API, so it should use the Gateway's `openai-responses` route.
+
+Set your gateway API key as an environment variable:
+
+```bash
+export PYDANTIC_AI_GATEWAY_API_KEY="YOUR_GATEWAY_API_KEY"
+```
+
+Then add the following configuration to `~/.codex/config.toml`, using the base URL that matches your Logfire region:
+
+=== "US"
+
+    ```toml
+    model = "gpt-5.4"
+    model_provider = "pydantic_gateway"
+
+    [model_providers.pydantic_gateway]
+    name = "Pydantic AI Gateway"
+    base_url = "https://gateway-us.pydantic.dev/proxy/openai-responses"
+    env_key = "PYDANTIC_AI_GATEWAY_API_KEY"
+    env_key_instructions = "Create a Gateway API key in your Logfire organization's Gateway settings."
+    wire_api = "responses"
+    ```
+
+=== "EU"
+
+    ```toml
+    model = "gpt-5.4"
+    model_provider = "pydantic_gateway"
+
+    [model_providers.pydantic_gateway]
+    name = "Pydantic AI Gateway"
+    base_url = "https://gateway-eu.pydantic.dev/proxy/openai-responses"
+    env_key = "PYDANTIC_AI_GATEWAY_API_KEY"
+    env_key_instructions = "Create a Gateway API key in your Logfire organization's Gateway settings."
+    wire_api = "responses"
+    ```
+
+For more details on configuring custom providers in Codex, see the [Codex custom model providers docs](https://developers.openai.com/codex/config-advanced#custom-model-providers) and the [Codex configuration reference](https://developers.openai.com/codex/config-reference/).
+
+If you already have a `~/.codex/config.toml`, add the `[model_providers.pydantic_gateway]` block and update `model_provider` instead of replacing the whole file. Replace `gpt-5.4` with whichever OpenAI Responses model you want Codex to use.
+
+Launch Codex by typing `codex`. All requests will now route through the Pydantic AI Gateway.
+
 ### SDKs
 
 #### OpenAI SDK

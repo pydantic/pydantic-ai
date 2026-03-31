@@ -29,6 +29,8 @@ try:
         OpenAIChatModel,
         OpenAIChatModelSettings,
         OpenAIStreamedResponse,
+        _ChatCompletion,  # pyright: ignore[reportPrivateUsage]
+        _ChatCompletionChunk,  # pyright: ignore[reportPrivateUsage]
     )
 except ImportError as _import_error:
     raise ImportError(
@@ -468,7 +470,7 @@ class _OpenRouterUsage(completion_usage.CompletionUsage):
     completion_tokens_details: _OpenRouterCompletionTokenDetails | None = None  # type: ignore[reportIncompatibleVariableOverride]
 
 
-class _OpenRouterChatCompletion(chat.ChatCompletion):
+class _OpenRouterChatCompletion(_ChatCompletion):
     """Wraps OpenAI chat completion with OpenRouter specific attributes."""
 
     provider: str
@@ -603,7 +605,7 @@ class OpenRouterModel(OpenAIChatModel):
         return new_settings, customized_parameters
 
     @override
-    def _get_reasoning_effort(
+    def _translate_thinking(
         self,
         model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
@@ -734,7 +736,7 @@ class _OpenRouterChunkChoice(chat_completion_chunk.Choice):
     """A wrapped chat completion delta with OpenRouter specific attributes."""
 
 
-class _OpenRouterChatCompletionChunk(chat.ChatCompletionChunk):
+class _OpenRouterChatCompletionChunk(_ChatCompletionChunk):
     """Wraps OpenAI chat completion with OpenRouter specific attributes."""
 
     provider: str
