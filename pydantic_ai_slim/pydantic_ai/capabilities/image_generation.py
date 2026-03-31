@@ -44,32 +44,11 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
     that returns a model.
     """
 
-    background: Literal['transparent', 'opaque', 'auto'] | None
-    """Background type for the generated image. Forwarded to `ImageGenerationTool`."""
+    _image_gen_config: ImageGenerationTool
+    """The `ImageGenerationTool` config built from the capability-level fields."""
 
-    input_fidelity: Literal['high', 'low'] | None
-    """Input fidelity for matching style/features of input images. Forwarded to `ImageGenerationTool`."""
-
-    moderation: Literal['auto', 'low'] | None
-    """Moderation level for the generated image. Forwarded to `ImageGenerationTool`."""
-
-    output_compression: int | None
-    """Compression level for the output image. Forwarded to `ImageGenerationTool`."""
-
-    output_format: Literal['png', 'webp', 'jpeg'] | None
-    """Output format of the generated image. Forwarded to `ImageGenerationTool`."""
-
-    partial_images: int | None
-    """Number of partial images to generate in streaming mode. Forwarded to `ImageGenerationTool`."""
-
-    quality: Literal['low', 'medium', 'high', 'auto'] | None
-    """Quality of the generated image. Forwarded to `ImageGenerationTool`."""
-
-    size: Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'] | None
-    """Size of the generated image. Forwarded to `ImageGenerationTool`."""
-
-    aspect_ratio: ImageAspectRatio | None
-    """Aspect ratio to use for generated images. Forwarded to `ImageGenerationTool`."""
+    _image_gen_overrides: dict[str, Any]
+    """The non-default image generation kwargs, used for merging with a custom `builtin`."""
 
     def __init__(
         self,
@@ -100,35 +79,34 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
         self.builtin = builtin
         self.local = local
         self.fallback_model = fallback_model
-        self.background = background
-        self.input_fidelity = input_fidelity
-        self.moderation = moderation
-        self.output_compression = output_compression
-        self.output_format = output_format
-        self.partial_images = partial_images
-        self.quality = quality
-        self.size = size
-        self.aspect_ratio = aspect_ratio
+
+        # Build ImageGenerationTool directly from the init params
+        kwargs: dict[str, Any] = {}
+        if background is not None:
+            kwargs['background'] = background
+        if input_fidelity is not None:
+            kwargs['input_fidelity'] = input_fidelity
+        if moderation is not None:
+            kwargs['moderation'] = moderation
+        if output_compression is not None:
+            kwargs['output_compression'] = output_compression
+        if output_format is not None:
+            kwargs['output_format'] = output_format
+        if partial_images is not None:
+            kwargs['partial_images'] = partial_images
+        if quality is not None:
+            kwargs['quality'] = quality
+        if size is not None:
+            kwargs['size'] = size
+        if aspect_ratio is not None:
+            kwargs['aspect_ratio'] = aspect_ratio
+        self._image_gen_config = ImageGenerationTool(**kwargs)
+        self._image_gen_overrides = kwargs
+
         self.__post_init__()
 
-    _IMAGE_GEN_FIELDS = (
-        'background',
-        'input_fidelity',
-        'moderation',
-        'output_compression',
-        'output_format',
-        'partial_images',
-        'quality',
-        'size',
-        'aspect_ratio',
-    )
-
-    def _image_gen_kwargs(self) -> dict[str, Any]:
-        """Collect non-None ImageGenerationTool config fields."""
-        return {f: v for f in self._IMAGE_GEN_FIELDS if (v := getattr(self, f)) is not None}
-
     def _default_builtin(self) -> ImageGenerationTool:
-        return ImageGenerationTool(**self._image_gen_kwargs())
+        return self._image_gen_config
 
     def _builtin_unique_id(self) -> str:
         return ImageGenerationTool.kind
@@ -136,10 +114,9 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
     def _resolved_builtin(self) -> ImageGenerationTool:
         """Get the ImageGenerationTool for the fallback, with capability-level overrides applied."""
         base = self.builtin if isinstance(self.builtin, ImageGenerationTool) else ImageGenerationTool()
-        overrides = self._image_gen_kwargs()
-        if not overrides:
+        if not self._image_gen_overrides:
             return base
-        return replace(base, **overrides)
+        return replace(base, **self._image_gen_overrides)
 
     def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
         if self.fallback_model is None:

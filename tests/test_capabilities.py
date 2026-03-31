@@ -3276,12 +3276,19 @@ class TestWebFetchCapability:
 
 
 class TestImageGenerationCapability:
-    def test_image_gen_fields_match_builtin_tool(self):
-        """_IMAGE_GEN_FIELDS stays in sync with ImageGenerationTool's configurable fields."""
+    def test_image_gen_init_params_match_builtin_tool(self):
+        """ImageGeneration.__init__ accepts all ImageGenerationTool configurable fields."""
         import dataclasses
+        import inspect
 
         builtin_fields = {f.name for f in dataclasses.fields(ImageGenerationTool) if f.name != 'kind'}
-        assert set(ImageGeneration._IMAGE_GEN_FIELDS) == builtin_fields  # pyright: ignore[reportPrivateUsage]
+        init_params = set(inspect.signature(ImageGeneration.__init__).parameters.keys()) - {
+            'self',
+            'builtin',
+            'local',
+            'fallback_model',
+        }
+        assert init_params == builtin_fields
 
     def test_image_generation_default(self):
         """ImageGeneration() provides only builtin, no local fallback."""
