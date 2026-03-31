@@ -816,6 +816,33 @@ async def test_mistral_midstream_error(
         pytest.param('CANCELLED', ModelAPIError, None, id='unmapped'),
     ],
 )
+async def test_xai_peek_error(
+    allow_model_requests: None, grpc_code_name: str, expected_exc: type[Exception], expected_status: int | None
+):
+    """gRPC errors during stream peek are wrapped correctly."""
+    error = _StubRpcError(getattr(grpc.StatusCode, grpc_code_name), 'gRPC error')
+    stream_data = [[error]]
+    mock_client = MockXai.create_mock_stream(stream_data)  # pyright: ignore[reportArgumentType]
+    m = XaiModel('grok-3-mini', provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(expected_exc) as exc_info:
+        async with agent.run_stream('hello'):
+            pass
+
+    if expected_status is not None:
+        assert isinstance(exc_info.value, ModelHTTPError)
+        assert exc_info.value.status_code == expected_status
+
+
+@pytest.mark.skipif(not xai_imports(), reason='xai-sdk not installed')
+@pytest.mark.parametrize(
+    'grpc_code_name,expected_exc,expected_status',
+    [
+        pytest.param('UNAVAILABLE', ModelHTTPError, 503, id='http_mappable'),
+        pytest.param('CANCELLED', ModelAPIError, None, id='unmapped'),
+    ],
+)
 async def test_xai_request_error(
     allow_model_requests: None, grpc_code_name: str, expected_exc: type[Exception], expected_status: int | None
 ):

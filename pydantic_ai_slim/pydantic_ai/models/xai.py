@@ -725,7 +725,14 @@ class XaiModel(Model):
     ) -> 'XaiStreamedResponse':
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
-        first_item = await peekable_response.peek()
+        try:
+            first_item = await peekable_response.peek()
+        except grpc.RpcError as e:
+            status_code = _GRPC_STATUS_TO_HTTP.get(e.code())
+            details = e.details() or str(e)
+            if status_code is not None:
+                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=details) from e
+            raise ModelAPIError(model_name=self.model_name, message=details) from e
         if isinstance(first_item, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
