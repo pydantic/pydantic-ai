@@ -11,7 +11,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
-from ._run_context import TemporalRunContext
+from ._run_context import TemporalRunContext, deserialize_run_context_with_agent
 from ._toolset import (
     CallToolParams,
     CallToolResult,
@@ -37,8 +37,8 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
 
         async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
             name = params.name
-            ctx = self.run_context_type.deserialize_run_context(
-                params.serialized_run_context, deps=deps, agent=self._agent
+            ctx = deserialize_run_context_with_agent(
+                self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
             try:
                 tool = (await toolset.get_tools(ctx))[name]

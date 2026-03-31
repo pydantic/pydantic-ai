@@ -13,7 +13,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 
-from ._run_context import TemporalRunContext
+from ._run_context import TemporalRunContext, deserialize_run_context_with_agent
 from ._toolset import (
     CallToolParams,
     CallToolResult,
@@ -54,8 +54,8 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
 
         async def get_tools_activity(params: GetToolsParams, deps: AgentDepsT) -> dict[str, _ToolInfo]:
             """Activity that calls the dynamic function and returns tool definitions."""
-            ctx = self.run_context_type.deserialize_run_context(
-                params.serialized_run_context, deps=deps, agent=self._agent
+            ctx = deserialize_run_context_with_agent(
+                self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
 
             run_toolset = await self.wrapped.for_run(ctx)
@@ -75,8 +75,8 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
 
         async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
             """Activity that instantiates the dynamic toolset and calls the tool."""
-            ctx = self.run_context_type.deserialize_run_context(
-                params.serialized_run_context, deps=deps, agent=self._agent
+            ctx = deserialize_run_context_with_agent(
+                self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
 
             run_toolset = await self.wrapped.for_run(ctx)

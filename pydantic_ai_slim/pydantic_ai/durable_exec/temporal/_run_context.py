@@ -61,11 +61,25 @@ class TemporalRunContext(RunContext[AgentDepsT]):
         }
 
     @classmethod
-    def deserialize_run_context(
-        cls, ctx: dict[str, Any], deps: Any, *, agent: AbstractAgent[Any, Any] | None = None
-    ) -> TemporalRunContext[Any]:
+    def deserialize_run_context(cls, ctx: dict[str, Any], deps: Any) -> TemporalRunContext[Any]:
         """Deserialize the run context from a `dict[str, Any]`."""
-        result = cls(**ctx, deps=deps)
-        if agent is not None:
-            result.__dict__['agent'] = agent
-        return result
+        return cls(**ctx, deps=deps)
+
+
+def deserialize_run_context_with_agent(
+    run_context_type: type[TemporalRunContext[Any]],
+    serialized: dict[str, Any],
+    deps: Any,
+    agent: AbstractAgent[Any, Any] | None,
+) -> RunContext[Any]:
+    """Deserialize a run context and attach the agent instance.
+
+    This is a helper used internally by the Temporal wrappers. It calls the
+    (potentially user-overridden) ``deserialize_run_context`` and then sets
+    ``agent`` on the result, so custom subclasses don't need to know about
+    the ``agent`` parameter.
+    """
+    ctx = run_context_type.deserialize_run_context(serialized, deps=deps)
+    if agent is not None:
+        ctx.__dict__['agent'] = agent
+    return ctx

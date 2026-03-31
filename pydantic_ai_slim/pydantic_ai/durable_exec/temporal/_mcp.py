@@ -12,7 +12,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 
-from ._run_context import TemporalRunContext
+from ._run_context import TemporalRunContext, deserialize_run_context_with_agent
 from ._toolset import (
     CallToolParams,
     CallToolResult,
@@ -47,8 +47,8 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
         self.run_context_type = run_context_type
 
         async def get_tools_activity(params: GetToolsParams, deps: AgentDepsT) -> dict[str, ToolDefinition]:
-            run_context = self.run_context_type.deserialize_run_context(
-                params.serialized_run_context, deps=deps, agent=self._agent
+            run_context = deserialize_run_context_with_agent(
+                self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
             tools = await self.wrapped.get_tools(run_context)
             # ToolsetTool is not serializable as it holds a SchemaValidator (which is also the same for every MCP tool so unnecessary to pass along the wire every time),
@@ -63,8 +63,8 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
         )
 
         async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
-            run_context = self.run_context_type.deserialize_run_context(
-                params.serialized_run_context, deps=deps, agent=self._agent
+            run_context = deserialize_run_context_with_agent(
+                self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
             assert isinstance(params.tool_def, ToolDefinition)
             return await self._wrap_call_tool_result(

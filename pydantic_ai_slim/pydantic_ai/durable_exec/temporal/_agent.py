@@ -40,7 +40,7 @@ from pydantic_ai.tools import (
 )
 
 from ._model import TemporalModel, TemporalProviderFactory
-from ._run_context import TemporalRunContext
+from ._run_context import TemporalRunContext, deserialize_run_context_with_agent
 from ._toolset import TemporalWrapperToolset, temporalize_toolset
 
 if TYPE_CHECKING:
@@ -148,8 +148,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             # and that only ends up calling `event_stream_handler` if it is set.
             assert self.event_stream_handler is not None
 
-            run_context = self.run_context_type.deserialize_run_context(
-                params.serialized_run_context, deps=deps, agent=self.wrapped
+            run_context = deserialize_run_context_with_agent(
+                self.run_context_type, params.serialized_run_context, deps=deps, agent=self.wrapped
             )
 
             async def streamed_response():
