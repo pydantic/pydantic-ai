@@ -20,20 +20,23 @@ from pydantic_ai import (
     ModelResponse,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry
+from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsNow, IsStr, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -48,8 +51,10 @@ with try_import() as imports_successful:
         FunctionCall as MistralFunctionCall,
         Mistral,
         ReferenceChunk as MistralReferenceChunk,
+        TextChunk,
         TextChunk as MistralTextChunk,
         UsageInfo as MistralUsageInfo,
+        UserMessage,
     )
     from mistralai.models import (
         ChatCompletionResponse as MistralChatCompletionResponse,
@@ -810,6 +815,7 @@ async def test_stream_result_type_primitif_dict(allow_model_requests: None):
         v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot(
             [
+                {'first': ''},
                 {'first': 'O'},
                 {'first': 'On'},
                 {'first': 'One'},
@@ -923,6 +929,7 @@ async def test_stream_result_type_primitif_array(allow_model_requests: None):
         v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot(
             [
+                [],
                 [''],
                 ['f'],
                 ['fi'],
@@ -1015,6 +1022,7 @@ async def test_stream_result_type_basemodel_with_default_params(allow_model_requ
         v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot(
             [
+                MyTypedBaseModel(first='', second=''),
                 MyTypedBaseModel(first='O', second=''),
                 MyTypedBaseModel(first='On', second=''),
                 MyTypedBaseModel(first='One', second=''),
@@ -2061,11 +2069,10 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 241a70',
+                        content=IsInstance(BinaryImage),
                         tool_call_id='FI5qQGzDE',
                         timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(content=['This is file 241a70:', image_content], timestamp=IsDatetime()),
+                    )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
@@ -2088,6 +2095,21 @@ async def test_image_as_binary_content_tool_response(
             ),
         ]
     )
+
+
+async def test_text_content_input(allow_model_requests: None):
+    c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
+    mock_client = MockMistralAI.create_mock(c)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+
+    part = UserPromptPart(
+        content=[
+            'Hello',
+            TextContent(content='This is some text content.', metadata={'key': 'value'}),
+        ]
+    )
+    m = await model._map_user_prompt(part)  # pyright: ignore[reportPrivateUsage]
+    assert m == snapshot(UserMessage(content=[TextChunk(text='Hello'), TextChunk(text='This is some text content.')]))
 
 
 async def test_image_url_input(allow_model_requests: None):
@@ -2281,7 +2303,9 @@ async def test_txt_url_input(allow_model_requests: None):
     m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(RuntimeError, match='DocumentUrl other than PDF is not supported in Mistral.'):
+    with pytest.raises(
+        NotImplementedError, match='DocumentUrl other than PDF is not supported in Mistral user prompts'
+    ):
         await agent.run(
             [
                 'hello',
@@ -2298,7 +2322,9 @@ async def test_audio_as_binary_content_input(allow_model_requests: None):
 
     base64_content = b'//uQZ'
 
-    with pytest.raises(RuntimeError, match='BinaryContent other than image or PDF is not supported in Mistral.'):
+    with pytest.raises(
+        NotImplementedError, match='BinaryContent other than image or PDF is not supported in Mistral user prompts'
+    ):
         await agent.run(['hello', BinaryContent(data=base64_content, media_type='audio/wav')])
 
 
@@ -2308,8 +2334,18 @@ async def test_video_url_input(allow_model_requests: None):
     m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(RuntimeError, match='VideoUrl is not supported in Mistral.'):
+    with pytest.raises(NotImplementedError, match='VideoUrl is not supported in Mistral user prompts'):
         await agent.run(['hello', VideoUrl(url='https://www.google.com')])
+
+
+async def test_uploaded_file_input(allow_model_requests: None):
+    c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
+    mock_client = MockMistralAI.create_mock(c)
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(NotImplementedError, match='UploadedFile is not supported in Mistral user prompts'):
+        await agent.run(['hello', UploadedFile(file_id='file-123', provider_name='anthropic')])
 
 
 def test_model_status_error(allow_model_requests: None) -> None:

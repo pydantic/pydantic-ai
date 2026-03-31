@@ -131,9 +131,8 @@ As Outlines is focused on structured output, this provider supports the `output_
 from pydantic import BaseModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ModelSettings
 from pydantic_ai.models.outlines import OutlinesModel
-from pydantic_ai.settings import ModelSettings
 
 
 class Box(BaseModel):

@@ -39,10 +39,12 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -380,8 +382,9 @@ class GeminiModel(Model):
         else:
             content: list[_GeminiPartUnion] = []
             for item in part.content:
-                if isinstance(item, str):
-                    content.append({'text': item})
+                if isinstance(item, str | TextContent):
+                    text = item if isinstance(item, str) else item.content
+                    content.append({'text': text})
                 elif isinstance(item, BinaryContent):
                     content.append(
                         _GeminiInlineDataPart(inline_data={'data': item.base64, 'mime_type': item.media_type})
@@ -399,6 +402,10 @@ class GeminiModel(Model):
                     else:  # pragma: lax no cover
                         file_data = _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
                         content.append(file_data)
+                elif isinstance(item, UploadedFile):  # pragma: no cover
+                    raise NotImplementedError(
+                        'UploadedFile is not supported by GeminiModel. Use GoogleModel with the Files API instead.'
+                    )
                 elif isinstance(item, CachePoint):
                     # Gemini doesn't support inline CachePoint markers. Google's caching requires
                     # pre-creating cache objects via the API, then referencing them by name using

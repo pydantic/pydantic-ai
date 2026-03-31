@@ -31,10 +31,12 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
@@ -439,8 +441,9 @@ class OutlinesModel(Model):
                         elif isinstance(part.content, Sequence):
                             outlines_input: Sequence[str | Image] = []
                             for item in part.content:
-                                if isinstance(item, str):
-                                    outlines_input.append(item)
+                                if isinstance(item, str | TextContent):
+                                    text = item if isinstance(item, str) else item.content
+                                    outlines_input.append(text)
                                 elif isinstance(item, ImageUrl):
                                     image_content: DownloadedItem[bytes] = await download_item(
                                         item, data_format='bytes', type_format='mime'
@@ -450,6 +453,8 @@ class OutlinesModel(Model):
                                 elif isinstance(item, BinaryContent) and item.is_image:
                                     image = self._create_PIL_image(item.data, item.media_type)
                                     outlines_input.append(Image(image))
+                                elif isinstance(item, UploadedFile):
+                                    raise NotImplementedError('UploadedFile is not supported by Outlines.')
                                 else:
                                     raise UserError(
                                         'Each element of the content sequence must be a string, an `ImageUrl`'

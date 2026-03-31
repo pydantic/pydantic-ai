@@ -33,10 +33,13 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
+    UserContent,
     UserPromptPart,
     VideoUrl,
 )
@@ -50,8 +53,18 @@ from ..models import (
 from ..profiles import ModelProfileSpec
 from ..profiles.grok import GrokModelProfile
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ThinkingLevel
 from ..usage import RequestUsage
+
+XAI_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'high']] = {
+    True: 'high',
+    'minimal': 'low',
+    'low': 'low',
+    'medium': 'high',
+    'high': 'high',
+    'xhigh': 'high',
+}
+"""Maps unified thinking values to xAI reasoning_effort. xAI only supports 'low' and 'high'."""
 
 try:
     import xai_sdk.chat as chat_types
@@ -138,6 +151,12 @@ class XaiModelSettings(ModelSettings, total=False):
     Corresponds to the `mcp_call.outputs` value of the `include` parameter in the Responses API.
     """
 
+    xai_reasoning_effort: Literal['low', 'high']
+    """Reasoning effort level for Grok reasoning models.
+
+    See https://docs.x.ai for details.
+    """
+
 
 # Mapping of XaiModelSettings keys to xAI SDK parameter names.
 # Most keys are the same, but some differ (e.g., 'stop_sequences' -> 'stop').
@@ -154,6 +173,7 @@ _XAI_MODEL_SETTINGS_MAPPING: dict[str, str] = {
     'xai_user': 'user',
     'xai_store_messages': 'store_messages',
     'xai_previous_response_id': 'previous_response_id',
+    'xai_reasoning_effort': 'reasoning_effort',
 }
 
 
@@ -267,9 +287,18 @@ class XaiModel(Model):
         if tool_results:
             order = {id: i for i, id in enumerate(pending_tool_call_ids)}
             tool_results.sort(key=lambda p: order.get(p.tool_call_id, float('inf')))
+            file_content: list[UserContent] = []
             for part in tool_results:
-                text = part.model_response_str() if isinstance(part, ToolReturnPart) else part.model_response()
-                xai_messages.append(tool_result(text))
+                if isinstance(part, ToolReturnPart):
+                    text, files = part.model_response_str_and_user_content()
+                    xai_messages.append(tool_result(text))
+                    file_content.extend(files)
+                else:
+                    xai_messages.append(tool_result(part.model_response()))
+            if file_content and (
+                user_msg := await self._map_user_prompt(UserPromptPart(content=file_content))
+            ):  # pragma: no branch
+                xai_messages.append(user_msg)
 
         return xai_messages
 
@@ -428,8 +457,9 @@ class XaiModel(Model):
         content_items: list[chat_types.Content] = []
 
         for item in part.content:
-            if isinstance(item, str):
-                content_items.append(item)
+            if isinstance(item, str | TextContent):
+                text = item if isinstance(item, str) else item.content
+                content_items.append(text)
             elif isinstance(item, ImageUrl):
                 # Get detail from vendor_metadata if available
                 detail: chat_types.ImageDetail = 'auto'
@@ -448,16 +478,18 @@ class XaiModel(Model):
                         image_detail = item.vendor_metadata['detail']
                     content_items.append(image(item.data_uri, detail=image_detail))
                 elif item.is_audio:
-                    raise NotImplementedError('AudioUrl/BinaryContent with audio is not supported by xAI SDK')
+                    raise NotImplementedError('BinaryContent with audio is not supported in xAI user prompts')
                 elif item.is_document:
                     # Upload document to xAI files API and reference it
                     filename = item.identifier or f'document.{item.format}'
                     file_id = await self._upload_file_to_xai(item.data, filename)
                     content_items.append(file(file_id))
-                else:
+                elif item.is_video:
+                    raise NotImplementedError('BinaryContent with video is not supported in xAI user prompts')
+                else:  # pragma: no cover
                     raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
             elif isinstance(item, AudioUrl):
-                raise NotImplementedError('AudioUrl is not supported by xAI SDK')
+                raise NotImplementedError('AudioUrl is not supported in xAI user prompts')
             elif isinstance(item, DocumentUrl):
                 # Download and upload to xAI files API
                 downloaded = await download_item(item, data_format='bytes')
@@ -469,7 +501,14 @@ class XaiModel(Model):
                 file_id = await self._upload_file_to_xai(downloaded['data'], filename)
                 content_items.append(file(file_id))
             elif isinstance(item, VideoUrl):
-                raise NotImplementedError('VideoUrl is not supported by xAI SDK')
+                raise NotImplementedError('VideoUrl is not supported in xAI user prompts')
+            elif isinstance(item, UploadedFile):
+                if item.provider_name != self.system:
+                    raise UserError(
+                        f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with XaiModel. '
+                        f'Expected `provider_name` to be `{self.system!r}`.'
+                    )
+                content_items.append(file(item.file_id))
             elif isinstance(item, CachePoint):
                 # xAI doesn't support prompt caching via CachePoint, so we filter it out
                 pass
@@ -525,6 +564,12 @@ class XaiModel(Model):
 
         # Map model settings to xAI SDK parameters
         xai_settings = _map_model_settings(model_settings)
+
+        # Fall back to unified thinking when xai_reasoning_effort is not set
+        if 'reasoning_effort' not in xai_settings and model_request_parameters.thinking is not None:
+            thinking = model_request_parameters.thinking
+            if thinking is not False:
+                xai_settings['reasoning_effort'] = XAI_EFFORT_MAP[thinking]
 
         # Populate use_encrypted_content and include based on model settings
         include: list[chat_pb2.IncludeOption] = []
@@ -1050,7 +1095,7 @@ def _extract_usage(
 
     # Add cached prompt tokens if available (optional attribute)
     if usage_obj.cached_prompt_text_tokens:
-        usage_data['cache_read_tokens'] = usage_obj.cached_prompt_text_tokens
+        usage_data['cached_prompt_text_tokens'] = usage_obj.cached_prompt_text_tokens
 
     # Aggregate server-side tools used by PydanticAI builtin tool name
     if usage_obj.server_side_tools_used:
@@ -1063,13 +1108,17 @@ def _extract_usage(
             usage_data[f'server_side_tools_{tool_name}'] = count
 
     # Build details from non-standard fields
-    details = {k: v for k, v in usage_data.items() if k not in {'prompt_tokens', 'completion_tokens'}}
+    details = {
+        k: v
+        for k, v in usage_data.items()
+        if k not in {'prompt_tokens', 'completion_tokens', 'cached_prompt_text_tokens'}
+    }
 
     extracted = RequestUsage.extract(
         dict(model=model, usage=usage_data),
         provider=provider,
         provider_url=provider_url,
-        provider_fallback='x_ai',  # Pricing file is defined as x_ai.yml
+        provider_fallback='x-ai',  # genai-prices provider ID is 'x-ai'
         details=details or None,
     )
 

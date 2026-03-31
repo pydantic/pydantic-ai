@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
-from typing import Any, Generic, Literal, TypeVar, get_args, overload
+from typing import Any, Generic, Literal, TypeVar, cast, get_args, overload
 
 import httpx
 from typing_extensions import TypeAliasType, TypedDict
@@ -47,8 +47,8 @@ from ..messages import (
 )
 from ..output import OutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
-from ..providers import Provider, infer_provider
-from ..settings import ModelSettings, merge_model_settings
+from ..providers import Provider, infer_provider, infer_provider_class
+from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 
@@ -251,6 +251,8 @@ KnownModelName = TypeAliasType(
         'gateway/google-vertex:gemini-3-flash-preview',
         'gateway/google-vertex:gemini-3-pro-image-preview',
         'gateway/google-vertex:gemini-3-pro-preview',
+        'gateway/google-vertex:gemini-3.1-flash-image-preview',
+        'gateway/google-vertex:gemini-3.1-flash-lite-preview',
         'gateway/google-vertex:gemini-3.1-pro-preview',
         'gateway/google-vertex:gemini-flash-latest',
         'gateway/google-vertex:gemini-flash-lite-latest',
@@ -335,6 +337,12 @@ KnownModelName = TypeAliasType(
         'gateway/openai:gpt-5.2-pro-2025-12-11',
         'gateway/openai:gpt-5.2-pro',
         'gateway/openai:gpt-5.2',
+        'gateway/openai:gpt-5.3-chat-latest',
+        'gateway/openai:gpt-5.4-mini-2026-03-17',
+        'gateway/openai:gpt-5.4-mini',
+        'gateway/openai:gpt-5.4-nano-2026-03-17',
+        'gateway/openai:gpt-5.4-nano',
+        'gateway/openai:gpt-5.4',
         'gateway/openai:gpt-5',
         'gateway/openai:o1-2024-12-17',
         'gateway/openai:o1-mini-2024-09-12',
@@ -367,6 +375,8 @@ KnownModelName = TypeAliasType(
         'google-gla:gemini-3-flash-preview',
         'google-gla:gemini-3-pro-image-preview',
         'google-gla:gemini-3-pro-preview',
+        'google-gla:gemini-3.1-flash-image-preview',
+        'google-gla:gemini-3.1-flash-lite-preview',
         'google-gla:gemini-3.1-pro-preview',
         'google-gla:gemini-flash-latest',
         'google-gla:gemini-flash-lite-latest',
@@ -381,6 +391,8 @@ KnownModelName = TypeAliasType(
         'google-vertex:gemini-3-flash-preview',
         'google-vertex:gemini-3-pro-image-preview',
         'google-vertex:gemini-3-pro-preview',
+        'google-vertex:gemini-3.1-flash-image-preview',
+        'google-vertex:gemini-3.1-flash-lite-preview',
         'google-vertex:gemini-3.1-pro-preview',
         'google-vertex:gemini-flash-latest',
         'google-vertex:gemini-flash-lite-latest',
@@ -539,6 +551,12 @@ KnownModelName = TypeAliasType(
         'openai:gpt-5.2-pro-2025-12-11',
         'openai:gpt-5.2-pro',
         'openai:gpt-5.2',
+        'openai:gpt-5.3-chat-latest',
+        'openai:gpt-5.4-mini-2026-03-17',
+        'openai:gpt-5.4-mini',
+        'openai:gpt-5.4-nano-2026-03-17',
+        'openai:gpt-5.4-nano',
+        'openai:gpt-5.4',
         'openai:gpt-5',
         'openai:o1-2024-12-17',
         'openai:o1-mini-2024-09-12',
@@ -616,9 +634,17 @@ class ModelRequestParameters:
     output_mode: OutputMode = 'text'
     output_object: OutputObjectDefinition | None = None
     output_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
-    prompted_output_template: str | None = None
+    prompted_output_template: str | Literal[False] | None = None
     allow_text_output: bool = True
     allow_image_output: bool = False
+
+    thinking: ThinkingLevel | None = None
+    """Resolved thinking/reasoning configuration for this request.
+
+    `None` means the model should use its default behavior. Set by the base
+    `Model.prepare_request()` from the unified `thinking` field in `ModelSettings`,
+    after checking that the model's profile supports thinking.
+    """
 
     @cached_property
     def tool_defs(self) -> dict[str, ToolDefinition]:
@@ -631,6 +657,20 @@ class ModelRequestParameters:
         return None
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(kw_only=True)
+class ModelRequestContext:
+    """Context for model request hooks.
+
+    Wrapping these parameters in a dataclass instead of a tuple makes the signature
+    future-proof: new fields can be added without breaking existing implementations.
+    """
+
+    model: Model
+    messages: list[ModelMessage]
+    model_settings: ModelSettings | None
+    model_request_parameters: ModelRequestParameters
 
 
 class Model(ABC):
@@ -735,6 +775,15 @@ class Model(ABC):
 
         params = self.customize_request_parameters(model_request_parameters)
 
+        # Resolve unified thinking setting and strip from model_settings
+        if model_settings and 'thinking' in model_settings:
+            thinking_value = model_settings['thinking']
+            if self.profile.supports_thinking or self.profile.thinking_always_enabled:
+                if not (thinking_value is False and self.profile.thinking_always_enabled):
+                    params = replace(params, thinking=thinking_value)
+            stripped = {k: v for k, v in model_settings.items() if k != 'thinking'}
+            model_settings = cast(ModelSettings, stripped) if stripped else None
+
         if builtin_tools := params.builtin_tools:
             # Deduplicate builtin tools
             params = replace(
@@ -762,7 +811,7 @@ class Model(ABC):
         if (
             params.output_mode == 'prompted'
             or (params.output_mode == 'native' and self.profile.native_output_requires_schema_in_instructions)
-        ) and not params.prompted_output_template:
+        ) and params.prompted_output_template is None:
             params = replace(params, prompted_output_template=self.profile.prompted_output_template)
 
         # Check if output mode is supported
@@ -773,16 +822,36 @@ class Model(ABC):
         if params.allow_image_output and not self.profile.supports_image_output:
             raise UserError('Image output is not supported by this model.')
 
-        # Check if builtin tools are supported
-        if params.builtin_tools:
+        # Check builtin tools and handle fallback swap
+        if params.builtin_tools or any(t.prefer_builtin for t in params.function_tools):
             supported_types = self.profile.supported_builtin_tools
-            unsupported = [tool for tool in params.builtin_tools if not isinstance(tool, tuple(supported_types))]
-            if unsupported:
-                unsupported_names = [type(tool).__name__ for tool in unsupported]
+
+            supported_builtins = [t for t in params.builtin_tools if isinstance(t, tuple(supported_types))]
+            unsupported_builtins = [t for t in params.builtin_tools if not isinstance(t, tuple(supported_types))]
+
+            supported_ids = {t.unique_id for t in supported_builtins}
+            unsupported_ids = {t.unique_id for t in unsupported_builtins}
+            fallback_ids = {t.prefer_builtin for t in params.function_tools if t.prefer_builtin}
+
+            # Error only for unsupported builtins that have no local fallback
+            without_fallback = unsupported_ids - fallback_ids
+            if without_fallback:
+                unsupported_names = [type(t).__name__ for t in unsupported_builtins if t.unique_id in without_fallback]
                 supported_names = [t.__name__ for t in supported_types]
                 raise UserError(
-                    f'Builtin tool(s) {unsupported_names} not supported by this model. Supported: {supported_names}'
+                    f'Builtin tool(s) {unsupported_names} not supported by this model. '
+                    f'Supported: {supported_names}. '
+                    f'To use these tools with this model, provide a local fallback via '
+                    f'BuiltinOrLocalTool(builtin=..., local=...) or the `local` parameter '
+                    f'of the capability (e.g. ImageGeneration(local=my_func)).'
                 )
+
+            # Remove local fallback tools whose preferred builtin IS supported (model handles natively)
+            # Remove unsupported builtins (their local fallbacks stay)
+            function_tools = [
+                t for t in params.function_tools if not t.prefer_builtin or t.prefer_builtin not in supported_ids
+            ]
+            params = replace(params, builtin_tools=supported_builtins, function_tools=function_tools)
 
         return model_settings, params
 
@@ -1111,6 +1180,84 @@ def override_allow_model_requests(allow_model_requests: bool) -> Iterator[None]:
         ALLOW_MODEL_REQUESTS = old_value  # pyright: ignore[reportConstantRedefinition]
 
 
+_LEGACY_MODEL_PREFIXES: dict[str, str] = {
+    'gpt': 'openai',
+    'o1': 'openai',
+    'o3': 'openai',
+    'claude': 'anthropic',
+    'gemini': 'google-gla',
+}
+"""Backward compat: allows prefix-only model names like `gpt-4` without `provider:`."""
+
+
+def parse_model_id(model: str) -> tuple[str | None, str]:
+    """Parse a model id string into its provider and model name components.
+
+    Handles both the modern `provider:model` format and legacy model names
+    that start with known prefixes (e.g., `gpt-4`, `claude-3`).
+
+    Emits a `DeprecationWarning` when a legacy prefix-based model name is used.
+
+    Args:
+        model: A model identifier string, either `provider:model_name` or a legacy
+            prefix-based name.
+
+    Returns:
+        A tuple of `(provider_name, model_name)`. If the provider can't be inferred,
+        returns `(None, model)` so callers can decide how to handle unknown providers.
+    """
+    if ':' in model:
+        provider_name, model_name = model.split(':', maxsplit=1)
+        return provider_name, model_name
+
+    # Legacy model names without provider prefix
+    for prefix, provider_name in _LEGACY_MODEL_PREFIXES.items():
+        if model.startswith(prefix):
+            warnings.warn(
+                f'Specifying a model name without a provider prefix is deprecated. '
+                f"Instead of {model!r}, use '{provider_name}:{model}'.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            return provider_name, model
+
+    # Unknown prefix: let callers decide how to handle this case.
+    return None, model
+
+
+def infer_model_profile(model: str) -> ModelProfile:
+    """Infer the model profile from a model id string without constructing a provider.
+
+    Uses `Provider.model_profile` to look up the profile for the given model.
+    Returns `DEFAULT_PROFILE` for unknown or unrecognized providers.
+
+    Note: This returns the raw provider profile **without** intersecting with
+    `Model.supported_builtin_tools()`, unlike `Model.profile`. This means the returned
+    profile may claim support for builtin tools that a specific `Model` subclass doesn't
+    implement. This is acceptable for best-effort scenarios (e.g. `TemporalModel` with
+    unregistered model strings) where the actual `Model` class isn't available.
+
+    Args:
+        model: A model identifier string (e.g. `'openai:gpt-5'`, `'anthropic:claude-sonnet-4-5'`).
+
+    Returns:
+        The inferred `ModelProfile`, or `DEFAULT_PROFILE` if the provider is unknown.
+    """
+    provider, model_name = parse_model_id(model)
+    if provider is None:
+        return DEFAULT_PROFILE
+
+    try:
+        provider_class = infer_provider_class(provider)
+    except ValueError:
+        return DEFAULT_PROFILE
+
+    try:
+        return provider_class.model_profile(model_name) or DEFAULT_PROFILE
+    except (ValueError, UserError):
+        return DEFAULT_PROFILE
+
+
 def infer_model(  # noqa: C901
     model: Model | KnownModelName | str, provider_factory: Callable[[str], Provider[Any]] = infer_provider
 ) -> Model:
@@ -1129,25 +1276,9 @@ def infer_model(  # noqa: C901
 
         return TestModel()
 
-    try:
-        provider_name, model_name = model.split(':', maxsplit=1)
-    except ValueError:
-        provider_name = None
-        model_name = model
-        if model_name.startswith(('gpt', 'o1', 'o3')):
-            provider_name = 'openai'
-        elif model_name.startswith('claude'):
-            provider_name = 'anthropic'
-        elif model_name.startswith('gemini'):
-            provider_name = 'google-gla'
-
-        if provider_name is not None:
-            warnings.warn(
-                f"Specifying a model name without a provider prefix is deprecated. Instead of {model_name!r}, use '{provider_name}:{model_name}'.",
-                DeprecationWarning,
-            )
-        else:
-            raise UserError(f'Unknown model: {model}')
+    provider_name, model_name = parse_model_id(model)
+    if provider_name is None:
+        raise UserError(f'Unknown model: {model}')
 
     if provider_name == 'vertexai':  # pragma: no cover
         warnings.warn(

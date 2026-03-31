@@ -7,25 +7,30 @@ from typing import Annotated, Any, Literal, TypeAlias, cast
 from pydantic import BaseModel, Discriminator
 from typing_extensions import TypedDict, assert_never, override
 
+from ..builtin_tools import AbstractBuiltinTool, WebSearchTool
 from ..exceptions import ModelHTTPError
 from ..messages import BinaryContent, FinishReason, ModelResponseStreamEvent, ThinkingPart, VideoUrl
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterProvider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ThinkingLevel
 from . import ModelRequestParameters, download_item
 
 try:
-    from openai import APIError, AsyncOpenAI
+    from openai import APIError, AsyncOpenAI, omit
     from openai.types import chat, completion_usage
     from openai.types.chat import chat_completion, chat_completion_chunk, chat_completion_message_function_tool_call
     from openai.types.chat.chat_completion_content_part_param import ChatCompletionContentPartParam
     from openai.types.chat.chat_completion_message import Annotation as _OpenAIAnnotation
+    from openai.types.chat.completion_create_params import WebSearchOptions
+    from openai.types.shared import ReasoningEffort
 
     from .openai import (
         OpenAIChatModel,
         OpenAIChatModelSettings,
         OpenAIStreamedResponse,
+        _ChatCompletion,  # pyright: ignore[reportPrivateUsage]
+        _ChatCompletionChunk,  # pyright: ignore[reportPrivateUsage]
     )
 except ImportError as _import_error:
     raise ImportError(
@@ -195,7 +200,7 @@ class OpenRouterReasoning(TypedDict, total=False):
     token limits, but not both simultaneously.
     """
 
-    effort: Literal['high', 'medium', 'low']
+    effort: Literal['xhigh', 'high', 'medium', 'low', 'minimal', 'none']
     """OpenAI-style reasoning effort level. Cannot be used with max_tokens."""
 
     max_tokens: int
@@ -465,7 +470,7 @@ class _OpenRouterUsage(completion_usage.CompletionUsage):
     completion_tokens_details: _OpenRouterCompletionTokenDetails | None = None  # type: ignore[reportIncompatibleVariableOverride]
 
 
-class _OpenRouterChatCompletion(chat.ChatCompletion):
+class _OpenRouterChatCompletion(_ChatCompletion):
     """Wraps OpenAI chat completion with OpenRouter specific attributes."""
 
     provider: str
@@ -503,11 +508,14 @@ def _map_openrouter_provider_details(
     return provider_details
 
 
-def _openrouter_settings_to_openai_settings(model_settings: OpenRouterModelSettings) -> OpenAIChatModelSettings:
+def _openrouter_settings_to_openai_settings(
+    model_settings: OpenRouterModelSettings, model_request_parameters: ModelRequestParameters
+) -> OpenAIChatModelSettings:
     """Transforms a 'OpenRouterModelSettings' object into an 'OpenAIChatModelSettings' object.
 
     Args:
         model_settings: The 'OpenRouterModelSettings' object to transform.
+        model_request_parameters: The 'ModelRequestParameters' object to use for the transformation.
 
     Returns:
         An 'OpenAIChatModelSettings' object with equivalent settings.
@@ -522,10 +530,32 @@ def _openrouter_settings_to_openai_settings(model_settings: OpenRouterModelSetti
         extra_body['preset'] = preset
     if transforms := model_settings.pop('openrouter_transforms', None):
         extra_body['transforms'] = transforms
+    # Fall back to unified thinking when openrouter_reasoning is not set
+    if 'openrouter_reasoning' not in model_settings and model_request_parameters.thinking is not None:
+        thinking = model_request_parameters.thinking
+        if thinking is not False:
+            unified_reasoning: OpenRouterReasoning = {}
+            # OpenRouter only supports low/medium/high; map others to closest
+            effort_map: dict[ThinkingLevel, str] = {
+                True: 'medium',
+                'minimal': 'low',
+                'low': 'low',
+                'medium': 'medium',
+                'high': 'high',
+                'xhigh': 'high',
+            }
+            unified_reasoning['effort'] = effort_map[thinking]  # type: ignore[typeddict-item]
+            model_settings['openrouter_reasoning'] = unified_reasoning
+
     if reasoning := model_settings.pop('openrouter_reasoning', None):
         extra_body['reasoning'] = reasoning
     if usage := model_settings.pop('openrouter_usage', None):
         extra_body['usage'] = usage
+
+    for builtin_tool in model_request_parameters.builtin_tools:
+        if isinstance(builtin_tool, WebSearchTool):
+            extra_body.setdefault('plugins', []).append({'id': 'web'})
+            extra_body['web_search_options'] = {'search_context_size': builtin_tool.search_context_size}
 
     model_settings['extra_body'] = extra_body
 
@@ -553,6 +583,15 @@ class OpenRouterModel(OpenAIChatModel):
         """
         super().__init__(model_name, provider=provider or OpenRouterProvider(), profile=profile, settings=settings)
 
+    @classmethod
+    @override
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """Return the set of builtin tool types this model can handle.
+
+        OpenRouter supports web search via its plugins system.
+        """
+        return frozenset({WebSearchTool})
+
     @override
     def prepare_request(
         self,
@@ -560,8 +599,30 @@ class OpenRouterModel(OpenAIChatModel):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
-        new_settings = _openrouter_settings_to_openai_settings(cast(OpenRouterModelSettings, merged_settings or {}))
+        new_settings = _openrouter_settings_to_openai_settings(
+            cast(OpenRouterModelSettings, merged_settings or {}), customized_parameters
+        )
         return new_settings, customized_parameters
+
+    @override
+    def _translate_thinking(
+        self,
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ReasoningEffort | Any:
+        """OpenRouter handles reasoning via extra_body['reasoning'], not the reasoning_effort parameter.
+
+        Only pass through explicit openai_reasoning_effort if set; unified thinking
+        is handled in _openrouter_settings_to_openai_settings via extra_body['reasoning'].
+        """
+        if effort := model_settings.get('openai_reasoning_effort'):
+            return effort
+        return omit
+
+    @override
+    def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:
+        """OpenRouter handles web search via plugins in extra_body, not via the OpenAI web_search_options parameter."""
+        return None
 
     @override
     def _validate_completion(self, response: chat.ChatCompletion) -> _OpenRouterChatCompletion:
@@ -675,7 +736,7 @@ class _OpenRouterChunkChoice(chat_completion_chunk.Choice):
     """A wrapped chat completion delta with OpenRouter specific attributes."""
 
 
-class _OpenRouterChatCompletionChunk(chat.ChatCompletionChunk):
+class _OpenRouterChatCompletionChunk(_ChatCompletionChunk):
     """Wraps OpenAI chat completion with OpenRouter specific attributes."""
 
     provider: str

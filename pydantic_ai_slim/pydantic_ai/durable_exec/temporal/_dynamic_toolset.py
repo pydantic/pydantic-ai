@@ -56,8 +56,10 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
             """Activity that calls the dynamic function and returns tool definitions."""
             ctx = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
 
-            async with self.wrapped:
-                tools = await self.wrapped.get_tools(ctx)
+            run_toolset = await self.wrapped.for_run(ctx)
+            async with run_toolset:
+                run_toolset = await run_toolset.for_run_step(ctx)
+                tools = await run_toolset.get_tools(ctx)
                 return {
                     name: _ToolInfo(tool_def=tool.tool_def, max_retries=tool.max_retries)
                     for name, tool in tools.items()
@@ -73,8 +75,10 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
             """Activity that instantiates the dynamic toolset and calls the tool."""
             ctx = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
 
-            async with self.wrapped:
-                tools = await self.wrapped.get_tools(ctx)
+            run_toolset = await self.wrapped.for_run(ctx)
+            async with run_toolset:
+                run_toolset = await run_toolset.for_run_step(ctx)
+                tools = await run_toolset.get_tools(ctx)
                 tool = tools.get(params.name)
                 if tool is None:  # pragma: no cover
                     raise UserError(
@@ -82,7 +86,7 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
                         'The dynamic toolset function may have returned a different toolset than expected.'
                     )
 
-                return await self._call_tool_in_activity(params.name, params.tool_args, ctx, tool)
+                return await self._call_tool_in_activity(params.name, params.tool_args, ctx, tool, toolset=run_toolset)
 
         call_tool_activity.__annotations__['deps'] = deps_type
 

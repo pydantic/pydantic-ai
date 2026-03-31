@@ -29,10 +29,12 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -429,8 +431,9 @@ class HuggingFaceModel(Model):
         else:
             content = []
             for item in part.content:
-                if isinstance(item, str):
-                    content.append(ChatCompletionInputMessageChunk(type='text', text=item))  # type: ignore
+                if isinstance(item, str | TextContent):
+                    text = item if isinstance(item, str) else item.content
+                    content.append(ChatCompletionInputMessageChunk(type='text', text=text))  # type: ignore
                 elif isinstance(item, ImageUrl):
                     url = ChatCompletionInputURL(url=item.url)
                     content.append(ChatCompletionInputMessageChunk(type='image_url', image_url=url))  # type: ignore
@@ -446,6 +449,8 @@ class HuggingFaceModel(Model):
                     raise NotImplementedError('DocumentUrl is not supported for Hugging Face')
                 elif isinstance(item, VideoUrl):
                     raise NotImplementedError('VideoUrl is not supported for Hugging Face')
+                elif isinstance(item, UploadedFile):
+                    raise NotImplementedError('UploadedFile is not supported for Hugging Face')
                 elif isinstance(item, CachePoint):
                     # Hugging Face doesn't support prompt caching via CachePoint
                     pass

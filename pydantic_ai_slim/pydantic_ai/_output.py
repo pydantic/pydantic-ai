@@ -2,18 +2,17 @@ from __future__ import annotations as _annotations
 
 import inspect
 import json
-import re
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
 from pydantic import Json, TypeAdapter, ValidationError
-from pydantic._internal._typing_extra import get_function_type_hints
 from pydantic_core import SchemaValidator, to_json
 from typing_extensions import Self, TypedDict, TypeVar
 
-from pydantic_ai._instrumentation import InstrumentationNames
+from pydantic_ai._instrumentation import InstrumentationNames, get_agent_run_baggage_attributes
+from pydantic_ai._utils import get_function_type_hints
 
 from . import _function_schema, _utils, messages as _messages
 from ._run_context import AgentDepsT, RunContext
@@ -71,7 +70,6 @@ Usage `OutputValidatorFunc[AgentDepsT, T]`.
 
 DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
 DEFAULT_OUTPUT_TOOL_DESCRIPTION = 'The final response which ends this conversation'
-OUTPUT_TOOL_NAME_SANITIZER = re.compile(r'[^a-zA-Z0-9-_]')
 
 
 async def execute_traced_output_function(
@@ -104,6 +102,7 @@ async def execute_traced_output_function(
     tool_name = run_context.tool_name or getattr(function_schema.function, '__name__', 'output_function')
     attributes = {
         'gen_ai.tool.name': tool_name,
+        **get_agent_run_baggage_attributes(),
         'logfire.msg': f'running output function: {tool_name}',
     }
     if run_context.tool_call_id:
@@ -440,12 +439,12 @@ class ImageOutputSchema(OutputSchema[OutputDataT]):
 @dataclass(init=False)
 class StructuredTextOutputSchema(OutputSchema[OutputDataT], ABC):
     processor: BaseObjectOutputProcessor[OutputDataT]
-    template: str | None
+    template: str | Literal[False] | None
 
     def __init__(
         self,
         *,
-        template: str | None = None,
+        template: str | Literal[False] | None = None,
         processor: BaseObjectOutputProcessor[OutputDataT],
         allows_deferred_tools: bool,
         allows_image: bool,
@@ -865,7 +864,10 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
     """The tool definitions for the output tools in this toolset."""
     processors: dict[str, ObjectOutputProcessor[Any]]
     """The processors for the output tools in this toolset."""
-    max_retries: int
+    max_retries: int | None
+    """Default max retries for output tools, set by the Agent. Per-tool overrides from `ToolOutput.max_retries` take priority."""
+    _max_retries_overrides: dict[str, int]
+    """Per-tool max_retries overrides from `ToolOutput(max_retries=N)`."""
     output_validators: list[OutputValidator[AgentDepsT, Any]]
 
     @classmethod
@@ -886,6 +888,9 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         default_description = description
         default_strict = strict
 
+        max_retries_overrides: dict[str, int] = {}
+        tool_output_max_retries: int | None = None
+
         multiple = len(outputs) > 1
         for output in outputs:
             name = None
@@ -896,6 +901,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 name = output.name
                 description = output.description
                 strict = output.strict
+                tool_output_max_retries = output.max_retries
 
                 output = output.output  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
 
@@ -910,7 +916,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 name = default_name
                 if multiple:
                     # strip unsupported characters like "[" and "]" from generic class names
-                    safe_name = OUTPUT_TOOL_NAME_SANITIZER.sub('', object_def.name or '')
+                    safe_name = _utils.TOOL_NAME_SANITIZER.sub('', object_def.name or '')
                     name += f'_{safe_name}'
 
             i = 1
@@ -935,19 +941,24 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             )
             processors[name] = processor
             tool_defs.append(tool_def)
+            if tool_output_max_retries is not None:
+                max_retries_overrides[name] = tool_output_max_retries
+            tool_output_max_retries = None
 
-        return cls(processors=processors, tool_defs=tool_defs)
+        return cls(processors=processors, tool_defs=tool_defs, max_retries_overrides=max_retries_overrides)
 
     def __init__(
         self,
         tool_defs: list[ToolDefinition],
         processors: dict[str, ObjectOutputProcessor[Any]],
-        max_retries: int = 1,
+        max_retries: int | None = None,
+        max_retries_overrides: dict[str, int] | None = None,
         output_validators: list[OutputValidator[AgentDepsT, Any]] | None = None,
     ):
         self.processors = processors
         self._tool_defs = tool_defs
         self.max_retries = max_retries
+        self._max_retries_overrides = max_retries_overrides or {}
         self.output_validators = output_validators or []
 
     @property
@@ -959,11 +970,12 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         return "the agent's output tools"
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        max_retries = self.max_retries if self.max_retries is not None else 1
         return {
             tool_def.name: ToolsetTool(
                 toolset=self,
                 tool_def=tool_def,
-                max_retries=self.max_retries,
+                max_retries=self._max_retries_overrides.get(tool_def.name, max_retries),
                 args_validator=self.processors[tool_def.name].validator,
             )
             for tool_def in self._tool_defs

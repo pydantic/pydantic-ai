@@ -1,6 +1,8 @@
 from __future__ import annotations as _annotations
 
+import os
 from datetime import date, datetime, timezone
+from itertools import count
 from types import SimpleNamespace
 from typing import Any
 
@@ -25,6 +27,7 @@ from pydantic_ai import (
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -42,6 +45,7 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
+    UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.profiles import DEFAULT_PROFILE
@@ -110,7 +114,8 @@ class _StubBedrockProvider(Provider[Any]):
     def client(self) -> _StubBedrockClient:
         return self._client
 
-    def model_profile(self, model_name: str):
+    @staticmethod
+    def model_profile(model_name: str):
         return DEFAULT_PROFILE
 
 
@@ -247,6 +252,71 @@ async def test_bedrock_count_tokens_non_http_error():
     assert exc_info.value.message == snapshot(
         'An error occurred (TestException) when calling the count_tokens operation: broken connection'
     )
+
+
+def _bedrock_arn(resource: str) -> str:
+    """Build a Bedrock ARN, using AWS_ACCOUNT_ID env var or a placeholder.
+
+    The placeholder works for VCR replay (the path matcher scrubs account IDs).
+    When re-recording, set AWS_ACCOUNT_ID to your real account ID:
+
+        AWS_ACCOUNT_ID=... uv run pytest ... --record-mode=new_episodes
+    """
+    account_id = os.getenv('AWS_ACCOUNT_ID', '123456789012')
+    region = os.getenv('AWS_REGION', 'us-east-1')
+    return f'arn:aws:bedrock:{region}:{account_id}:{resource}'
+
+
+async def test_bedrock_inference_profile_converse(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    inference_profile_arn = _bedrock_arn('application-inference-profile/mi1dadi0g15f')
+    settings: BedrockModelSettings = {'bedrock_inference_profile': inference_profile_arn}
+    model = BedrockConverseModel('amazon.nova-micro-v1:0', provider=bedrock_provider, settings=settings)
+    agent = Agent(model)
+
+    result = await agent.run('Say "hello" and nothing else.')
+    assert result.output == snapshot('Hello')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Say "hello" and nothing else.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Hello')],
+                usage=RequestUsage(input_tokens=8, output_tokens=2),
+                model_name='amazon.nova-micro-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_bedrock_inference_profile_count_tokens(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    # count_tokens only uses model_name (not the inference profile), so the ARN doesn't
+    # matter here. Claude Sonnet is used because it's one of the few Bedrock models that
+    # supports the count_tokens API.
+    inference_profile_arn = _bedrock_arn('application-inference-profile/mi1dadi0g15f')
+    settings: BedrockModelSettings = {'bedrock_inference_profile': inference_profile_arn}
+    model = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider, settings=settings
+    )
+    params = ModelRequestParameters()
+
+    result = await model.count_tokens([ModelRequest.user_text_prompt('Hello, world!')], settings, params)
+    assert result.input_tokens > 0
+    assert model.model_name == 'us.anthropic.claude-sonnet-4-20250514-v1:0'
 
 
 async def test_bedrock_stream_non_http_error():
@@ -944,6 +1014,31 @@ The document you're referring to appears to be a test document, which means its 
 
 Since this is a test document, it probably doesn't contain any meaningful or specific information beyond what is necessary to serve its testing purpose. If you have specific questions about the format, structure, or any particular element within the document, feel free to ask!\
 """
+    )
+
+
+async def test_map_user_prompt_with_text_content_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    m = await model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        part=UserPromptPart(
+            content=[
+                'What is the main content on this document?',
+                TextContent(content='This is a test document.', metadata={'format': 'plain_text'}),
+            ]
+        ),
+        document_count=count(1),
+        supports_prompt_caching=False,
+    )
+    assert m == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is the main content on this document?'},
+                    {'text': 'This is a test document.'},
+                ],
+            }
+        ]
     )
 
 
@@ -1784,6 +1879,60 @@ async def test_bedrock_no_tool_choice(bedrock_provider: BedrockProvider):
     )
 
 
+async def test_bedrock_sanitize_tool_name_in_history(bedrock_provider: BedrockProvider):
+    """Hallucinated tool names with invalid chars (e.g. dots) are sanitized when replayed to Bedrock."""
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')], timestamp=IsDatetime()),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='search.evidence invalid', args={'q': 'x'}, tool_call_id='tooluse_123')]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='search.evidence invalid',
+                    content='not found',
+                    tool_call_id='tooluse_123',
+                    timestamp=datetime.now(),
+                ),
+            ],
+            timestamp=IsDatetime(),
+        ),
+    ]
+
+    _, bedrock_messages = await model._map_messages(messages, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'Hello'}]},
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'toolUse': {
+                            'toolUseId': 'tooluse_123',
+                            'name': 'search_evidence_invalid',
+                            'input': {'q': 'x'},
+                        }
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'toolResult': {
+                            'toolUseId': 'tooluse_123',
+                            'content': [{'text': 'not found'}],
+                            'status': 'success',
+                        }
+                    }
+                ],
+            },
+        ]
+    )
+
+
 async def test_bedrock_model_stream_empty_text_delta(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel(model_name='openai.gpt-oss-120b-1:0', provider=bedrock_provider)
     agent = Agent(model)
@@ -2590,13 +2739,15 @@ async def test_bedrock_cache_messages_with_binary_content(
     # Should not add cache point for document content
     assert bedrock_messages[0]['content'] == snapshot(
         [
+            {'text': 'See attached document(s).'},
+            {'cachePoint': {'type': 'default'}},
             {
                 'document': {
                     'name': 'Document 1',
                     'format': 'txt',
                     'source': {'bytes': b'Test document content'},
                 }
-            }
+            },
         ]
     )
 
@@ -2660,9 +2811,14 @@ async def test_bedrock_cache_messages_no_user_messages(allow_model_requests: Non
         ModelRequestParameters(),
         BedrockModelSettings(bedrock_cache_messages=True),
     )
-    # Should not crash, no cache point added since no user message
-    assert len(bedrock_messages) == 1
-    assert bedrock_messages[0]['role'] == 'assistant'
+    # Should not crash, no cache point added since no real user message.
+    # Synthetic user message is prepended because Bedrock requires conversations to start with a user turn.
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': '.'}]},
+            {'role': 'assistant', 'content': [{'text': 'Assistant response'}]},
+        ]
+    )
 
 
 async def test_get_last_user_message_content_non_dict_block(
@@ -2853,6 +3009,222 @@ async def test_bedrock_empty_model_response_skipped(bedrock_provider: BedrockPro
     )
 
 
+async def test_uploaded_file_wrong_provider(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that UploadedFile with wrong provider raises an error."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match="provider_name='openai'.*cannot be used with BedrockConverseModel"):
+        await agent.run(['Analyze this file', UploadedFile(file_id='s3://bucket/file.pdf', provider_name='openai')])
+
+
+async def test_uploaded_file_non_s3_url(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that UploadedFile with non-S3 URL raises an error."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match='UploadedFile for Bedrock must use an S3 URL'):
+        await agent.run(
+            [
+                'Analyze this file',
+                UploadedFile(
+                    file_id='https://example.com/file.pdf', provider_name='bedrock', media_type='application/pdf'
+                ),
+            ]
+        )
+
+
+async def test_uploaded_file_no_extension_defaults_to_octet_stream(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Test that UploadedFile without extension defaults to application/octet-stream which is unsupported."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match='Unsupported media type for Bedrock UploadedFile: application/octet-stream'):
+        await agent.run(
+            [
+                'Analyze this file',
+                UploadedFile(
+                    file_id='s3://bucket/file', provider_name='bedrock'
+                ),  # No extension, defaults to octet-stream
+            ]
+        )
+
+
+async def test_uploaded_file_unsupported_media_type(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that UploadedFile with unsupported media type raises an error."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match='Unsupported media type for Bedrock UploadedFile'):
+        await agent.run(
+            [
+                'Analyze this file',
+                UploadedFile(
+                    file_id='s3://bucket/file.bin', provider_name='bedrock', media_type='application/octet-stream'
+                ),
+            ]
+        )
+
+
+async def test_uploaded_file_image(bedrock_provider: BedrockProvider):
+    """Test that UploadedFile with image media type is correctly mapped."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    uploaded_file = UploadedFile(file_id='s3://my-bucket/image.png', provider_name='bedrock', media_type='image/png')
+
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['What is in this image?', uploaded_file])]),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is in this image?'},
+                    {
+                        'image': {
+                            'format': 'png',
+                            'source': {'s3Location': {'uri': 's3://my-bucket/image.png'}},
+                        }
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_uploaded_file_video(bedrock_provider: BedrockProvider):
+    """Test that UploadedFile with video media type is correctly mapped."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    uploaded_file = UploadedFile(file_id='s3://my-bucket/video.mp4', provider_name='bedrock', media_type='video/mp4')
+
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['Describe this video', uploaded_file])]),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Describe this video'},
+                    {
+                        'video': {
+                            'format': 'mp4',
+                            'source': {'s3Location': {'uri': 's3://my-bucket/video.mp4'}},
+                        }
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_uploaded_file_document(bedrock_provider: BedrockProvider):
+    """Test that UploadedFile with document media type is correctly mapped."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    uploaded_file = UploadedFile(
+        file_id='s3://my-bucket/report.pdf', provider_name='bedrock', media_type='application/pdf'
+    )
+
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['What is in this document?', uploaded_file])]),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is in this document?'},
+                    {
+                        'document': {
+                            'format': 'pdf',
+                            'name': IsStr(),
+                            'source': {'s3Location': {'uri': 's3://my-bucket/report.pdf'}},
+                        }
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_uploaded_file_s3_with_bucket_owner(bedrock_provider: BedrockProvider):
+    """Test that UploadedFile S3 URLs with bucketOwner parameter are parsed correctly."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    uploaded_file = UploadedFile(
+        file_id='s3://my-bucket/image.png?bucketOwner=123456789012', provider_name='bedrock', media_type='image/png'
+    )
+
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['What is in this image?', uploaded_file])]),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is in this image?'},
+                    {
+                        'image': {
+                            'format': 'png',
+                            'source': {
+                                's3Location': {
+                                    'uri': 's3://my-bucket/image.png',
+                                    'bucketOwner': '123456789012',
+                                }
+                            },
+                        }
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_uploaded_file_media_type_inference(bedrock_provider: BedrockProvider):
+    """Test that UploadedFile infers media type from file extension."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    # No media_type provided, should infer from .pdf extension
+    uploaded_file = UploadedFile(file_id='s3://my-bucket/report.pdf', provider_name='bedrock')
+
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['What is in this document?', uploaded_file])]),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is in this document?'},
+                    {
+                        'document': {
+                            'format': 'pdf',
+                            'name': IsStr(),
+                            'source': {'s3Location': {'uri': 's3://my-bucket/report.pdf'}},
+                        }
+                    },
+                ],
+            }
+        ]
+    )
+
+
 async def test_bedrock_map_messages_builtin_tool_provider_filtering(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
@@ -2935,6 +3307,7 @@ async def test_bedrock_map_messages_builtin_tool_provider_filtering(
     )
     assert bedrock_messages == snapshot(
         [
+            {'role': 'user', 'content': [{'text': '.'}]},
             {
                 'role': 'assistant',
                 'content': [
@@ -2970,7 +3343,7 @@ async def test_bedrock_map_messages_builtin_tool_provider_filtering(
                         }
                     },
                 ],
-            }
+            },
         ]
     )
 
@@ -3241,6 +3614,184 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                     provider_name='bedrock',
                     provider_details={'status': 'success'},
                 )
+            ),
+        ]
+    )
+
+
+async def test_image_url_unsupported_format(bedrock_provider: BedrockProvider):
+    """Test that ImageUrl with unsupported image format raises an error."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+
+    image_url = ImageUrl(url='s3://bucket/image.bmp', media_type='image/bmp')
+
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['What is in this image?', image_url])]),
+    ]
+
+    with pytest.raises(UserError, match='Unsupported image format: bmp'):
+        await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+
+async def test_video_url_unsupported_format(bedrock_provider: BedrockProvider):
+    """Test that VideoUrl with unsupported video format raises an error."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+
+    video_url = VideoUrl(url='s3://bucket/video.avi', media_type='video/avi')
+
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['Describe this video', video_url])]),
+    ]
+
+    with pytest.raises(UserError, match='Unsupported video format: avi'):
+        await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+
+async def test_document_url_unsupported_format(bedrock_provider: BedrockProvider):
+    """Test that DocumentUrl with unsupported document format raises an error."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+
+    doc_url = DocumentUrl(url='s3://bucket/file.rtf', media_type='application/rtf')
+
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['Summarize this document', doc_url])]),
+    ]
+
+    with pytest.raises(UserError, match='Unsupported document format: rtf'):
+        await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+
+async def test_uploaded_file_unsupported_video_media_type(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Test that UploadedFile with unsupported video media type raises an error."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match='Unsupported media type for Bedrock UploadedFile: video/avi'):
+        await agent.run(
+            [
+                'Describe this video',
+                UploadedFile(file_id='s3://bucket/video.avi', provider_name='bedrock', media_type='video/avi'),
+            ]
+        )
+
+
+async def test_uploaded_file_audio_not_supported(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that UploadedFile with audio media type raises an error."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match='Audio files are not supported for Bedrock UploadedFile'):
+        await agent.run(
+            [
+                'Transcribe this audio',
+                UploadedFile(file_id='s3://bucket/audio.wav', provider_name='bedrock', media_type='audio/wav'),
+            ]
+        )
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        pytest.param('us.anthropic.claude-sonnet-4-5-20250929-v1:0', id='claude-sonnet-4-5'),
+        pytest.param('us.amazon.nova-micro-v1:0', id='nova-micro'),
+    ],
+)
+async def test_bedrock_model_with_instructions_only(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, model_name: BedrockModelName
+):
+    """Test that agent.run() works without a user prompt, using only a system prompt.
+
+    Bedrock requires conversations to start with a user message. When called with only a
+    system prompt, the model layer synthesizes a placeholder user message automatically.
+    See: https://github.com/pydantic/pydantic-ai/issues/4495
+    """
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    agent = Agent(model=model, system_prompt='Generate a short greeting.')
+
+    result = await agent.run()
+    assert result.output
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[SystemPromptPart(content='Generate a short greeting.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())],
+                usage=IsInstance(RequestUsage),
+                model_name=model_name,
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        pytest.param('us.anthropic.claude-sonnet-4-5-20250929-v1:0', id='claude-sonnet-4-5'),
+        pytest.param('us.amazon.nova-micro-v1:0', id='nova-micro'),
+    ],
+)
+async def test_bedrock_model_instructions_only_then_message_history(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, model_name: BedrockModelName
+):
+    """Test that message_history from a system-prompt-only run works in a follow-up run.
+
+    Verifies the scenario where a first run with only instructions produces a history
+    starting with an assistant message (after system parts are extracted), and a second
+    run using that history doesn't fail.
+    See: https://github.com/pydantic/pydantic-ai/issues/4495
+    """
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    agent = Agent(model=model, system_prompt='Generate a short greeting.')
+
+    first_result = await agent.run()
+    second_result = await agent.run('Now say goodbye.', message_history=first_result.all_messages())
+    assert second_result.output
+    assert second_result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[SystemPromptPart(content='Generate a short greeting.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())],
+                usage=IsInstance(RequestUsage),
+                model_name=model_name,
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='Now say goodbye.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())],
+                usage=IsInstance(RequestUsage),
+                model_name=model_name,
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
