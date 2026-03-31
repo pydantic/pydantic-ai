@@ -546,11 +546,11 @@ class ModelResponsePartsManager:
             self._empty_start_thinking_closed_without_vendor_id = False
         yield from self._handle_embedded_thinking_start(vendor_part_id, provider_name, provider_details)
         latest_thinking_part_and_index = self._latest_part_if_of_type(ThinkingPart)
-        if latest_thinking_part_and_index is not None:
-            existing_thinking_part, part_index = latest_thinking_part_and_index
-            yield from self._handle_embedded_thinking_content(
-                existing_thinking_part, part_index, content, provider_name, provider_details
-            )
+        assert latest_thinking_part_and_index is not None
+        existing_thinking_part, part_index = latest_thinking_part_and_index
+        yield from self._handle_embedded_thinking_content(
+            existing_thinking_part, part_index, content, provider_name, provider_details
+        )
 
     def _resolve_provider_name(
         self, existing_part: ModelResponsePart | ToolCallPartDelta, provider_name: str | None

@@ -99,6 +99,31 @@ from ._inline_snapshot import snapshot
             'no thinking tags',
             [TextPart(content='no thinking tags')],
         ),
+        (
+            ('', ''),
+            '',
+            [],
+        ),
+        (
+            ('', '</think>'),
+            'thinking</think>',
+            [ThinkingPart(content='thinking')],
+        ),
+        (
+            ('', '</think>'),
+            '',
+            [],
+        ),
+        (
+            ('<think>', ''),
+            '<think>thinking',
+            [ThinkingPart(content='thinking')],
+        ),
+        (
+            ('<think>', ''),
+            'text only',
+            [TextPart(content='text only')],
+        ),
     ],
 )
 def test_split_content(thinking_tags: tuple[str, str], content: str, parts: list[ModelResponsePart]):
