@@ -1576,9 +1576,10 @@ async def test_dbos_mcp_toolset_instructions_propagate(dbos: DBOS):
 
 
 class _UninitializedInstructionsToolset(AbstractToolset[None]):
-    """A toolset whose instructions raise AttributeError until it's entered (like an uninitialized MCP server)."""
+    """A toolset whose instructions return None until entered (like an uninitialized MCP server)."""
 
     _entered = False
+    include_instructions = True
 
     @property
     def id(self) -> str:
@@ -1593,7 +1594,7 @@ class _UninitializedInstructionsToolset(AbstractToolset[None]):
 
     async def get_instructions(self, ctx: RunContext[None]) -> str | list[str] | None:
         if not self._entered:
-            raise AttributeError('instructions are only available after initialization')
+            return None
         return 'step-resolved instructions'
 
     async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:  # pragma: no cover
