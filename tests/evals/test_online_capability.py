@@ -360,6 +360,33 @@ async def test_streaming_dispatches_after_context_exit():
 
 
 @pytest.mark.anyio
+async def test_iter_dispatches_after_context_exit():
+    """Iter-based runs dispatch evaluations only after the context exits."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    agent = Agent(
+        TestModel(),
+        capabilities=[OnlineEvaluation(evaluators=[AlwaysTrue()], config=config)],
+    )
+
+    async with agent.iter('hello') as agent_run:
+        async for _ in agent_run:
+            pass
+        assert agent_run.result is not None
+        assert agent_run.result.output == 'success (no tool calls)'
+        assert len(collector.calls) == 0
+
+    await wait_for_evaluations()
+
+    assert len(collector.calls) == 1
+    results, failures, ctx = collector.calls[0]
+    assert len(results) == 1
+    assert len(failures) == 0
+    assert ctx.output == 'success (no tool calls)'
+
+
+@pytest.mark.anyio
 async def test_span_reference_with_logfire(capfire: Any):
     """OnlineEvaluation produces a valid SpanReference when logfire is configured."""
     collector = SpanCollector()

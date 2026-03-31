@@ -895,16 +895,15 @@ agent = Agent(
 )
 
 
-async def main() -> None:
+async def main() -> list[str]:
     results_log.clear()
     await agent.run('What is the capital of the UK?')
     await wait_for_evaluations()
-    print(results_log)
-    #> ['OutputNotEmpty=True']
-    #> ['OutputNotEmpty=True']
+    return results_log
 
 
-asyncio.run(main())
+print(asyncio.run(main()))
+#> ['OutputNotEmpty=True']
 ```
 
 After each completed agent run, the capability:
@@ -917,7 +916,7 @@ After each completed agent run, the capability:
 The capability supports all the same features as the [`@evaluate()`][pydantic_evals.online.evaluate] decorator: sampling, per-evaluator sinks, concurrency control, and error handling. The `config` parameter is optional and defaults to the global [`DEFAULT_CONFIG`][pydantic_evals.online.DEFAULT_CONFIG].
 
 !!! note
-    [`OnlineEvaluation`][pydantic_evals.online_capability.OnlineEvaluation] wraps both [`agent.run()`][pydantic_ai.Agent.run] and [`agent.run_stream()`][pydantic_ai.Agent.run_stream]. For streaming runs, evaluators are dispatched only after the stream completes and the context manager exits, when the final result is available.
+    [`OnlineEvaluation`][pydantic_evals.online_capability.OnlineEvaluation] wraps [`agent.run()`][pydantic_ai.Agent.run], [`agent.run_stream()`][pydantic_ai.Agent.run_stream], and [`agent.iter()`][pydantic_ai.Agent.iter] when the run reaches a final result. For streaming runs, evaluators are dispatched only after the final result is available and the surrounding context manager exits. The same delayed-dispatch behavior applies when driving an [`agent.iter()`][pydantic_ai.Agent.iter] run to completion, which is generally the preferred streaming API.
 
 ## API Reference
 

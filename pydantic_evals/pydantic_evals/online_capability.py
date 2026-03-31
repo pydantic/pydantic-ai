@@ -15,22 +15,15 @@ from pydantic_ai.capabilities.abstract import AbstractCapability, WrapRunHandler
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 
-from .dataset import (
-    _CURRENT_TASK_RUN as _CURRENT_TASK_RUN,  # pyright: ignore[reportPrivateUsage]
-    _extract_span_tree_metrics as _extract_span_tree_metrics,  # pyright: ignore[reportPrivateUsage]
-    _TaskRun as _TaskRun,  # pyright: ignore[reportPrivateUsage]
-)
+from . import _online as _online_internal, _task_run
 from .evaluators.context import EvaluatorContext
 from .evaluators.evaluator import Evaluator
 from .online import (
-    _EVALUATION_DISABLED,  # pyright: ignore[reportPrivateUsage]
     DEFAULT_CONFIG,
     OnlineEvalConfig,
     OnlineEvaluator,
+    SamplingContext,
     SpanReference,
-    _dispatch_async,  # pyright: ignore[reportPrivateUsage]
-    _dispatch_evaluators,  # pyright: ignore[reportPrivateUsage]
-    _sample_evaluators,  # pyright: ignore[reportPrivateUsage]
 )
 from .otel._context_subtree import context_subtree
 from .otel.span_tree import SpanTree
@@ -67,11 +60,12 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
 
     !!! note
         [`OnlineEvaluation`][pydantic_evals.online_capability.OnlineEvaluation]
-        wraps both [`agent.run()`][pydantic_ai.Agent.run] and
-        [`agent.run_stream()`][pydantic_ai.Agent.run_stream].
-        For streaming runs, evaluators are dispatched only after the stream
-        completes and the context manager exits, when the final result is
-        available.
+        wraps [`agent.run()`][pydantic_ai.Agent.run],
+        [`agent.run_stream()`][pydantic_ai.Agent.run_stream], and
+        [`agent.iter()`][pydantic_ai.Agent.iter] when the run reaches a
+        final result.
+        For streaming runs, evaluators are dispatched only after the final
+        result is available and the surrounding context manager exits.
 
     Example:
     ```python {lint="skip"}
@@ -121,6 +115,20 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
     def get_serialization_name(cls) -> str | None:
         return None
 
+    @staticmethod
+    def _build_sampling_context(
+        evaluator: Evaluator,
+        inputs: dict[str, Any],
+        metadata: dict[str, Any] | None,
+        call_seed: float,
+    ) -> SamplingContext:
+        return SamplingContext(
+            evaluator=evaluator,
+            inputs=inputs,
+            metadata=metadata,
+            call_seed=call_seed,
+        )
+
     async def wrap_run(
         self,
         ctx: RunContext[AgentDepsT],
@@ -130,38 +138,45 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
         config = self._resolved_config
 
         # Skip if disabled or already inside an evaluation context (e.g. Dataset.evaluate)
-        if not config.enabled or _EVALUATION_DISABLED.get() or _CURRENT_TASK_RUN.get() is not None:
+        if (
+            not config.enabled
+            or _online_internal.EVALUATION_DISABLED.get()
+            or _task_run.CURRENT_TASK_RUN.get() is not None
+        ):
             return await handler()
 
         # Build a synthetic inputs dict for sampling context
         inputs: dict[str, Any] = {'prompt': ctx.prompt}
 
         # Determine which evaluators are sampled (before running the agent)
-        sampled = _sample_evaluators(self._online_evaluators, config, inputs)
+        sampled = _online_internal.sample_evaluators(
+            self._online_evaluators,
+            config,
+            inputs,
+            build_sampling_context=self._build_sampling_context,
+        )
         if not sampled:
             return await handler()
 
         # Run the agent with span tree capture and attribute/metric tracking
-        task_run = _TaskRun()
-        token = _CURRENT_TASK_RUN.set(task_run)
+        task_run = _task_run.TaskRun()
+        token = _task_run.CURRENT_TASK_RUN.set(task_run)
         try:
             with context_subtree() as span_tree:
                 t0 = time.perf_counter()
                 result = await handler()
                 duration = time.perf_counter() - t0
         finally:  # pragma: no branch
-            _CURRENT_TASK_RUN.reset(token)
+            _task_run.CURRENT_TASK_RUN.reset(token)
 
         # Extract standard metrics from the span tree
         if isinstance(span_tree, SpanTree):  # pragma: no branch
-            _extract_span_tree_metrics(task_run, span_tree)
+            _task_run.extract_span_tree_metrics(task_run, span_tree)
 
         # Merge config and run metadata
         metadata: dict[str, Any] | None = None
-        if config.metadata or ctx.metadata:
+        if config.metadata is not None or ctx.metadata is not None:
             metadata = {**(config.metadata or {}), **(ctx.metadata or {})}
-        elif config.metadata is not None:
-            metadata = dict(config.metadata)
 
         context = EvaluatorContext(
             name=self.name or ctx.run_id or 'agent',
@@ -177,6 +192,6 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
 
         span_reference = _parse_traceparent(result._traceparent(required=False))  # pyright: ignore[reportPrivateUsage]
 
-        _dispatch_async(_dispatch_evaluators(sampled, context, span_reference, config))
+        _online_internal.dispatch_async(_online_internal.dispatch_evaluators(sampled, context, span_reference, config))
 
         return result
