@@ -3660,3 +3660,98 @@ def test_args_validator_not_double_called_for_approved_tools():
     # Validator should have been called exactly once with approved=True
     assert len(validator_calls) == 1
     assert validator_calls[0] == (0, True)  # retry=0, approved=True
+
+
+def test_tool_ctx_agent():
+    """ctx.agent gives tools access to the running agent's properties."""
+    agent = Agent('test', name='my_agent', output_type=int)
+    tool_agent_names: list[str | None] = []
+    tool_output_types: list[Any] = []
+
+    @agent.tool
+    def get_agent_info(ctx: RunContext[None]) -> str:
+        tool_agent_names.append(ctx.agent.name if ctx.agent else None)
+        tool_output_types.append(ctx.agent.output_type if ctx.agent else None)
+        return f'agent={ctx.agent.name if ctx.agent else None}'
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot(0)
+    assert tool_agent_names == ['my_agent']
+    assert tool_output_types == [int]
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_agent_info', args={}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_agent_info',
+                        content='agent=my_agent',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'response': 0}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=52, output_tokens=6),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+def test_tool_ctx_agent_in_output_validator():
+    """ctx.agent is available in output validators."""
+    agent = Agent('test', name='validated_agent')
+    validator_agent_names: list[str | None] = []
+
+    @agent.output_validator
+    def check_agent(ctx: RunContext[None], output: str) -> str:
+        validator_agent_names.append(ctx.agent.name if ctx.agent else None)
+        return output
+
+    result = agent.run_sync('Hello')
+    assert validator_agent_names == ['validated_agent']
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )

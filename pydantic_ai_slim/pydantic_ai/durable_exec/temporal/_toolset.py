@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import ConfigDict, Discriminator, Tag, with_config
 from temporalio import workflow
@@ -17,6 +17,9 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._run_context import TemporalRunContext
+
+if TYPE_CHECKING:
+    from pydantic_ai.agent.abstract import AbstractAgent
 
 
 @dataclass
@@ -79,6 +82,8 @@ CallToolResult = Annotated[
 
 
 class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
+    _agent: AbstractAgent[AgentDepsT, Any] | None = None
+
     @property
     def id(self) -> str:
         # An error is raised in `TemporalAgent` if no `id` is set.

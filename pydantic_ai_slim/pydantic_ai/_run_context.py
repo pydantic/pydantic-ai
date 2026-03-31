@@ -15,6 +15,7 @@ from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from . import _utils, messages as _messages
 
 if TYPE_CHECKING:
+    from .agent.abstract import AbstractAgent
     from .models import Model
     from .result import RunUsage
     from .settings import ModelSettings
@@ -33,6 +34,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
     deps: RunContextAgentDepsT
     """Dependencies for the agent."""
+    agent: AbstractAgent[Any, Any] | None = field(default=None, repr=False)
+    """The agent running this context, or `None` if not set."""
     model: Model
     """The model used in this run."""
     usage: RunUsage

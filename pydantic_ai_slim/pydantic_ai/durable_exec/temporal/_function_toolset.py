@@ -37,7 +37,9 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
 
         async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
             name = params.name
-            ctx = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
+            ctx = self.run_context_type.deserialize_run_context(
+                params.serialized_run_context, deps=deps, agent=self._agent
+            )
             try:
                 tool = (await toolset.get_tools(ctx))[name]
             except KeyError as e:  # pragma: no cover

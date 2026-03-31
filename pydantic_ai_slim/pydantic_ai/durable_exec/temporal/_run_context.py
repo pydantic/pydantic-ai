@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from typing_extensions import TypeVar
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import RunContext
+
+if TYPE_CHECKING:
+    from pydantic_ai.agent.abstract import AbstractAgent
 
 AgentDepsT = TypeVar('AgentDepsT', default=None, covariant=True)
 """Type variable for the agent dependencies in `RunContext`."""
@@ -20,6 +23,7 @@ class TemporalRunContext(RunContext[AgentDepsT]):
 
     def __init__(self, deps: AgentDepsT, **kwargs: Any):
         self.__dict__ = {**kwargs, 'deps': deps}
+        self.__dict__.setdefault('agent', None)
         setattr(
             self,
             '__dataclass_fields__',
@@ -57,6 +61,11 @@ class TemporalRunContext(RunContext[AgentDepsT]):
         }
 
     @classmethod
-    def deserialize_run_context(cls, ctx: dict[str, Any], deps: Any) -> TemporalRunContext[Any]:
+    def deserialize_run_context(
+        cls, ctx: dict[str, Any], deps: Any, *, agent: AbstractAgent[Any, Any] | None = None
+    ) -> TemporalRunContext[Any]:
         """Deserialize the run context from a `dict[str, Any]`."""
-        return cls(**ctx, deps=deps)
+        result = cls(**ctx, deps=deps)
+        if agent is not None:
+            result.__dict__['agent'] = agent
+        return result

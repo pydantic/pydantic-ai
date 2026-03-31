@@ -148,7 +148,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             # and that only ends up calling `event_stream_handler` if it is set.
             assert self.event_stream_handler is not None
 
-            run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
+            run_context = self.run_context_type.deserialize_run_context(
+                params.serialized_run_context, deps=deps, agent=self.wrapped
+            )
 
             async def streamed_response():
                 yield params.event
@@ -175,6 +177,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             models=models,
             provider_factory=provider_factory,
         )
+        temporal_model._agent = self.wrapped  # pyright: ignore[reportPrivateUsage]
         activities.extend(temporal_model.temporal_activities)
         self._temporal_model = temporal_model
 
@@ -194,6 +197,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 self.run_context_type,
             )
             if isinstance(toolset, TemporalWrapperToolset):
+                toolset._agent = self.wrapped  # pyright: ignore[reportPrivateUsage]
                 activities.extend(toolset.temporal_activities)
             return toolset
 
