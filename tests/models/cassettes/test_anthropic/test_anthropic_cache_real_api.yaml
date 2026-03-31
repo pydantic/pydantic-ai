@@ -4,24 +4,24 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '5617'
+      - '5637'
       content-type:
       - application/json
       host:
       - api.anthropic.com
     method: POST
     parsed_body:
+      cache_control:
+        ttl: 5m
+        type: ephemeral
       max_tokens: 4096
       messages:
       - content:
-        - cache_control:
-            ttl: 5m
-            type: ephemeral
-          text: 'Please explain what Python is and its main use cases. Please explain what Python is and its main use cases.
+        - text: 'Please explain what Python is and its main use cases. Please explain what Python is and its main use cases.
             Please explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please
             explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain
             what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what
@@ -80,66 +80,70 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1986'
+      - '2081'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
-      retry-after:
-      - '3'
+      server-timing:
+      - x-originResponse;dur=7107
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
+      vary:
+      - Accept-Encoding
     parsed_body:
       content:
       - text: |-
           # What is Python?
 
-          **Python** is a high-level, interpreted programming language created by Guido van Rossum and first released in 1991. It emphasizes code readability and simplicity, using clear syntax that often resembles plain English.
+          Python is a high-level, interpreted programming language created by Guido van Rossum and first released in 1991. It's designed with an emphasis on code readability and simplicity, using significant whitespace (indentation) to define code blocks.
 
           ## Key Characteristics:
-          - **Easy to learn**: Simple, intuitive syntax ideal for beginners
-          - **Interpreted**: Code runs line-by-line without compilation
-          - **Dynamically typed**: No need to declare variable types
-          - **Versatile**: Supports multiple programming paradigms (procedural, object-oriented, functional)
-          - **Extensive libraries**: Vast ecosystem of packages and frameworks
+          - **Easy to learn and read** - Clean, English-like syntax
+          - **Interpreted** - Code runs without compilation
+          - **Dynamically typed** - No need to declare variable types
+          - **Multi-paradigm** - Supports procedural, object-oriented, and functional programming
+          - **Extensive libraries** - Vast ecosystem of packages and frameworks
 
           ## Main Use Cases:
 
           ### 1. **Web Development**
-          - Frameworks: Django, Flask, FastAPI
-          - Backend services and APIs
+             - Frameworks: Django, Flask, FastAPI
+             - Backend services and APIs
 
           ### 2. **Data Science & Analytics**
-          - Libraries: Pandas, NumPy, Matplotlib
-          - Data manipulation and visualization
+             - Libraries: Pandas, NumPy, Matplotlib
+             - Data manipulation and visualization
 
           ### 3. **Machine Learning & AI**
-          - Frameworks: TensorFlow, PyTorch, scikit-learn
-          - Deep learning and predictive modeling
+             - Libraries: TensorFlow, PyTorch, scikit-learn
+             - Model development and deployment
 
           ### 4. **Automation & Scripting**
-          - Task automation
-          - System administration
+             - Task automation
+             - System administration
 
           ### 5. **Scientific Computing**
-          - Research and computational analysis
-          - Libraries: SciPy, SymPy
+             - Research and simulations
+             - Libraries: SciPy, SymPy
 
           ### 6. **Software Development**
-          - Application development
-          - Prototyping
+             - Prototyping
+             - Application development
 
           ### 7. **Cybersecurity**
-          - Penetration testing tools
-          - Security automation
+             - Penetration testing
+             - Security analysis tools
 
           ### 8. **Game Development**
-          - Libraries: Pygame
-          - Prototyping game logic
+             - Library: Pygame
+             - Prototyping game logic
 
-          Python's versatility and ease of use make it one of the most popular programming languages worldwide, used by companies like Google, Netflix, NASA, and many others.
+          Python's versatility and beginner-friendly nature make it one of the most popular programming languages today, used by companies like Google, Netflix, NASA, and Instagram.
         type: text
-      id: msg_01FdUT99HgS9cAzcv4ztTDYJ
+      id: msg_01UUPT9QdZnZSRzcQJkjG25U
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
@@ -148,11 +152,12 @@ interactions:
       usage:
         cache_creation:
           ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 1111
-        cache_creation_input_tokens: 1111
-        cache_read_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 1111
+        inference_geo: not_available
         input_tokens: 3
-        output_tokens: 391
+        output_tokens: 406
         service_tier: standard
     status:
       code: 200
@@ -162,17 +167,22 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '7343'
+      - '7409'
       content-type:
       - application/json
+      cookie:
+      - _cfuvid=C5t3XUEZEFy8GuwgjiLQFR5itH1z9IW4VIXv3ktJkR0-1774621758.8210778-1.0.1.1-7RHFAdyTyQQ6_7DL_iGE_O_MhCEvrxg_70RebHwK3Ac
       host:
       - api.anthropic.com
     method: POST
     parsed_body:
+      cache_control:
+        ttl: 5m
+        type: ephemeral
       max_tokens: 4096
       messages:
       - content:
@@ -230,57 +240,54 @@ interactions:
         - text: |-
             # What is Python?
 
-            **Python** is a high-level, interpreted programming language created by Guido van Rossum and first released in 1991. It emphasizes code readability and simplicity, using clear syntax that often resembles plain English.
+            Python is a high-level, interpreted programming language created by Guido van Rossum and first released in 1991. It's designed with an emphasis on code readability and simplicity, using significant whitespace (indentation) to define code blocks.
 
             ## Key Characteristics:
-            - **Easy to learn**: Simple, intuitive syntax ideal for beginners
-            - **Interpreted**: Code runs line-by-line without compilation
-            - **Dynamically typed**: No need to declare variable types
-            - **Versatile**: Supports multiple programming paradigms (procedural, object-oriented, functional)
-            - **Extensive libraries**: Vast ecosystem of packages and frameworks
+            - **Easy to learn and read** - Clean, English-like syntax
+            - **Interpreted** - Code runs without compilation
+            - **Dynamically typed** - No need to declare variable types
+            - **Multi-paradigm** - Supports procedural, object-oriented, and functional programming
+            - **Extensive libraries** - Vast ecosystem of packages and frameworks
 
             ## Main Use Cases:
 
             ### 1. **Web Development**
-            - Frameworks: Django, Flask, FastAPI
-            - Backend services and APIs
+               - Frameworks: Django, Flask, FastAPI
+               - Backend services and APIs
 
             ### 2. **Data Science & Analytics**
-            - Libraries: Pandas, NumPy, Matplotlib
-            - Data manipulation and visualization
+               - Libraries: Pandas, NumPy, Matplotlib
+               - Data manipulation and visualization
 
             ### 3. **Machine Learning & AI**
-            - Frameworks: TensorFlow, PyTorch, scikit-learn
-            - Deep learning and predictive modeling
+               - Libraries: TensorFlow, PyTorch, scikit-learn
+               - Model development and deployment
 
             ### 4. **Automation & Scripting**
-            - Task automation
-            - System administration
+               - Task automation
+               - System administration
 
             ### 5. **Scientific Computing**
-            - Research and computational analysis
-            - Libraries: SciPy, SymPy
+               - Research and simulations
+               - Libraries: SciPy, SymPy
 
             ### 6. **Software Development**
-            - Application development
-            - Prototyping
+               - Prototyping
+               - Application development
 
             ### 7. **Cybersecurity**
-            - Penetration testing tools
-            - Security automation
+               - Penetration testing
+               - Security analysis tools
 
             ### 8. **Game Development**
-            - Libraries: Pygame
-            - Prototyping game logic
+               - Library: Pygame
+               - Prototyping game logic
 
-            Python's versatility and ease of use make it one of the most popular programming languages worldwide, used by companies like Google, Netflix, NASA, and many others.
+            Python's versatility and beginner-friendly nature make it one of the most popular programming languages today, used by companies like Google, Netflix, NASA, and Instagram.
           type: text
         role: assistant
       - content:
-        - cache_control:
-            ttl: 5m
-            type: ephemeral
-          text: Can you summarize that in one sentence?
+        - text: Can you summarize that in one sentence?
           type: text
         role: user
       model: claude-sonnet-4-5
@@ -292,21 +299,25 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '576'
+      - '642'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
-      retry-after:
-      - '56'
+      server-timing:
+      - x-originResponse;dur=979
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
+      vary:
+      - Accept-Encoding
     parsed_body:
       content:
       - text: Python is a beginner-friendly, versatile programming language widely used for web development, data science,
           machine learning, automation, and scientific computing.
         type: text
-      id: msg_01PYfyaNS7Rysss2xMNqQgy9
+      id: msg_01KPaKTJSqAKoZri7Ujrny58
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
@@ -315,9 +326,10 @@ interactions:
       usage:
         cache_creation:
           ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 403
-        cache_creation_input_tokens: 403
+          ephemeral_5m_input_tokens: 418
+        cache_creation_input_tokens: 418
         cache_read_input_tokens: 1111
+        inference_geo: not_available
         input_tokens: 3
         output_tokens: 33
         service_tier: standard
