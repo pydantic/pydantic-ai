@@ -5243,6 +5243,81 @@ async def test_google_api_non_http_error(
     assert exc_info.value.model_name == 'gemini-1.5-flash'
 
 
+async def test_google_retry_prompt_without_tool_call_id(
+    allow_model_requests: None,
+    google_provider: GoogleProvider,
+    mocker: MockerFixture,
+):
+    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+
+    mocked_response = mocker.Mock(
+        candidates=[
+            mocker.Mock(
+                content=mocker.Mock(
+                    parts=[
+                        mocker.Mock(
+                            text='final response',
+                            thought=False,
+                            thought_signature=None,
+                            function_call=None,
+                            inline_data=None,
+                            executable_code=None,
+                            code_execution_result=None,
+                            function_response=None,
+                        )
+                    ]
+                ),
+                finish_reason=GoogleFinishReason.STOP,
+                safety_ratings=None,
+                grounding_metadata=None,
+                url_context_metadata=None,
+                logprobs_result=None,
+                avg_logprobs=None,
+            )
+        ],
+        model_version='gemini-1.5-flash',
+        usage_metadata=mocker.Mock(
+            prompt_token_count=1,
+            candidates_token_count=1,
+            total_token_count=2,
+            cached_content_token_count=None,
+            thoughts_token_count=None,
+            tool_use_prompt_token_count=None,
+            prompt_tokens_details=None,
+            cache_tokens_details=None,
+            candidates_tokens_details=None,
+            tool_use_prompt_tokens_details=None,
+            text_prompt_token_count=None,
+            image_prompt_token_count=None,
+            audio_prompt_token_count=None,
+            video_prompt_token_count=None,
+        ),
+        create_time=datetime.datetime.now(tz=timezone.utc),
+        response_id='resp_1',
+    )
+    generate_content = mocker.AsyncMock(return_value=mocked_response)
+    mocker.patch.object(model.client.aio.models, 'generate_content', generate_content)
+
+    agent = Agent(model=model)
+
+    result = await agent.run(
+        'Hello',
+        message_history=[
+            ModelRequest(parts=[RetryPromptPart(content='Wrong location, please try again', tool_name='get_location')])
+        ],
+    )
+
+    assert result.output == 'final response'
+    contents = generate_content.call_args.kwargs['contents']
+    retry_content = next(part for content in contents for part in content['parts'] if 'function_response' in part)
+    assert retry_content['function_response']['name'] == 'get_location'
+    assert retry_content['function_response']['response'] == {
+        'error': 'Wrong location, please try again\n\nFix the errors and try again.'
+    }
+    assert isinstance(retry_content['function_response']['id'], str)
+    assert retry_content['function_response']['id']
+
+
 @pytest.mark.parametrize(
     'error_class,error_response,expected_status',
     [

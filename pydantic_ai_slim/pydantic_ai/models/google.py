@@ -736,7 +736,7 @@ class GoogleModel(Model):
                                     'function_response': {
                                         'name': part.tool_name,
                                         'response': {'error': part.model_response()},
-                                        'id': part.tool_call_id,
+                                        'id': _utils.guard_tool_call_id(part),
                                     }
                                 }
                             )
