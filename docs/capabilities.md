@@ -87,7 +87,14 @@ See the dedicated [Hooks](hooks.md) page for the full API: decorator and constru
 
 [`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], and [`MCP`][pydantic_ai.capabilities.MCP] provide model-agnostic access to common tool types. When the model supports the tool natively (as a [builtin tool](builtin-tools.md)), it's used directly. When it doesn't, a local function tool handles it instead — so your agent works across providers without code changes.
 
-[`WebSearch`][pydantic_ai.capabilities.WebSearch] auto-detects DuckDuckGo as a local fallback. [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] requires you to provide a local fallback via `local=` — this should be a tool function that calls an image generation API (e.g. DALL-E) directly. Each accepts `builtin` and `local` keyword arguments to control which side is used:
+| Capability | Local fallback | Notes |
+|---|---|---|
+| [`WebSearch`][pydantic_ai.capabilities.WebSearch] | Auto-detected (DuckDuckGo) | Works out of the box |
+| [`WebFetch`][pydantic_ai.capabilities.WebFetch] | Provide your own via `local=` | Default local fallback [coming soon](https://github.com/pydantic/pydantic-ai/pull/4906) |
+| [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | Provide your own via `local=` | e.g. a tool that calls an image generation API, or a subagent with a model that supports image gen |
+| [`MCP`][pydantic_ai.capabilities.MCP] | Direct connection to MCP server | Auto-detects transport from URL |
+
+Each accepts `builtin` and `local` keyword arguments to control which side is used:
 
 ```python {title="provider_adaptive_tools.py" test="skip"}
 from pydantic_ai import Agent
@@ -189,32 +196,6 @@ Every [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] has a 
 
 ```python {title="prefix_convenience.py" test="skip" lint="skip"}
 MCP(url='https://mcp.example.com/api').prefix_tools('mcp')
-```
-
-### Convenience wrappers
-
-[`BuiltinTool`][pydantic_ai.capabilities.BuiltinTool], [`Toolset`][pydantic_ai.capabilities.Toolset], and [`HistoryProcessor`][pydantic_ai.capabilities.HistoryProcessor] wrap a single tool, toolset, or history processor as a capability, so they can be composed alongside other capabilities:
-
-```python {title="convenience_wrappers.py" test="skip" lint="skip"}
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import BuiltinTool, HistoryProcessor, Toolset
-from pydantic_ai.builtin_tools import CodeExecutionTool
-from pydantic_ai.toolsets import FunctionToolset
-
-# Register a builtin tool as a capability
-code_exec = BuiltinTool(CodeExecutionTool())
-
-# Wrap a toolset as a capability
-my_toolset = FunctionToolset()
-toolset_cap = Toolset(my_toolset)
-
-# Wrap a history processor as a capability
-def trim_history(messages):
-    return messages[-10:]  # keep only last 10 messages
-
-history_cap = HistoryProcessor(trim_history)
-
-agent = Agent('openai:gpt-5.2', capabilities=[code_exec, toolset_cap, history_cap])
 ```
 
 ## Building custom capabilities
@@ -794,6 +775,9 @@ print(counter.count)
 
 When `for_run` returns a new instance, all `get_*()` methods (`get_toolset`, `get_instructions`, `get_model_settings`, etc.) are re-called on that new instance — not on the original. This is important for capabilities where per-run configuration depends on per-run state.
 
+!!! warning
+    Always return a **new instance** from `for_run` — do not mutate `self` and return `self`. The agent caches toolsets, instructions, and model settings resolved from the original instance, so mutations to `self` won't be reflected in the cached configuration.
+
 ### Composition
 
 When multiple capabilities are passed to an agent, they are composed into a single [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability]:
@@ -812,6 +796,52 @@ Capabilities don't have direct access to each other. To share state between capa
 ### Testing custom capabilities
 
 Test custom capabilities the same way you test agents — using [`TestModel`][pydantic_ai.models.test.TestModel] or [`FunctionModel`][pydantic_ai.models.function.FunctionModel]. Create an agent with your capability and assert on the run result, messages, or any observable side effects of your hooks.
+
+## Wrapping existing components as capabilities
+
+[`BuiltinTool`][pydantic_ai.capabilities.BuiltinTool], [`Toolset`][pydantic_ai.capabilities.Toolset], and [`HistoryProcessor`][pydantic_ai.capabilities.HistoryProcessor] wrap existing reusable components that haven't been repackaged as capabilities yet, so they can be composed alongside other capabilities in the `capabilities` list.
+
+### BuiltinTool
+
+[`BuiltinTool`][pydantic_ai.capabilities.BuiltinTool] wraps an [`AbstractBuiltinTool`][pydantic_ai.builtin_tools.AbstractBuiltinTool] as a capability:
+
+```python {title="builtin_tool_wrapper.py"}
+from pydantic_ai import Agent
+from pydantic_ai.builtin_tools import CodeExecutionTool
+from pydantic_ai.capabilities import BuiltinTool
+
+agent = Agent('openai:gpt-5.2', capabilities=[BuiltinTool(CodeExecutionTool())])
+```
+
+### Toolset
+
+[`Toolset`][pydantic_ai.capabilities.Toolset] wraps an [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] as a capability:
+
+```python {title="toolset_wrapper.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Toolset
+from pydantic_ai.toolsets import FunctionToolset
+
+my_toolset = FunctionToolset()
+
+agent = Agent('openai:gpt-5.2', capabilities=[Toolset(my_toolset)])
+```
+
+### HistoryProcessor
+
+[`HistoryProcessor`][pydantic_ai.capabilities.HistoryProcessor] wraps a [history processor](message-history.md#processing-message-history) as a capability:
+
+```python {title="history_processor_wrapper.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import HistoryProcessor
+from pydantic_ai.messages import ModelMessage
+
+
+def trim_history(messages: list[ModelMessage]) -> list[ModelMessage]:
+    return messages[-10:]  # keep only last 10 messages
+
+agent = Agent('openai:gpt-5.2', capabilities=[HistoryProcessor(trim_history)])
+```
 
 ## Examples
 
