@@ -4254,6 +4254,43 @@ Fix the errors and try again.\
     assert reloaded_messages == messages
 
 
+async def test_adapter_dump_messages_with_retry_without_tool_call_id():
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Do something')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', args={'arg': 'value'}, tool_call_id='tool_789')]),
+        ModelRequest(parts=[RetryPromptPart(content='Tool failed with error', tool_name='my_tool')]),
+    ]
+
+    ui_message_dicts = [msg.model_dump() for msg in VercelAIAdapter.dump_messages(messages)]
+
+    assert ui_message_dicts == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'user',
+                'metadata': None,
+                'parts': [{'type': 'text', 'text': 'Do something', 'state': 'done', 'provider_metadata': None}],
+            },
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [
+                    {
+                        'type': 'tool-my_tool',
+                        'tool_call_id': 'tool_789',
+                        'state': 'input-available',
+                        'input': {'arg': 'value'},
+                        'provider_executed': False,
+                        'call_provider_metadata': None,
+                        'approval': None,
+                    }
+                ],
+            },
+        ]
+    )
+
+
 async def test_adapter_dump_messages_consecutive_text():
     """Test that consecutive text parts are concatenated correctly."""
     messages = [

@@ -702,7 +702,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     if isinstance(part, ToolReturnPart):
                         tool_results[part.tool_call_id] = part
                     elif isinstance(part, RetryPromptPart) and part.tool_name:
-                        tool_results[part.tool_call_id] = part
+                        tool_call_id = part.tool_call_id
+                        if isinstance(tool_call_id, str):
+                            tool_results[tool_call_id] = part
 
         id_generator = generate_message_id or _generate_message_id
         result: list[UIMessage] = []
