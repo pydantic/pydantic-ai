@@ -486,23 +486,17 @@ class ToolManager(Generic[AgentDepsT]):
                 return await self._validate_tool_args(call, tool, ctx, allow_partial=allow_partial, args_override=args)
 
             cap = self.root_capability
-            if cap is not None:
-                raw_args: str | dict[str, Any] = call.args if call.args is not None else {}
-                validated_args: dict[str, Any] = await run_output_validate_hooks(
-                    cap,
-                    run_context=ctx,
-                    output_context=output_context,
-                    output=raw_args,
-                    do_validate=do_validate,
-                    allow_partial=allow_partial,
-                    wrap_validation_errors=wrap_validation_errors,
-                )
-            else:
-                validated_args = (
-                    await self._validate_tool_args(  # pragma: no cover — agents always have root_capability
-                        call, tool, ctx, allow_partial=allow_partial
-                    )
-                )
+            assert cap is not None, 'validate_output_tool_call requires root_capability'
+            raw_args: str | dict[str, Any] = call.args if call.args is not None else {}
+            validated_args: dict[str, Any] = await run_output_validate_hooks(
+                cap,
+                run_context=ctx,
+                output_context=output_context,
+                output=raw_args,
+                do_validate=do_validate,
+                allow_partial=allow_partial,
+                wrap_validation_errors=wrap_validation_errors,
+            )
 
             return ValidatedToolCall(
                 call=call,
@@ -561,10 +555,7 @@ class ToolManager(Generic[AgentDepsT]):
             ToolRetryError: If execution or output validation fails.
             UnexpectedModelBehavior: If max retries exceeded.
         """
-        if not validated.args_valid:  # pragma: no cover — callers check args_valid before calling
-            assert validated.validation_error is not None
-            raise validated.validation_error
-
+        assert validated.args_valid
         assert validated.tool is not None
         assert validated.validated_args is not None
 
@@ -572,38 +563,34 @@ class ToolManager(Generic[AgentDepsT]):
         toolset = validated.tool.toolset
         assert isinstance(toolset, OutputToolset)
 
+        tool = validated.tool
         processor = toolset.processors[name]
-        output_context = processor.get_output_context(
-            'tool', tool_call=validated.call, tool_def=validated.tool.tool_def
-        )
+        output_context = processor.get_output_context('tool', tool_call=validated.call, tool_def=tool.tool_def)
 
         async def do_execute(output: Any) -> Any:
             try:
                 return await processor.call(output, validated.ctx, wrap_validation_errors=False)
             except ModelRetry as e:
-                self._check_max_retries(name, validated.tool.max_retries, e)  # type: ignore[union-attr]
+                self._check_max_retries(name, tool.max_retries, e)
                 self.failed_tools.add(name)
                 raise self._wrap_error_as_retry(name, validated.call, e) from e
 
         cap = self.root_capability
-        if cap is not None:
-            result = await run_output_execute_hooks(
-                cap,
-                run_context=validated.ctx,
-                output_context=output_context,
-                output=validated.validated_args,
-                do_execute=do_execute,
-            )
-        else:
-            result = await do_execute(validated.validated_args)  # pragma: no cover — agents always have root_capability
+        assert cap is not None, 'execute_output_tool_call requires root_capability'
+        result = await run_output_execute_hooks(
+            cap,
+            run_context=validated.ctx,
+            output_context=output_context,
+            output=validated.validated_args,
+            do_execute=do_execute,
+        )
 
         # Output validators run AFTER all output hooks (consistent with text output)
         try:
             for validator in toolset.output_validators:
                 result = await validator.validate(result, validated.ctx, wrap_validation_errors=False)
         except ModelRetry as e:
-            assert validated.tool is not None
-            self._check_max_retries(name, validated.tool.max_retries, e)
+            self._check_max_retries(name, tool.max_retries, e)
             self.failed_tools.add(name)
             raise self._wrap_error_as_retry(name, validated.call, e) from e
 

@@ -56,7 +56,7 @@ WrapToolExecuteHandler: TypeAlias = 'Callable[[dict[str, Any]], Awaitable[Any]]'
 RawOutput: TypeAlias = 'str | dict[str, Any]'
 """Type alias for raw output data (text or tool args)."""
 
-WrapOutputValidateHandler: TypeAlias = 'Callable[[str | dict[str, Any]], Awaitable[Any]]'
+WrapOutputValidateHandler: TypeAlias = 'Callable[[RawOutput], Awaitable[Any]]'
 """Handler type for wrap_output_validate."""
 
 WrapOutputExecuteHandler: TypeAlias = 'Callable[[Any], Awaitable[Any]]'

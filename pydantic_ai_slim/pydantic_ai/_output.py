@@ -80,7 +80,7 @@ def _build_output_handlers(
     allow_partial: bool,
     wrap_validation_errors: bool,
 ) -> tuple[
-    Callable[[str | dict[str, Any]], Awaitable[str | dict[str, Any]]],
+    Callable[[str | dict[str, Any]], Awaitable[Any]],
     Callable[[Any], Awaitable[Any]],
 ]:
     """Build validate and execute handler functions using processor's validate/call methods.
@@ -92,11 +92,10 @@ def _build_output_handlers(
     """
     _union_kind: list[str] = []  # Per-invocation storage; list to allow mutation in closure
 
-    async def do_validate(data: str | dict[str, Any]) -> str | dict[str, Any]:
+    async def do_validate(data: str | dict[str, Any]) -> Any:
         result = processor.validate(
             data,
             allow_partial=allow_partial,
-            wrap_validation_errors=wrap_validation_errors,
             validation_context=run_context.validation_context,
         )
         if isinstance(result, _UnionValidatedOutput):
@@ -112,12 +111,28 @@ def _build_output_handlers(
             )
         if isinstance(processor, UnionOutputProcessor):
             # Error recovery path: validation failed and on_output_validate_error returned
-            # data directly, so _union_kind was never populated. The recovered data is
-            # already the final validated output — return as-is.
+            # data directly. Try to match against inner processors by type so the output
+            # function still runs.
+            for inner in processor._processors.values():  # pyright: ignore[reportPrivateUsage]
+                if inner._output_type is not None:  # pyright: ignore[reportPrivateUsage]
+                    try:
+                        if isinstance(output, inner._output_type):  # pyright: ignore[reportPrivateUsage]
+                            if inner.outer_typed_dict_key:
+                                output = {inner.outer_typed_dict_key: output}
+                            return await inner.call(output, run_context, wrap_validation_errors)
+                    except TypeError:
+                        pass  # Generic types (e.g. list[str]) can't be used with isinstance
             return output
         return await processor.call(output, run_context, wrap_validation_errors)
 
     return do_validate, do_execute
+
+
+def _make_retry_prompt(e: ModelRetry, run_context: RunContext[Any]) -> ToolRetryError:
+    m = _messages.RetryPromptPart(content=e.message, tool_name=run_context.tool_name)
+    if run_context.tool_call_id:
+        m.tool_call_id = run_context.tool_call_id
+    return ToolRetryError(m)
 
 
 async def run_output_validate_hooks(
@@ -135,13 +150,6 @@ async def run_output_validate_hooks(
     ModelRetry from any hook (before, after, wrap, on_error) is caught by the outer handler
     and converted to ToolRetryError, triggering a model retry.
     """
-
-    def _make_retry(e: ModelRetry) -> ToolRetryError:
-        m = _messages.RetryPromptPart(content=e.message, tool_name=run_context.tool_name)
-        if run_context.tool_call_id:
-            m.tool_call_id = run_context.tool_call_id
-        return ToolRetryError(m)
-
     try:
         output = await capability.before_output_validate(run_context, output_context=output_context, output=output)
 
@@ -182,7 +190,7 @@ async def run_output_validate_hooks(
     except ModelRetry as e:
         # ModelRetry from before_output_validate or after_output_validate
         if wrap_validation_errors:
-            raise _make_retry(e) from e
+            raise _make_retry_prompt(e, run_context) from e
         raise  # pragma: no cover — wrap_validation_errors=False only in streaming partial validation
 
 
@@ -220,10 +228,7 @@ async def run_output_execute_hooks(
         raise  # Already wrapped, propagate
     except ModelRetry as e:
         # ModelRetry from before/after/wrap/on_error — convert to ToolRetryError
-        m = _messages.RetryPromptPart(content=e.message, tool_name=run_context.tool_name)
-        if run_context.tool_call_id:
-            m.tool_call_id = run_context.tool_call_id
-        raise ToolRetryError(m) from e
+        raise _make_retry_prompt(e, run_context) from e
 
 
 async def run_output_with_hooks(
@@ -723,7 +728,6 @@ class BaseOutputProcessor(ABC, Generic[OutputDataT]):
         data: str | dict[str, Any] | None,
         *,
         allow_partial: bool = False,
-        wrap_validation_errors: bool = True,
         validation_context: Any | None = None,
     ) -> Any:
         """Validate/parse raw output. Default: identity (returns data as-is)."""
@@ -859,7 +863,6 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             output = self.validate(
                 data,
                 allow_partial=allow_partial,
-                wrap_validation_errors=wrap_validation_errors,
                 validation_context=run_context.validation_context,
             )
         except ValidationError as e:
@@ -880,7 +883,6 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         data: str | dict[str, Any] | None,
         *,
         allow_partial: bool = False,
-        wrap_validation_errors: bool = True,
         validation_context: Any | None = None,
     ) -> dict[str, Any]:
         if isinstance(data, str):
@@ -1042,7 +1044,6 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         data: str | dict[str, Any] | None,
         *,
         allow_partial: bool = False,
-        wrap_validation_errors: bool = True,
         validation_context: Any | None = None,
     ) -> _UnionValidatedOutput:
         """Validate union envelope, resolve kind, and validate inner type.
@@ -1058,14 +1059,8 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         kind: str = result.kind
         inner_data: dict[str, Any] = result.data
 
-        try:
-            processor = self._processors[kind]
-        except KeyError as e:  # pragma: no cover — Pydantic validation ensures kind is valid before this point
-            if wrap_validation_errors:
-                m = _messages.RetryPromptPart(content=f'Invalid kind: {kind}')
-                raise ToolRetryError(m) from e
-            else:
-                raise
+        # Pydantic validation ensures kind is always valid, so KeyError can't happen
+        processor = self._processors[kind]
 
         inner_validated = processor.validate(
             inner_data, allow_partial=allow_partial, validation_context=validation_context
@@ -1094,7 +1089,6 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             wrapper = self.validate(
                 data,
                 allow_partial=allow_partial,
-                wrap_validation_errors=wrap_validation_errors,
                 validation_context=run_context.validation_context,
             )
         except ValidationError as e:
@@ -1319,13 +1313,12 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             for tool_def in self._tool_defs
         }
 
-    async def call_tool(  # pragma: no cover — output tools use validate_output_tool_call/execute_output_tool_call
+    async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
-        output = await self.processors[name].call(tool_args, ctx, wrap_validation_errors=False)
-        for validator in self.output_validators:
-            output = await validator.validate(output, ctx, wrap_validation_errors=False)
-        return output
+        # Output tools are handled by ToolManager.validate_output_tool_call/execute_output_tool_call,
+        # not through the normal toolset.call_tool path.
+        raise NotImplementedError('Output tools use validate_output_tool_call/execute_output_tool_call')
 
 
 @overload

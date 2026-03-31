@@ -528,7 +528,7 @@ Output hooks fire for **all output types**: text, structured text (native/prompt
 | [`before_output_validate`][pydantic_ai.capabilities.AbstractCapability.before_output_validate] | `(ctx, *, output_context, output: RawOutput) -> RawOutput` | Modify raw output before validation (e.g. JSON repair) |
 | [`after_output_validate`][pydantic_ai.capabilities.AbstractCapability.after_output_validate] | `(ctx, *, output_context, output: Any) -> Any` | Modify validated output |
 | [`wrap_output_validate`][pydantic_ai.capabilities.AbstractCapability.wrap_output_validate] | `(ctx, *, output_context, output: RawOutput, handler) -> Any` | Wrap the validation step |
-| [`on_output_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_output_validate_error] | `(ctx, *, output_context, output: RawOutput, error) -> Any` | Handle validation errors (see [error hooks](#error-hooks)) |
+| [`on_output_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_output_validate_error] | `(ctx, *, output_context, output: RawOutput, error: ValidationError \| ModelRetry) -> Any` | Handle validation errors (see [error hooks](#error-hooks)) |
 
 **Execution hooks** — `output` is the validated output from the validation phase:
 
@@ -537,7 +537,7 @@ Output hooks fire for **all output types**: text, structured text (native/prompt
 | [`before_output_execute`][pydantic_ai.capabilities.AbstractCapability.before_output_execute] | `(ctx, *, output_context, output: Any) -> Any` | Modify output before execution |
 | [`after_output_execute`][pydantic_ai.capabilities.AbstractCapability.after_output_execute] | `(ctx, *, output_context, output: Any) -> Any` | Modify execution result |
 | [`wrap_output_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_output_execute] | `(ctx, *, output_context, output: Any, handler) -> Any` | Wrap execution |
-| [`on_output_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_output_execute_error] | `(ctx, *, output_context, output: Any, error) -> Any` | Handle execution errors (see [error hooks](#error-hooks)) |
+| [`on_output_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_output_execute_error] | `(ctx, *, output_context, output: Any, error: Exception) -> Any` | Handle execution errors (see [error hooks](#error-hooks)) |
 
 #### Tool preparation
 

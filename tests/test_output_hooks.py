@@ -1883,6 +1883,38 @@ class TestDefaultOutputErrorHooks:
             agent.run_sync('hello')
 
 
+class TestStreamingOutputHooks:
+    """Output hooks fire during streaming (partial and final validation)."""
+
+    async def test_output_hooks_fire_during_streaming(self):
+        """before_output_validate fires during streaming."""
+        from pydantic_ai.models.function import DeltaToolCall, DeltaToolCalls, FunctionModel
+
+        hook_calls: list[tuple[str, bool]] = []
+
+        async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> DeltaToolCalls:
+            # Stream the JSON response in chunks
+            yield {0: DeltaToolCall(name='final_result', json_args='{"val')}
+            yield {0: DeltaToolCall(json_args='ue": 42}')}
+
+        @dataclass
+        class StreamLogCap(AbstractCapability[Any]):
+            async def before_output_validate(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
+            ) -> str | dict[str, Any]:
+                hook_calls.append(('validate', ctx.partial_output))
+                return output
+
+        agent = Agent(FunctionModel(stream_function=stream_fn), output_type=MyOutput, capabilities=[StreamLogCap()])
+        async with agent.run_stream('hello') as stream:
+            result = await stream.get_output()
+        assert result == MyOutput(value=42)
+        # Output hooks fire during streaming validation
+        assert len(hook_calls) >= 1, f'Expected at least 1 hook call, got {len(hook_calls)}'
+        # The final validation has partial_output=False
+        assert any(not partial for _, partial in hook_calls), 'Expected at least one final validation call'
+
+
 class TestOutputHookEdgeCases:
     """Tests for edge cases to ensure full coverage of output hook code paths."""
 
