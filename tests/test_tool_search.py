@@ -195,6 +195,7 @@ if evals_available():
 
     def _build_dataset() -> Dataset[str, EvalOutput, EvalMetadata]:
         return Dataset[str, EvalOutput, EvalMetadata](
+            name='tool_search',
             cases=[
                 Case(
                     name='exchange_rate',
