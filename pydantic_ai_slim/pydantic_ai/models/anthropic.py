@@ -1106,17 +1106,14 @@ class AnthropicModel(Model):
                         del block_dict['cache_control']
 
     def _build_cache_control(self, ttl: Literal['5m', '1h'] = '5m') -> BetaCacheControlEphemeralParam:
-        """Build cache control dict, automatically omitting TTL for Bedrock clients.
+        """Build cache control dict with the specified TTL.
 
         Args:
-            ttl: The cache time-to-live ('5m' or '1h'). Ignored for Bedrock clients.
+            ttl: The cache time-to-live ('5m' or '1h').
 
         Returns:
-            A cache control dict suitable for the current client type.
+            A cache control dict with the specified TTL.
         """
-        if isinstance(self.client, AsyncAnthropicBedrock):
-            # Bedrock doesn't support TTL, use cast to satisfy type checker
-            return cast(BetaCacheControlEphemeralParam, {'type': 'ephemeral'})
         return BetaCacheControlEphemeralParam(type='ephemeral', ttl=ttl)
 
     def _add_cache_control_to_last_param(

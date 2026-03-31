@@ -464,8 +464,8 @@ def test_cache_control_unsupported_param_type():
         m._add_cache_control_to_last_param(params)  # type: ignore[arg-type]  # Testing internal method
 
 
-def test_build_cache_control_bedrock_omits_ttl():
-    """Test that _build_cache_control automatically omits TTL for Bedrock clients."""
+def test_build_cache_control_bedrock_includes_ttl():
+    """Test that _build_cache_control includes TTL for Bedrock clients."""
     from unittest.mock import MagicMock
 
     from anthropic import AsyncAnthropicBedrock
@@ -476,12 +476,12 @@ def test_build_cache_control_bedrock_omits_ttl():
 
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_bedrock_client))
 
-    # Verify cache_control is built without TTL for Bedrock
+    # Verify cache_control includes TTL for Bedrock
     cache_control = m._build_cache_control('5m')  # pyright: ignore[reportPrivateUsage]
-    assert cache_control == {'type': 'ephemeral'}  # No 'ttl' field
+    assert cache_control == {'type': 'ephemeral', 'ttl': '5m'}
 
     cache_control_1h = m._build_cache_control('1h')  # pyright: ignore[reportPrivateUsage]
-    assert cache_control_1h == {'type': 'ephemeral'}  # TTL still omitted
+    assert cache_control_1h == {'type': 'ephemeral', 'ttl': '1h'}
 
 
 def test_build_cache_control_standard_client_includes_ttl():
