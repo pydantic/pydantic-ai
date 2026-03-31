@@ -11,7 +11,7 @@ import pytest
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import BinaryContent
+from pydantic_ai.messages import BinaryContent, InstructionPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
@@ -251,7 +251,9 @@ class TestFastMCPToolsetInstructions:
 
         async with toolset:
             assert toolset.instructions == 'Be a helpful assistant.'
-            assert await toolset.get_instructions(run_context) == 'Be a helpful assistant.'
+            assert await toolset.get_instructions(run_context) == InstructionPart(
+                content='Be a helpful assistant.', dynamic=True
+            )
 
         # After exiting, cached instructions are reset.
         assert await toolset.get_instructions(run_context) is None
