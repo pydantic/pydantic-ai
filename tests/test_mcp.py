@@ -261,16 +261,14 @@ async def test_server_instructions_included_in_agent_request() -> None:
 
 
 async def test_server_instructions_not_initialized():
-    """Test that AttributeError is raised when include_instructions=True but server not initialized."""
+    """Test that get_instructions returns None when include_instructions=True but server not initialized."""
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True)
 
     # Don't enter the context manager to avoid initialization
     ctx = build_run_context(0)
 
-    with pytest.raises(
-        AttributeError, match='The `MCPServerStdio.instructions` is only available after initialization.'
-    ):
-        await server.get_instructions(ctx)
+    result = await server.get_instructions(ctx)
+    assert result is None
 
 
 def build_run_context(deps: int) -> RunContext[int]:
