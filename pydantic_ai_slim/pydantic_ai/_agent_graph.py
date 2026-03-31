@@ -914,9 +914,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         """
         ctx.state.increment_retries(ctx.deps.max_result_retries, error=error)
         run_context = build_run_context(ctx)
-        m = _messages.RetryPromptPart(content=error.message, tool_name=run_context.tool_name)
-        if run_context.tool_call_id:
-            m.tool_call_id = run_context.tool_call_id
+        m = _messages.RetryPromptPart(
+            content=error.message,
+            tool_name=run_context.tool_name,
+            tool_call_id=run_context.tool_call_id,
+        )
         retry_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[m]))
         self._result = retry_node
         return retry_node
@@ -1088,6 +1090,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     # actionable output alongside their thinking content. so we tell the model to try again.
                     m = _messages.RetryPromptPart(
                         content=f'Please {" or ".join(alternatives)}.',
+                        tool_call_id=None,
                     )
                     raise ToolRetryError(m)
                 except ToolRetryError as e:

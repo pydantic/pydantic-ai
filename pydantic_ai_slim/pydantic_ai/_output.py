@@ -138,9 +138,8 @@ async def execute_traced_output_function(
                 m = _messages.RetryPromptPart(
                     content=r.message,
                     tool_name=run_context.tool_name,
+                    tool_call_id=run_context.tool_call_id,
                 )
-                if run_context.tool_call_id:
-                    m.tool_call_id = run_context.tool_call_id  # pragma: no cover
                 raise ToolRetryError(m) from r
             else:
                 raise
@@ -200,9 +199,8 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
                 m = _messages.RetryPromptPart(
                     content=r.message,
                     tool_name=run_context.tool_name,
+                    tool_call_id=run_context.tool_call_id,
                 )
-                if run_context.tool_call_id:  # pragma: no cover
-                    m.tool_call_id = run_context.tool_call_id
                 raise ToolRetryError(m) from r
             else:
                 raise r
@@ -627,9 +625,8 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
                 m = _messages.RetryPromptPart(
                     content=e.errors(include_url=False),
                     tool_name=run_context.tool_name,
+                    tool_call_id=run_context.tool_call_id,
                 )
-                if run_context.tool_call_id:
-                    m.tool_call_id = run_context.tool_call_id
                 raise ToolRetryError(m) from e
             else:
                 raise
@@ -791,7 +788,7 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             processor = self._processors[kind]
         except KeyError as e:  # pragma: no cover
             if wrap_validation_errors:
-                m = _messages.RetryPromptPart(content=f'Invalid kind: {kind}')
+                m = _messages.RetryPromptPart(content=f'Invalid kind: {kind}', tool_call_id=None)
                 raise ToolRetryError(m) from e
             else:
                 raise
