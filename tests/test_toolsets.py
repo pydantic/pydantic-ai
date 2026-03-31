@@ -1766,23 +1766,13 @@ async def test_custom_toolset_returning_plain_str_instructions():
     from pydantic_ai import Agent
     from pydantic_ai.messages import InstructionPart
 
-    class PlainStrToolset(AbstractToolset[None]):
-        @property
-        def id(self) -> None:
-            return None
+    class PlainStrInstructionsToolset(FunctionToolset[None]):
+        """A toolset that overrides get_instructions to return a plain str instead of InstructionPart."""
 
-        async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
-            return {}
-
-        async def call_tool(
-            self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
-        ) -> Any:
-            raise NotImplementedError  # pragma: no cover
-
-        async def get_instructions(self, ctx: RunContext[None]) -> str | None:
+        async def get_instructions(self, ctx: RunContext[None]) -> str | None:  # type: ignore[override]
             return 'Custom toolset instruction.'
 
-    agent = Agent(TestModel(), toolsets=[PlainStrToolset()])
+    agent = Agent(TestModel(), toolsets=[PlainStrInstructionsToolset()])
     result = await agent.run('Hello')
     first_message = result.all_messages()[0]
     assert first_message.instructions == 'Custom toolset instruction.'  # type: ignore[union-attr]
