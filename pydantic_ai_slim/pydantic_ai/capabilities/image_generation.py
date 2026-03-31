@@ -21,55 +21,55 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
     """Image generation capability.
 
     Uses the model's builtin image generation when available. When the model doesn't
-    support it and ``fallback_model`` is provided, falls back to a local tool that
+    support it and `fallback_model` is provided, falls back to a local tool that
     delegates to a subagent running the specified image-capable model.
 
-    Image generation settings (``quality``, ``size``, etc.) are forwarded to the
-    ``ImageGenerationTool`` used by both the builtin and the local fallback subagent.
-    When passing a custom ``builtin`` instance, its settings are also used for the
-    fallback subagent; capability-level fields override any ``builtin`` instance settings.
+    Image generation settings (`quality`, `size`, etc.) are forwarded to the
+    `ImageGenerationTool` used by both the builtin and the local fallback subagent.
+    When passing a custom `builtin` instance, its settings are also used for the
+    fallback subagent; capability-level fields override any `builtin` instance settings.
     """
 
     fallback_model: FallbackModel
     """Model to use for image generation when the agent's model doesn't support it natively.
 
-    Must be a model that supports image generation via the ``ImageGenerationTool`` builtin.
+    Must be a model that supports image generation via the `ImageGenerationTool` builtin.
     This requires a conversational model with image generation support, not a dedicated
     image-only API. Examples:
 
-    * ``'openai-responses:gpt-5.4'`` — OpenAI model with image generation support
-    * ``'google-gla:gemini-3-pro-image-preview'`` — Google image generation model
+    * `'openai-responses:gpt-5.4'` — OpenAI model with image generation support
+    * `'google-gla:gemini-3-pro-image-preview'` — Google image generation model
 
-    Can be a model name string, ``Model`` instance, or a callable taking ``RunContext``
+    Can be a model name string, `Model` instance, or a callable taking `RunContext`
     that returns a model.
     """
 
     background: Literal['transparent', 'opaque', 'auto'] | None
-    """Background type for the generated image. Forwarded to ``ImageGenerationTool``."""
+    """Background type for the generated image. Forwarded to `ImageGenerationTool`."""
 
     input_fidelity: Literal['high', 'low'] | None
-    """Input fidelity for matching style/features of input images. Forwarded to ``ImageGenerationTool``."""
+    """Input fidelity for matching style/features of input images. Forwarded to `ImageGenerationTool`."""
 
     moderation: Literal['auto', 'low'] | None
-    """Moderation level for the generated image. Forwarded to ``ImageGenerationTool``."""
+    """Moderation level for the generated image. Forwarded to `ImageGenerationTool`."""
 
     output_compression: int | None
-    """Compression level for the output image. Forwarded to ``ImageGenerationTool``."""
+    """Compression level for the output image. Forwarded to `ImageGenerationTool`."""
 
     output_format: Literal['png', 'webp', 'jpeg'] | None
-    """Output format of the generated image. Forwarded to ``ImageGenerationTool``."""
+    """Output format of the generated image. Forwarded to `ImageGenerationTool`."""
 
     partial_images: int | None
-    """Number of partial images to generate in streaming mode. Forwarded to ``ImageGenerationTool``."""
+    """Number of partial images to generate in streaming mode. Forwarded to `ImageGenerationTool`."""
 
     quality: Literal['low', 'medium', 'high', 'auto'] | None
-    """Quality of the generated image. Forwarded to ``ImageGenerationTool``."""
+    """Quality of the generated image. Forwarded to `ImageGenerationTool`."""
 
     size: Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'] | None
-    """Size of the generated image. Forwarded to ``ImageGenerationTool``."""
+    """Size of the generated image. Forwarded to `ImageGenerationTool`."""
 
     aspect_ratio: ImageAspectRatio | None
-    """Aspect ratio to use for generated images. Forwarded to ``ImageGenerationTool``."""
+    """Aspect ratio to use for generated images. Forwarded to `ImageGenerationTool`."""
 
     def __init__(
         self,
