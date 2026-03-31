@@ -65,6 +65,9 @@ class ImageGenerationLocalTool:
     builtin_tool: ImageGenerationTool
     """The image generation tool configuration to pass to the subagent."""
 
+    instructions: str = 'Generate an image based on the user prompt. Do not ask clarifying questions.'
+    """Instructions for the subagent that generates the image."""
+
     async def __call__(self, ctx: RunContext[Any], prompt: str) -> BinaryImage:
         """Generate an image using a subagent.
 
@@ -90,7 +93,7 @@ class ImageGenerationLocalTool:
             model,
             output_type=BinaryImage,
             builtin_tools=[self.builtin_tool],
-            instructions='Generate an image based on the user prompt. Do not ask clarifying questions.',
+            instructions=self.instructions,
         )
         try:
             result = await agent.run(prompt)
@@ -102,6 +105,8 @@ class ImageGenerationLocalTool:
 def image_generation_tool(
     model: Model | KnownModelName | str | FallbackModelFunc,
     builtin_tool: ImageGenerationTool,
+    *,
+    instructions: str = 'Generate an image based on the user prompt. Do not ask clarifying questions.',
 ) -> Tool[Any]:
     """Creates an image generation tool backed by a subagent.
 
@@ -109,11 +114,12 @@ def image_generation_tool(
         model: The model to use for image generation (e.g. `'openai-responses:gpt-5.4'`),
             or a callable taking `RunContext` that returns a model.
         builtin_tool: The image generation tool configuration to pass to the subagent.
+        instructions: Instructions for the subagent that generates the image.
     """
     if isinstance(model, str):
         _check_image_only_model(model)
     return Tool[Any](
-        ImageGenerationLocalTool(model=model, builtin_tool=builtin_tool).__call__,
+        ImageGenerationLocalTool(model=model, builtin_tool=builtin_tool, instructions=instructions).__call__,
         name='generate_image',
         description='Generate an image based on the given prompt.',
     )
