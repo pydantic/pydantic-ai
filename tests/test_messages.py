@@ -15,6 +15,7 @@ from pydantic_ai import (
     DocumentUrl,
     FilePart,
     ImageUrl,
+    InstructionPart,
     InstrumentationSettings,
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -1425,3 +1426,73 @@ def test_user_prompt_part_with_text_content():
     )
     assert part.content[0] == 'Hi there'
     assert part.content[1].metadata == snapshot({'key': 'value'})  # type: ignore[reportUnknownMemberType]
+
+
+class TestInstructionParts:
+    def test_post_init_sorts_static_before_dynamic(self):
+        """Static instruction parts are sorted before dynamic ones."""
+        parts = [
+            InstructionPart(content='dynamic', dynamic=True),
+            InstructionPart(content='static', dynamic=False),
+        ]
+        request = ModelRequest(parts=[], instruction_parts=parts)
+        assert request.instruction_parts is not None
+        assert request.instruction_parts[0].content == 'static'
+        assert request.instruction_parts[1].content == 'dynamic'
+
+    def test_post_init_derives_instructions_from_parts(self):
+        """The instructions string is derived from instruction_parts."""
+        parts = [
+            InstructionPart(content='First instruction'),
+            InstructionPart(content='Second instruction', dynamic=True),
+        ]
+        request = ModelRequest(parts=[], instruction_parts=parts)
+        assert request.instructions == 'First instruction\n\nSecond instruction'
+
+    def test_post_init_backward_compat_from_instructions_string(self):
+        """Setting only instructions creates instruction_parts for backward compat."""
+        request = ModelRequest(parts=[], instructions='Hello world')
+        assert request.instruction_parts == [InstructionPart(content='Hello world')]
+
+    def test_post_init_both_none(self):
+        """When both are None, both stay None."""
+        request = ModelRequest(parts=[])
+        assert request.instructions is None
+        assert request.instruction_parts is None
+
+    def test_post_init_empty_list_normalized_to_none(self):
+        """An empty instruction_parts list is normalized to None."""
+        request = ModelRequest(parts=[], instruction_parts=[])
+        assert request.instruction_parts is None
+        assert request.instructions is None
+
+    def test_serialization_round_trip(self):
+        """InstructionPart survives serialization and deserialization."""
+        parts = [
+            InstructionPart(content='static part', dynamic=False),
+            InstructionPart(content='dynamic part', dynamic=True),
+        ]
+        original = ModelRequest(parts=[UserPromptPart('test')], instruction_parts=parts)
+
+        # Serialize via ModelMessagesTypeAdapter
+        serialized = ModelMessagesTypeAdapter.dump_json([original])
+        deserialized = ModelMessagesTypeAdapter.validate_json(serialized)
+
+        msg = deserialized[0]
+        assert isinstance(msg, ModelRequest)
+        assert msg.instructions == 'static part\n\ndynamic part'
+        assert msg.instruction_parts is not None
+        assert len(msg.instruction_parts) == 2
+        assert msg.instruction_parts[0].content == 'static part'
+        assert msg.instruction_parts[0].dynamic is False
+        assert msg.instruction_parts[1].content == 'dynamic part'
+        assert msg.instruction_parts[1].dynamic is True
+
+    def test_join_helper(self):
+        """InstructionPart.join produces the correct joined string."""
+        parts = [
+            InstructionPart(content='First'),
+            InstructionPart(content='Second'),
+        ]
+        assert InstructionPart.join(parts) == 'First\n\nSecond'
+        assert InstructionPart.join([]) is None

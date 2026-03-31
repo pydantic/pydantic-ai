@@ -1223,16 +1223,20 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             cap_instructions=cap_instructions,
         )
 
-        async def get_instructions(run_context: RunContext[AgentDepsT]) -> str | None:
-            parts = [
-                instructions_literal,
-                *[await func.run(run_context) for func in instructions_functions],
-            ]
+        async def get_instructions(
+            run_context: RunContext[AgentDepsT],
+        ) -> list[_messages.InstructionPart] | None:
+            parts: list[_messages.InstructionPart] = []
 
-            parts = [p for p in parts if p]
-            if not parts:
-                return None
-            return '\n\n'.join(parts).strip()
+            if instructions_literal:
+                parts.append(_messages.InstructionPart(content=instructions_literal, dynamic=False))
+
+            for func in instructions_functions:
+                text = await func.run(run_context)
+                if text:
+                    parts.append(_messages.InstructionPart(content=text, dynamic=True))
+
+            return parts or None
 
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,

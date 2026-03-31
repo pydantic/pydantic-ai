@@ -359,9 +359,13 @@ class HuggingFaceModel(Model):
                 hf_messages.append(message_param)
             else:
                 assert_never(message)
-        if instructions := self._get_instructions(messages, model_request_parameters):
+        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
             system_prompt_count = sum(1 for m in hf_messages if getattr(m, 'role', None) == 'system')
-            hf_messages.insert(system_prompt_count, ChatCompletionInputMessage(content=instructions, role='system'))
+            for i, part in enumerate(instruction_parts):
+                hf_messages.insert(
+                    system_prompt_count + i,
+                    ChatCompletionInputMessage(content=part.content, role='system'),
+                )
         return hf_messages
 
     @staticmethod

@@ -487,27 +487,32 @@ class MCPServer(AbstractToolset[Any], ABC):
             )
         return self._instructions
 
-    async def get_instructions(self, ctx: RunContext[Any]) -> str | list[str] | None:
+    async def get_instructions(self, ctx: RunContext[Any]) -> messages.InstructionPart | None:
         """Return the MCP server's instructions for how to use its tools.
 
         If [`include_instructions`][pydantic_ai.mcp.MCPServer.include_instructions] is `True`, returns
         the [`instructions`][pydantic_ai.mcp.MCPServer.instructions] sent by the MCP server during
         initialization. Otherwise, returns `None`.
 
+        Instructions from external servers are marked as dynamic since they may change between connections.
+
         Args:
             ctx: The run context for this agent run.
 
         Returns:
-            The server's instructions if `include_instructions` is enabled, otherwise `None`.
+            An `InstructionPart` with the server's instructions if `include_instructions` is enabled, otherwise `None`.
         """
         if not self.include_instructions:
             return None
         try:
-            return self.instructions
+            instr = self.instructions
         except AttributeError:
             # Server not yet initialized — return None rather than propagating.
             # Durable execution wrappers detect this and fetch via activity/step.
             return None
+        if instr is None:
+            return None
+        return messages.InstructionPart(content=instr, dynamic=True)
 
     async def list_tools(self) -> list[mcp_types.Tool]:
         """Retrieve tools that are currently active on the server.

@@ -125,7 +125,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     usage_limits: _usage.UsageLimits
     max_result_retries: int
     end_strategy: EndStrategy
-    get_instructions: Callable[[RunContext[DepsT]], Awaitable[str | None]]
+    get_instructions: Callable[[RunContext[DepsT]], Awaitable[list[_messages.InstructionPart] | None]]
 
     output_schema: _output.OutputSchema[OutputDataT]
     output_validators: list[_output.OutputValidator[DepsT, OutputDataT]]
@@ -213,7 +213,6 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         is_resuming_without_prompt = False
 
         run_context: RunContext[DepsT] | None = None
-        instructions: str | None = None
 
         if messages and (last_message := messages[-1]):
             if isinstance(last_message, _messages.ModelRequest) and self.user_prompt is None:
@@ -249,8 +248,8 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                         # of instructions.  Instructions will be applied by ModelRequestNode.run() on
                         # the subsequent request after tool results are collected.
                         return CallToolsNode[DepsT, NodeRunEndT](last_message)
-                    instructions = await _get_instructions(ctx, run_context)
-                    if not instructions:
+                    instruction_parts = await _get_instructions(ctx, run_context)
+                    if not instruction_parts:
                         # No pending tool calls and no instructions — nothing new to send to the model.
                         return CallToolsNode[DepsT, NodeRunEndT](last_message)
                 elif last_message.tool_calls:
@@ -388,26 +387,32 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 async def _get_instructions(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     run_context: RunContext[DepsT],
-) -> str | None:
+) -> list[_messages.InstructionPart] | None:
     """Combine base instructions (from agent/capabilities) with toolset instructions.
 
     Toolset instructions are fetched from the current tool manager's toolset,
     which reflects any changes from for_run_step.
     """
-    parts: list[str] = []
+    parts: list[_messages.InstructionPart] = []
 
     base = await ctx.deps.get_instructions(run_context)
     if base:
-        parts.append(base)
+        parts.extend(base)
 
     toolset_result = await ctx.deps.tool_manager.toolset.get_instructions(run_context)
     if toolset_result:
-        if isinstance(toolset_result, list):
-            parts.extend(toolset_result)
-        else:  # pragma: no cover — top-level toolset is always CombinedToolset which returns list[str]
-            parts.append(toolset_result)
+        if isinstance(toolset_result, (str, _messages.InstructionPart)):
+            items: list[str | _messages.InstructionPart] = [toolset_result]
+        else:
+            items = list(toolset_result)
+        for item in items:
+            if isinstance(item, _messages.InstructionPart):
+                parts.append(item)
+            else:
+                # Plain str from toolsets: treat as dynamic (external/changeable source)
+                parts.append(_messages.InstructionPart(content=item, dynamic=True))
 
-    return '\n\n'.join(parts).strip() if parts else None
+    return parts or None
 
 
 async def _prepare_request_parameters(
@@ -772,7 +777,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
         # Fetch instructions now that dynamic toolsets have been resolved by for_run_step
-        self.request.instructions = await _get_instructions(ctx, run_context)
+        instruction_parts = await _get_instructions(ctx, run_context)
+        self.request.instruction_parts = instruction_parts
+        self.request.instructions = _messages.InstructionPart.join(instruction_parts) if instruction_parts else None
 
         # Validate after instructions are resolved; self.request was appended above so [:-1] is prior history
         if not ctx.state.message_history[:-1] and not self.request.parts and not self.request.instructions:

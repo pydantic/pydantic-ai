@@ -772,6 +772,82 @@ async def test_anthropic_cache_with_custom_ttl(allow_model_requests: None):
     assert system[0]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '5m'})
 
 
+async def test_anthropic_cache_instructions_mixed_static_dynamic(allow_model_requests: None):
+    """Test that cache_control is placed after the last static instruction when mixed with dynamic."""
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        instructions='Static instructions that should be cached.',
+        model_settings=AnthropicModelSettings(anthropic_cache_instructions=True),
+    )
+
+    @agent.instructions
+    def dynamic_context() -> str:
+        return 'Dynamic context that changes per run.'
+
+    await agent.run('test prompt')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    system = completion_kwargs['system']
+    # Should have 2 blocks: static (with cache_control) and dynamic (without)
+    assert system == snapshot(
+        [
+            {
+                'type': 'text',
+                'text': 'Static instructions that should be cached.',
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            },
+            {
+                'type': 'text',
+                'text': 'Dynamic context that changes per run.',
+            },
+        ]
+    )
+
+
+async def test_anthropic_cache_instructions_all_dynamic(allow_model_requests: None):
+    """Test that when all instructions are dynamic, no cache_control is placed on instructions."""
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        system_prompt='A static system prompt.',
+        model_settings=AnthropicModelSettings(anthropic_cache_instructions=True),
+    )
+
+    @agent.instructions
+    def dynamic_instructions() -> str:
+        return 'Dynamic instructions only.'
+
+    await agent.run('test prompt')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    system = completion_kwargs['system']
+    # System prompt block gets cache_control (it's static), dynamic instructions don't
+    assert system == snapshot(
+        [
+            {
+                'type': 'text',
+                'text': 'A static system prompt.',
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            },
+            {
+                'type': 'text',
+                'text': 'Dynamic instructions only.',
+            },
+        ]
+    )
+
+
 async def test_anthropic_incompatible_schema_disables_auto_strict(allow_model_requests: None):
     """Ensure strict mode is disabled when Anthropic cannot enforce the tool schema."""
     c = completion_message(
@@ -8662,13 +8738,19 @@ async def test_anthropic_system_prompts_and_instructions_ordering():
     system_prompt, anthropic_messages = await m._map_message(messages, ModelRequestParameters(), {})  # pyright: ignore[reportPrivateUsage]
 
     # Verify system prompts and instructions are joined in order: system1, system2, instructions
-    assert system_prompt == snapshot("""\
+    assert system_prompt == snapshot(
+        [
+            {
+                'type': 'text',
+                'text': """\
 System prompt 1
 
-System prompt 2
-
-Instructions content\
-""")
+System prompt 2\
+""",
+            },
+            {'type': 'text', 'text': 'Instructions content'},
+        ]
+    )
     # Verify user message is in anthropic_messages
     assert len(anthropic_messages) == 1
     assert anthropic_messages[0]['role'] == 'user'

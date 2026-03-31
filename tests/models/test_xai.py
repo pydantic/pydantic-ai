@@ -64,6 +64,7 @@ from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     CachePoint,
+    InstructionPart,
     UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
@@ -257,6 +258,11 @@ async def test_xai_request_structured_response_tool_output(allow_model_requests:
                 parts=[UserPromptPart(content='What is the largest city in the user country?', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 instructions='Call `get_user_country` first, then call `final_result` with the JSON result.',
+                instruction_parts=[
+                    InstructionPart(
+                        content='Call `get_user_country` first, then call `final_result` with the JSON result.'
+                    )
+                ],
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -281,6 +287,11 @@ async def test_xai_request_structured_response_tool_output(allow_model_requests:
                 ],
                 timestamp=IsDatetime(),
                 instructions='Call `get_user_country` first, then call `final_result` with the JSON result.',
+                instruction_parts=[
+                    InstructionPart(
+                        content='Call `get_user_country` first, then call `final_result` with the JSON result.'
+                    )
+                ],
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2352,6 +2363,11 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                 ],
                 timestamp=IsDatetime(),
                 instructions='Use tools to get the users city and then use the web search tool to find a famous landmark in that city.',
+                instruction_parts=[
+                    InstructionPart(
+                        content='Use tools to get the users city and then use the web search tool to find a famous landmark in that city.'
+                    )
+                ],
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2388,6 +2404,11 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                 ],
                 timestamp=IsDatetime(),
                 instructions='Use tools to get the users city and then use the web search tool to find a famous landmark in that city.',
+                instruction_parts=[
+                    InstructionPart(
+                        content='Use tools to get the users city and then use the web search tool to find a famous landmark in that city.'
+                    )
+                ],
                 run_id=IsStr(),
             ),
             ModelResponse(

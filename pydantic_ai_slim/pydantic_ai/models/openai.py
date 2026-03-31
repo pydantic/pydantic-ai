@@ -1146,11 +1146,13 @@ class OpenAIChatModel(Model):
                 openai_messages.append(self._map_model_response(message))
             else:
                 assert_never(message)
-        if instructions := self._get_instructions(messages, model_request_parameters):
+        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
             system_prompt_count = sum(1 for m in openai_messages if m.get('role') == 'system')
-            openai_messages.insert(
-                system_prompt_count, chat.ChatCompletionSystemMessageParam(content=instructions, role='system')
-            )
+            for i, part in enumerate(instruction_parts):
+                openai_messages.insert(
+                    system_prompt_count + i,
+                    chat.ChatCompletionSystemMessageParam(content=part.content, role='system'),
+                )
         return openai_messages
 
     @staticmethod

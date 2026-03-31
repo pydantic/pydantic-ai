@@ -11,6 +11,7 @@ from pydantic.json_schema import GenerateJsonSchema
 from .._run_context import AgentDepsT, RunContext
 from .._system_prompt import SystemPromptRunner
 from ..exceptions import ModelRetry, UserError
+from ..messages import InstructionPart
 from ..tools import (
     ArgsValidatorFunc,
     DocstringFormat,
@@ -547,18 +548,18 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             tool.metadata = self.metadata | (tool.metadata or {})
         self.tools[tool.name] = tool
 
-    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> list[str] | None:
+    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> list[InstructionPart] | None:
         if not self._instructions:
             return None
-        parts: list[str] = []
+        parts: list[InstructionPart] = []
         for func in self._instructions:
             if isinstance(func, str):
                 if func.strip():
-                    parts.append(func)
+                    parts.append(InstructionPart(content=func, dynamic=False))
             else:
                 result = await func.run(ctx)
                 if result and result.strip():
-                    parts.append(result)
+                    parts.append(InstructionPart(content=result, dynamic=True))
         return parts or None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:

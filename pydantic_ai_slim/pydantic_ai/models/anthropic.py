@@ -998,8 +998,7 @@ class AnthropicModel(Model):
                     anthropic_messages.append(BetaMessageParam(role='assistant', content=assistant_content_params))
             else:
                 assert_never(m)
-        if instructions := self._get_instructions(messages, model_request_parameters):
-            system_prompt_parts.append(instructions)
+        instruction_parts = self._get_instruction_parts(messages, model_request_parameters)
         system_prompt = '\n\n'.join(system_prompt_parts)
 
         # Add cache_control to the last message content if anthropic_cache_messages is enabled
@@ -1021,20 +1020,54 @@ class AnthropicModel(Model):
                 content = cast(list[BetaContentBlockParam], content)
                 self._add_cache_control_to_last_param(content, ttl)
 
-        # If anthropic_cache_instructions is enabled, return system prompt as a list with cache_control
-        if system_prompt and (cache_instructions := model_settings.get('anthropic_cache_instructions')):
-            # If True, use '5m'; otherwise use the specified ttl value
-            ttl: Literal['5m', '1h'] = '5m' if cache_instructions is True else cache_instructions
-            system_prompt_blocks = [
-                BetaTextBlockParam(
-                    type='text',
-                    text=system_prompt,
-                    cache_control=self._build_cache_control(ttl),
-                )
-            ]
-            return system_prompt_blocks, anthropic_messages
+        # Build system prompt blocks: each instruction part becomes a separate text block.
+        # When anthropic_cache_instructions is enabled, the cache point goes after the last
+        # static instruction (or at the end if all instructions are static).
+        cache_instructions = model_settings.get('anthropic_cache_instructions')
 
-        return system_prompt, anthropic_messages
+        if instruction_parts or cache_instructions:
+            system_prompt_blocks: list[BetaTextBlockParam] = []
+
+            if system_prompt:
+                system_prompt_blocks.append(BetaTextBlockParam(type='text', text=system_prompt))
+
+            if instruction_parts:
+                for part in instruction_parts:
+                    system_prompt_blocks.append(BetaTextBlockParam(type='text', text=part.content))
+
+            if system_prompt_blocks and cache_instructions:
+                ttl: Literal['5m', '1h'] = '5m' if cache_instructions is True else cache_instructions
+                # Find the last block that corresponds to a static instruction.
+                # system_prompt_blocks layout: [system_prompt_block?, ...instruction_blocks]
+                # instruction_parts are sorted static-first, so find the boundary.
+                if instruction_parts:
+                    has_dynamic = any(p.dynamic for p in instruction_parts)
+                    if has_dynamic:
+                        # Cache after the last static instruction block
+                        num_prefix_blocks = 1 if system_prompt else 0
+                        num_static = sum(1 for p in instruction_parts if not p.dynamic)
+                        if num_static > 0:
+                            cache_block_idx = num_prefix_blocks + num_static - 1
+                        else:
+                            # All dynamic: cache the system prompt block if it exists
+                            cache_block_idx = 0 if system_prompt else None
+                    else:
+                        # All static: cache the last block
+                        cache_block_idx = len(system_prompt_blocks) - 1
+                else:
+                    # No instruction parts, just system prompt: cache it
+                    cache_block_idx = 0
+
+                if cache_block_idx is not None:
+                    system_prompt_blocks[cache_block_idx]['cache_control'] = self._build_cache_control(ttl)
+
+            if system_prompt_blocks:
+                return system_prompt_blocks, anthropic_messages
+
+        if system_prompt:
+            return system_prompt, anthropic_messages
+
+        return '', anthropic_messages
 
     @staticmethod
     def _limit_cache_points(

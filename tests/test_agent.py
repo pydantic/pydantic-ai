@@ -28,6 +28,7 @@ from pydantic_ai import (
     FunctionToolset,
     ImageUrl,
     IncompleteToolCall,
+    InstructionPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelProfile,
@@ -2975,7 +2976,7 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
                         dynamic_ref=IsStr(),
                     ),
                     UserPromptPart(
-                        content=['Hello', ImageUrl(url='https://example.com/image.jpg', identifier='39cfc4')],
+                        content=['Hello', ImageUrl(url='https://example.com/image.jpg')],
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
@@ -3145,6 +3146,14 @@ async def test_message_history_ending_on_model_response_with_instructions():
 Summarize this conversation to include all important facts about the user and
         what their interactions were about.\
 """,
+                instruction_parts=[
+                    InstructionPart(
+                        content="""\
+Summarize this conversation to include all important facts about the user and
+        what their interactions were about.\
+"""
+                    )
+                ],
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -5602,6 +5611,7 @@ def test_binary_content_serializable():
                 ],
                 'timestamp': IsStr(),
                 'instructions': None,
+                'instruction_parts': None,
                 'kind': 'request',
                 'run_id': IsStr(),
                 'metadata': None,
@@ -5672,6 +5682,7 @@ def test_image_url_serializable_missing_media_type():
                 ],
                 'timestamp': IsStr(),
                 'instructions': None,
+                'instruction_parts': None,
                 'kind': 'request',
                 'run_id': IsStr(),
                 'metadata': None,
@@ -5749,6 +5760,7 @@ def test_image_url_serializable():
                 ],
                 'timestamp': IsStr(),
                 'instructions': None,
+                'instruction_parts': None,
                 'kind': 'request',
                 'run_id': IsStr(),
                 'metadata': None,
@@ -6059,6 +6071,14 @@ def test_instructions_during_run():
 You are a helpful assistant.
 Your task is to greet people.\
 """,
+            instruction_parts=[
+                InstructionPart(
+                    content="""\
+You are a helpful assistant.
+Your task is to greet people.\
+"""
+                )
+            ],
             run_id=IsStr(),
         )
     )
@@ -6263,6 +6283,7 @@ def test_tool_call_with_validation_value_error_serializable():
             ],
             'timestamp': IsStr(),
             'instructions': None,
+            'instruction_parts': None,
             'kind': 'request',
             'run_id': IsStr(),
             'metadata': None,

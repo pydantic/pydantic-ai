@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol
 
@@ -9,6 +9,7 @@ from pydantic_core import SchemaValidator
 from typing_extensions import Self
 
 from .._run_context import AgentDepsT, RunContext
+from ..messages import InstructionPart
 from ..tools import ToolDefinition, ToolsPrepareFunc
 
 if TYPE_CHECKING:
@@ -135,18 +136,24 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> str | list[str] | None:
+    async def get_instructions(
+        self, ctx: RunContext[AgentDepsT]
+    ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
         r"""Return instructions for how to use this toolset's tools.
 
         Override this method to provide instructions that help the agent understand
         how to use the tools in this toolset effectively.
 
+        Simple implementations can return a plain `str`; advanced implementations can return
+        [`InstructionPart`][pydantic_ai.messages.InstructionPart] objects to indicate whether
+        each instruction block is static or dynamic for caching purposes.
+
         Args:
             ctx: The run context for this agent run.
 
         Returns:
-            Instruction string (or list of strings) to add to the agent's instructions, or None if
-            no instructions. A list of strings will be joined with `\n\n` by the agent.
+            Instruction string, `InstructionPart`, list of either, or `None`.
+            Plain `str` values are treated as dynamic instructions by default.
         """
         return None
 

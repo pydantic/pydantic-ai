@@ -70,6 +70,7 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
+    InstructionPart,
     UploadedFile,
 )
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, ModelRequestParameters
@@ -355,6 +356,9 @@ async def test_google_model_builtin_code_execution_stream(
                 ],
                 instructions='Be concise and always use Python to do calculations no matter how small.',
                 timestamp=IsNow(tz=timezone.utc),
+                instruction_parts=[
+                    InstructionPart(content='Be concise and always use Python to do calculations no matter how small.')
+                ],
                 run_id=IsStr(),
             ),
             ModelResponse(
