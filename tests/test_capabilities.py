@@ -3276,6 +3276,13 @@ class TestWebFetchCapability:
 
 
 class TestImageGenerationCapability:
+    def test_image_gen_fields_match_builtin_tool(self):
+        """_IMAGE_GEN_FIELDS stays in sync with ImageGenerationTool's configurable fields."""
+        import dataclasses
+
+        builtin_fields = {f.name for f in dataclasses.fields(ImageGenerationTool) if f.name != 'kind'}
+        assert set(ImageGeneration._IMAGE_GEN_FIELDS) == builtin_fields  # pyright: ignore[reportPrivateUsage]
+
     def test_image_generation_default(self):
         """ImageGeneration() provides only builtin, no local fallback."""
         cap = ImageGeneration()
@@ -3301,7 +3308,7 @@ class TestImageGenerationCapability:
         """ImageGeneration(fallback_model=...) creates a local fallback tool."""
         from pydantic_ai.tools import Tool
 
-        cap = ImageGeneration(fallback_model='openai-responses:gpt-4o')
+        cap = ImageGeneration(fallback_model='openai-responses:gpt-5.4')
         assert isinstance(cap.local, Tool)
         assert cap.get_toolset() is not None
         builtins = cap.get_builtin_tools()
@@ -3342,7 +3349,7 @@ class TestImageGenerationCapability:
         custom_builtin = ImageGenerationTool(quality='high', size='1024x1024')
         cap = ImageGeneration(
             builtin=custom_builtin,
-            fallback_model='openai-responses:gpt-4o',
+            fallback_model='openai-responses:gpt-5.4',
             output_format='jpeg',  # capability-level override
         )
         # The local fallback should exist and contain the merged config
@@ -3355,7 +3362,7 @@ class TestImageGenerationCapability:
 
         cap = ImageGeneration(
             builtin=lambda ctx: ImageGenerationTool(quality='high'),
-            fallback_model='openai-responses:gpt-4o',
+            fallback_model='openai-responses:gpt-5.4',
         )
         # Callable builtin can't be resolved at init time, but local fallback is still created
         assert isinstance(cap.local, Tool)
@@ -3368,12 +3375,12 @@ class TestImageGenerationCapability:
             return 'image_url'  # pragma: no cover
 
         with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
-            ImageGeneration(fallback_model='openai-responses:gpt-4o', local=my_gen)
+            ImageGeneration(fallback_model='openai-responses:gpt-5.4', local=my_gen)
 
     def test_image_generation_fallback_model_with_local_false(self):
         """ImageGeneration(fallback_model=..., local=False) raises UserError."""
         with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
-            ImageGeneration(fallback_model='openai-responses:gpt-4o', local=False)
+            ImageGeneration(fallback_model='openai-responses:gpt-5.4', local=False)
 
     async def test_image_generation_callable_fallback_model(self, allow_model_requests: None):
         """ImageGeneration with async callable fallback_model resolves the model per-run."""

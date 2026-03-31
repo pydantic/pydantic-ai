@@ -82,8 +82,10 @@ class ImageGenerationLocalTool:
         if model is None:
             raise ModelRetry('The fallback model callable returned None; cannot generate an image.')
 
-        if isinstance(model, str):
-            _check_image_only_model(model)  # also checked at factory time for static strings
+        if isinstance(model, str) and callable(self.model):
+            # Only check at call time for dynamically resolved models;
+            # static strings are already validated at factory time
+            _check_image_only_model(model)
 
         agent = Agent(model, output_type=BinaryImage, builtin_tools=[self.builtin])
         try:
