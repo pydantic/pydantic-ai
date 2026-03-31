@@ -1386,7 +1386,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 _ready_waiter = asyncio.create_task(_run_ready.wait())
                 await asyncio.wait({_ready_waiter, _wrap_task}, return_when=asyncio.FIRST_COMPLETED)
                 _ready_waiter.cancel()
-
                 # Propagate context vars set by wrap_run/before_run to
                 # the outer task so that agent_run.next() (and therefore
                 # node hooks) can see them.
@@ -1535,12 +1534,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def _get_metadata(
         self,
         ctx: RunContext[AgentDepsT],
-        additional_metadata: AgentMetadata[AgentDepsT] | None = None,
+        additional_metadata: AgentMetadata[AgentDepsT] | None,
     ) -> dict[str, Any] | None:
-        metadata_override = self._override_metadata.get()
-        if metadata_override is not None:
-            return self._resolve_metadata_config(metadata_override.value, ctx)
-
         base_metadata = self._resolve_metadata_config(self._metadata, ctx)
         run_metadata = self._resolve_metadata_config(additional_metadata, ctx)
 
