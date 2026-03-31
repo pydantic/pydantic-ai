@@ -5,7 +5,7 @@ Pydantic AI agents can fail due to provider outages, rate limits, or transient e
 
 ## Circuit Breaker
 
-```python
+```python {test="skip" lint="skip"}
 from kavacha import CircuitBreaker
 from punarjanma import retry
 
