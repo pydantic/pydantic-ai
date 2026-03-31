@@ -2756,6 +2756,15 @@ def test_function_tool_event_tool_call_id_properties():
     assert result_event.tool_call_id == return_part.tool_call_id == 'return_id_456'
 
 
+def test_function_tool_result_event_generates_tool_call_id_for_retry_without_one():
+    retry_part = RetryPromptPart(content='retry', tool_name='sample_tool', tool_call_id=None)
+    result_event = FunctionToolResultEvent(result=retry_part)
+
+    assert isinstance(result_event.tool_call_id, str)
+    assert result_event.tool_call_id
+    assert result_event.tool_call_id == result_event.tool_call_id
+
+
 async def test_tool_raises_call_deferred():
     agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
 

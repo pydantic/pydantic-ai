@@ -238,7 +238,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             message_id=self.new_message_id(),
             type=EventType.TOOL_CALL_RESULT,
             role='tool',
-            tool_call_id=result.tool_call_id,
+            tool_call_id=event.tool_call_id,
             content=output,
         )
 

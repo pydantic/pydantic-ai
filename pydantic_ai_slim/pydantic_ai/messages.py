@@ -2392,13 +2392,18 @@ class FunctionToolResultEvent:
     content: str | Sequence[UserContent] | None = None
     """The content that will be sent to the model as a UserPromptPart following the result."""
 
+    _tool_call_id: str = field(init=False, repr=False)
+
+    def __post_init__(self):
+        self._tool_call_id = self.result.tool_call_id or _generate_tool_call_id()
+
     event_kind: Literal['function_tool_result'] = 'function_tool_result'
     """Event type identifier, used as a discriminator."""
 
     @property
-    def tool_call_id(self) -> str | None:
+    def tool_call_id(self) -> str:
         """An ID used to match the result to its original call."""
-        return self.result.tool_call_id
+        return self._tool_call_id
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
