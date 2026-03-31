@@ -3836,8 +3836,17 @@ def test_parse_ag_ui_version_invalid() -> None:
     with pytest.raises(UserError, match="Invalid AG-UI version 'latest'"):
         parse_ag_ui_version('latest')
 
-    with pytest.raises(UserError, match="Invalid AG-UI version '0.1.x'"):
-        parse_ag_ui_version('0.1.x')
+    with pytest.raises(UserError, match="Invalid AG-UI version ''"):
+        parse_ag_ui_version('')
+
+
+def test_parse_ag_ui_version_prerelease() -> None:
+    """Test that parse_ag_ui_version strips pre-release suffixes."""
+    assert parse_ag_ui_version('0.1.13a1') == snapshot((0, 1, 13))
+    assert parse_ag_ui_version('0.1.13b2') == snapshot((0, 1, 13))
+    assert parse_ag_ui_version('0.1.13rc1') == snapshot((0, 1, 13))
+    assert parse_ag_ui_version('0.1.13.dev0') == snapshot((0, 1, 13))
+    assert parse_ag_ui_version('0.1.x') == snapshot((0, 1))
 
 
 def test_detect_ag_ui_version_fallback(monkeypatch: pytest.MonkeyPatch) -> None:

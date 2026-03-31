@@ -53,7 +53,6 @@ try:
         DeveloperMessage,
         FunctionCall,
         Message,
-        ReasoningMessage,
         RunAgentInput,
         SystemMessage,
         TextInputContent,
@@ -80,9 +79,18 @@ except ImportError as e:  # pragma: no cover
     ) from e
 
 if TYPE_CHECKING:
+    from ag_ui.core import ReasoningMessage
     from starlette.requests import Request
 
     from ...agent import AbstractAgent
+else:
+    try:
+        from ag_ui.core import ReasoningMessage
+    except ImportError:
+
+        class ReasoningMessage:
+            """Stub for ag-ui-protocol < 0.1.13 — no instances exist, so pattern matching is a no-op."""
+
 
 __all__ = ['AGUIAdapter']
 
@@ -503,6 +511,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 text_content.append(part.content)
             elif isinstance(part, ThinkingPart):
                 if parse_ag_ui_version(ag_ui_version) >= REASONING_VERSION:
+                    from ag_ui.core import ReasoningMessage
+
                     flush()
                     encrypted = thinking_encrypted_metadata(part)
                     result.append(
