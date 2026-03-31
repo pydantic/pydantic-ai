@@ -483,6 +483,33 @@ class _OpenRouterChatCompletion(chat.ChatCompletion):
     """OpenRouter specific usage attribute."""
 
 
+class _OpenRouterErrorResponse(BaseModel):
+    """OpenRouter error response with null standard fields (see #3994)."""
+
+    choices: None
+    error: _OpenRouterError
+    model: str | None = None
+
+
+class _OpenRouterNestedCompletion(BaseModel, extra='allow'):
+    """The nested completion data inside the ``provider`` field (see #3994).
+
+    Uses ``extra='allow'`` to preserve all fields for re-validation
+    as :class:`_OpenRouterChatCompletion`.
+    """
+
+    choices: list[Any]
+    provider: str | None = None
+
+
+class _OpenRouterNestedProviderResponse(BaseModel):
+    """OpenRouter response where the real completion is nested in ``provider`` (see #3994)."""
+
+    choices: None
+    provider: _OpenRouterNestedCompletion
+    created: int
+
+
 def _map_openrouter_provider_details(
     response: _OpenRouterChatCompletion | _OpenRouterChatCompletionChunk,
 ) -> dict[str, Any]:
@@ -594,33 +621,27 @@ class OpenRouterModel(OpenAIChatModel):
     def _validate_completion(self, response: chat.ChatCompletion) -> _OpenRouterChatCompletion:
         response_dict = response.model_dump()
 
-        # OpenRouter intermittently returns responses with null standard fields.
-        # Handle the two known cases before validation (see #3994).
-        if response_dict.get('choices') is None:
-            # Case 1: Error response — surface as ModelHTTPError instead of a
-            # confusing ValidationError about null fields.
-            if error_data := response_dict.get('error'):
-                try:
-                    error = _OpenRouterError.model_validate(error_data)
-                except (TypeError, ValueError, ValidationError):
-                    pass
-                else:
-                    raise ModelHTTPError(
-                        status_code=error.code,
-                        model_name=response_dict.get('model') or self.model_name,
-                        body=error.message,
-                    )
+        # OpenRouter intermittently returns responses with null standard fields (#3994).
+        # Check for known quirky response shapes before normal validation.
+        try:
+            error_response = _OpenRouterErrorResponse.model_validate(response_dict)
+        except ValidationError:
+            pass
+        else:
+            raise ModelHTTPError(
+                status_code=error_response.error.code,
+                model_name=error_response.model or self.model_name,
+                body=error_response.error.message,
+            )
 
-            # Case 2: Nested provider response — the real completion is inside
-            # the `provider` dict; use it as the top-level response.
-            raw_provider = response_dict.get('provider')
-            if isinstance(raw_provider, dict):
-                nested = cast(dict[str, Any], raw_provider)
-                if isinstance(nested.get('choices'), list):
-                    provider_name = nested.pop('provider', None) or 'unknown'
-                    nested.setdefault('created', response_dict.get('created'))
-                    nested['provider'] = provider_name
-                    response_dict = nested
+        try:
+            nested = _OpenRouterNestedProviderResponse.model_validate(response_dict)
+        except ValidationError:
+            pass
+        else:
+            response_dict = nested.provider.model_dump()
+            response_dict['provider'] = nested.provider.provider or 'unknown'
+            response_dict.setdefault('created', nested.created)
 
         validated = _OpenRouterChatCompletion.model_validate(response_dict)
 
