@@ -122,7 +122,7 @@ def _build_output_handlers(
                             return await inner.call(output, run_context, wrap_validation_errors)
                     except TypeError:  # pragma: no cover — generic types (e.g. list[str]) can't be used with isinstance
                         pass
-            return output
+            return output  # pragma: no cover — no inner processor type matched the recovered data
         return await processor.call(output, run_context, wrap_validation_errors)
 
     return do_validate, do_execute
