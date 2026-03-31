@@ -867,7 +867,10 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
     """The tool definitions for the output tools in this toolset."""
     processors: dict[str, ObjectOutputProcessor[Any]]
     """The processors for the output tools in this toolset."""
-    max_retries: int
+    max_retries: int | None
+    """Default max retries for output tools, set by the Agent. Per-tool overrides from `ToolOutput.max_retries` take priority."""
+    _max_retries_overrides: dict[str, int]
+    """Per-tool max_retries overrides from `ToolOutput(max_retries=N)`."""
     output_validators: list[OutputValidator[AgentDepsT, Any]]
 
     @classmethod
@@ -888,6 +891,9 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         default_description = description
         default_strict = strict
 
+        max_retries_overrides: dict[str, int] = {}
+        tool_output_max_retries: int | None = None
+
         multiple = len(outputs) > 1
         for output in outputs:
             name = None
@@ -898,6 +904,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 name = output.name
                 description = output.description
                 strict = output.strict
+                tool_output_max_retries = output.max_retries
 
                 output = output.output  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
 
@@ -937,19 +944,24 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             )
             processors[name] = processor
             tool_defs.append(tool_def)
+            if tool_output_max_retries is not None:
+                max_retries_overrides[name] = tool_output_max_retries
+            tool_output_max_retries = None
 
-        return cls(processors=processors, tool_defs=tool_defs)
+        return cls(processors=processors, tool_defs=tool_defs, max_retries_overrides=max_retries_overrides)
 
     def __init__(
         self,
         tool_defs: list[ToolDefinition],
         processors: dict[str, ObjectOutputProcessor[Any]],
-        max_retries: int = 1,
+        max_retries: int | None = None,
+        max_retries_overrides: dict[str, int] | None = None,
         output_validators: list[OutputValidator[AgentDepsT, Any]] | None = None,
     ):
         self.processors = processors
         self._tool_defs = tool_defs
         self.max_retries = max_retries
+        self._max_retries_overrides = max_retries_overrides or {}
         self.output_validators = output_validators or []
 
     @property
@@ -961,11 +973,12 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         return "the agent's output tools"
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        max_retries = self.max_retries if self.max_retries is not None else 1
         return {
             tool_def.name: ToolsetTool(
                 toolset=self,
                 tool_def=tool_def,
-                max_retries=self.max_retries,
+                max_retries=self._max_retries_overrides.get(tool_def.name, max_retries),
                 args_validator=self.processors[tool_def.name].validator,
             )
             for tool_def in self._tool_defs
