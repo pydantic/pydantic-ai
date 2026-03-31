@@ -6,9 +6,10 @@ Pydantic AI agents can fail due to provider outages, rate limits, or transient e
 ## Circuit Breaker
 
 ```python
-from pydantic_ai import Agent
 from kavacha import CircuitBreaker
 from punarjanma import retry
+
+from pydantic_ai import Agent
 
 cb = CircuitBreaker(name="llm", threshold=3, timeout=30)
 
