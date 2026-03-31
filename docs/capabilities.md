@@ -91,7 +91,7 @@ Each accepts `builtin` and `local` keyword arguments to control which side is us
 
 ```python {title="provider_adaptive_tools.py" test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import ImageGeneration, MCP, WebFetch, WebSearch
+from pydantic_ai.capabilities import MCP, ImageGeneration, WebFetch, WebSearch
 
 agent = Agent(
     'anthropic:claude-sonnet-4-1-20250414',
