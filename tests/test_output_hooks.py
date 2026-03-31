@@ -1888,11 +1888,13 @@ class TestStreamingOutputHooks:
 
     async def test_output_hooks_fire_during_streaming(self):
         """before_output_validate fires during streaming."""
+        from collections.abc import AsyncIterator
+
         from pydantic_ai.models.function import DeltaToolCall, DeltaToolCalls, FunctionModel
 
         hook_calls: list[tuple[str, bool]] = []
 
-        async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> DeltaToolCalls:
+        async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
             # Stream the JSON response in chunks
             yield {0: DeltaToolCall(name='final_result', json_args='{"val')}
             yield {0: DeltaToolCall(json_args='ue": 42}')}

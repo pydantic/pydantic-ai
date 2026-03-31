@@ -117,11 +117,11 @@ def _build_output_handlers(
                 if inner._output_type is not None:  # pyright: ignore[reportPrivateUsage]
                     try:
                         if isinstance(output, inner._output_type):  # pyright: ignore[reportPrivateUsage]
-                            if inner.outer_typed_dict_key:
+                            if inner.outer_typed_dict_key:  # pragma: no cover — non-model-like union members are rare
                                 output = {inner.outer_typed_dict_key: output}
                             return await inner.call(output, run_context, wrap_validation_errors)
-                    except TypeError:
-                        pass  # Generic types (e.g. list[str]) can't be used with isinstance
+                    except TypeError:  # pragma: no cover — generic types (e.g. list[str]) can't be used with isinstance
+                        pass
             return output
         return await processor.call(output, run_context, wrap_validation_errors)
 
