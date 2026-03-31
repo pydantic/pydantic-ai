@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic_ai.builtin_tools import ImageAspectRatio, ImageGenerationTool
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import KnownModelName, Model
+from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
@@ -58,9 +58,8 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
         | bool = True,
         local: Tool[AgentDepsT] | Callable[..., Any] | Literal[False] | None = None,
         fallback_model: Model
-        | KnownModelName
         | str
-        | Callable[[RunContext[AgentDepsT]], Awaitable[Model | KnownModelName | str] | Model | KnownModelName | str]
+        | Callable[[RunContext[AgentDepsT]], Awaitable[Model | str] | Model | str]
         | None = None,
         background: Literal['transparent', 'opaque', 'auto'] | None = None,
         input_fidelity: Literal['high', 'low'] | None = None,
