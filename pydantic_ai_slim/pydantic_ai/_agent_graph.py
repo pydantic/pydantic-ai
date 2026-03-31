@@ -401,10 +401,9 @@ async def _get_instructions(
 
     toolset_result = await ctx.deps.tool_manager.toolset.get_instructions(run_context)
     if toolset_result:
-        if isinstance(toolset_result, (str, _messages.InstructionPart)):
-            items: list[str | _messages.InstructionPart] = [toolset_result]
-        else:
-            items = list(toolset_result)
+        # The top-level toolset is always a CombinedToolset which returns a list,
+        # but the return type also allows a single str or InstructionPart for custom subclasses.
+        items = [toolset_result] if isinstance(toolset_result, (str, _messages.InstructionPart)) else toolset_result
         for item in items:
             if isinstance(item, _messages.InstructionPart):
                 parts.append(item)

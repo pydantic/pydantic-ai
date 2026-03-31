@@ -918,6 +918,26 @@ async def test_anthropic_cache_instructions_all_dynamic_no_system_prompt(allow_m
     )
 
 
+async def test_anthropic_cache_instructions_no_instructions(allow_model_requests: None):
+    """Test that cache_instructions with no actual instructions works gracefully."""
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        model_settings=AnthropicModelSettings(anthropic_cache_instructions=True),
+    )
+
+    await agent.run('test prompt')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    # No system prompts or instructions — system param is omitted
+    assert 'system' not in completion_kwargs or not completion_kwargs['system']
+
+
 async def test_anthropic_incompatible_schema_disables_auto_strict(allow_model_requests: None):
     """Ensure strict mode is disabled when Anthropic cannot enforce the tool schema."""
     c = completion_message(
