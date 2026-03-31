@@ -61,6 +61,20 @@ if TYPE_CHECKING or imports_successful():
         ) -> None:
             self.calls.append((list(results), list(failures), context))
 
+    class SpanCollector:
+        def __init__(self) -> None:
+            self.span_refs: list[SpanReference | None] = []
+
+        async def submit(
+            self,
+            *,
+            results: Sequence[EvaluationResult[Any]],
+            failures: Sequence[EvaluatorFailure],
+            context: EvaluatorContext[Any, Any, Any],
+            span_reference: SpanReference | None,
+        ) -> None:
+            self.span_refs.append(span_reference)
+
 
 @pytest.mark.anyio
 async def test_basic_dispatch():
@@ -259,6 +273,25 @@ async def test_metadata_merging():
 
 
 @pytest.mark.anyio
+async def test_empty_config_metadata_is_preserved():
+    """An empty config metadata dict stays an empty dict instead of becoming None."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector, metadata={})
+
+    agent = Agent(
+        TestModel(),
+        capabilities=[OnlineEvaluation(evaluators=[AlwaysTrue()], config=config)],
+    )
+
+    await agent.run('hello')
+    await wait_for_evaluations()
+
+    assert len(collector.calls) == 1
+    _, _, ctx = collector.calls[0]
+    assert ctx.metadata == {}
+
+
+@pytest.mark.anyio
 async def test_name_defaults_to_run_id():
     """EvaluatorContext name defaults to run_id when no name is provided."""
     collector = Collector()
@@ -303,22 +336,34 @@ def test_serialization_name_is_none():
 
 
 @pytest.mark.anyio
+async def test_streaming_dispatches_after_context_exit():
+    """Streaming runs dispatch evaluations only after the stream context exits."""
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    agent = Agent(
+        TestModel(),
+        capabilities=[OnlineEvaluation(evaluators=[AlwaysTrue()], config=config)],
+    )
+
+    async with agent.run_stream('hello') as result:
+        assert await result.get_output() == 'success (no tool calls)'
+        assert len(collector.calls) == 0
+
+    await wait_for_evaluations()
+
+    assert len(collector.calls) == 1
+    results, failures, ctx = collector.calls[0]
+    assert len(results) == 1
+    assert len(failures) == 0
+    assert ctx.output == 'success (no tool calls)'
+
+
+@pytest.mark.anyio
 async def test_span_reference_with_logfire(capfire: Any):
     """OnlineEvaluation produces a valid SpanReference when logfire is configured."""
-    span_refs: list[SpanReference | None] = []
-
-    class SpanCaptureSink:
-        async def submit(
-            self,
-            *,
-            results: Sequence[EvaluationResult[Any]],
-            failures: Sequence[EvaluatorFailure],
-            context: EvaluatorContext[Any, Any, Any],
-            span_reference: SpanReference | None,
-        ) -> None:
-            span_refs.append(span_reference)
-
-    config = OnlineEvalConfig(default_sink=SpanCaptureSink())
+    collector = SpanCollector()
+    config = OnlineEvalConfig(default_sink=collector)
 
     agent = Agent(
         TestModel(),
@@ -329,9 +374,40 @@ async def test_span_reference_with_logfire(capfire: Any):
     await agent.run('hello')
     await wait_for_evaluations()
 
-    assert len(span_refs) == 1
-    ref = span_refs[0]
+    assert len(collector.span_refs) == 1
+    ref = collector.span_refs[0]
     assert ref is not None
     assert isinstance(ref, SpanReference)
     assert len(ref.trace_id) == 32
     assert len(ref.span_id) == 16
+
+
+@pytest.mark.parametrize(
+    'traceparent',
+    (
+        'malformed',
+        f'00-{"0" * 32}-1234567890abcdef-01',
+        f'00-1234567890abcdef1234567890abcdef-{"0" * 16}-01',
+    ),
+)
+@pytest.mark.anyio
+async def test_malformed_traceparent_yields_no_span_reference(monkeypatch: pytest.MonkeyPatch, traceparent: str):
+    """Malformed traceparents do not produce span references."""
+
+    def fake_traceparent(self: Any, *, required: bool = True) -> str | None:
+        return traceparent
+
+    monkeypatch.setattr('pydantic_ai.run.AgentRunResult._traceparent', fake_traceparent)
+
+    collector = SpanCollector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    agent = Agent(
+        TestModel(),
+        capabilities=[OnlineEvaluation(evaluators=[AlwaysTrue()], config=config)],
+    )
+
+    await agent.run('hello')
+    await wait_for_evaluations()
+
+    assert collector.span_refs == [None]

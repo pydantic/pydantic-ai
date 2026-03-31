@@ -47,12 +47,12 @@ def _parse_traceparent(traceparent: str | None) -> SpanReference | None:
     if traceparent is None:
         return None
     parts = traceparent.split('-')
-    if len(parts) != 4:  # pragma: no cover
+    if len(parts) != 4:
         return None
     trace_id, span_id = parts[1], parts[2]
-    if not trace_id or trace_id == '0' * 32:  # pragma: no cover
+    if not trace_id or trace_id == '0' * 32:
         return None
-    if not span_id or span_id == '0' * 16:  # pragma: no cover
+    if not span_id or span_id == '0' * 16:
         return None
     return SpanReference(trace_id=trace_id, span_id=span_id)
 
@@ -61,28 +61,38 @@ def _parse_traceparent(traceparent: str | None) -> SpanReference | None:
 class OnlineEvaluation(AbstractCapability[AgentDepsT]):
     """Capability that runs online evaluators on agent run results.
 
-    Dispatches evaluators asynchronously in the background after each
-    [`agent.run()`][pydantic_ai.Agent.run] completes. Non-blocking — the agent run returns
-    immediately and evaluators run concurrently.
+    Dispatches evaluators asynchronously in the background after each completed
+    agent run. Non-blocking — the agent run returns without waiting for evaluators
+    to finish.
 
     !!! note
-        Only [`agent.run()`][pydantic_ai.Agent.run] is supported.
-        Streaming via [`agent.run_stream()`][pydantic_ai.Agent.run_stream] does not trigger
-        evaluators since the final result is not available until the stream completes.
+        [`OnlineEvaluation`][pydantic_evals.online_capability.OnlineEvaluation]
+        wraps both [`agent.run()`][pydantic_ai.Agent.run] and
+        [`agent.run_stream()`][pydantic_ai.Agent.run_stream].
+        For streaming runs, evaluators are dispatched only after the stream
+        completes and the context manager exits, when the final result is
+        available.
 
     Example:
-    ```python {test="skip" lint="skip"}
+    ```python {lint="skip"}
+    from dataclasses import dataclass
+
     from pydantic_ai import Agent
     from pydantic_evals.evaluators import Evaluator, EvaluatorContext
     from pydantic_evals.online import OnlineEvalConfig
     from pydantic_evals.online_capability import OnlineEvaluation
 
+    @dataclass
+    class OutputNotEmpty(Evaluator):
+        def evaluate(self, ctx: EvaluatorContext) -> bool:
+            return bool(ctx.output)
+
     agent = Agent(
-        'test',
+        'openai:gpt-5.2',
         capabilities=[
             OnlineEvaluation(
-                evaluators=[MyEvaluator()],
-                config=OnlineEvalConfig(default_sink=my_sink),
+                evaluators=[OutputNotEmpty()],
+                config=OnlineEvalConfig(default_sink=lambda results, failures, context: None),
             ),
         ],
     )
@@ -139,7 +149,7 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
                 t0 = time.perf_counter()
                 result = await handler()
                 duration = time.perf_counter() - t0
-        finally:
+        finally:  # pragma: no branch
             _CURRENT_TASK_RUN.reset(token)
 
         # Extract standard metrics from the span tree

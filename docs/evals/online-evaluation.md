@@ -862,34 +862,62 @@ Key behaviors:
 
 The [`OnlineEvaluation`][pydantic_evals.online_capability.OnlineEvaluation] capability brings online evaluation to Pydantic AI agents. Instead of decorating a function, you add the capability to your agent:
 
-```python {test="skip" lint="skip"}
+```python
+import asyncio
+from dataclasses import dataclass
+
 from pydantic_ai import Agent
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext
-from pydantic_evals.online import OnlineEvalConfig
+from pydantic_evals.online import OnlineEvalConfig, wait_for_evaluations
 from pydantic_evals.online_capability import OnlineEvaluation
 
+results_log: list[str] = []
+
+
+@dataclass
+class OutputNotEmpty(Evaluator):
+    def evaluate(self, ctx: EvaluatorContext) -> bool:
+        return bool(ctx.output)
+
+
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5.2',
     capabilities=[
         OnlineEvaluation(
-            evaluators=[MyEvaluator()],
-            config=OnlineEvalConfig(default_sink=my_sink),
+            evaluators=[OutputNotEmpty()],
+            config=OnlineEvalConfig(
+                default_sink=lambda results, failures, context: results_log.extend(
+                    f'{result.name}={result.value}' for result in results
+                )
+            ),
         ),
     ],
 )
+
+
+async def main() -> None:
+    results_log.clear()
+    await agent.run('What is the capital of the UK?')
+    await wait_for_evaluations()
+    print(results_log)
+    #> ['OutputNotEmpty=True']
+    #> ['OutputNotEmpty=True']
+
+
+asyncio.run(main())
 ```
 
-After each [`agent.run()`][pydantic_ai.Agent.run] call, the capability:
+After each completed agent run, the capability:
 
 1. Samples evaluators based on their `sample_rate` configuration
 2. Builds an [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext] from the run result (output, prompt, token usage, duration, span tree)
 3. Dispatches evaluators asynchronously in the background
-4. Returns the run result immediately without blocking
+4. Returns control to the caller without waiting for evaluators to finish
 
 The capability supports all the same features as the [`@evaluate()`][pydantic_evals.online.evaluate] decorator: sampling, per-evaluator sinks, concurrency control, and error handling. The `config` parameter is optional and defaults to the global [`DEFAULT_CONFIG`][pydantic_evals.online.DEFAULT_CONFIG].
 
 !!! note
-    [`OnlineEvaluation`][pydantic_evals.online_capability.OnlineEvaluation] wraps [`agent.run()`][pydantic_ai.Agent.run] only. Streaming via [`agent.run_stream()`][pydantic_ai.Agent.run_stream] is not currently supported because the final result is not available until the stream completes.
+    [`OnlineEvaluation`][pydantic_evals.online_capability.OnlineEvaluation] wraps both [`agent.run()`][pydantic_ai.Agent.run] and [`agent.run_stream()`][pydantic_ai.Agent.run_stream]. For streaming runs, evaluators are dispatched only after the stream completes and the context manager exits, when the final result is available.
 
 ## API Reference
 
