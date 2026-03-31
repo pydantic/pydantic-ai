@@ -949,44 +949,6 @@ async def test_openrouter_prepare_request_loop_with_non_websearch_first(openrout
     assert extra_body['web_search_options'] == {'search_context_size': 'medium'}
 
 
-def test_openrouter_null_metadata_fallbacks() -> None:
-    """Null metadata fields (id, model, object, provider) are filled with safe defaults.
-
-    Regression test for https://github.com/pydantic/pydantic-ai/issues/3994.
-    """
-    provider = OpenRouterProvider(api_key='test-key')
-    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
-
-    completion = ChatCompletion.model_construct(
-        id=None,
-        choices=[
-            {
-                'index': 0,
-                'message': {'role': 'assistant', 'content': 'Hi'},
-                'finish_reason': 'stop',
-                'native_finish_reason': None,
-                'logprobs': None,
-            }
-        ],
-        model=None,
-        object=None,
-        provider=None,
-        created=1234567890,
-        usage=None,
-    )
-
-    model_response = model._process_response(completion)  # type: ignore[reportPrivateUsage]
-
-    assert model_response.parts == snapshot([TextPart(content='Hi')])
-    assert model_response.provider_details == snapshot(
-        {
-            'finish_reason': 'stop',
-            'downstream_provider': 'unknown',
-            'timestamp': datetime.datetime(2009, 2, 13, 23, 31, 30, tzinfo=datetime.timezone.utc),
-        }
-    )
-
-
 def test_openrouter_nested_provider_response() -> None:
     """OpenRouter sometimes nests the real response inside the 'provider' dict.
 
@@ -1067,7 +1029,7 @@ def test_openrouter_nested_provider_null_name() -> None:
 
 
 def test_openrouter_provider_dict_without_choices_raises() -> None:
-    """Provider is a dict with no 'choices' key — normalization skips unwrap, validation fails."""
+    """Provider is a dict with no 'choices' key — no unwrap happens, validation fails."""
     provider = OpenRouterProvider(api_key='test-key')
     model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
 
