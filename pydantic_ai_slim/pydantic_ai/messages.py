@@ -1316,10 +1316,11 @@ class RetryPromptPart:
     tool_name: str | None = None
     """The name of the tool that was called, if any."""
 
-    tool_call_id: str | None = None
+    tool_call_id: str | None = field(default_factory=_generate_tool_call_id)
     """The tool call identifier, this is used by some models including OpenAI.
 
-    This may be `None` for retries that are not tied to a tool-call protocol.
+    If omitted, Pydantic AI generates a random ID for backward compatibility.
+    Pass `None` explicitly for retries that are not tied to a tool-call protocol.
     """
 
     timestamp: datetime = field(default_factory=_now_utc)

@@ -22,6 +22,7 @@ from pydantic_ai import (
     ModelResponse,
     MultiModalContent,
     RequestUsage,
+    RetryPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
@@ -361,6 +362,19 @@ def test_video_url_formats(video_url: VideoUrl, media_type: str, format: str):
 def test_video_url_invalid():
     with pytest.raises(ValueError, match='Could not infer media type from video URL: foobar.potato'):
         VideoUrl('foobar.potato').media_type
+
+
+def test_retry_prompt_part_generates_tool_call_id_by_default():
+    retry_prompt = RetryPromptPart(content='try again', tool_name='lookup_weather')
+
+    assert isinstance(retry_prompt.tool_call_id, str)
+    assert retry_prompt.tool_call_id
+
+
+def test_retry_prompt_part_accepts_explicit_none_tool_call_id():
+    retry_prompt = RetryPromptPart(content='try again', tool_name='lookup_weather', tool_call_id=None)
+
+    assert retry_prompt.tool_call_id is None
 
 
 @pytest.mark.skipif(
