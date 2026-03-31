@@ -86,7 +86,7 @@ class CerebrasModel(OpenAIChatModel):
         super().__init__(model_name, provider=provider, profile=profile, settings=settings)
 
     @override
-    def _get_reasoning_effort(
+    def _translate_thinking(
         self,
         model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
