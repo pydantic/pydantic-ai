@@ -520,7 +520,7 @@ class MistralModel(Model):
                     yield MistralUserMessage(content=part.model_response())  # pragma: no cover
                 else:
                     yield MistralToolMessage(
-                        tool_call_id=part.tool_call_id,
+                        tool_call_id=_utils.guard_tool_call_id(part),
                         content=part.model_response(),
                     )
             else:

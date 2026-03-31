@@ -62,6 +62,7 @@ with try_import() as imports_successful:
         SDKError,
         ToolCall as MistralToolCall,
     )
+    from mistralai.models.toolmessage import ToolMessage as MistralToolMessage
     from mistralai.types.basemodel import Unset as MistralUnset
 
     from pydantic_ai.models.mistral import (
@@ -1471,6 +1472,35 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
             ),
         ]
     )
+
+
+async def test_request_retry_prompt_without_tool_call_id(allow_model_requests: None):
+    class CaptureMistralAI(MockMistralAI):
+        last_kwargs: dict[str, Any] | None = None
+
+        async def chat_completions_create(
+            self, *_args: Any, stream: bool = False, **_kwargs: Any
+        ) -> MistralChatCompletionResponse | MockAsyncStream[MockCompletionEvent]:
+            self.last_kwargs = _kwargs
+            return await super().chat_completions_create(*_args, stream=stream, **_kwargs)
+
+    capture_client = CaptureMistralAI(completions=completion_message(MistralAssistantMessage(content='final response')))
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=cast(Mistral, capture_client)))
+    agent = Agent(model=model)
+
+    result = await agent.run(
+        'Hello',
+        message_history=[
+            ModelRequest(parts=[RetryPromptPart(content='Wrong location, please try again', tool_name='get_location')])
+        ],
+    )
+
+    assert result.output == 'final response'
+    assert capture_client.last_kwargs is not None
+    retry_message = next(msg for msg in capture_client.last_kwargs['messages'] if isinstance(msg, MistralToolMessage))
+    assert retry_message.content == 'Wrong location, please try again\n\nFix the errors and try again.'
+    assert isinstance(retry_message.tool_call_id, str)
+    assert retry_message.tool_call_id
 
 
 #####################
