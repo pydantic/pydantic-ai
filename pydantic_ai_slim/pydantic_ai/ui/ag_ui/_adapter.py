@@ -31,6 +31,7 @@ from ...messages import (
     ModelResponse,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -121,11 +122,13 @@ def _new_message_id() -> str:
 
 
 def _user_content_to_input(
-    item: str | ImageUrl | VideoUrl | AudioUrl | DocumentUrl | BinaryContent | UploadedFile | CachePoint,
+    item: str | TextContent | ImageUrl | VideoUrl | AudioUrl | DocumentUrl | BinaryContent | UploadedFile | CachePoint,
 ) -> TextInputContent | BinaryInputContent | None:
     """Convert a user content item to AG-UI input content."""
     if isinstance(item, str):
         return TextInputContent(type='text', text=item)
+    elif isinstance(item, TextContent):
+        return TextInputContent(type='text', text=item.content)
     elif isinstance(item, (ImageUrl, VideoUrl, AudioUrl, DocumentUrl)):
         return BinaryInputContent(type='binary', url=item.url, mime_type=item.media_type or '')
     elif isinstance(item, BinaryContent):
