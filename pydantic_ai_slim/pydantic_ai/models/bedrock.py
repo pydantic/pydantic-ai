@@ -830,14 +830,14 @@ class BedrockConverseModel(Model):
                         if part.tool_name is None:
                             bedrock_messages.append({'role': 'user', 'content': [{'text': part.model_response()}]})
                         else:
-                            assert part.tool_call_id is not None
+                            tool_call_id = _utils.guard_tool_call_id(part)
                             bedrock_messages.append(
                                 {
                                     'role': 'user',
                                     'content': [
                                         {
                                             'toolResult': {
-                                                'toolUseId': part.tool_call_id,
+                                                'toolUseId': tool_call_id,
                                                 'content': [{'text': part.model_response()}],
                                                 'status': 'error',
                                             }

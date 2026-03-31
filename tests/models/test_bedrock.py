@@ -96,10 +96,31 @@ class _StubBedrockClient:
         raise self._error
 
 
+class _CaptureBedrockClient:
+    def __init__(self):
+        self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub')
+        self.last_converse_kwargs: dict[str, Any] | None = None
+
+    def converse(self, **kwargs: Any) -> dict[str, Any]:
+        self.last_converse_kwargs = kwargs
+        return {
+            'output': {'message': {'content': [{'text': 'final response'}]}},
+            'usage': {'inputTokens': 1, 'outputTokens': 1},
+            'stopReason': 'end_turn',
+            'ResponseMetadata': {'RequestId': 'req_123'},
+        }
+
+    def converse_stream(self, **_: Any) -> None:
+        raise AssertionError('converse_stream should not be called in this test')
+
+    def count_tokens(self, **_: Any) -> None:
+        raise AssertionError('count_tokens should not be called in this test')
+
+
 class _StubBedrockProvider(Provider[Any]):
     """Provider implementation backed by the stub client."""
 
-    def __init__(self, client: _StubBedrockClient):
+    def __init__(self, client: Any):
         self._client = client
 
     @property
@@ -340,6 +361,32 @@ async def test_stub_provider_properties():
 
     assert provider.name == 'bedrock-stub'
     assert provider.base_url == 'https://bedrock.stub'
+
+
+async def test_bedrock_retry_prompt_without_tool_call_id(allow_model_requests: None):
+    client = _CaptureBedrockClient()
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=_StubBedrockProvider(client))
+    agent = Agent(model=model)
+
+    result = await agent.run(
+        'Hello',
+        message_history=[
+            ModelRequest(parts=[RetryPromptPart(content='Wrong location, please try again', tool_name='get_location')])
+        ],
+    )
+
+    assert result.output == 'final response'
+    assert client.last_converse_kwargs is not None
+    retry_message = next(
+        message
+        for message in client.last_converse_kwargs['messages']
+        if any('toolResult' in part for part in message['content'])
+    )
+    tool_result = retry_message['content'][0]['toolResult']
+    assert tool_result['status'] == 'error'
+    assert tool_result['content'] == [{'text': 'Wrong location, please try again\n\nFix the errors and try again.'}]
+    assert isinstance(tool_result['toolUseId'], str)
+    assert tool_result['toolUseId']
 
 
 async def test_bedrock_model_structured_output(allow_model_requests: None, bedrock_provider: BedrockProvider):
