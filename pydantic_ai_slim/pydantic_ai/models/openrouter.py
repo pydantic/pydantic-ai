@@ -4,7 +4,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
-from pydantic import BaseModel, Discriminator, ValidationError
+from pydantic import BaseModel, Discriminator, ValidationError, field_validator
 from typing_extensions import TypedDict, assert_never, override
 
 from ..builtin_tools import AbstractBuiltinTool, WebSearchTool
@@ -483,31 +483,29 @@ class _OpenRouterChatCompletion(chat.ChatCompletion):
     """OpenRouter specific usage attribute."""
 
 
-class _OpenRouterErrorResponse(BaseModel):
+class _OpenRouterErrorResponse(BaseModel, extra='allow'):
     """OpenRouter error response with null standard fields (see #3994)."""
 
-    choices: None
     error: _OpenRouterError
     model: str | None = None
 
 
-class _OpenRouterNestedCompletion(BaseModel, extra='allow'):
-    """The nested completion data inside the ``provider`` field (see #3994).
+class _OpenRouterNestedCompletion(_OpenRouterChatCompletion):
+    """Completion nested in the `provider` field where provider name may be null (see #3994)."""
 
-    Uses ``extra='allow'`` to preserve all fields for re-validation
-    as :class:`_OpenRouterChatCompletion`.
-    """
+    provider: str = 'unknown'
+    created: int = 0
 
-    choices: list[Any]
-    provider: str | None = None
+    @field_validator('provider', mode='before')
+    @classmethod
+    def _coerce_null_provider(cls, v: Any) -> str:
+        return v if isinstance(v, str) else 'unknown'
 
 
-class _OpenRouterNestedProviderResponse(BaseModel):
-    """OpenRouter response where the real completion is nested in ``provider`` (see #3994)."""
+class _OpenRouterNestedProviderResponse(BaseModel, extra='allow'):
+    """OpenRouter response where the real completion is nested in `provider` (see #3994)."""
 
-    choices: None
     provider: _OpenRouterNestedCompletion
-    created: int
 
 
 def _map_openrouter_provider_details(
@@ -621,29 +619,30 @@ class OpenRouterModel(OpenAIChatModel):
     def _validate_completion(self, response: chat.ChatCompletion) -> _OpenRouterChatCompletion:
         response_dict = response.model_dump()
 
-        # OpenRouter intermittently returns responses with null standard fields (#3994).
-        # Check for known quirky response shapes before normal validation.
         try:
-            error_response = _OpenRouterErrorResponse.model_validate(response_dict)
-        except ValidationError:
-            pass
-        else:
-            raise ModelHTTPError(
-                status_code=error_response.error.code,
-                model_name=error_response.model or self.model_name,
-                body=error_response.error.message,
-            )
+            validated = _OpenRouterChatCompletion.model_validate(response_dict)
+        except ValidationError as exc:
+            # OpenRouter intermittently returns responses with null standard fields (#3994).
+            # Try known quirky response shapes before giving up.
+            try:
+                error_response = _OpenRouterErrorResponse.model_validate(response_dict)
+            except ValidationError:
+                pass
+            else:
+                raise ModelHTTPError(
+                    status_code=error_response.error.code,
+                    model_name=error_response.model or self.model_name,
+                    body=error_response.error.message,
+                )
 
-        try:
-            nested = _OpenRouterNestedProviderResponse.model_validate(response_dict)
-        except ValidationError:
-            pass
-        else:
-            response_dict = nested.provider.model_dump()
-            response_dict['provider'] = nested.provider.provider or 'unknown'
-            response_dict.setdefault('created', nested.created)
+            try:
+                nested = _OpenRouterNestedProviderResponse.model_validate(response_dict)
+            except ValidationError:
+                raise exc
 
-        validated = _OpenRouterChatCompletion.model_validate(response_dict)
+            validated = nested.provider
+            if not validated.created:
+                validated.created = response_dict.get('created') or 0
 
         if error := validated.error:
             raise ModelHTTPError(status_code=error.code, model_name=validated.model, body=error.message)

@@ -1095,3 +1095,36 @@ def test_openrouter_malformed_error_fallthrough() -> None:
 
     with pytest.raises(UnexpectedModelBehavior):
         model._process_response(completion)  # type: ignore[reportPrivateUsage]
+
+
+def test_openrouter_error_with_metadata() -> None:
+    """Real-world error response with metadata field from #3994.
+
+    OpenRouter returns error code 524 with extra metadata including the raw
+    error and provider name. The extra fields should be ignored.
+    """
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('google/gemini-3-flash-preview', provider=provider)
+
+    completion = ChatCompletion.model_construct(
+        id=None,
+        choices=None,
+        created=1768361801,
+        model=None,
+        object=None,
+        service_tier=None,
+        system_fingerprint=None,
+        usage=None,
+        error={
+            'message': 'Provider returned error',
+            'code': 524,
+            'metadata': {'raw': 'error code: 524', 'provider_name': 'Google'},
+        },
+        user_id='org_xxx',
+    )
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        model._process_response(completion)  # type: ignore[reportPrivateUsage]
+
+    assert exc_info.value.status_code == 524
+    assert 'Provider returned error' in str(exc_info.value)
