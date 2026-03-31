@@ -20,7 +20,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-LatestGoogleGLAEmbeddingModelNames = Literal['gemini-embedding-001']
+LatestGoogleGLAEmbeddingModelNames = Literal['gemini-embedding-001', 'gemini-embedding-2-preview']
 """Latest Google Gemini API (GLA) embedding models.
 
 See the [Google Embeddings documentation](https://ai.google.dev/gemini-api/docs/embeddings)
@@ -29,6 +29,7 @@ for available models and their capabilities.
 
 LatestGoogleVertexEmbeddingModelNames = Literal[
     'gemini-embedding-001',
+    'gemini-embedding-2-preview',
     'text-embedding-005',
     'text-multilingual-embedding-002',
 ]
