@@ -925,7 +925,7 @@ Supported by:
                 },
                 'end_strategy': {
                     'default': 'early',
-                    'enum': ['early', 'exhaustive'],
+                    'enum': ['early', 'graceful', 'exhaustive'],
                     'title': 'End Strategy',
                     'type': 'string',
                 },
