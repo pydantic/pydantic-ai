@@ -1147,7 +1147,9 @@ class OpenAIChatModel(Model):
             else:
                 assert_never(message)
         if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
-            system_prompt_count = sum(1 for m in openai_messages if m.get('role') == 'system')
+            system_prompt_count = next(
+                (i for i, m in enumerate(openai_messages) if m.get('role') != 'system'), len(openai_messages)
+            )
             for i, part in enumerate(instruction_parts):
                 openai_messages.insert(
                     system_prompt_count + i,
@@ -1735,7 +1737,9 @@ class OpenAIResponsesModel(Model):
             # > Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'.
             # Apparently they're only checking input messages for "JSON", not instructions.
             assert isinstance(instructions, str)
-            system_prompt_count = sum(1 for m in openai_messages if m.get('role') == 'system')
+            system_prompt_count = next(
+                (i for i, m in enumerate(openai_messages) if m.get('role') != 'system'), len(openai_messages)
+            )
             openai_messages.insert(
                 system_prompt_count, responses.EasyInputMessageParam(role='system', content=instructions)
             )

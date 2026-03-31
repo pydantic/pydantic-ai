@@ -454,7 +454,9 @@ class GroqModel(Model):
             else:
                 assert_never(message)
         if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
-            system_prompt_count = sum(1 for m in groq_messages if m.get('role') == 'system')
+            system_prompt_count = next(
+                (i for i, m in enumerate(groq_messages) if m.get('role') != 'system'), len(groq_messages)
+            )
             for i, part in enumerate(instruction_parts):
                 groq_messages.insert(
                     system_prompt_count + i,

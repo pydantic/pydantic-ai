@@ -317,7 +317,7 @@ async def test_async_request_prompt_caching(allow_model_requests: None):
 async def test_cache_point_adds_cache_control(allow_model_requests: None):
     """Test that CachePoint correctly adds cache_control to content blocks.
 
-    By default, CachePoint uses ttl='5m'. For non-Bedrock clients, the ttl field is included.
+    By default, CachePoint uses ttl='5m'.
     """
     c = completion_message(
         [BetaTextBlock(text='response', type='text')],
@@ -365,7 +365,7 @@ async def test_cache_point_multiple_markers(allow_model_requests: None):
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     content = completion_kwargs['messages'][0]['content']
 
-    # Default ttl='5m' for non-Bedrock clients
+    # Default ttl='5m'
     assert content == snapshot(
         [
             {'text': 'First chunk', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
@@ -413,7 +413,7 @@ async def test_cache_point_with_image_content(allow_model_requests: None):
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     content = completion_kwargs['messages'][0]['content']
 
-    # Default ttl='5m' for non-Bedrock clients
+    # Default ttl='5m'
     assert content == snapshot(
         [
             {
@@ -464,8 +464,8 @@ def test_cache_control_unsupported_param_type():
         m._add_cache_control_to_last_param(params)  # type: ignore[arg-type]  # Testing internal method
 
 
-def test_build_cache_control_bedrock_omits_ttl():
-    """Test that _build_cache_control automatically omits TTL for Bedrock clients."""
+def test_build_cache_control_bedrock_includes_ttl():
+    """Test that _build_cache_control includes TTL for Bedrock clients."""
     from unittest.mock import MagicMock
 
     from anthropic import AsyncAnthropicBedrock
@@ -476,12 +476,12 @@ def test_build_cache_control_bedrock_omits_ttl():
 
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_bedrock_client))
 
-    # Verify cache_control is built without TTL for Bedrock
+    # Verify cache_control includes TTL for Bedrock
     cache_control = m._build_cache_control('5m')  # pyright: ignore[reportPrivateUsage]
-    assert cache_control == {'type': 'ephemeral'}  # No 'ttl' field
+    assert cache_control == {'type': 'ephemeral', 'ttl': '5m'}
 
     cache_control_1h = m._build_cache_control('1h')  # pyright: ignore[reportPrivateUsage]
-    assert cache_control_1h == {'type': 'ephemeral'}  # TTL still omitted
+    assert cache_control_1h == {'type': 'ephemeral', 'ttl': '1h'}
 
 
 def test_build_cache_control_standard_client_includes_ttl():

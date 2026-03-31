@@ -272,7 +272,10 @@ class CohereModel(Model):
             else:
                 assert_never(message)
         if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
-            system_prompt_count = sum(1 for m in cohere_messages if isinstance(m, SystemChatMessageV2))
+            system_prompt_count = next(
+                (i for i, m in enumerate(cohere_messages) if not isinstance(m, SystemChatMessageV2)),
+                len(cohere_messages),
+            )
             instruction_messages = [SystemChatMessageV2(role='system', content=p.content) for p in instruction_parts]
             cohere_messages[system_prompt_count:system_prompt_count] = instruction_messages
         return cohere_messages
