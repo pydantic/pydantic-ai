@@ -3502,6 +3502,28 @@ class TestImageGenerationCapability:
             ]
         )
 
+    async def test_image_generation_callable_returns_image_only_model(self, allow_model_requests: None):
+        """Callable fallback_model returning an image-only model name is caught at call time."""
+
+        def model_factory(ctx: RunContext[None]) -> str:
+            return 'openai-responses:gpt-image-1'
+
+        call_count = 0
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
+            return ModelResponse(parts=[TextPart(content='gave up')])
+
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=model_factory)])
+        # The callable returns an image-only model, which is caught and becomes a UserError
+        # that propagates (not caught as ModelRetry since it's a config error)
+        with pytest.raises(UserError, match="'gpt-image-1' is a dedicated image generation model"):
+            await agent.run('Generate a test image')
+
     async def test_image_generation_subagent_error_becomes_model_retry(self, allow_model_requests: None):
         """UnexpectedModelBehavior from subagent becomes a retry prompt to the outer model."""
 
