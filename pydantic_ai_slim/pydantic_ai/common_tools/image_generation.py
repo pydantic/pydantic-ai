@@ -87,7 +87,12 @@ class ImageGenerationLocalTool:
             # static strings are already validated at factory time
             _check_image_only_model(model)
 
-        agent = Agent(model, output_type=BinaryImage, builtin_tools=[self.builtin])
+        agent = Agent(
+            model,
+            output_type=BinaryImage,
+            builtin_tools=[self.builtin],
+            instructions='Generate an image based on the user prompt. Do not ask clarifying questions.',
+        )
         try:
             result = await agent.run(prompt)
         except UnexpectedModelBehavior as e:
