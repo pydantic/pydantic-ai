@@ -135,6 +135,8 @@ nav:
           - examples/question-graph.md
       - Business Applications:
           - examples/slack-lead-qualifier.md
+      - Reliability:
+          - examples/reliability.md
       - UI Examples:
           - examples/ag-ui.md
       - Production & Reliability:
