@@ -13,7 +13,7 @@ from pydantic_ai.toolsets import AbstractToolset
 from .builtin_or_local import BuiltinOrLocalTool
 
 if TYPE_CHECKING:
-    from pydantic_ai.common_tools.image_generation import FallbackModel
+    from pydantic_ai.common_tools.image_generation import ImageGenerationFallbackModel
 
 
 @dataclass(init=False)
@@ -25,15 +25,17 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
     delegates to a subagent running the specified image-capable model.
 
     Image generation settings (`quality`, `size`, etc.) are forwarded to the
-    `ImageGenerationTool` used by both the builtin and the local fallback subagent.
-    When passing a custom `builtin` instance, its settings are also used for the
-    fallback subagent; capability-level fields override any `builtin` instance settings.
+    [`ImageGenerationTool`][pydantic_ai.builtin_tools.ImageGenerationTool] used by
+    both the builtin and the local fallback subagent. When passing a custom `builtin`
+    instance, its settings are also used for the fallback subagent; capability-level
+    fields override any `builtin` instance settings.
     """
 
-    fallback_model: FallbackModel
+    fallback_model: ImageGenerationFallbackModel
     """Model to use for image generation when the agent's model doesn't support it natively.
 
-    Must be a model that supports image generation via the `ImageGenerationTool` builtin.
+    Must be a model that supports image generation via the
+    [`ImageGenerationTool`][pydantic_ai.builtin_tools.ImageGenerationTool] builtin.
     This requires a conversational model with image generation support, not a dedicated
     image-only API. Examples:
 
@@ -41,35 +43,59 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
     * `'google-gla:gemini-3-pro-image-preview'` — Google image generation model
 
     Can be a model name string, `Model` instance, or a callable taking `RunContext`
-    that returns a model.
+    that returns a `Model` instance.
     """
 
+    # Keep these fields in sync with ImageGenerationTool in builtin_tools.py.
+
     background: Literal['transparent', 'opaque', 'auto'] | None
-    """Background type for the generated image. Forwarded to `ImageGenerationTool`."""
+    """Background type for the generated image.
+
+    Supported by: OpenAI Responses. `'transparent'` only supported for `'png'` and `'webp'`.
+    """
 
     input_fidelity: Literal['high', 'low'] | None
-    """Input fidelity for matching style/features of input images. Forwarded to `ImageGenerationTool`."""
+    """Input fidelity for matching style/features of input images.
+
+    Supported by: OpenAI Responses. Default: `'low'`.
+    """
 
     moderation: Literal['auto', 'low'] | None
-    """Moderation level for the generated image. Forwarded to `ImageGenerationTool`."""
+    """Moderation level for the generated image.
+
+    Supported by: OpenAI Responses.
+    """
 
     output_compression: int | None
-    """Compression level for the output image. Forwarded to `ImageGenerationTool`."""
+    """Compression level for the output image.
+
+    Supported by: OpenAI Responses (jpeg/webp, default: 100), Google Vertex AI (jpeg, default: 75).
+    """
 
     output_format: Literal['png', 'webp', 'jpeg'] | None
-    """Output format of the generated image. Forwarded to `ImageGenerationTool`."""
+    """Output format of the generated image.
 
-    partial_images: int | None
-    """Number of partial images to generate in streaming mode. Forwarded to `ImageGenerationTool`."""
+    Supported by: OpenAI Responses (default: `'png'`), Google Vertex AI.
+    """
 
     quality: Literal['low', 'medium', 'high', 'auto'] | None
-    """Quality of the generated image. Forwarded to `ImageGenerationTool`."""
+    """Quality of the generated image.
+
+    Supported by: OpenAI Responses.
+    """
 
     size: Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'] | None
-    """Size of the generated image. Forwarded to `ImageGenerationTool`."""
+    """Size of the generated image.
+
+    Supported by: OpenAI Responses (`'auto'`, `'1024x1024'`, `'1024x1536'`, `'1536x1024'`),
+    Google (`'512'`, `'1K'`, `'2K'`, `'4K'`).
+    """
 
     aspect_ratio: ImageAspectRatio | None
-    """Aspect ratio to use for generated images. Forwarded to `ImageGenerationTool`."""
+    """Aspect ratio for generated images.
+
+    Supported by: Google (Gemini), OpenAI Responses (maps `'1:1'`, `'2:3'`, `'3:2'` to sizes).
+    """
 
     def __init__(
         self,
@@ -81,14 +107,13 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
         fallback_model: Model
         | KnownModelName
         | str
-        | Callable[[RunContext[AgentDepsT]], Awaitable[Model | KnownModelName | str] | Model | KnownModelName | str]
+        | Callable[[RunContext[AgentDepsT]], Awaitable[Model] | Model]
         | None = None,
         background: Literal['transparent', 'opaque', 'auto'] | None = None,
         input_fidelity: Literal['high', 'low'] | None = None,
         moderation: Literal['auto', 'low'] | None = None,
         output_compression: int | None = None,
         output_format: Literal['png', 'webp', 'jpeg'] | None = None,
-        partial_images: int | None = None,
         quality: Literal['low', 'medium', 'high', 'auto'] | None = None,
         size: Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'] | None = None,
         aspect_ratio: ImageAspectRatio | None = None,
@@ -106,7 +131,6 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
         self.moderation = moderation
         self.output_compression = output_compression
         self.output_format = output_format
-        self.partial_images = partial_images
         self.quality = quality
         self.size = size
         self.aspect_ratio = aspect_ratio
@@ -125,8 +149,6 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
             kwargs['output_compression'] = self.output_compression
         if self.output_format is not None:
             kwargs['output_format'] = self.output_format
-        if self.partial_images is not None:
-            kwargs['partial_images'] = self.partial_images
         if self.quality is not None:
             kwargs['quality'] = self.quality
         if self.size is not None:

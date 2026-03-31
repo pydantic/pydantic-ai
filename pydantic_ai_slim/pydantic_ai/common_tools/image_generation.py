@@ -1,28 +1,25 @@
 from __future__ import annotations
 
 import inspect
-from dataclasses import KW_ONLY, dataclass
-from typing import TYPE_CHECKING, Any
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from typing import Any
 
+from pydantic_ai.agent import Agent
 from pydantic_ai.builtin_tools import ImageGenerationTool
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import BinaryImage
-from pydantic_ai.models import Model
+from pydantic_ai.models import KnownModelName, Model, parse_model_id
 from pydantic_ai.tools import RunContext, Tool
 
-if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+ImageGenerationFallbackModelFunc = Callable[
+    [RunContext[Any]],
+    Awaitable[Model] | Model,
+]
+"""Callable that resolves a fallback model dynamically per-run."""
 
-    from pydantic_ai.models import KnownModelName
-
-    FallbackModelFunc = Callable[
-        [RunContext[Any]],
-        Awaitable[Model | KnownModelName | str] | Model | KnownModelName | str,
-    ]
-    """Callable that resolves a fallback model dynamically per-run."""
-
-    FallbackModel = Model | KnownModelName | str | FallbackModelFunc | None
-    """Type for the fallback model: a model, model name, factory callable, or None."""
+ImageGenerationFallbackModel = Model | KnownModelName | str | ImageGenerationFallbackModelFunc | None
+"""Type for the fallback model: a model, model name, factory callable, or None."""
 
 __all__ = ('image_generation_tool',)
 
@@ -39,8 +36,6 @@ _IMAGE_ONLY_MODELS: dict[str, str] = {
 
 def _check_image_only_model(model: str) -> None:
     """Raise UserError if the model is a known image-only model."""
-    from pydantic_ai.models import parse_model_id
-
     _, model_name = parse_model_id(model)
     if suggestion := _IMAGE_ONLY_MODELS.get(model_name):
         raise UserError(
@@ -50,8 +45,8 @@ def _check_image_only_model(model: str) -> None:
         )
 
 
-@dataclass
-class ImageGenerationLocalTool:
+@dataclass(kw_only=True)
+class ImageGenerationSubagentTool:
     """Local image generation tool that delegates to a subagent.
 
     Uses a subagent with the specified model and builtin tool configuration
@@ -59,10 +54,8 @@ class ImageGenerationLocalTool:
     generation natively.
     """
 
-    model: Model | KnownModelName | str | FallbackModelFunc
+    model: Model | KnownModelName | str | ImageGenerationFallbackModelFunc
     """The model to use for image generation, or a callable that returns one."""
-
-    _: KW_ONLY
 
     builtin_tool: ImageGenerationTool
     """The image generation tool configuration to pass to the subagent."""
@@ -77,8 +70,6 @@ class ImageGenerationLocalTool:
             ctx: The run context from the outer agent.
             prompt: A description of the image to generate.
         """
-        from pydantic_ai.agent import Agent
-
         model = self.model
         if callable(model):
             result = model(ctx)
@@ -105,7 +96,7 @@ class ImageGenerationLocalTool:
 
 
 def image_generation_tool(
-    model: Model | KnownModelName | str | FallbackModelFunc,
+    model: Model | KnownModelName | str | ImageGenerationFallbackModelFunc,
     builtin_tool: ImageGenerationTool,
     *,
     instructions: str = 'Generate an image based on the user prompt. Do not ask clarifying questions.',
@@ -121,7 +112,7 @@ def image_generation_tool(
     if isinstance(model, str):
         _check_image_only_model(model)
     return Tool[Any](
-        ImageGenerationLocalTool(model=model, builtin_tool=builtin_tool, instructions=instructions).__call__,
+        ImageGenerationSubagentTool(model=model, builtin_tool=builtin_tool, instructions=instructions).__call__,
         name='generate_image',
         description='Generate an image based on the given prompt.',
     )

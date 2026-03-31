@@ -1318,7 +1318,6 @@ Supported by:
                             'anyOf': [{'enum': ['png', 'webp', 'jpeg'], 'type': 'string'}, {'type': 'null'}],
                             'title': 'Output Format',
                         },
-                        'partial_images': {'anyOf': [{'type': 'integer'}, {'type': 'null'}], 'title': 'Partial Images'},
                         'quality': {
                             'anyOf': [{'enum': ['low', 'medium', 'high', 'auto'], 'type': 'string'}, {'type': 'null'}],
                             'title': 'Quality',
@@ -3806,7 +3805,10 @@ class TestImageGenerationCapability:
         import dataclasses
         import inspect
 
-        builtin_fields = {f.name for f in dataclasses.fields(ImageGenerationTool) if f.name != 'kind'}
+        # partial_images is excluded — not useful for subagent fallback (no streaming)
+        builtin_fields = {
+            f.name for f in dataclasses.fields(ImageGenerationTool) if f.name not in ('kind', 'partial_images')
+        }
         init_params = set(inspect.signature(ImageGeneration.__init__).parameters.keys()) - {
             'self',
             'builtin',
@@ -3855,7 +3857,6 @@ class TestImageGenerationCapability:
             moderation='low',
             output_compression=80,
             output_format='jpeg',
-            partial_images=2,
             quality='high',
             size='1024x1024',
             aspect_ratio='16:9',
@@ -3869,7 +3870,6 @@ class TestImageGenerationCapability:
         assert tool.moderation == 'low'
         assert tool.output_compression == 80
         assert tool.output_format == 'jpeg'
-        assert tool.partial_images == 2
         assert tool.quality == 'high'
         assert tool.size == '1024x1024'
         assert tool.aspect_ratio == '16:9'
@@ -3989,7 +3989,7 @@ class TestImageGenerationCapability:
             return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
 
         outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
-        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=model_factory)])
+        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=model_factory)])  # pyright: ignore[reportArgumentType]
         with pytest.raises(UserError, match="'gpt-image-1' is a dedicated image generation model"):
             await agent.run('Generate a test image')
 
