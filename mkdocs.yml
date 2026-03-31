@@ -139,8 +139,6 @@ nav:
           - examples/reliability.md
       - UI Examples:
           - examples/ag-ui.md
-      - Production & Reliability:
-          - examples/reliability.md
 
   - API Reference:
       - pydantic_ai:
