@@ -29,9 +29,9 @@ __all__ = ('image_generation_tool',)
 # Known image-only model names that don't support the conversational Agent loop
 # required by the subagent fallback, mapped to suggested LLM alternatives.
 _IMAGE_ONLY_MODELS: dict[str, str] = {
-    'gpt-image-1': 'gpt-4o',
-    'dall-e-3': 'gpt-4o',
-    'dall-e-2': 'gpt-4o',
+    'gpt-image-1': 'gpt-5.4',
+    'dall-e-3': 'gpt-5.4',
+    'dall-e-2': 'gpt-5.4',
 }
 
 
@@ -100,7 +100,7 @@ def image_generation_tool(
     """Creates an image generation tool backed by a subagent.
 
     Args:
-        model: The model to use for image generation (e.g. ``'openai-responses:gpt-4o'``),
+        model: The model to use for image generation (e.g. ``'openai-responses:gpt-5.4'``),
             or a callable taking ``RunContext`` that returns a model.
         builtin: The image generation tool configuration to pass to the subagent.
     """

@@ -37,9 +37,8 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
     This requires a conversational model with image generation support, not a dedicated
     image-only API. Examples:
 
-    * ``'openai-responses:gpt-4o'`` — OpenAI model with image generation support
-    * ``'openai-responses:gpt-5'`` — OpenAI model with image generation support
-    * ``'google-gla:gemini-2.0-flash-preview-image-generation'`` — Google image generation model
+    * ``'openai-responses:gpt-5.4'`` — OpenAI model with image generation support
+    * ``'google-gla:gemini-3-pro-image-preview'`` — Google image generation model
 
     Can be a model name string, ``Model`` instance, or a callable taking ``RunContext``
     that returns a model.
