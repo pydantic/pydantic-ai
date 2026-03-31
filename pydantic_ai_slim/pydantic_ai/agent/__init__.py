@@ -2293,6 +2293,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         additional_instructions: AgentInstructions[AgentDepsT] = None,
         cap_instructions: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] | None = None,
     ) -> tuple[str | None, list[_system_prompt.SystemPromptRunner[AgentDepsT]]]:
+        """Prepare agent-level instructions, splitting them into literal strings and functions.
+
+        Toolset instructions are collected separately during run execution.
+
+        Args:
+            additional_instructions: Additional instructions to include for this run.
+            cap_instructions: Instructions from capabilities, resolved at run time.
+
+        Returns:
+            A tuple of (literal_instructions, instruction_functions) where:
+            - literal_instructions: Combined literal string instructions or None
+            - instruction_functions: List of instruction functions that need to be evaluated at runtime
+        """
         override_instructions = self._override_instructions.get()
         if override_instructions:
             # Override replaces all instructions, including capability contributions.
