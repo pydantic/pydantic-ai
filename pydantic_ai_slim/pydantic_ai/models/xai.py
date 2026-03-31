@@ -33,6 +33,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -54,6 +55,16 @@ from ..profiles.grok import GrokModelProfile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ThinkingLevel
 from ..usage import RequestUsage
+
+XAI_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'high']] = {
+    True: 'high',
+    'minimal': 'low',
+    'low': 'low',
+    'medium': 'high',
+    'high': 'high',
+    'xhigh': 'high',
+}
+"""Maps unified thinking values to xAI reasoning_effort. xAI only supports 'low' and 'high'."""
 
 try:
     import xai_sdk.chat as chat_types
@@ -451,8 +462,9 @@ class XaiModel(Model):
         content_items: list[chat_types.Content] = []
 
         for item in part.content:
-            if isinstance(item, str):
-                content_items.append(item)
+            if isinstance(item, str | TextContent):
+                text = item if isinstance(item, str) else item.content
+                content_items.append(text)
             elif isinstance(item, ImageUrl):
                 # Get detail from vendor_metadata if available
                 detail: chat_types.ImageDetail = 'auto'
@@ -562,16 +574,7 @@ class XaiModel(Model):
         if 'reasoning_effort' not in xai_settings and model_request_parameters.thinking is not None:
             thinking = model_request_parameters.thinking
             if thinking is not False:
-                # xAI only supports 'low' and 'high'; map others to closest
-                xai_map: dict[ThinkingLevel, str] = {
-                    True: 'high',
-                    'minimal': 'low',
-                    'low': 'low',
-                    'medium': 'high',
-                    'high': 'high',
-                    'xhigh': 'high',
-                }
-                xai_settings['reasoning_effort'] = xai_map[thinking]
+                xai_settings['reasoning_effort'] = XAI_EFFORT_MAP[thinking]
 
         # Populate use_encrypted_content and include based on model settings
         include: list[chat_pb2.IncludeOption] = []
@@ -1097,7 +1100,7 @@ def _extract_usage(
 
     # Add cached prompt tokens if available (optional attribute)
     if usage_obj.cached_prompt_text_tokens:
-        usage_data['cache_read_tokens'] = usage_obj.cached_prompt_text_tokens
+        usage_data['cached_prompt_text_tokens'] = usage_obj.cached_prompt_text_tokens
 
     # Aggregate server-side tools used by PydanticAI builtin tool name
     if usage_obj.server_side_tools_used:
@@ -1110,13 +1113,17 @@ def _extract_usage(
             usage_data[f'server_side_tools_{tool_name}'] = count
 
     # Build details from non-standard fields
-    details = {k: v for k, v in usage_data.items() if k not in {'prompt_tokens', 'completion_tokens'}}
+    details = {
+        k: v
+        for k, v in usage_data.items()
+        if k not in {'prompt_tokens', 'completion_tokens', 'cached_prompt_text_tokens'}
+    }
 
     extracted = RequestUsage.extract(
         dict(model=model, usage=usage_data),
         provider=provider,
         provider_url=provider_url,
-        provider_fallback='x_ai',  # Pricing file is defined as x_ai.yml
+        provider_fallback='x-ai',  # genai-prices provider ID is 'x-ai'
         details=details or None,
     )
 

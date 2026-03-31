@@ -21,7 +21,7 @@ from opentelemetry.trace import Span, SpanKind, Tracer, TracerProvider, get_trac
 from opentelemetry.util.types import AttributeValue
 from pydantic import TypeAdapter
 
-from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
+from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, get_agent_run_baggage_attributes
 
 from .. import _otel_messages
 from .._run_context import RunContext
@@ -92,7 +92,7 @@ class InstrumentationSettings:
     event_mode: Literal['attributes', 'logs'] = 'attributes'
     include_binary_content: bool = True
     include_content: bool = True
-    version: Literal[1, 2, 3, 4] = DEFAULT_INSTRUMENTATION_VERSION
+    version: Literal[1, 2, 3, 4, 5] = DEFAULT_INSTRUMENTATION_VERSION
     use_aggregated_usage_attribute_names: bool = False
 
     def __init__(
@@ -102,7 +102,7 @@ class InstrumentationSettings:
         meter_provider: MeterProvider | None = None,
         include_binary_content: bool = True,
         include_content: bool = True,
-        version: Literal[1, 2, 3, 4] = DEFAULT_INSTRUMENTATION_VERSION,
+        version: Literal[1, 2, 3, 4, 5] = DEFAULT_INSTRUMENTATION_VERSION,
         event_mode: Literal['attributes', 'logs'] = 'attributes',
         logger_provider: LoggerProvider | None = None,
         use_aggregated_usage_attribute_names: bool = False,
@@ -132,6 +132,9 @@ class InstrumentationSettings:
                     URL-based media uses type='uri' with uri and mime_type fields (and modality for image/audio/video).
                     Inline binary content uses type='blob' with mime_type and content fields (and modality for image/audio/video).
                     https://opentelemetry.io/docs/specs/semconv/gen-ai/non-normative/examples-llm-calls/#multimodal-inputs-example
+                Version 5 is the same as version 4, but CallDeferred and ApprovalRequired exceptions
+                    no longer record an exception event or set the span status to ERROR — the span is left
+                    as UNSET, since deferrals are control flow, not errors.
             event_mode: The mode for emitting events in version 1.
                 If `'attributes'`, events are attached to the span as attributes.
                 If `'logs'`, events are emitted as OpenTelemetry log-based events.
@@ -453,6 +456,7 @@ class InstrumentedModel(WrapperModel):
             'gen_ai.operation.name': operation,
             **self.model_attributes(self.wrapped),
             **self.model_request_parameters_attributes(model_request_parameters),
+            **get_agent_run_baggage_attributes(),
             'logfire.json_schema': json.dumps(
                 {
                     'type': 'object',

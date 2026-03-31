@@ -39,6 +39,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -386,8 +387,9 @@ class GeminiModel(Model):
         else:
             content: list[_GeminiPartUnion] = []
             for item in part.content:
-                if isinstance(item, str):
-                    content.append({'text': item})
+                if isinstance(item, str | TextContent):
+                    text = item if isinstance(item, str) else item.content
+                    content.append({'text': text})
                 elif isinstance(item, BinaryContent):
                     content.append(
                         _GeminiInlineDataPart(inline_data={'data': item.base64, 'mime_type': item.media_type})

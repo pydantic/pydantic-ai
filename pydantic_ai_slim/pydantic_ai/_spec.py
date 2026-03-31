@@ -7,6 +7,8 @@ and registry/loading utilities that can be reused by both the evaluator system a
 from __future__ import annotations
 
 import inspect
+import types
+import typing
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
@@ -87,7 +89,7 @@ class NamedSpec(BaseModel):
                 deserialized = _SerializedNamedSpec.model_validate(value)
             except ValidationError:
                 raise exc  # raise the original error
-            return deserialized.to_named_spec()
+            return deserialized.to_named_spec(cls)
 
     @model_serializer(mode='wrap')
     def serialize(self, handler: SerializerFunctionWrapHandler, info: SerializationInfo) -> Any:
@@ -141,8 +143,16 @@ class _SerializedNamedSpec(RootModel[str | dict[str, Any]]):
         # Anything else is passed as a single positional argument
         return (cast(Any, value),)
 
-    def to_named_spec(self) -> NamedSpec:
-        return NamedSpec(name=self._name, arguments=self._args)
+    def to_named_spec(self, cls: type[NamedSpec] = NamedSpec) -> NamedSpec:
+        return cls(name=self._name, arguments=self._args)
+
+
+class CapabilitySpec(NamedSpec):
+    """A capability specification, distinguishable from other NamedSpec types for schema generation.
+
+    In JSON schemas, fields typed as CapabilitySpec are replaced with the full
+    capability Union (the same set of types used in `AgentSpec.capabilities`).
+    """
 
 
 def build_registry(
@@ -224,6 +234,40 @@ def load_from_registry(
         raise ValueError(f'Failed to instantiate {label} {spec.name!r}{detail}: {e}') from e
 
 
+def filter_serializable_type(tp: Any) -> Any | None:
+    """Filter a type to only include members that can be represented in JSON schema.
+
+    For Union types, removes non-serializable members (TypeVars, Callables).
+    Returns None if the type is entirely non-serializable.
+    """
+    # TypeVar is not serializable
+    if isinstance(tp, TypeVar):
+        return None
+
+    origin = typing.get_origin(tp)
+
+    # Callable is not serializable
+    if origin is Callable:
+        return None
+
+    # Union: filter members
+    if origin is typing.Union or isinstance(tp, types.UnionType):
+        args = typing.get_args(tp)
+        filtered = [fa for a in args if (fa := filter_serializable_type(a)) is not None]
+        if not filtered:
+            return None
+        if len(filtered) == 1:
+            return filtered[0]
+        return typing.Union[tuple(filtered)]  # noqa: UP007
+
+    # Other generics (list[X], dict[X, Y]): all args must be serializable
+    args = typing.get_args(tp)
+    if args and any(filter_serializable_type(a) is None for a in args):
+        return None
+
+    return tp
+
+
 def build_schema_types(
     registry: Mapping[str, type[Any]],
     *,
@@ -244,12 +288,22 @@ def build_schema_types(
         target = get_schema_target(cls) if get_schema_target is not None else cls
         type_hints = get_function_type_hints(target)
         type_hints.pop('return', None)
+
+        # Filter out non-serializable types (TypeVars, Callables) from unions
+        type_hints = {k: fv for k, v in type_hints.items() if (fv := filter_serializable_type(v)) is not None}
+
         required_type_hints: dict[str, Any] = {}
 
         for p in inspect.signature(target).parameters.values():
-            # Skip *args and **kwargs — they can't be represented as typed dict fields
+            # Skip self/cls (unbound instance/class methods) and *args/**kwargs
+            if p.name in ('self', 'cls') and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD):
+                type_hints.pop(p.name, None)
+                continue
             if p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD):
                 type_hints.pop(p.name, None)
+                continue
+            # Skip params whose type was entirely filtered out
+            if p.name not in type_hints:
                 continue
             type_hints.setdefault(p.name, Any)
             if p.default is not p.empty:

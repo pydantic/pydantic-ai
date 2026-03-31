@@ -462,6 +462,27 @@ class DocumentUrl(FileUrl):
             raise ValueError(f'Unknown document media type: {media_type}') from e
 
 
+@dataclass(repr=False)
+class TextContent:
+    """String content that is tagged with additional metadata.
+
+    This is useful for including metadata that can be accessed programmatically by the application, but is not sent to the LLM.
+    """
+
+    content: str
+    """The content that is sent to the LLM."""
+
+    _: KW_ONLY
+
+    metadata: Any = None
+    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+
+    kind: Literal['text-content'] = 'text-content'
+    """Type identifier, this is available on all parts as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 @pydantic_dataclass(
     repr=False,
     config=pydantic.ConfigDict(
@@ -817,7 +838,7 @@ def is_multi_modal_content(obj: Any) -> TypeGuard[MultiModalContent]:
     return isinstance(obj, MULTI_MODAL_CONTENT_TYPES)
 
 
-UserContent: TypeAlias = str | MultiModalContent | CachePoint
+UserContent: TypeAlias = str | TextContent | MultiModalContent | CachePoint
 
 
 @dataclass(repr=False)
@@ -945,6 +966,7 @@ class UserPromptPart:
         content = [
             part['content'] if part == {'kind': 'text', 'content': part.get('content')} else part for part in content
         ]
+
         if content in ([{'kind': 'text'}], [self.content]):
             content = content[0]
         return LogRecord(attributes={'event.name': 'gen_ai.user.message'}, body={'content': content, 'role': 'user'})
@@ -953,9 +975,12 @@ class UserPromptPart:
         parts: list[_otel_messages.MessagePart] = []
         content: Sequence[UserContent] = [self.content] if isinstance(self.content, str) else self.content
         for part in content:
-            if isinstance(part, str):
+            if isinstance(part, str | TextContent):
+                content_str = part if isinstance(part, str) else part.content
                 parts.append(
-                    _otel_messages.TextPart(type='text', **({'content': part} if settings.include_content else {}))
+                    _otel_messages.TextPart(
+                        type='text', **({'content': content_str} if settings.include_content else {})
+                    )
                 )
             elif isinstance(part, ImageUrl | AudioUrl | DocumentUrl | VideoUrl):
                 if settings.version >= 4:

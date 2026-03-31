@@ -38,6 +38,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -527,7 +528,7 @@ class GoogleModel(Model):
                 ) from e
             raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
 
-    def _get_thinking_config(
+    def _translate_thinking(
         self,
         model_settings: GoogleModelSettings,
         model_request_parameters: ModelRequestParameters,
@@ -620,7 +621,7 @@ class GoogleModel(Model):
             frequency_penalty=model_settings.get('frequency_penalty'),
             seed=model_settings.get('seed'),
             safety_settings=model_settings.get('google_safety_settings'),
-            thinking_config=self._get_thinking_config(model_settings, model_request_parameters),
+            thinking_config=self._translate_thinking(model_settings, model_request_parameters),
             labels=model_settings.get('google_labels'),
             media_resolution=model_settings.get('google_video_resolution'),
             cached_content=model_settings.get('google_cached_content'),
@@ -914,8 +915,9 @@ class GoogleModel(Model):
         else:
             content: list[PartDict] = []
             for item in part.content:
-                if isinstance(item, str):
-                    content.append({'text': item})
+                if isinstance(item, str | TextContent):
+                    text = item if isinstance(item, str) else item.content
+                    content.append({'text': text})
                 elif isinstance(item, (BinaryContent, FileUrl, UploadedFile)):
                     file_part = await self._map_file_to_part(item)
                     content.append(file_part)
