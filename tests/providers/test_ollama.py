@@ -84,35 +84,39 @@ def test_ollama_provider_model_profile(mocker: MockerFixture):
     meta_model_profile_mock.assert_called_with('llama3.2')
     assert meta_profile is not None
     assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert meta_profile.supports_json_schema_output is False
 
     google_profile = provider.model_profile('gemma3')
     google_model_profile_mock.assert_called_with('gemma3')
     assert google_profile is not None
     assert google_profile.json_schema_transformer == GoogleJsonSchemaTransformer
+    assert google_profile.supports_json_schema_output is False
 
     deepseek_profile = provider.model_profile('deepseek-r1')
     deepseek_model_profile_mock.assert_called_with('deepseek-r1')
     assert deepseek_profile is not None
     assert deepseek_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert deepseek_profile.supports_json_schema_output is False
 
     mistral_profile = provider.model_profile('mistral-small')
     mistral_model_profile_mock.assert_called_with('mistral-small')
     assert mistral_profile is not None
     assert mistral_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert mistral_profile.supports_json_schema_output is False
 
     qwen_profile = provider.model_profile('qwen3')
     qwen_model_profile_mock.assert_called_with('qwen3')
     assert qwen_profile is not None
     assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
     assert qwen_profile.ignore_streamed_leading_whitespace is True
-    assert qwen_profile.supports_json_schema_output is True
+    assert qwen_profile.supports_json_schema_output is False
 
     qwen_profile = provider.model_profile('qwen3.5')
     qwen_model_profile_mock.assert_called_with('qwen3.5')
     assert qwen_profile is not None
     assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
     assert qwen_profile.ignore_streamed_leading_whitespace is True
-    assert qwen_profile.supports_json_schema_output is True
+    assert qwen_profile.supports_json_schema_output is False
     assert qwen_profile.supports_json_object_output is True
 
     qwen_profile = provider.model_profile('qwen3.5:35b')
@@ -120,7 +124,7 @@ def test_ollama_provider_model_profile(mocker: MockerFixture):
     assert qwen_profile is not None
     assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
     assert qwen_profile.ignore_streamed_leading_whitespace is True
-    assert qwen_profile.supports_json_schema_output is True
+    assert qwen_profile.supports_json_schema_output is False
     assert qwen_profile.supports_json_object_output is True
 
     qwen_profile = provider.model_profile('qwq')
@@ -128,20 +132,23 @@ def test_ollama_provider_model_profile(mocker: MockerFixture):
     assert qwen_profile is not None
     assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
     assert qwen_profile.ignore_streamed_leading_whitespace is True
+    assert qwen_profile.supports_json_schema_output is False
 
     cohere_profile = provider.model_profile('command-r')
     cohere_model_profile_mock.assert_called_with('command-r')
     assert cohere_profile is not None
     assert cohere_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert cohere_profile.supports_json_schema_output is False
 
     harmony_profile = provider.model_profile('gpt-oss')
     harmony_model_profile_mock.assert_called_with('gpt-oss')
     assert harmony_profile is not None
     assert harmony_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
     assert harmony_profile.ignore_streamed_leading_whitespace is True
+    assert harmony_profile.supports_json_schema_output is False
 
     unknown_profile = provider.model_profile('unknown-model')
     assert unknown_profile is not None
     assert unknown_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
-    assert unknown_profile.supports_json_schema_output is True
+    assert unknown_profile.supports_json_schema_output is False
     assert unknown_profile.supports_json_object_output is True

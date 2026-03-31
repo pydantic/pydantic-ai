@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+from dataclasses import replace
 
 import httpx
 from openai import AsyncOpenAI
@@ -61,14 +62,14 @@ class OllamaProvider(Provider[AsyncOpenAI]):
             if model_name.startswith(prefix):
                 profile = profile_func(model_name)
 
-        # As OllamaProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
-        # we need to maintain that behavior unless json_schema_transformer is set explicitly
-        return OpenAIModelProfile(
+        # Ollama's OpenAI-compatible `/v1` API does not document JSON-schema enforcement via `response_format`,
+        # so the provider must not advertise native structured output even if the underlying model family supports it.
+        openai_profile = OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_chat_thinking_field='reasoning',
-            supports_json_schema_output=True,
             supports_json_object_output=True,
         ).update(profile)
+        return replace(openai_profile, supports_json_schema_output=False)
 
     def __init__(
         self,
