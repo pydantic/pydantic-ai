@@ -77,6 +77,7 @@ nav:
           - Custom Evaluators: evals/evaluators/custom.md
           - Report Evaluators: evals/evaluators/report-evaluators.md
           - Span-Based: evals/evaluators/span-based.md
+      - Online Evaluation: evals/online-evaluation.md
       - How-To Guides:
           - Logfire Integration: evals/how-to/logfire-integration.md
           - Dataset Management: evals/how-to/dataset-management.md
@@ -190,6 +191,7 @@ nav:
           - api/pydantic_evals/dataset.md
           - api/pydantic_evals/evaluators.md
           - api/pydantic_evals/lifecycle.md
+          - api/pydantic_evals/online.md
           - api/pydantic_evals/reporting.md
           - api/pydantic_evals/otel.md
           - api/pydantic_evals/generation.md

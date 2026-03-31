@@ -34,6 +34,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -242,7 +243,7 @@ class GroqModel(Model):
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters)
 
-    def _get_reasoning_format(
+    def _translate_thinking(
         self,
         model_settings: GroqModelSettings,
         model_request_parameters: ModelRequestParameters,
@@ -327,7 +328,7 @@ class GroqModel(Model):
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 seed=model_settings.get('seed', NOT_GIVEN),
                 presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
-                reasoning_format=self._get_reasoning_format(model_settings, model_request_parameters),
+                reasoning_format=self._translate_thinking(model_settings, model_request_parameters),
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 extra_headers=extra_headers,
@@ -525,8 +526,9 @@ class GroqModel(Model):
         else:
             content = []
             for item in part.content:
-                if isinstance(item, str):
-                    content.append(chat.ChatCompletionContentPartTextParam(text=item, type='text'))
+                if isinstance(item, str | TextContent):
+                    text = item if isinstance(item, str) else item.content
+                    content.append(chat.ChatCompletionContentPartTextParam(text=text, type='text'))
                 elif isinstance(item, ImageUrl):
                     image_url_str = item.url
                     if item.force_download:

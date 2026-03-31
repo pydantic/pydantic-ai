@@ -30,6 +30,7 @@ from pydantic_ai import (
     ModelResponse,
     ModelRetry,
     RetryPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -1482,6 +1483,16 @@ async def test_uploaded_file_wrong_provider_responses(allow_model_requests: None
 
     with pytest.raises(UserError, match="provider_name='anthropic'.*cannot be used with OpenAIResponsesModel"):
         await agent.run(['Analyze this file', UploadedFile(file_id='file-xyz789', provider_name='anthropic')])
+
+
+async def test_text_content_input(allow_model_requests: None):
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+    res = await m._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        part=UserPromptPart(content=['hello', TextContent(content='world', metadata={'id': 1})])
+    )
+    assert res == snapshot(
+        {'role': 'user', 'content': [{'text': 'hello', 'type': 'text'}, {'text': 'world', 'type': 'text'}]}
+    )
 
 
 def test_model_status_error(allow_model_requests: None) -> None:
@@ -3580,6 +3591,18 @@ async def test_process_response_no_finish_reason(allow_model_requests: None):
     response_message = messages[1]
     assert isinstance(response_message, ModelResponse)
     assert response_message.finish_reason == 'stop'
+
+
+async def test_service_tier_non_standard_value(allow_model_requests: None):
+    """OpenAI-compatible providers can return service_tier values outside the OpenAI Literal."""
+    c = completion_message(ChatCompletionMessage(content='hello', role='assistant'))
+    c.service_tier = 'standard'  # type: ignore  # simulate provider returning non-OpenAI value
+
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+    result = await agent.run('Hello')
+    assert result.output == 'hello'
 
 
 async def test_tool_choice_fallback(allow_model_requests: None) -> None:
