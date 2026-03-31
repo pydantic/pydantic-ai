@@ -34,12 +34,12 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
     deps: RunContextAgentDepsT
     """Dependencies for the agent."""
-    agent: AbstractAgent[Any, Any] | None = field(default=None, repr=False)
-    """The agent running this context, or `None` if not set."""
     model: Model
     """The model used in this run."""
     usage: RunUsage
     """LLM usage associated with the run."""
+    agent: AbstractAgent[Any, Any] | None = field(default=None, repr=False)
+    """The agent running this context, or `None` if not set."""
     prompt: str | Sequence[_messages.UserContent] | None = None
     """The original user prompt passed to the run."""
     messages: list[_messages.ModelMessage] = field(default_factory=list[_messages.ModelMessage])
