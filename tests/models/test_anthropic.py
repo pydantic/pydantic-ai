@@ -848,6 +848,76 @@ async def test_anthropic_cache_instructions_all_dynamic(allow_model_requests: No
     )
 
 
+async def test_anthropic_cache_instructions_all_static_with_toolset(allow_model_requests: None):
+    """Test all-static cache placement with multiple instruction sources."""
+    from pydantic_ai import FunctionToolset
+
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    toolset = FunctionToolset(instructions='Use the tools wisely.')
+    agent = Agent(
+        m,
+        instructions='You are a helpful assistant.',
+        toolsets=[toolset],
+        model_settings=AnthropicModelSettings(anthropic_cache_instructions=True),
+    )
+
+    await agent.run('test prompt')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    system = completion_kwargs['system']
+    # All instruction parts are static — cache_control on the last block
+    assert system == snapshot(
+        [
+            {
+                'type': 'text',
+                'text': 'You are a helpful assistant.',
+            },
+            {
+                'type': 'text',
+                'text': 'Use the tools wisely.',
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            },
+        ]
+    )
+
+
+async def test_anthropic_cache_instructions_all_dynamic_no_system_prompt(allow_model_requests: None):
+    """Test all-dynamic instructions with no system prompt — no cache_control at all."""
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        model_settings=AnthropicModelSettings(anthropic_cache_instructions=True),
+    )
+
+    @agent.instructions
+    def dynamic_only() -> str:
+        return 'Dynamic instructions.'
+
+    await agent.run('test prompt')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    system = completion_kwargs['system']
+    # No system prompt, all dynamic → no cache_control
+    assert system == snapshot(
+        [
+            {
+                'type': 'text',
+                'text': 'Dynamic instructions.',
+            },
+        ]
+    )
+
+
 async def test_anthropic_incompatible_schema_disables_auto_strict(allow_model_requests: None):
     """Ensure strict mode is disabled when Anthropic cannot enforce the tool schema."""
     c = completion_message(

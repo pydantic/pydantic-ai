@@ -258,6 +258,16 @@ class TestFastMCPToolsetInstructions:
         # After exiting, cached instructions are reset.
         assert await toolset.get_instructions(run_context) is None
 
+    async def test_get_instructions_enabled_no_server_instructions(self, run_context: RunContext[None]):
+        """When include_instructions is enabled but server provides no instructions, returns None."""
+        no_instruction_server = FastMCP('no_instructions_server')
+        no_instruction_client = Client(transport=no_instruction_server)
+        toolset = FastMCPToolset(no_instruction_client, include_instructions=True)
+
+        async with toolset:
+            assert toolset.instructions is None
+            assert await toolset.get_instructions(run_context) is None
+
 
 class TestFastMCPToolsetToolDiscovery:
     """Test FastMCP Toolset tool discovery functionality."""

@@ -510,9 +510,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             # Server not yet initialized — return None rather than propagating.
             # Durable execution wrappers detect this and fetch via activity/step.
             return None
-        if instr is None:
-            return None
-        return messages.InstructionPart(content=instr, dynamic=True)
+        return messages.InstructionPart(content=instr, dynamic=True) if instr is not None else None
 
     async def list_tools(self) -> list[mcp_types.Tool]:
         """Retrieve tools that are currently active on the server.

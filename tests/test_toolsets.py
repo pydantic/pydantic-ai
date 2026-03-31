@@ -1759,3 +1759,32 @@ async def test_concurrent_runs_dont_share_state():
     assert results[1].output == 'Done'
     # Each run should have its own count (1), not share state (1, 2)
     assert all(c == 1 for c in call_counts)
+
+
+async def test_custom_toolset_returning_plain_str_instructions():
+    """A custom AbstractToolset returning a plain str from get_instructions is treated as dynamic."""
+    from pydantic_ai import Agent
+    from pydantic_ai.messages import InstructionPart
+
+    class PlainStrToolset(AbstractToolset[None]):
+        @property
+        def id(self) -> str:
+            return 'plain-str'
+
+        async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
+            return {}
+
+        async def call_tool(
+            self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+        ) -> Any:
+            raise NotImplementedError  # pragma: no cover
+
+        async def get_instructions(self, ctx: RunContext[None]) -> str | None:
+            return 'Custom toolset instruction.'
+
+    agent = Agent(TestModel(), toolsets=[PlainStrToolset()])
+    result = await agent.run('Hello')
+    first_message = result.all_messages()[0]
+    assert first_message.instructions == 'Custom toolset instruction.'  # type: ignore[union-attr]
+    # The instruction should be wrapped as dynamic InstructionPart
+    assert first_message.instruction_parts == [InstructionPart(content='Custom toolset instruction.', dynamic=True)]  # type: ignore[union-attr]
