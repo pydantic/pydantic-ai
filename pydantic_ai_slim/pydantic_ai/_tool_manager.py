@@ -611,6 +611,9 @@ class ToolManager(Generic[AgentDepsT]):
         validated = await self.validate_output_tool_call(
             call, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
         )
+        if not validated.args_valid:
+            assert validated.validation_error is not None
+            raise validated.validation_error
         return await self.execute_output_tool_call(validated)
 
     async def _execute_tool_call_impl(
