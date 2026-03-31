@@ -192,7 +192,6 @@ class AnthropicModelSettings(ModelSettings, total=False):
     When enabled, the last tool in the `tools` array will have `cache_control` set,
     allowing Anthropic to cache tool definitions and reduce costs.
     If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
-    TTL is automatically omitted for Bedrock, as it does not support explicit TTL.
     See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
     """
 
@@ -202,7 +201,6 @@ class AnthropicModelSettings(ModelSettings, total=False):
     When enabled, the last system prompt will have `cache_control` set,
     allowing Anthropic to cache system instructions and reduce costs.
     If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
-    TTL is automatically omitted for Bedrock, as it does not support explicit TTL.
     See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
     """
 
@@ -213,7 +211,6 @@ class AnthropicModelSettings(ModelSettings, total=False):
     in the final user message, which is useful for caching conversation history
     or context in multi-turn conversations.
     If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
-    TTL is automatically omitted for Bedrock, as it does not support explicit TTL.
 
     Note: Uses 1 of Anthropic's 4 available cache points per request. Any additional CachePoint
     markers in messages will be automatically limited to respect the 4-cache-point maximum.
@@ -1125,8 +1122,7 @@ class AnthropicModel(Model):
 
         Args:
             params: List of content block params to modify.
-            ttl: The cache time-to-live ('5m' or '1h'). This is automatically ignored for
-                 Bedrock clients, which don't support explicit TTL parameters.
+            ttl: The cache time-to-live ('5m' or '1h').
         """
         if not params:
             raise UserError(

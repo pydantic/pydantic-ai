@@ -317,7 +317,7 @@ async def test_async_request_prompt_caching(allow_model_requests: None):
 async def test_cache_point_adds_cache_control(allow_model_requests: None):
     """Test that CachePoint correctly adds cache_control to content blocks.
 
-    By default, CachePoint uses ttl='5m'. For non-Bedrock clients, the ttl field is included.
+    By default, CachePoint uses ttl='5m'.
     """
     c = completion_message(
         [BetaTextBlock(text='response', type='text')],
@@ -365,7 +365,7 @@ async def test_cache_point_multiple_markers(allow_model_requests: None):
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     content = completion_kwargs['messages'][0]['content']
 
-    # Default ttl='5m' for non-Bedrock clients
+    # Default ttl='5m'
     assert content == snapshot(
         [
             {'text': 'First chunk', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
@@ -413,7 +413,7 @@ async def test_cache_point_with_image_content(allow_model_requests: None):
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     content = completion_kwargs['messages'][0]['content']
 
-    # Default ttl='5m' for non-Bedrock clients
+    # Default ttl='5m'
     assert content == snapshot(
         [
             {
