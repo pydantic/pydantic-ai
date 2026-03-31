@@ -3859,6 +3859,16 @@ def test_detect_ag_ui_version_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     assert _detect_ag_ui_version() == snapshot('0.1.10')
 
 
+def test_detect_ag_ui_version_old(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that _detect_ag_ui_version returns '0.1.10' when installed version is below REASONING_VERSION."""
+
+    def _return_old_version(_name: str) -> str:
+        return '0.1.10'
+
+    monkeypatch.setattr('pydantic_ai.ui.ag_ui._event_stream.importlib.metadata.version', _return_old_version)
+    assert _detect_ag_ui_version() == snapshot('0.1.10')
+
+
 def test_dump_messages_text_content() -> None:
     """Test that TextContent in UserPromptPart is converted to TextInputContent."""
     messages: list[ModelMessage] = [

@@ -86,7 +86,7 @@ if TYPE_CHECKING:
 else:
     try:
         from ag_ui.core import ReasoningMessage
-    except ImportError:
+    except ImportError:  # pragma: no cover
 
         class ReasoningMessage:
             """Stub for ag-ui-protocol < 0.1.13 — no instances exist, so pattern matching is a no-op."""
