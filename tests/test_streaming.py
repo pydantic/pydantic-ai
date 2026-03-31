@@ -793,48 +793,31 @@ async def test_call_tool_wrong_name():
 
 
 async def test_invalid_output_tool_args_get_output():
-    """Test that invalid output tool call args raise UnexpectedModelBehavior (not ValidationError) via get_output().
-
-    Regression test for https://github.com/pydantic/pydantic-ai/issues/3638.
-    """
-    output_tool_name: str | None = None
+    """Regression test for https://github.com/pydantic/pydantic-ai/issues/3638."""
 
     async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
-        nonlocal output_tool_name
         assert info.output_tools is not None and len(info.output_tools) == 1
-        output_tool_name = info.output_tools[0].name
-        # Stream a tool call with invalid args: second element should be int, not str
-        yield {0: DeltaToolCall(name=output_tool_name)}
+        yield {0: DeltaToolCall(name=info.output_tools[0].name)}
         yield {0: DeltaToolCall(json_args='{"response": ["hello", "not_an_int"]}')}
 
-    # Use default retries=1 to reproduce the bug: with 1 retry allowed, the first
-    # failure increments the retry counter but does not yet exhaust retries, so
-    # _check_max_retries does not raise and ValidationError would leak to the caller.
     agent = Agent(FunctionModel(stream_function=stream_fn), output_type=tuple[str, int])
 
-    with pytest.raises(UnexpectedModelBehavior, match='Invalid output'):
+    with pytest.raises(UnexpectedModelBehavior, match='retries are not supported in `run_stream'):
         async with agent.run_stream('hello') as result:
             await result.get_output()
 
 
 async def test_invalid_output_tool_args_stream_output():
-    """Test that invalid output tool call args raise UnexpectedModelBehavior (not ValidationError) via stream_output().
-
-    Regression test for https://github.com/pydantic/pydantic-ai/issues/3638.
-    """
-    output_tool_name: str | None = None
+    """Regression test for https://github.com/pydantic/pydantic-ai/issues/3638."""
 
     async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
-        nonlocal output_tool_name
         assert info.output_tools is not None and len(info.output_tools) == 1
-        output_tool_name = info.output_tools[0].name
-        # Stream a tool call with invalid args: second element should be int, not str
-        yield {0: DeltaToolCall(name=output_tool_name)}
+        yield {0: DeltaToolCall(name=info.output_tools[0].name)}
         yield {0: DeltaToolCall(json_args='{"response": ["hello", "not_an_int"]}')}
 
     agent = Agent(FunctionModel(stream_function=stream_fn), output_type=tuple[str, int])
 
-    with pytest.raises(UnexpectedModelBehavior, match='Invalid output'):
+    with pytest.raises(UnexpectedModelBehavior, match='retries are not supported in `run_stream'):
         async with agent.run_stream('hello') as result:
             async for _ in result.stream_output(debounce_by=None):
                 pass

@@ -78,7 +78,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
             try:
                 yield await self.validate_response_output(response, allow_partial=True)
-            except ValidationError:
+            except (ValidationError, exceptions.ModelRetry):
                 pass
 
         if self._raw_stream_response.final_result_event is not None:  # pragma: no branch
@@ -242,9 +242,11 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
                     'Invalid response, unable to process text output'
                 )
-        except (ValidationError, exceptions.ToolRetryError) as e:
+        except (ValidationError, exceptions.ModelRetry) as e:
             if not allow_partial:
-                raise exceptions.UnexpectedModelBehavior('Invalid output') from e
+                raise exceptions.UnexpectedModelBehavior(
+                    'Output validation failed during streaming, and retries are not supported in `run_stream()`'
+                ) from e
             raise
 
     async def _stream_response_text(
