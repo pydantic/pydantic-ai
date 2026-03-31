@@ -1300,7 +1300,7 @@ async def process_tool_calls(  # noqa: C901
             )
             output_parts.append(part)
         # A final result is already set and this strategy skips remaining output tools
-        elif ctx.deps.end_strategy in ('early', 'complete') and final_result:
+        elif ctx.deps.end_strategy in ('early', 'graceful') and final_result:
             for event in _emit_skipped_output_tool(
                 call, 'Output tool not used - a final result was already processed.', output_parts, args_valid=None
             ):
