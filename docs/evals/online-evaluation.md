@@ -858,6 +858,39 @@ Key behaviors:
 - **If `on_error` itself raises**, the exception is silently suppressed to protect sibling evaluators.
 - **If no `on_error` is set**, exceptions are silently suppressed — this is the safe default.
 
+## Agent Integration
+
+The [`OnlineEvaluation`][pydantic_evals.online_capability.OnlineEvaluation] capability brings online evaluation to Pydantic AI agents. Instead of decorating a function, you add the capability to your agent:
+
+```python {test="skip" lint="skip"}
+from pydantic_ai import Agent
+from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+from pydantic_evals.online import OnlineEvalConfig
+from pydantic_evals.online_capability import OnlineEvaluation
+
+agent = Agent(
+    'openai:gpt-4o',
+    capabilities=[
+        OnlineEvaluation(
+            evaluators=[MyEvaluator()],
+            config=OnlineEvalConfig(default_sink=my_sink),
+        ),
+    ],
+)
+```
+
+After each [`agent.run()`][pydantic_ai.Agent.run] call, the capability:
+
+1. Samples evaluators based on their `sample_rate` configuration
+2. Builds an [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext] from the run result (output, prompt, token usage, duration, span tree)
+3. Dispatches evaluators asynchronously in the background
+4. Returns the run result immediately without blocking
+
+The capability supports all the same features as the [`@evaluate()`][pydantic_evals.online.evaluate] decorator: sampling, per-evaluator sinks, concurrency control, and error handling. The `config` parameter is optional and defaults to the global [`DEFAULT_CONFIG`][pydantic_evals.online.DEFAULT_CONFIG].
+
+!!! note
+    [`OnlineEvaluation`][pydantic_evals.online_capability.OnlineEvaluation] wraps [`agent.run()`][pydantic_ai.Agent.run] only. Streaming via [`agent.run_stream()`][pydantic_ai.Agent.run_stream] is not currently supported because the final result is not available until the stream completes.
+
 ## API Reference
 
 The complete API for the `pydantic_evals.online` module is documented in the [API reference](../api/pydantic_evals/online.md).
