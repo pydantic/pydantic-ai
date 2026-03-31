@@ -61,6 +61,8 @@ class ModelResponsePartsManager:
     """A list of parts (text or tool calls) that make up the current state of the model's response."""
     _vendor_id_to_part_index: dict[VendorId, int] = field(default_factory=dict[VendorId, int], init=False)
     """Maps a vendor's "part" ID (if provided) to the index in `_parts` where that part resides."""
+    _empty_start_thinking_closed_without_vendor_id: bool = field(default=False, init=False)
+    """Tracks whether empty-start-tag thinking has been closed for `vendor_part_id=None`."""
 
     def get_parts(self) -> list[ModelResponsePart]:
         """Return only model response parts that are complete (i.e., not ToolCallPartDelta's).
@@ -152,8 +154,18 @@ class ModelResponsePartsManager:
                 else:
                     raise UnexpectedModelBehavior(f'Cannot apply a text delta to {existing_part=}')
 
-        if thinking_tags and not start_tag and end_tag:
-            if vendor_part_id is None or not self._parts or vendor_part_id in self._vendor_id_to_part_index:
+        if thinking_tags and not start_tag and end_tag and existing_text_part_and_index is None:
+            if vendor_part_id is None:
+                if not self._empty_start_thinking_closed_without_vendor_id:
+                    yield from self._handle_empty_start_tag(
+                        vendor_part_id=vendor_part_id,
+                        content=content,
+                        end_tag=end_tag,
+                        provider_name=provider_name,
+                        provider_details=provider_details,
+                    )
+                    return
+            elif not self._parts or vendor_part_id in self._vendor_id_to_part_index:
                 yield from self._handle_empty_start_tag(
                     vendor_part_id=vendor_part_id,
                     content=content,
@@ -516,16 +528,22 @@ class ModelResponsePartsManager:
             if existing_thinking_part_and_index is not None:
                 existing_thinking_part, part_index = existing_thinking_part_and_index
                 if content == end_tag:
+                    self._empty_start_thinking_closed_without_vendor_id = True
                     self._handle_embedded_thinking_end(vendor_part_id)
                     return
+                self._empty_start_thinking_closed_without_vendor_id = False
                 yield from self._handle_embedded_thinking_content(
                     existing_thinking_part, part_index, content, provider_name, provider_details
                 )
                 return
         if content == end_tag:
+            if vendor_part_id is None:
+                self._empty_start_thinking_closed_without_vendor_id = True
             yield from self._handle_embedded_thinking_start(vendor_part_id, provider_name, provider_details)
             self._handle_embedded_thinking_end(vendor_part_id)
             return
+        if vendor_part_id is None:
+            self._empty_start_thinking_closed_without_vendor_id = False
         yield from self._handle_embedded_thinking_start(vendor_part_id, provider_name, provider_details)
         latest_thinking_part_and_index = self._latest_part_if_of_type(ThinkingPart)
         if latest_thinking_part_and_index is not None:
