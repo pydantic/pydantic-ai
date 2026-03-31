@@ -1319,7 +1319,7 @@ class RetryPromptPart:
     tool_call_id: str | None = None
     """The tool call identifier, this is used by some models including OpenAI.
 
-    In case the tool call id is not provided by the model, Pydantic AI will generate a random one.
+    This may be `None` for retries that are not tied to a tool-call protocol.
     """
 
     timestamp: datetime = field(default_factory=_now_utc)
