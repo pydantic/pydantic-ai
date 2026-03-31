@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
 import uuid
 from collections.abc import AsyncIterator, MutableMapping
@@ -37,6 +38,7 @@ from pydantic_ai import (
     RequestUsage,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -52,6 +54,7 @@ from pydantic_ai import (
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent, AgentRunResult
 from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import (
     AgentInfo,
     BuiltinToolCallsReturns,
@@ -102,6 +105,10 @@ with try_import() as imports_successful:
         run_ag_ui,
     )
     from pydantic_ai.ui.ag_ui import AGUIEventStream
+    from pydantic_ai.ui.ag_ui._event_stream import (
+        _detect_ag_ui_version,  # pyright: ignore[reportPrivateUsage]
+        parse_ag_ui_version,
+    )
 
 with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
@@ -3815,6 +3822,43 @@ def test_dump_messages_uploaded_file_without_vendor_metadata() -> None:
                 },
             }
         ]
+    )
+
+
+# endregion
+
+
+# region: Coverage — parse_ag_ui_version validation + TextContent + detect fallback
+
+
+def test_parse_ag_ui_version_invalid() -> None:
+    """Test that parse_ag_ui_version raises UserError for malformed input."""
+    with pytest.raises(UserError, match="Invalid AG-UI version 'latest'"):
+        parse_ag_ui_version('latest')
+
+    with pytest.raises(UserError, match="Invalid AG-UI version '0.1.x'"):
+        parse_ag_ui_version('0.1.x')
+
+
+def test_detect_ag_ui_version_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that _detect_ag_ui_version returns '0.1.10' when package is not found."""
+
+    def _raise_not_found(_name: str) -> str:
+        raise importlib.metadata.PackageNotFoundError()
+
+    monkeypatch.setattr('pydantic_ai.ui.ag_ui._event_stream.importlib.metadata.version', _raise_not_found)
+    assert _detect_ag_ui_version() == snapshot('0.1.10')
+
+
+def test_dump_messages_text_content() -> None:
+    """Test that TextContent in UserPromptPart is converted to TextInputContent."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=[TextContent(content='hello')])]),
+    ]
+
+    result = AGUIAdapter.dump_messages(messages)
+    assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in result] == snapshot(
+        [{'role': 'user', 'content': 'hello'}]
     )
 
 
