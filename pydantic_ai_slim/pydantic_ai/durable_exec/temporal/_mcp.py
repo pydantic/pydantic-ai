@@ -104,7 +104,10 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
             return await super().get_instructions(ctx)
 
         # If instructions are enabled, fetch via activity (the server isn't initialized locally in workflows).
-        if getattr(self.wrapped, 'include_instructions', False):
+        from pydantic_ai.mcp import MCPServer
+        from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+
+        if isinstance(self.wrapped, (MCPServer, FastMCPToolset)) and self.wrapped.include_instructions:
             serialized_run_context = self.run_context_type.serialize_run_context(ctx)
             activity_config: ActivityConfig = {'summary': f'get instructions: {self.id}', **self.activity_config}
             return await workflow.execute_activity(

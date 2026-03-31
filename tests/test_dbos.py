@@ -16,7 +16,6 @@ from httpx import AsyncClient
 from pydantic import BaseModel
 
 from pydantic_ai import (
-    AbstractToolset,
     Agent,
     AgentStreamEvent,
     ModelMessage,
@@ -1575,63 +1574,24 @@ async def test_dbos_mcp_toolset_instructions_propagate(dbos: DBOS):
     assert result.output == snapshot('Be a helpful assistant.')
 
 
-class _UninitializedInstructionsToolset(AbstractToolset[None]):
-    """A toolset whose instructions return None until entered (like an uninitialized MCP server)."""
-
-    _entered = False
-    include_instructions = True
-
-    @property
-    def id(self) -> str:
-        return 'test-mcp-uninit'
-
-    async def __aenter__(self) -> _UninitializedInstructionsToolset:
-        self._entered = True
-        return self
-
-    async def __aexit__(self, *args: Any) -> None:
-        self._entered = False
-
-    async def get_instructions(self, ctx: RunContext[None]) -> str | list[str] | None:
-        if not self._entered:
-            return None
-        return 'step-resolved instructions'
-
-    async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:  # pragma: no cover
-        return {}
-
-    async def call_tool(
-        self,
-        name: str,
-        tool_args: dict[str, Any],
-        ctx: RunContext[None],
-        tool: ToolsetTool[None],
-    ) -> Any:
-        raise AssertionError('call_tool should not be invoked in this test')  # pragma: no cover
-
-
-class _TestDBOSMCPToolset(DBOSMCPToolset[None]):
-    def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[None]:
+class _TestDBOSMCPToolset(DBOSMCPToolset[int]):
+    def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[int]:
         raise AssertionError('tool_for_tool_def should not be invoked in this test')  # pragma: no cover
 
 
 _uninit_instructions_toolset = _TestDBOSMCPToolset(
-    _UninitializedInstructionsToolset(),
+    MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True),
     step_name_prefix='coverage_test',
     step_config={},
 )
 
 
 async def test_dbos_mcp_toolset_get_instructions_falls_back_to_step(dbos: DBOS):
-    """When wrapped instructions are uninitialized, DBOS wrapper falls back to fetching via a step."""
-    run_context = RunContext(
-        deps=None,
-        model=TestModel(),
-        usage=RunUsage(),
-    )
+    """When the MCP server isn't initialized locally, DBOS wrapper fetches instructions via a step."""
+    run_context = RunContext(deps=0, model=TestModel(), usage=RunUsage())
 
     instructions = await _uninit_instructions_toolset.get_instructions(run_context)
-    assert instructions == 'step-resolved instructions'
+    assert instructions == 'Be a helpful assistant.'
 
 
 fastmcp_agent = Agent(
