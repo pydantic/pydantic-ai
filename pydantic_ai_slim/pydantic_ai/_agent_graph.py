@@ -1015,10 +1015,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                             self._next_node = self._handle_final_result(ctx, result.FinalResult(result_data), [])
                         except ToolRetryError as e:
                             ctx.state.increment_retries(ctx.deps.max_result_retries, error=e)
-                            run_context = build_run_context(ctx)
-                            instructions = await ctx.deps.get_instructions(run_context)
                             self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
-                                _messages.ModelRequest(parts=[e.tool_retry], instructions=instructions)
+                                _messages.ModelRequest(parts=[e.tool_retry])
                             )
                         return
 

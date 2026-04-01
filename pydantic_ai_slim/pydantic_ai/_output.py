@@ -213,12 +213,12 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
 
 @dataclass(kw_only=True)
 class OutputSchema(ABC, Generic[OutputDataT]):
+    allows_none: bool
     text_processor: BaseOutputProcessor[OutputDataT] | None = None
     toolset: OutputToolset[Any] | None = None
     object_def: OutputObjectDefinition | None = None
     allows_deferred_tools: bool = False
     allows_image: bool = False
-    allows_none: bool
 
     @property
     def mode(self) -> OutputMode:
