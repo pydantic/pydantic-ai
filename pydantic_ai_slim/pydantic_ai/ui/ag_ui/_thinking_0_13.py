@@ -22,7 +22,7 @@ from ag_ui.core import (
 )
 
 from ...messages import ThinkingPart, ThinkingPartDelta
-from ._event_stream import thinking_encrypted_metadata
+from ._utils import thinking_encrypted_metadata
 
 if TYPE_CHECKING:
     from ...output import OutputDataT

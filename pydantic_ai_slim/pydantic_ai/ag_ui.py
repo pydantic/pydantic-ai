@@ -30,7 +30,7 @@ try:
 
     from .ui import SSE_CONTENT_TYPE, OnCompleteFunc, StateDeps, StateHandler
     from .ui.ag_ui import AGUIAdapter
-    from .ui.ag_ui._event_stream import DEFAULT_AG_UI_VERSION, AGUIVersion
+    from .ui.ag_ui._utils import DEFAULT_AG_UI_VERSION
     from .ui.ag_ui.app import AGUIApp
 except ImportError as e:  # pragma: no cover
     raise ImportError(
@@ -54,7 +54,7 @@ async def handle_ag_ui_request(
     agent: AbstractAgent[AgentDepsT, Any],
     request: Request,
     *,
-    ag_ui_version: AGUIVersion = DEFAULT_AG_UI_VERSION,
+    ag_ui_version: str = DEFAULT_AG_UI_VERSION,
     preserve_file_data: bool = False,
     output_type: OutputSpec[Any] | None = None,
     message_history: Sequence[ModelMessage] | None = None,
@@ -122,7 +122,7 @@ def run_ag_ui(
     run_input: RunAgentInput,
     accept: str = SSE_CONTENT_TYPE,
     *,
-    ag_ui_version: AGUIVersion = DEFAULT_AG_UI_VERSION,
+    ag_ui_version: str = DEFAULT_AG_UI_VERSION,
     preserve_file_data: bool = False,
     output_type: OutputSpec[Any] | None = None,
     message_history: Sequence[ModelMessage] | None = None,

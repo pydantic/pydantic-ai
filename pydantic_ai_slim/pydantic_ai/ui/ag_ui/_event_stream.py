@@ -6,11 +6,9 @@ enabling streaming event-based communication for interactive AI applications.
 
 from __future__ import annotations
 
-import importlib.metadata
 import json
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
-from typing import Any, Final, Literal
 from uuid import uuid4
 
 from ..._utils import now_utc
@@ -31,6 +29,7 @@ from ...output import OutputDataT
 from ...tools import AgentDepsT
 from .. import SSE_CONTENT_TYPE, NativeEvent, UIEventStream
 from .._event_stream import describe_file
+from ._utils import BUILTIN_TOOL_CALL_ID_PREFIX, DEFAULT_AG_UI_VERSION, REASONING_VERSION, parse_ag_ui_version
 
 try:
     from ag_ui.core import (
@@ -56,79 +55,20 @@ except ImportError as e:  # pragma: no cover
         'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
     ) from e
 
-AGUIVersion = Literal['0.1.10', '0.1.13']
-"""Supported AG-UI protocol versions.
-
-- `'0.1.10'`: emits `THINKING_*` events, drops `ThinkingPart` from `dump_messages`.
-- `'0.1.13'`: emits `REASONING_*` events with encrypted metadata, preserves `ThinkingPart`
-  as `ReasoningMessage` in `dump_messages` for full round-trip fidelity.
-"""
-
-REASONING_VERSION = (0, 1, 13)
-"""AG-UI version that introduced REASONING_* events (replacing THINKING_*)."""
-
-
-def parse_ag_ui_version(version: str) -> tuple[int, ...]:
-    """Parse an AG-UI version string (e.g. `'0.1.13'`) into a comparable tuple.
-
-    Pre-release suffixes like `a1`, `b2`, `rc1`, `.dev0` are stripped before parsing.
-    """
-    import re
-
-    from ...exceptions import UserError
-
-    match = re.match(r'(\d+(?:\.\d+)*)', version)
-    if not match:
-        raise UserError(f"Invalid AG-UI version {version!r}: expected a dotted numeric version like '0.1.13'")
-    return tuple(int(x) for x in match.group(1).split('.'))
-
-
-def _detect_ag_ui_version() -> AGUIVersion:
-    """Detect installed ag-ui-protocol version and map to the nearest supported `AGUIVersion`."""
-    try:
-        installed = importlib.metadata.version('ag-ui-protocol')
-        if parse_ag_ui_version(installed) >= REASONING_VERSION:
-            return '0.1.13'
-    except Exception:
-        pass
-    return '0.1.10'
-
-
-DEFAULT_AG_UI_VERSION: AGUIVersion = _detect_ag_ui_version()
-"""The default AG-UI version, auto-detected from the installed `ag-ui-protocol` package."""
-
-
 __all__ = [
     'AGUIEventStream',
-    'AGUIVersion',
     'DEFAULT_AG_UI_VERSION',
     'RunAgentInput',
     'RunStartedEvent',
     'RunFinishedEvent',
 ]
 
-BUILTIN_TOOL_CALL_ID_PREFIX: Final[str] = 'pyd_ai_builtin'
-
-
-def thinking_encrypted_metadata(part: ThinkingPart) -> dict[str, Any]:
-    """Collect non-None metadata fields from a ThinkingPart for AG-UI encrypted_value."""
-    encrypted: dict[str, Any] = {}
-    if part.id is not None:
-        encrypted['id'] = part.id
-    if part.signature is not None:
-        encrypted['signature'] = part.signature
-    if part.provider_name is not None:
-        encrypted['provider_name'] = part.provider_name
-    if part.provider_details is not None:
-        encrypted['provider_details'] = part.provider_details
-    return encrypted
-
 
 @dataclass
 class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]):
     """UI event stream transformer for the Agent-User Interaction (AG-UI) protocol."""
 
-    ag_ui_version: AGUIVersion = DEFAULT_AG_UI_VERSION
+    ag_ui_version: str = DEFAULT_AG_UI_VERSION
 
     _use_reasoning: bool = field(default=False, init=False)
     _reasoning_message_id: str | None = None

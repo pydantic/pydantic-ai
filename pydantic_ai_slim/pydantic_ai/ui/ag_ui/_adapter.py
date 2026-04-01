@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
+import warnings
 from base64 import b64decode
 from collections.abc import Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass
@@ -63,12 +64,14 @@ try:
     )
 
     from .. import MessagesBuilder, UIAdapter, UIEventStream
-    from ._event_stream import (
+    from ._event_stream import AGUIEventStream
+    from ._utils import (
         BUILTIN_TOOL_CALL_ID_PREFIX,
         DEFAULT_AG_UI_VERSION,
+        FILE_ACTIVITY_TYPE,
+        MULTIMODAL_VERSION,
         REASONING_VERSION,
-        AGUIEventStream,
-        AGUIVersion,
+        UPLOADED_FILE_ACTIVITY_TYPE,
         parse_ag_ui_version,
         thinking_encrypted_metadata,
     )
@@ -90,6 +93,28 @@ else:
 
         class ReasoningMessage:
             """Stub for ag-ui-protocol < 0.1.13 — no instances exist, so pattern matching is a no-op."""
+
+
+try:
+    from ag_ui.core import (
+        AudioInputContent,  # pyright: ignore[reportAttributeAccessIssue,reportUnknownVariableType]
+        DocumentInputContent,  # pyright: ignore[reportAttributeAccessIssue,reportUnknownVariableType]
+        ImageInputContent,  # pyright: ignore[reportAttributeAccessIssue,reportUnknownVariableType]
+        VideoInputContent,  # pyright: ignore[reportAttributeAccessIssue,reportUnknownVariableType]
+    )
+except ImportError:  # pragma: no cover
+
+    class ImageInputContent:
+        """Stub for ag-ui-protocol < 0.1.15."""
+
+    class AudioInputContent:
+        """Stub for ag-ui-protocol < 0.1.15."""
+
+    class VideoInputContent:
+        """Stub for ag-ui-protocol < 0.1.15."""
+
+    class DocumentInputContent:
+        """Stub for ag-ui-protocol < 0.1.15."""
 
 
 __all__ = ['AGUIAdapter']
@@ -131,19 +156,31 @@ def _new_message_id() -> str:
 
 def _user_content_to_input(
     item: str | TextContent | ImageUrl | VideoUrl | AudioUrl | DocumentUrl | BinaryContent | UploadedFile | CachePoint,
+    *,
+    use_multimodal: bool = False,
 ) -> TextInputContent | BinaryInputContent | None:
-    """Convert a user content item to AG-UI input content."""
+    """Convert a user content item to AG-UI input content.
+
+    When `use_multimodal` is True (ag-ui >= 0.1.15), media URLs are emitted as typed
+    multimodal input content (e.g. `ImageInputContent`) instead of generic `BinaryInputContent`.
+    The actual return type is then wider than annotated; the annotation is kept narrow for
+    backward-compat typechecking against ag-ui-protocol < 0.1.15.
+    """
     if isinstance(item, str):
         return TextInputContent(type='text', text=item)
     elif isinstance(item, TextContent):
         return TextInputContent(type='text', text=item.content)
     elif isinstance(item, (ImageUrl, VideoUrl, AudioUrl, DocumentUrl)):
+        if use_multimodal:
+            from ._multimodal import media_url_to_multimodal  # pyright: ignore[reportUnknownVariableType]
+
+            return media_url_to_multimodal(item)  # pyright: ignore[reportUnknownVariableType]
         return BinaryInputContent(type='binary', url=item.url, mime_type=item.media_type or '')
     elif isinstance(item, BinaryContent):
         return BinaryInputContent(type='binary', data=item.base64, mime_type=item.media_type)
     elif isinstance(item, UploadedFile):
         # UploadedFile holds an opaque provider file_id (e.g. 'file-abc123'), not a URL or
-        # binary data, so it can't be mapped to AG-UI's BinaryInputContent. Skipped like CachePoint.
+        # binary data, so it can't be mapped to AG-UI input content. Skipped like CachePoint.
         return None
     elif isinstance(item, CachePoint):
         return None
@@ -156,18 +193,24 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     """UI adapter for the Agent-User Interaction (AG-UI) protocol."""
 
     _: KW_ONLY
-    ag_ui_version: AGUIVersion = DEFAULT_AG_UI_VERSION
-    """AG-UI protocol version controlling thinking/reasoning event format.
+    ag_ui_version: str = DEFAULT_AG_UI_VERSION
+    """AG-UI protocol version controlling behavior thresholds.
 
-    Defaults to the version detected from the installed `ag-ui-protocol` package.
+    Accepts any version string (e.g. `'0.1.13'`). Defaults to the version detected from
+    the installed `ag-ui-protocol` package.
 
-    - `'0.1.10'`: emits `THINKING_*` events during streaming, drops `ThinkingPart`
-      from `dump_messages` output. Compatible with AG-UI frontends that don't support reasoning events.
-    - `'0.1.13'`: emits `REASONING_*` events with encrypted metadata during streaming, and
+    Known thresholds:
+
+    - `< 0.1.13`: emits `THINKING_*` events during streaming, drops `ThinkingPart`
+      from `dump_messages` output.
+    - `>= 0.1.13`: emits `REASONING_*` events with encrypted metadata during streaming, and
       includes `ThinkingPart` as `ReasoningMessage` in `dump_messages` output for full round-trip
       fidelity of thinking signatures and provider metadata.
+    - `>= 0.1.15`: emits typed multimodal input content (`ImageInputContent`, `AudioInputContent`,
+      `VideoInputContent`, `DocumentInputContent`) instead of generic `BinaryInputContent`.
 
-    `load_messages` always accepts `ReasoningMessage` regardless of this setting.
+    `load_messages` always accepts `ReasoningMessage` and multimodal content types regardless
+    of this setting.
     """
 
     preserve_file_data: bool = False
@@ -197,7 +240,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         request: Request,
         *,
         agent: AbstractAgent[AgentDepsT, OutputDataT],
-        ag_ui_version: AGUIVersion = DEFAULT_AG_UI_VERSION,
+        ag_ui_version: str = DEFAULT_AG_UI_VERSION,
         preserve_file_data: bool = False,
         **kwargs: Any,
     ) -> AGUIAdapter[AgentDepsT, OutputDataT]:
@@ -266,6 +309,17 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                     else:  # pragma: no cover
                                         raise ValueError('BinaryInputContent must have either a `url` or `data` field.')
                                     user_prompt_content.append(binary_part)
+                                case (
+                                    ImageInputContent()
+                                    | AudioInputContent()
+                                    | VideoInputContent()
+                                    | DocumentInputContent()
+                                ):
+                                    from ._multimodal import (
+                                        multimodal_input_to_content,  # pyright: ignore[reportUnknownVariableType]
+                                    )
+
+                                    user_prompt_content.append(multimodal_input_to_content(part))
                                 case _:
                                     assert_never(part)
 
@@ -358,12 +412,12 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     )
 
                 case ActivityMessage() as activity_msg:
-                    if activity_msg.activity_type == 'pydantic_ai_file' and preserve_file_data:
+                    if activity_msg.activity_type == FILE_ACTIVITY_TYPE and preserve_file_data:
                         activity_content = activity_msg.content
                         url = activity_content.get('url', '')
                         if not url:
                             raise ValueError(
-                                'ActivityMessage with activity_type=pydantic_ai_file must have a non-empty url.'
+                                f'ActivityMessage with activity_type={FILE_ACTIVITY_TYPE!r} must have a non-empty url.'
                             )
                         builder.add(
                             FilePart(
@@ -373,14 +427,14 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 provider_details=activity_content.get('provider_details'),
                             )
                         )
-                    elif activity_msg.activity_type == 'pydantic_ai_uploaded_file' and preserve_file_data:
+                    elif activity_msg.activity_type == UPLOADED_FILE_ACTIVITY_TYPE and preserve_file_data:
                         activity_content = activity_msg.content
                         file_id = activity_content.get('file_id', '')
                         provider_name = activity_content.get('provider_name', '')
                         if not file_id or not provider_name:
                             raise ValueError(
-                                'ActivityMessage with activity_type=pydantic_ai_uploaded_file '
-                                'must have non-empty file_id and provider_name.'
+                                f'ActivityMessage with activity_type={UPLOADED_FILE_ACTIVITY_TYPE!r}'
+                                ' must have non-empty file_id and provider_name.'
                             )
                         builder.add(
                             UserPromptPart(
@@ -397,15 +451,24 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         )
 
                 case _:
-                    # this might crash if a user is using the latest AG-UI protocol with new message types
-                    # in that case we can easily push a patch handling the new message type as a placeholder while we plan the actual implementation
-                    assert_never(msg)
+                    if TYPE_CHECKING:
+                        assert_never(msg)
+                    warnings.warn(
+                        f'AG-UI message type {type(msg).__name__} is not yet implemented; skipping.',
+                        UserWarning,
+                    )
 
         return builder.messages
 
     @staticmethod
-    def _dump_request_parts(msg: ModelRequest, *, preserve_file_data: bool = False) -> list[Message]:
+    def _dump_request_parts(
+        msg: ModelRequest,
+        *,
+        ag_ui_version: str = DEFAULT_AG_UI_VERSION,
+        preserve_file_data: bool = False,
+    ) -> list[Message]:
         """Convert a `ModelRequest` into AG-UI messages."""
+        use_multimodal = parse_ag_ui_version(ag_ui_version) >= MULTIMODAL_VERSION
         result: list[Message] = []
         system_content: list[str] = []
         user_content: list[TextInputContent | BinaryInputContent] = []
@@ -419,6 +482,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 else:
                     for item in part.content:
                         if isinstance(item, UploadedFile) and preserve_file_data:
+                            # AG-UI has no native uploaded-file message type. We repurpose
+                            # ActivityMessage with a reserved `pydantic_ai_*` activity_type
+                            # for round-trip fidelity. See UploadedFileActivityContent.
                             uploaded_content: dict[str, Any] = {
                                 'file_id': item.file_id,
                                 'provider_name': item.provider_name,
@@ -430,12 +496,12 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             result.append(
                                 ActivityMessage(
                                     id=_new_message_id(),
-                                    activity_type='pydantic_ai_uploaded_file',
+                                    activity_type=UPLOADED_FILE_ACTIVITY_TYPE,
                                     content=uploaded_content,
                                 )
                             )
                         else:
-                            converted = _user_content_to_input(item)
+                            converted = _user_content_to_input(item, use_multimodal=use_multimodal)
                             if converted is not None:
                                 user_content.append(converted)
             elif isinstance(part, ToolReturnPart):
@@ -475,7 +541,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
     @staticmethod
     def _dump_response_parts(  # noqa: C901
-        msg: ModelResponse, *, ag_ui_version: AGUIVersion = DEFAULT_AG_UI_VERSION, preserve_file_data: bool = False
+        msg: ModelResponse, *, ag_ui_version: str = DEFAULT_AG_UI_VERSION, preserve_file_data: bool = False
     ) -> list[Message]:
         """Convert a `ModelResponse` into AG-UI messages.
 
@@ -552,6 +618,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 pass
             elif isinstance(part, FilePart):
                 if preserve_file_data:
+                    # AG-UI has no native file message type. We repurpose ActivityMessage
+                    # with a reserved `pydantic_ai_*` activity_type for round-trip fidelity.
+                    # See FileActivityContent.
                     flush()
                     file_content: dict[str, Any] = {
                         'url': part.content.data_uri,
@@ -566,7 +635,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     result.append(
                         ActivityMessage(
                             id=_new_message_id(),
-                            activity_type='pydantic_ai_file',
+                            activity_type=FILE_ACTIVITY_TYPE,
                             content=file_content,
                         )
                     )
@@ -581,7 +650,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         cls,
         messages: Sequence[ModelMessage],
         *,
-        ag_ui_version: AGUIVersion = DEFAULT_AG_UI_VERSION,
+        ag_ui_version: str = DEFAULT_AG_UI_VERSION,
         preserve_file_data: bool = False,
     ) -> list[Message]:
         """Transform Pydantic AI messages into AG-UI messages.
@@ -613,7 +682,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
         for msg in messages:
             if isinstance(msg, ModelRequest):
-                request_messages = cls._dump_request_parts(msg, preserve_file_data=preserve_file_data)
+                request_messages = cls._dump_request_parts(
+                    msg, ag_ui_version=ag_ui_version, preserve_file_data=preserve_file_data
+                )
                 result.extend(request_messages)
             elif isinstance(msg, ModelResponse):
                 result.extend(

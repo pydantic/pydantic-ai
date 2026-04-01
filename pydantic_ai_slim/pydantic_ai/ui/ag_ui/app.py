@@ -21,7 +21,7 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 
 from .. import OnCompleteFunc, StateHandler
 from ._adapter import AGUIAdapter
-from ._event_stream import DEFAULT_AG_UI_VERSION, AGUIVersion
+from ._utils import DEFAULT_AG_UI_VERSION
 
 try:
     from starlette.applications import Starlette
@@ -45,7 +45,7 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
         agent: AbstractAgent[AgentDepsT, OutputDataT],
         *,
         # AGUIAdapter.dispatch_request parameters
-        ag_ui_version: AGUIVersion = DEFAULT_AG_UI_VERSION,
+        ag_ui_version: str = DEFAULT_AG_UI_VERSION,
         preserve_file_data: bool = False,
         output_type: OutputSpec[Any] | None = None,
         message_history: Sequence[ModelMessage] | None = None,

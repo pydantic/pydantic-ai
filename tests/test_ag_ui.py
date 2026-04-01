@@ -105,10 +105,7 @@ with try_import() as imports_successful:
         run_ag_ui,
     )
     from pydantic_ai.ui.ag_ui import AGUIEventStream
-    from pydantic_ai.ui.ag_ui._event_stream import (
-        _detect_ag_ui_version,  # pyright: ignore[reportPrivateUsage]
-        parse_ag_ui_version,
-    )
+    from pydantic_ai.ui.ag_ui._utils import detect_ag_ui_version, parse_ag_ui_version
 
 with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
@@ -3850,23 +3847,23 @@ def test_parse_ag_ui_version_prerelease() -> None:
 
 
 def test_detect_ag_ui_version_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Test that _detect_ag_ui_version returns '0.1.10' when package is not found."""
+    """Test that detect_ag_ui_version returns '0.1.10' when package is not found."""
 
     def _raise_not_found(_name: str) -> str:
         raise importlib.metadata.PackageNotFoundError()
 
-    monkeypatch.setattr('pydantic_ai.ui.ag_ui._event_stream.importlib.metadata.version', _raise_not_found)
-    assert _detect_ag_ui_version() == snapshot('0.1.10')
+    monkeypatch.setattr('pydantic_ai.ui.ag_ui._utils.importlib.metadata.version', _raise_not_found)
+    assert detect_ag_ui_version() == snapshot('0.1.10')
 
 
 def test_detect_ag_ui_version_old(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Test that _detect_ag_ui_version returns '0.1.10' when installed version is below REASONING_VERSION."""
+    """Test that detect_ag_ui_version returns the raw installed version string."""
 
     def _return_old_version(_name: str) -> str:
         return '0.1.10'
 
-    monkeypatch.setattr('pydantic_ai.ui.ag_ui._event_stream.importlib.metadata.version', _return_old_version)
-    assert _detect_ag_ui_version() == snapshot('0.1.10')
+    monkeypatch.setattr('pydantic_ai.ui.ag_ui._utils.importlib.metadata.version', _return_old_version)
+    assert detect_ag_ui_version() == snapshot('0.1.10')
 
 
 def test_dump_messages_text_content() -> None:
