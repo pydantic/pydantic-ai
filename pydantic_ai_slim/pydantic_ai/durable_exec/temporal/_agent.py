@@ -76,6 +76,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 dict[str, ActivityConfig | Literal[False]],
                 type[AgentDepsT],
                 type[TemporalRunContext[AgentDepsT]],
+                AbstractAgent[AgentDepsT, Any] | None,
             ],
             AbstractToolset[AgentDepsT],
         ] = temporalize_toolset,
@@ -195,9 +196,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 tool_activity_config.get(id, {}),
                 self.deps_type,
                 self.run_context_type,
+                self.wrapped,
             )
             if isinstance(toolset, TemporalWrapperToolset):
-                toolset._agent = self.wrapped  # pyright: ignore[reportPrivateUsage]
                 activities.extend(toolset.temporal_activities)
             return toolset
 

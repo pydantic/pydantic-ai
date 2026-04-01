@@ -82,8 +82,6 @@ CallToolResult = Annotated[
 
 
 class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
-    _agent: AbstractAgent[AgentDepsT, Any] | None = None
-
     @property
     def id(self) -> str:
         # An error is raised in `TemporalAgent` if no `id` is set.
