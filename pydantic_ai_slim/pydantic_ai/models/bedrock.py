@@ -935,7 +935,8 @@ class BedrockConverseModel(Model):
                 num_pre_instruction_blocks = len(system_prompt) - len(instruction_parts)
                 num_static = sum(1 for p in instruction_parts if not p.dynamic)
                 cache_idx = num_pre_instruction_blocks + num_static
-                system_prompt.insert(cache_idx, {'cachePoint': {'type': 'default'}})
+                if cache_idx > 0:
+                    system_prompt.insert(cache_idx, {'cachePoint': {'type': 'default'}})
             else:
                 # All static or no instruction_parts: cache point at end (current behavior)
                 system_prompt.append({'cachePoint': {'type': 'default'}})

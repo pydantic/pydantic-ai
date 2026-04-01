@@ -4543,7 +4543,24 @@ async def test_xai_prompted_output_json_object(allow_model_requests: None):
         [
             {
                 'model': XAI_NON_REASONING_MODEL,
-                'messages': [{'content': [{'text': 'What is the meaning of life?'}], 'role': 'ROLE_USER'}],
+                'messages': [
+                    {
+                        'content': [
+                            {
+                                'text': """\
+
+Always respond with a JSON object that's compatible with this schema:
+
+{"properties": {"answer": {"type": "string"}}, "required": ["answer"], "title": "SimpleResult", "type": "object"}
+
+Don't include any text or Markdown fencing before or after.
+"""
+                            }
+                        ],
+                        'role': 'ROLE_SYSTEM',
+                    },
+                    {'content': [{'text': 'What is the meaning of life?'}], 'role': 'ROLE_USER'},
+                ],
                 'tools': None,
                 'tool_choice': None,
                 'response_format': {'format_type': 'FORMAT_TYPE_JSON_OBJECT'},

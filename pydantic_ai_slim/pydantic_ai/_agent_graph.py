@@ -406,10 +406,12 @@ async def _get_instructions(
         items = [toolset_result] if isinstance(toolset_result, (str, _messages.InstructionPart)) else toolset_result
         for item in items:
             if isinstance(item, _messages.InstructionPart):
-                parts.append(item)
+                if item.content.strip():
+                    parts.append(item)
             else:
                 # Plain str from toolsets: treat as dynamic (external/changeable source)
-                parts.append(_messages.InstructionPart(content=item, dynamic=True))
+                if item.strip():
+                    parts.append(_messages.InstructionPart(content=item, dynamic=True))
 
     return parts or None
 
@@ -452,7 +454,7 @@ async def _prepare_request_parameters(
                 if t is not None:
                     builtin_tools.append(t)
 
-    params = models.ModelRequestParameters(
+    return models.ModelRequestParameters(
         function_tools=function_tools,
         builtin_tools=builtin_tools,
         output_mode=output_schema.mode,
@@ -463,15 +465,6 @@ async def _prepare_request_parameters(
         allow_image_output=output_schema.allows_image,
         instruction_parts=instruction_parts,
     )
-
-    # Append prompted_output_instructions to instruction_parts so models that use structured
-    # instruction parts (for per-part system messages or cache placement) also get them.
-    if output_instr := params.prompted_output_instructions:
-        if params.instruction_parts is None:
-            params.instruction_parts = []
-        params.instruction_parts.append(_messages.InstructionPart(content=output_instr, dynamic=True))
-
-    return params
 
 
 @dataclasses.dataclass

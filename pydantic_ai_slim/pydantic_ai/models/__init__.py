@@ -865,7 +865,24 @@ class Model(ABC):
             ]
             params = replace(params, builtin_tools=supported_builtins, function_tools=function_tools)
 
+        params = self._append_prompted_output_to_instruction_parts(params)
+
         return model_settings, params
+
+    @staticmethod
+    def _append_prompted_output_to_instruction_parts(params: ModelRequestParameters) -> ModelRequestParameters:
+        """Append prompted_output_instructions to instruction_parts.
+
+        Done after customize_request_parameters so it uses the final resolved template.
+        This ensures models reading structured instruction_parts (for per-part system messages
+        or cache placement) also receive the prompted output format instructions.
+        """
+        if output_instr := params.prompted_output_instructions:
+            return replace(
+                params,
+                instruction_parts=[*(params.instruction_parts or []), InstructionPart(content=output_instr)],
+            )
+        return params
 
     @property
     @abstractmethod
