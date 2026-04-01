@@ -1,13 +1,11 @@
 name: PR Guard
 
 on:
+  # zizmor: ignore[dangerous-triggers] -- pull_request_target is needed to close duplicate PRs and manage issues; no fork code is checked out
   pull_request_target:
-    types: [opened, ready_for_review]
+    types: [opened, ready_for_review, edited]
 
-permissions:
-  contents: read
-  issues: write
-  pull-requests: write
+permissions: {}
 
 concurrency:
   group: pr-guard-${{ github.event.pull_request.number }}
@@ -17,20 +15,24 @@ jobs:
     name: Guard
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
     steps:
       - name: Check linked issues and guard against duplicates
         run: |
           set -euo pipefail
 
-          PR_NUMBER=${{ github.event.pull_request.number }}
-          PR_AUTHOR="${{ github.event.pull_request.user.login }}"
-          AUTHOR_ASSOCIATION="${{ github.event.pull_request.author_association }}"
+          PR_NUMBER="${GITHUB_EVENT_PULL_REQUEST_NUMBER}"
+          PR_AUTHOR="${GITHUB_EVENT_PULL_REQUEST_USER_LOGIN}"
+          AUTHOR_ASSOCIATION="${GITHUB_EVENT_PULL_REQUEST_AUTHOR_ASSOCIATION}"
           PR_BODY=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.body // ""')
 
           echo "PR #${PR_NUMBER} by ${PR_AUTHOR} (${AUTHOR_ASSOCIATION})"
 
           # Skip draft PRs — authors may create drafts to save progress
-          if [ "${{ github.event.pull_request.draft }}" = "true" ]; then
+          if [ "${GITHUB_EVENT_PULL_REQUEST_DRAFT}" = "true" ]; then
             echo "PR is a draft, skipping checks."
             exit 0
           fi
@@ -171,3 +173,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
+          GITHUB_EVENT_PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_EVENT_PULL_REQUEST_USER_LOGIN: ${{ github.event.pull_request.user.login }}
+          GITHUB_EVENT_PULL_REQUEST_AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
+          GITHUB_EVENT_PULL_REQUEST_DRAFT: ${{ github.event.pull_request.draft }}

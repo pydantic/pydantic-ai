@@ -30,6 +30,7 @@ from pydantic_ai import (
     ModelResponse,
     ModelRetry,
     RetryPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -1257,20 +1258,12 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file bd38f5',
+                        content=ImageUrl(
+                            url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
+                        ),
                         tool_call_id='call_4hrT4QP9jfojtK69vGiFCFjG',
                         timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(
-                        content=[
-                            'This is file bd38f5:',
-                            ImageUrl(
-                                url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg',
-                                identifier='bd38f5',
-                            ),
-                        ],
-                        timestamp=IsDatetime(),
-                    ),
+                    )
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -1296,88 +1289,6 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                     'timestamp': datetime(2025, 4, 29, 21, 8, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-BRmTI0Y2zmkGw27kLarhsmiFQTGxR',
-                finish_reason='stop',
-                run_id=IsStr(),
-            ),
-        ]
-    )
-
-
-async def test_image_as_binary_content_tool_response(
-    allow_model_requests: None, image_content: BinaryContent, openai_api_key: str
-):
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(m)
-
-    @agent.tool_plain
-    async def get_image() -> BinaryContent:
-        return image_content
-
-    result = await agent.run(['What fruit is in the image you can get from the get_image tool?'])
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content=['What fruit is in the image you can get from the get_image tool?'],
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_1FnV4RIOyM7T9BxPHbSuUexJ')],
-                usage=RequestUsage(
-                    input_tokens=46,
-                    output_tokens=10,
-                    details={
-                        'accepted_prediction_tokens': 0,
-                        'audio_tokens': 0,
-                        'reasoning_tokens': 0,
-                        'rejected_prediction_tokens': 0,
-                    },
-                ),
-                model_name='gpt-4o-2024-08-06',
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'tool_calls', 'timestamp': IsDatetime()},
-                provider_response_id='chatcmpl-Cpwffm3QIHBYzhoYYZSF7Et1tiiqI',
-                finish_reason='tool_call',
-                run_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='get_image',
-                        content='See file 241a70',
-                        tool_call_id='call_1FnV4RIOyM7T9BxPHbSuUexJ',
-                        timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(content=['This is file 241a70:', image_content], timestamp=IsDatetime()),
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='The fruit in the image is a kiwi.')],
-                usage=RequestUsage(
-                    input_tokens=847,
-                    output_tokens=10,
-                    details={
-                        'accepted_prediction_tokens': 0,
-                        'audio_tokens': 0,
-                        'reasoning_tokens': 0,
-                        'rejected_prediction_tokens': 0,
-                    },
-                ),
-                model_name='gpt-4o-2024-08-06',
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
-                provider_response_id='chatcmpl-CpwfhFC1iUmDKeoxOTSN7KP8D11aq',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1572,6 +1483,16 @@ async def test_uploaded_file_wrong_provider_responses(allow_model_requests: None
 
     with pytest.raises(UserError, match="provider_name='anthropic'.*cannot be used with OpenAIResponsesModel"):
         await agent.run(['Analyze this file', UploadedFile(file_id='file-xyz789', provider_name='anthropic')])
+
+
+async def test_text_content_input(allow_model_requests: None):
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+    res = await m._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        part=UserPromptPart(content=['hello', TextContent(content='world', metadata={'id': 1})])
+    )
+    assert res == snapshot(
+        {'role': 'user', 'content': [{'text': 'hello', 'type': 'text'}, {'text': 'world', 'type': 'text'}]}
+    )
 
 
 def test_model_status_error(allow_model_requests: None) -> None:
@@ -3672,6 +3593,18 @@ async def test_process_response_no_finish_reason(allow_model_requests: None):
     assert response_message.finish_reason == 'stop'
 
 
+async def test_service_tier_non_standard_value(allow_model_requests: None):
+    """OpenAI-compatible providers can return service_tier values outside the OpenAI Literal."""
+    c = completion_message(ChatCompletionMessage(content='hello', role='assistant'))
+    c.service_tier = 'standard'  # type: ignore  # simulate provider returning non-OpenAI value
+
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+    result = await agent.run('Hello')
+    assert result.output == 'hello'
+
+
 async def test_tool_choice_fallback(allow_model_requests: None) -> None:
     profile = OpenAIModelProfile(openai_supports_tool_choice_required=False).update(openai_model_profile('stub'))
 
@@ -4316,6 +4249,91 @@ async def test_openai_chat_instructions_after_system_prompts(allow_model_request
             {'role': 'user', 'content': 'Hello'},
         ]
     )
+
+
+async def test_openai_chat_instructions_after_only_system_prompts(allow_model_requests: None):
+    """Test that instructions are appended after a history made entirely of system prompts."""
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='System prompt 1'),
+                SystemPromptPart(content='System prompt 2'),
+            ],
+            instructions='Instructions content',
+        ),
+    ]
+
+    openai_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert openai_messages == snapshot(
+        [
+            {'role': 'system', 'content': 'System prompt 1'},
+            {'role': 'system', 'content': 'System prompt 2'},
+            {'content': 'Instructions content', 'role': 'system'},
+        ]
+    )
+
+
+async def test_openai_chat_instructions_with_no_mapped_messages(allow_model_requests: None):
+    """Test that instructions are inserted even when there are no mapped messages yet."""
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[], instructions='Instructions content'),
+    ]
+
+    openai_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert openai_messages == snapshot(
+        [
+            {'content': 'Instructions content', 'role': 'system'},
+        ]
+    )
+
+
+async def test_openai_chat_instructions_do_not_split_tool_call_history(allow_model_requests: None):
+    """Test that instructions are inserted before tool-call history when a later system prompt exists."""
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call_abc123')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='my_tool', content='result', tool_call_id='call_abc123')]),
+        ModelResponse(parts=[TextPart('Done.')]),
+        ModelRequest(parts=[UserPromptPart(content='Next question?')]),
+        ModelResponse(parts=[TextPart('Answer.')]),
+        ModelRequest(parts=[SystemPromptPart(content='CONVERSATION SUMMARY:\n...')]),
+        ModelRequest(
+            parts=[UserPromptPart(content='New user message')],
+            instructions='You are a helpful assistant.',
+        ),
+    ]
+
+    openai_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert [message['role'] for message in openai_messages] == [
+        'system',
+        'assistant',
+        'tool',
+        'assistant',
+        'user',
+        'assistant',
+        'system',
+        'user',
+    ]
+    assistant_message = cast(chat.ChatCompletionAssistantMessageParam, openai_messages[1])
+    tool_message = cast(dict[str, Any], openai_messages[2])
+    tool_calls = assistant_message.get('tool_calls')
+    assert tool_calls is not None
+    first_tool_call = cast(dict[str, Any], next(iter(tool_calls)))
+    assert openai_messages[0] == {'role': 'system', 'content': 'You are a helpful assistant.'}
+    assert first_tool_call['id'] == 'call_abc123'
+    assert tool_message['tool_call_id'] == 'call_abc123'
+    assert openai_messages[6] == {'role': 'system', 'content': 'CONVERSATION SUMMARY:\n...'}
 
 
 def test_openai_chat_audio_default_base64(allow_model_requests: None):
