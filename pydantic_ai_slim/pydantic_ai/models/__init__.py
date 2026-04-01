@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
-from typing import Any, Generic, Literal, TypeVar, get_args, overload
+from typing import Any, Generic, Literal, TypeVar, cast, get_args, overload
 
 import httpx
 from typing_extensions import TypeAliasType, TypedDict
@@ -659,7 +659,7 @@ class ModelRequestParameters:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass
+@dataclass(kw_only=True)
 class ModelRequestContext:
     """Context for model request hooks.
 
@@ -667,6 +667,7 @@ class ModelRequestContext:
     future-proof: new fields can be added without breaking existing implementations.
     """
 
+    model: Model
     messages: list[ModelMessage]
     model_settings: ModelSettings | None
     model_request_parameters: ModelRequestParameters
@@ -774,15 +775,14 @@ class Model(ABC):
 
         params = self.customize_request_parameters(model_request_parameters)
 
-        # Resolve unified thinking setting
-        thinking_value = model_settings.get('thinking') if model_settings else None
-        if thinking_value is not None:
+        # Resolve unified thinking setting and strip from model_settings
+        if model_settings and 'thinking' in model_settings:
+            thinking_value = model_settings['thinking']
             if self.profile.supports_thinking or self.profile.thinking_always_enabled:
-                if thinking_value is False and self.profile.thinking_always_enabled:
-                    pass  # Silent ignore: model always thinks, can't disable
-                else:
+                if not (thinking_value is False and self.profile.thinking_always_enabled):
                     params = replace(params, thinking=thinking_value)
-            # else: silent ignore for unsupported models
+            stripped = {k: v for k, v in model_settings.items() if k != 'thinking'}
+            model_settings = cast(ModelSettings, stripped) if stripped else None
 
         if builtin_tools := params.builtin_tools:
             # Deduplicate builtin tools

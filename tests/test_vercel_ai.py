@@ -29,6 +29,7 @@ from pydantic_ai.messages import (
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -68,6 +69,7 @@ with try_import() as starlette_import_successful:
         load_provider_metadata,
     )
     from pydantic_ai.ui.vercel_ai.request_types import (
+        DataUIPart,
         DynamicToolApprovalRespondedPart,
         DynamicToolInputAvailablePart,
         DynamicToolInputStreamingPart,
@@ -3432,6 +3434,72 @@ async def test_adapter_load_messages():
     )
 
 
+async def test_adapter_load_messages_with_data_ui_part_in_user_message():
+    data = SubmitMessage(
+        trigger='submit-message',
+        id='bvQXcnrJ4OA2iRKU',
+        messages=[
+            UIMessage(
+                id='foobar',
+                role='system',
+                parts=[
+                    TextUIPart(
+                        text='You are a helpful assistant.',
+                    ),
+                ],
+            ),
+            UIMessage(
+                id='BeuwNtYIjJuniHbR',
+                role='user',
+                parts=[
+                    TextUIPart(
+                        text='Hi',
+                    ),
+                    DataUIPart(
+                        id='custom-data',
+                        type='data-custom',
+                        data={'key': 'value'},
+                    ),
+                ],
+            ),
+            UIMessage(
+                id='bylfKVeyoR901rax',
+                role='assistant',
+                parts=[
+                    TextUIPart(
+                        text='Hello',
+                        state='streaming',
+                    ),
+                ],
+            ),
+        ],
+    )
+
+    messages = VercelAIAdapter.load_messages(data.messages)
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='You are a helpful assistant.',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='Hi',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Hello'),
+                ],
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
 async def test_adapter_dump_messages():
     """Test dumping Pydantic AI messages to Vercel AI format."""
     messages = [
@@ -4890,6 +4958,17 @@ async def test_adapter_load_messages_file_url_without_metadata():
                 ]
             )
         ]
+    )
+
+
+async def test_convert_user_prompt_part_text_content():
+    """Test converting a user prompt with only text content."""
+    from pydantic_ai.ui.vercel_ai._adapter import _convert_user_prompt_part  # pyright: ignore[reportPrivateUsage]
+
+    part = UserPromptPart(content=['Just some text', TextContent(content='More text', metadata={'key': 'value'})])
+    ui_parts = _convert_user_prompt_part(part)
+    assert ui_parts == snapshot(
+        [TextUIPart(text='Just some text', state='done'), TextUIPart(text='More text', state='done')]
     )
 
 

@@ -31,6 +31,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -562,7 +563,10 @@ class MistralModel(Model):
             else:
                 assert_never(message)
         if instructions := self._get_instructions(messages, model_request_parameters):
-            system_prompt_count = sum(1 for m in mistral_messages if isinstance(m, MistralSystemMessage))
+            system_prompt_count = next(
+                (i for i, m in enumerate(mistral_messages) if not isinstance(m, MistralSystemMessage)),
+                len(mistral_messages),
+            )
             mistral_messages.insert(system_prompt_count, MistralSystemMessage(content=instructions))
 
         # Post-process messages to insert fake assistant message after tool message if followed by user message
@@ -586,8 +590,9 @@ class MistralModel(Model):
         else:
             content = []
             for item in part.content:
-                if isinstance(item, str):
-                    content.append(MistralTextChunk(text=item))
+                if isinstance(item, str | TextContent):
+                    text = item if isinstance(item, str) else item.content
+                    content.append(MistralTextChunk(text=text))
                 elif isinstance(item, ImageUrl):
                     if item.force_download:
                         downloaded = await download_item(item, data_format='base64_uri')

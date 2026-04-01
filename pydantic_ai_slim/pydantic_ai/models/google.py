@@ -38,6 +38,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -167,7 +168,39 @@ _GOOGLE_IMAGE_OUTPUT_FORMAT = Literal['png', 'jpeg', 'webp']
 _GOOGLE_IMAGE_OUTPUT_FORMATS: tuple[_GOOGLE_IMAGE_OUTPUT_FORMAT, ...] = _utils.get_args(_GOOGLE_IMAGE_OUTPUT_FORMAT)
 
 
-_GOOGLE_SERVICE_TIER = Literal['default', 'standard', 'flex', 'priority']
+GoogleServiceTier = Literal[
+    'default',
+    'standard',
+    'flex',
+    'priority',
+    'pt_then_on_demand',
+    'pt_only',
+    'pt_then_flex',
+    'on_demand',
+    'flex_only',
+]
+"""Values for the `google_service_tier` field on [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings].
+
+**Gemini API (GLA) values:**
+
+- `'default'`: The default service tier (maps to standard, for cross-compat).
+- `'standard'`: The standard service tier.
+- `'flex'`: The flexible service tier.
+- `'priority'`: The priority service tier.
+
+**Vertex AI values:**
+
+Controls Vertex AI HTTP headers for [Provisioned Throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput/use-provisioned-throughput)
+(PT) and [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo).
+
+- `'pt_then_on_demand'` (**default**): PT when quota allows, then standard on-demand spillover. No headers sent.
+- `'pt_only'`: PT only (`X-Vertex-AI-LLM-Request-Type: dedicated`). No on-demand spillover; returns 429 when over quota.
+- `'pt_then_flex'`: PT when quota allows, then [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) spillover (`X-Vertex-AI-LLM-Shared-Request-Type: flex`).
+- `'on_demand'`: Standard on-demand only (`X-Vertex-AI-LLM-Request-Type: shared`). Bypasses PT for this request.
+- `'flex_only'`: [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) only (`X-Vertex-AI-LLM-Request-Type: shared` and `X-Vertex-AI-LLM-Shared-Request-Type: flex`). Bypasses PT.
+
+Not every model or region supports every value; see the linked Google docs.
+"""
 
 
 class GoogleModelSettings(ModelSettings, total=False):
@@ -191,18 +224,6 @@ class GoogleModelSettings(ModelSettings, total=False):
     """User-defined metadata to break down billed charges. Only supported by the Vertex AI API.
 
     See the [Gemini API docs](https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/add-labels-to-api-calls) for use cases and limitations.
-    """
-
-    google_service_tier: _GOOGLE_SERVICE_TIER
-    """The service tier to use for the model request.
-
-    Controls the priority of the request, allowing you to trade off cost or latency for traffic priority.
-
-    Values:
-    - `default`: The default service tier (maps to standard).
-    - `standard`: The standard service tier.
-    - `flex`: The flexible service tier.
-    - `priority`: The priority service tier.
     """
 
     google_video_resolution: MediaResolution
@@ -236,6 +257,36 @@ class GoogleModelSettings(ModelSettings, total=False):
 
     These will be included in `ModelResponse.provider_details['logprobs']`.
     """
+
+    google_service_tier: GoogleServiceTier
+    """The service tier to use for the model request.
+
+    - When using the Gemini API (GLA), this controls traffic priority (e.g., `'flex'`, `'priority'`).
+    - When using the Vertex AI API, this controls routing for Provisioned Throughput and Flex PayGo
+      (e.g., `'pt_only'`, `'flex_only'`).
+
+    See [`GoogleServiceTier`][pydantic_ai.models.google.GoogleServiceTier] for all values,
+    headers sent, and links to Google docs.
+    """
+
+
+def _google_vertex_service_tier_headers(service_tier: GoogleServiceTier) -> dict[str, str]:
+    """HTTP headers for Vertex AI Provisioned Throughput and Flex PayGo routing."""
+    service_tier = cast(GoogleServiceTier, service_tier.lower())
+    if service_tier in ('default', 'standard', 'flex', 'priority', 'pt_then_on_demand'):
+        return {}
+    if service_tier == 'pt_only':
+        return {'X-Vertex-AI-LLM-Request-Type': 'dedicated'}
+    if service_tier == 'on_demand':
+        return {'X-Vertex-AI-LLM-Request-Type': 'shared'}
+    if service_tier == 'pt_then_flex':
+        return {'X-Vertex-AI-LLM-Shared-Request-Type': 'flex'}
+    if service_tier == 'flex_only':
+        return {
+            'X-Vertex-AI-LLM-Request-Type': 'shared',
+            'X-Vertex-AI-LLM-Shared-Request-Type': 'flex',
+        }
+    assert_never(service_tier)  # pragma: no cover
 
 
 @dataclass(init=False)
@@ -538,7 +589,7 @@ class GoogleModel(Model):
                 ) from e
             raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
 
-    def _get_thinking_config(
+    def _translate_thinking(
         self,
         model_settings: GoogleModelSettings,
         model_request_parameters: ModelRequestParameters,
@@ -613,6 +664,10 @@ class GoogleModel(Model):
         headers: dict[str, str] = {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
         if extra_headers := model_settings.get('extra_headers'):
             headers.update(extra_headers)
+
+        service_tier_vertex = model_settings.get('google_service_tier', 'pt_then_on_demand')
+        headers.update(_google_vertex_service_tier_headers(service_tier_vertex))
+
         http_options: HttpOptionsDict = {'headers': headers}
         if timeout := model_settings.get('timeout'):
             if isinstance(timeout, int | float):
@@ -620,11 +675,11 @@ class GoogleModel(Model):
             else:
                 raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
 
-        service_tier: str | None = None
+        service_tier_str: str | None = None
         if raw_service_tier := model_settings.get('google_service_tier'):
-            service_tier = raw_service_tier.lower()
-            if service_tier == 'default':
-                service_tier = 'standard'
+            service_tier_str = raw_service_tier.lower()
+            if service_tier_str == 'default':
+                service_tier_str = 'standard'
 
         config = GenerateContentConfigDict(
             http_options=http_options,
@@ -637,9 +692,9 @@ class GoogleModel(Model):
             frequency_penalty=model_settings.get('frequency_penalty'),
             seed=model_settings.get('seed'),
             safety_settings=model_settings.get('google_safety_settings'),
-            thinking_config=self._get_thinking_config(model_settings, model_request_parameters),
+            thinking_config=self._translate_thinking(model_settings, model_request_parameters),
             labels=model_settings.get('google_labels'),
-            service_tier=cast(ServiceTier, service_tier),
+            service_tier=cast(ServiceTier, service_tier_str),
             media_resolution=model_settings.get('google_video_resolution'),
             cached_content=model_settings.get('google_cached_content'),
             tools=cast(ToolListUnionDict, tools),
@@ -694,6 +749,10 @@ class GoogleModel(Model):
             and (service_tier := response.sdk_http_response.headers.get('x-gemini-service-tier'))
         ):
             vendor_details['service_tier'] = service_tier.lower()
+
+        # Add traffic_type to provider_details for Flex PayGo verification
+        if response.usage_metadata and response.usage_metadata.traffic_type:
+            vendor_details['traffic_type'] = response.usage_metadata.traffic_type.value
 
         if candidate is None or candidate.content is None or candidate.content.parts is None:
             parts = []
@@ -939,8 +998,9 @@ class GoogleModel(Model):
         else:
             content: list[PartDict] = []
             for item in part.content:
-                if isinstance(item, str):
-                    content.append({'text': item})
+                if isinstance(item, str | TextContent):
+                    text = item if isinstance(item, str) else item.content
+                    content.append({'text': text})
                 elif isinstance(item, (BinaryContent, FileUrl, UploadedFile)):
                     file_part = await self._map_file_to_part(item)
                     content.append(file_part)
@@ -990,6 +1050,14 @@ class GeminiStreamedResponse(StreamedResponse):
                     and (service_tier := chunk.sdk_http_response.headers.get('x-gemini-service-tier'))
                 ):
                     self.provider_details = {**(self.provider_details or {}), 'service_tier': service_tier.lower()}
+
+                # Capture traffic_type before the candidates guard, since usage_metadata
+                # may be present on chunks without candidates.
+                if chunk.usage_metadata and chunk.usage_metadata.traffic_type:
+                    self.provider_details = {
+                        **(self.provider_details or {}),
+                        'traffic_type': chunk.usage_metadata.traffic_type.value,
+                    }
 
                 if not chunk.candidates:
                     if chunk.prompt_feedback and chunk.prompt_feedback.block_reason:
