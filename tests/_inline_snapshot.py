@@ -82,6 +82,8 @@ else:
     def warns(expected_warnings: Any, /, include_line: bool = False, include_file: bool = False) -> Iterator[None]:
         with catch_warnings(record=True) as caught:
             simplefilter('always')
+            # Re-apply pytest's configured ignores that simplefilter('always') overrides
+            warnings.filterwarnings('ignore', message='unclosed event loop', category=ResourceWarning)
             yield
         formatted: list[str] = []
         for w in caught:
