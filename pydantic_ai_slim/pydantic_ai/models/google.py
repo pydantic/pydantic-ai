@@ -680,6 +680,9 @@ class GoogleModel(Model):
             service_tier_str = raw_service_tier.lower()
             if service_tier_str == 'default':
                 service_tier_str = 'standard'
+            # Only GLA service tiers should be sent in the config. Vertex tiers are handled via headers.
+            elif service_tier_str not in ('standard', 'flex', 'priority'):
+                service_tier_str = None
 
         config = GenerateContentConfigDict(
             http_options=http_options,

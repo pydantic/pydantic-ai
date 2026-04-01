@@ -6506,6 +6506,9 @@ async def test_google_service_tier_vertex_headers(
     config_dict = cast(dict[str, Any], config)
     headers = config_dict['http_options']['headers']
 
+    # For Vertex-specific tiers, the `service_tier` config parameter should not be populated.
+    assert config_dict.get('service_tier') is None
+
     routing_header_names = {'X-Vertex-AI-LLM-Request-Type', 'X-Vertex-AI-LLM-Shared-Request-Type'}
     actual_routing_headers = {k: v for k, v in headers.items() if k in routing_header_names}
     assert actual_routing_headers == expected_headers
