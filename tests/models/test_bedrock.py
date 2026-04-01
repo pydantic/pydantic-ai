@@ -2726,6 +2726,36 @@ async def test_bedrock_cache_instructions_mixed_static_dynamic(
     )
 
 
+async def test_bedrock_cache_instructions_all_dynamic_no_system_prompt(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Test that no cache point is inserted when all instructions are dynamic and there's no system prompt."""
+    from pydantic_ai.messages import InstructionPart
+
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart(content='Hi!')],
+        )
+    ]
+    model_request_parameters = ModelRequestParameters(
+        instruction_parts=[
+            InstructionPart(content='Dynamic only.', dynamic=True),
+        ],
+    )
+    system_prompt, _ = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        model_request_parameters,
+        BedrockModelSettings(bedrock_cache_instructions=True),
+    )
+    # No cache point should be inserted — nothing static to cache
+    assert system_prompt == snapshot(
+        [
+            {'text': 'Dynamic only.'},
+        ]
+    )
+
+
 async def test_bedrock_cache_messages(allow_model_requests: None, bedrock_provider: BedrockProvider):
     """Test that bedrock_cache_messages adds cache point to the last user message."""
     model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)

@@ -1775,3 +1775,25 @@ async def test_custom_toolset_returning_plain_str_instructions():
     result = await agent.run('Hello')
     first_message = result.all_messages()[0]
     assert first_message.instructions == 'Custom toolset instruction.'  # type: ignore[union-attr]
+
+
+async def test_toolset_empty_instructions_filtered():
+    """Empty and whitespace-only instructions from toolsets are filtered out."""
+    from pydantic_ai import Agent
+    from pydantic_ai.messages import InstructionPart
+
+    class EmptyInstructionsToolset(FunctionToolset[None]):
+        async def get_instructions(self, ctx: RunContext[None]) -> list[str | InstructionPart] | None:  # type: ignore[override]
+            return [
+                '',
+                '   ',
+                InstructionPart(content='', dynamic=True),
+                InstructionPart(content='  ', dynamic=False),
+                'valid instruction',
+                InstructionPart(content='another valid', dynamic=True),
+            ]
+
+    agent = Agent(TestModel(), toolsets=[EmptyInstructionsToolset()])
+    result = await agent.run('Hello')
+    first_message = result.all_messages()[0]
+    assert first_message.instructions == 'valid instruction\n\nanother valid'  # type: ignore[union-attr]
