@@ -954,7 +954,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
-    async def iter(  # noqa: C901, D417
+    async def iter(  # noqa: C901
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
@@ -1040,6 +1040,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
+            session_id: Optional session identifier used to load and persist conversation history, requires `memory` to
+                be configured on the agent. Cannot be used together with `message_history`.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.

@@ -331,7 +331,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
-    async def run(  # noqa: D417
+    async def run(
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
@@ -375,6 +375,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
+            session_id: Optional session identifier used to load and persist conversation history, requires `memory` to
+                be configured on the agent. Cannot be used together with `message_history`.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
                 Inside workflows, only registered model instances, registered names, or provider strings are valid.
@@ -471,7 +473,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
-    def run_sync(  # noqa: D417
+    def run_sync(
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
@@ -514,6 +516,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
+            session_id: Optional session identifier used to load and persist conversation history, requires `memory` to
+                be configured on the agent. Cannot be used together with `message_history`.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
@@ -605,7 +609,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     ) -> AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
-    async def run_stream(  # noqa: D417
+    async def run_stream(
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
@@ -646,6 +650,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
+            session_id: Optional session identifier used to load and persist conversation history, requires `memory` to
+                be configured on the agent. Cannot be used together with `message_history`.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
@@ -736,7 +742,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]: ...
 
-    def run_stream_events(  # noqa: D417
+    def run_stream_events(
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
@@ -795,6 +801,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
+            session_id: Optional session identifier used to load and persist conversation history, requires `memory` to
+                be configured on the agent. Cannot be used together with `message_history`.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
@@ -885,7 +893,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
-    async def iter(  # noqa: D417
+    async def iter(
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
@@ -972,6 +980,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
+            session_id: Optional session identifier used to load and persist conversation history, requires `memory` to
+                be configured on the agent. Cannot be used together with `message_history`.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
