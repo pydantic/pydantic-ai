@@ -73,10 +73,13 @@ async def generate_dataset(
         retries=1,
     )
 
+    default_name = Path(path).stem if path is not None else 'generated'
     result = await agent.run(extra_instructions or 'Please generate the object.')
     output = strip_markdown_fences(result.output)
     try:
-        result = dataset_type.from_text(output, fmt='json', custom_evaluator_types=custom_evaluator_types)
+        result = dataset_type.from_text(
+            output, fmt='json', default_name=default_name, custom_evaluator_types=custom_evaluator_types
+        )
     except ValidationError as e:  # pragma: no cover
         print(f'Raw response from model:\n{result.output}')
         raise e
