@@ -556,6 +556,46 @@ async def test_groq_midstream_status_error(allow_model_requests: None):
     'error_factory,expected_exc',
     [
         pytest.param(
+            lambda: GroqStatusError(
+                message='Rate limited',
+                response=_httpx_response(429),
+                body={'error': {'message': 'Rate limited'}},
+            ),
+            ModelHTTPError,
+            id='http',
+        ),
+        pytest.param(
+            lambda: GroqStatusError(message='SSE error', response=_httpx_response(200), body={}),
+            ModelAPIError,
+            id='status_lt_400',
+        ),
+        pytest.param(
+            lambda: GroqConnectionError(request=httpx.Request('POST', 'https://api.groq.com')),
+            ModelAPIError,
+            id='connection',
+        ),
+    ],
+)
+async def test_groq_peek_error(allow_model_requests: None, error_factory: Any, expected_exc: type[Exception]):
+    """Errors during peek() are wrapped in ModelHTTPError/ModelAPIError."""
+    stream = [error_factory()]
+    mock_client = MockGroq.create_mock_stream(stream)
+    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(expected_exc) as exc_info:
+        async with agent.run_stream('hello'):
+            pass
+
+    if isinstance(exc_info.value, ModelHTTPError):
+        assert exc_info.value.status_code == 429
+
+
+@pytest.mark.skipif(not groq_imports(), reason='groq not installed')
+@pytest.mark.parametrize(
+    'error_factory,expected_exc',
+    [
+        pytest.param(
             lambda: GroqStatusError(message='SSE error', response=_httpx_response(200), body={}),
             ModelAPIError,
             id='status_lt_400',
