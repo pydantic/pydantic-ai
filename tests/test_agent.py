@@ -2374,6 +2374,25 @@ def test_prompted_output_with_template():
     )
 
 
+def test_prompted_output_with_template_and_instructions():
+    def return_foo(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.instructions is not None
+        assert 'Be helpful' in info.instructions
+        assert 'Gimme some JSON:' in info.instructions
+        text = Foo(bar='baz').model_dump_json()
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    m = FunctionModel(return_foo)
+
+    class Foo(BaseModel):
+        bar: str
+
+    agent = Agent(m, instructions='Be helpful', output_type=PromptedOutput(Foo, template='Gimme some JSON:'))
+
+    result = agent.run_sync('What is the capital of Mexico?')
+    assert result.output == snapshot(Foo(bar='baz'))
+
+
 def test_prompted_output_with_template_false():
     def return_foo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.model_request_parameters.prompted_output_template is False
