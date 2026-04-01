@@ -26,6 +26,7 @@ In addition, many providers are compatible with the OpenAI API, and can be used 
 - [GitHub Models](openai.md#github-models)
 - [Heroku](openai.md#heroku-ai)
 - [LiteLLM](openai.md#litellm)
+- [MiniMax](minimax.md)
 - [Nebius AI Studio](openai.md#nebius-ai-studio)
 - [Ollama](openai.md#ollama)
 - [OVHcloud AI Endpoints](openai.md#ovhcloud-ai-endpoints)
