@@ -1416,11 +1416,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         _run_error = agent_run._node_error or _exc  # pyright: ignore[reportPrivateUsage]
                         # Don't attempt recovery for GeneratorExit/KeyboardInterrupt —
                         # awaiting _wrap_task during cleanup could delay shutdown.
-                        if isinstance(_run_error, (GeneratorExit, KeyboardInterrupt)):
-                            if not _short_circuited:  # pragma: no cover
+                        if isinstance(_run_error, (GeneratorExit, KeyboardInterrupt)):  # pragma: no cover
+                            if not _short_circuited:
                                 _run_done.set()
                                 if not _wrap_task.done():
-                                    _wrap_task.cancel()  # pragma: no cover
+                                    _wrap_task.cancel()
                             raise
                         # Don't re-raise yet — give wrap_run a chance to recover.
                         # If wrap_run catches the error from handler() and returns
