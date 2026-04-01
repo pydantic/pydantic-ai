@@ -318,7 +318,7 @@ async def safe_download(
         max_redirects: Maximum number of redirects to follow (default: 10).
         timeout: Request timeout in seconds (default: 30).
         headers: Additional HTTP headers to include in the request.
-                The ``Host`` header is always set to the original hostname
+                The `Host` header is always set to the original hostname
                 and cannot be overridden.
 
     Returns:

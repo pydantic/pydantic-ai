@@ -169,7 +169,7 @@ def web_fetch_tool(
 
     This tool uses SSRF protection via `pydantic_ai._ssrf.safe_download`.
 
-    By default, sends ``Accept: text/markdown`` to request markdown directly from
+    By default, sends `Accept: text/markdown` to request markdown directly from
     servers that support it (e.g. Cloudflare, Vercel, Mintlify). This reduces
     token usage and improves content quality. Falls back to HTML-to-markdown
     conversion when the server doesn't support markdown responses.
@@ -183,7 +183,7 @@ def web_fetch_tool(
         allowed_domains: Only fetch from these domains (exact hostname match). Raises `ModelRetry` on violation.
         blocked_domains: Never fetch from these domains (exact hostname match). Raises `ModelRetry` on violation.
         headers: Additional HTTP headers to include in requests.
-            Overrides the default ``Accept: text/markdown`` header if ``Accept`` is provided.
+            Overrides the default `Accept: text/markdown` header if `Accept` is provided.
     """
     return Tool[Any](
         WebFetchLocalTool(
