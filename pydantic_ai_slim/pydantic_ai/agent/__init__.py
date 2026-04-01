@@ -1536,6 +1536,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         ctx: RunContext[AgentDepsT],
         additional_metadata: AgentMetadata[AgentDepsT] | None,
     ) -> dict[str, Any] | None:
+        metadata_override = self._override_metadata.get()
+        if metadata_override is not None:
+            return self._resolve_metadata_config(metadata_override.value, ctx)
+
         base_metadata = self._resolve_metadata_config(self._metadata, ctx)
         run_metadata = self._resolve_metadata_config(additional_metadata, ctx)
 

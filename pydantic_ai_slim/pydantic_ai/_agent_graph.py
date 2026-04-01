@@ -1345,6 +1345,7 @@ async def process_tool_calls(  # noqa: C901
                         yield event
                     continue
 
+                ctx.state.increment_retries(ctx.deps.max_result_retries, error=validated.validation_error)
                 yield _messages.FunctionToolCallEvent(call, args_valid=False)
                 output_parts.append(validated.validation_error.tool_retry)
                 yield _messages.FunctionToolResultEvent(validated.validation_error.tool_retry)
@@ -1368,6 +1369,10 @@ async def process_tool_calls(  # noqa: C901
                     f'Exceeded maximum retries ({max_retries}) for output validation'
                 ) from (e.__cause__ or e)
             except ToolRetryError as e:
+                # If we already have a valid final result, don't increment retries for invalid output tools
+                # This allows the run to succeed if at least one output tool returned a valid result
+                if not final_result:
+                    ctx.state.increment_retries(ctx.deps.max_result_retries, error=e)
                 yield _messages.FunctionToolCallEvent(call, args_valid=True)
                 output_parts.append(e.tool_retry)
                 yield _messages.FunctionToolResultEvent(e.tool_retry)
