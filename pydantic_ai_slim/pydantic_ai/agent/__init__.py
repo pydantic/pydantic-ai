@@ -1517,19 +1517,21 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     )
         finally:
             try:
-                if instrumentation_settings and run_span.is_recording():
-                    run_span.set_attributes(
-                        self._run_span_end_attributes(
-                            instrumentation_settings,
-                            usage,
-                            state.message_history,
-                            graph_deps.new_message_index,
-                            metadata=run_metadata,
+                try:
+                    if instrumentation_settings and run_span.is_recording():
+                        run_span.set_attributes(
+                            self._run_span_end_attributes(
+                                instrumentation_settings,
+                                usage,
+                                state.message_history,
+                                graph_deps.new_message_index,
+                                metadata=run_metadata,
+                            )
                         )
-                    )
-            except Exception:
-                pass
-            run_span.end()
+                except Exception:
+                    pass
+            finally:
+                run_span.end()
 
     def _get_metadata(
         self,
