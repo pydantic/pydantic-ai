@@ -193,11 +193,13 @@ async def run_output_execute_hooks(
     output_context: OutputContext,
     output: Any,
     do_execute: Callable[[Any], Awaitable[Any]],
+    wrap_validation_errors: bool = True,
 ) -> Any:
     """Run the output execute hooks around do_execute.
 
     ModelRetry from any hook (before, after, wrap, on_error) is caught by the outer handler
-    and converted to ToolRetryError, triggering a model retry.
+    and converted to ToolRetryError when wrap_validation_errors is True.
+    When False (streaming), ModelRetry propagates as-is.
     """
     try:
         output = await capability.before_output_execute(run_context, output_context=output_context, output=output)
@@ -219,8 +221,9 @@ async def run_output_execute_hooks(
     except ToolRetryError:
         raise  # Already wrapped, propagate
     except ModelRetry as e:
-        # ModelRetry from before/after/wrap/on_error — convert to ToolRetryError
-        raise _make_retry_prompt(e, run_context) from e
+        if wrap_validation_errors:
+            raise _make_retry_prompt(e, run_context) from e
+        raise
 
 
 async def run_output_with_hooks(
@@ -262,6 +265,7 @@ async def run_output_with_hooks(
         output_context=output_context,
         output=validated,
         do_execute=do_execute,
+        wrap_validation_errors=wrap_validation_errors,
     )
 
     return cast(OutputDataT, result)
