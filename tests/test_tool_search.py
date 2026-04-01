@@ -37,6 +37,7 @@ from .conftest import try_import
 with try_import() as evals_available:
     from pydantic_evals import Case, Dataset
     from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+    from pydantic_evals.reporting import EvaluationReport
 
 with try_import() as anthropic_available:
     import anthropic  # pyright: ignore[reportUnusedImport]  # noqa: F401
@@ -227,7 +228,7 @@ if evals_available():
         )
 
 
-def _summarize_report(report: Any) -> dict[str, ScenarioSummary]:
+def _summarize_report(report: EvaluationReport[str, EvalOutput, EvalMetadata]) -> dict[str, ScenarioSummary]:
     """Extract a compact summary from eval report for snapshotting."""
     summary: dict[str, ScenarioSummary] = {}
     for case in report.cases:
@@ -402,9 +403,6 @@ async def test_tool_search_toolset_filters_deferred_tools():
     tool_names = list(tools.keys())
 
     assert tool_names == snapshot(['search_tools', 'get_weather', 'get_time'])
-    assert 'calculate_mortgage' not in tool_names
-    assert 'stock_price' not in tool_names
-    assert 'crypto_price' not in tool_names
 
 
 async def test_search_tool_def_description_and_schema():
@@ -445,11 +443,14 @@ async def test_tool_search_toolset_search_returns_matching_tools():
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'mortgage'}, ctx, search_tool)
-    assert isinstance(result, ToolReturn)
-    assert result.return_value == snapshot(
-        [{'name': 'calculate_mortgage', 'description': 'Calculate monthly mortgage payment for a loan.'}]
+    assert result == snapshot(
+        ToolReturn(
+            return_value=[
+                {'name': 'calculate_mortgage', 'description': 'Calculate monthly mortgage payment for a loan.'}
+            ],
+            metadata={'discovered_tools': ['calculate_mortgage']},
+        )
     )
-    assert result.metadata == snapshot({'discovered_tools': ['calculate_mortgage']})
 
 
 async def test_tool_search_toolset_search_is_case_insensitive():
@@ -605,38 +606,32 @@ async def test_tool_search_toolset_no_deferred_tools_returns_all():
     tool_names = list(tools.keys())
 
     assert tool_names == snapshot(['get_weather', 'get_time'])
-    assert _SEARCH_TOOLS_NAME not in tool_names
 
 
 async def test_agent_always_wraps_in_tool_search_toolset():
-    """Test that agent always wraps toolset in ToolSearchToolset."""
-    agent = Agent('test')
+    """Test that agent always wraps toolset in ToolSearchToolset, with and without deferred tools."""
+    agent_no_deferred = Agent('test')
 
-    @agent.tool_plain
+    @agent_no_deferred.tool_plain
     def get_weather(city: str) -> str:  # pragma: no cover
         """Get the current weather for a city."""
         return f'Weather in {city}'
 
-    toolset = agent._get_toolset()  # pyright: ignore[reportPrivateUsage]
-    assert isinstance(toolset, ToolSearchToolset)
+    assert isinstance(agent_no_deferred._get_toolset(), ToolSearchToolset)  # pyright: ignore[reportPrivateUsage]
 
+    agent_with_deferred = Agent('test')
 
-async def test_agent_wraps_in_tool_search_toolset_with_deferred():
-    """Test that agent wraps with ToolSearchToolset when there are deferred tools."""
-    agent = Agent('test')
-
-    @agent.tool_plain
-    def get_weather(city: str) -> str:  # pragma: no cover
+    @agent_with_deferred.tool_plain
+    def get_weather2(city: str) -> str:  # pragma: no cover
         """Get the current weather for a city."""
         return f'Weather in {city}'
 
-    @agent.tool_plain(defer_loading=True)
+    @agent_with_deferred.tool_plain(defer_loading=True)
     def calculate_mortgage(principal: float) -> str:  # pragma: no cover
         """Calculate mortgage payment."""
         return 'Calculated'
 
-    toolset = agent._get_toolset()  # pyright: ignore[reportPrivateUsage]
-    assert isinstance(toolset, ToolSearchToolset)
+    assert isinstance(agent_with_deferred._get_toolset(), ToolSearchToolset)  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_tool_manager_with_tool_search_toolset():
@@ -735,8 +730,6 @@ async def test_function_toolset_all_deferred():
     tool_names = list(tools.keys())
 
     assert tool_names == snapshot(['search_tools'])
-    assert 'deferred_tool1' not in tool_names
-    assert 'deferred_tool2' not in tool_names
 
 
 async def test_tool_search_toolset_ignores_non_metadata_history():
@@ -836,23 +829,3 @@ async def test_deferred_loading_toolset_marks_specific_tools():
     assert 'search_tools' in tools
     assert 'tool_a' in tools
     assert 'tool_b' not in tools
-
-
-async def test_call_tool_returns_tool_return_with_metadata():
-    """Test that call_tool for search_tools returns a ToolReturn with metadata listing matched tools."""
-    toolset = _create_function_toolset()
-    searchable = ToolSearchToolset(wrapped=toolset)
-    ctx = _build_run_context(None)
-
-    tools = await searchable.get_tools(ctx)
-    search_tool = tools[_SEARCH_TOOLS_NAME]
-
-    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'mortgage'}, ctx, search_tool)
-    assert result == snapshot(
-        ToolReturn(
-            return_value=[
-                {'name': 'calculate_mortgage', 'description': 'Calculate monthly mortgage payment for a loan.'}
-            ],
-            metadata={'discovered_tools': ['calculate_mortgage']},
-        )
-    )
