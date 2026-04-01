@@ -21,7 +21,12 @@ ImageGenerationFallbackModelFunc = Callable[
 ImageGenerationFallbackModel = Model | KnownModelName | str | ImageGenerationFallbackModelFunc | None
 """Type for the fallback model: a model, model name, factory callable, or None."""
 
-__all__ = ('image_generation_tool',)
+__all__ = (
+    'ImageGenerationFallbackModel',
+    'ImageGenerationFallbackModelFunc',
+    'ImageGenerationSubagentTool',
+    'image_generation_tool',
+)
 
 # Known image-only model names that don't support the conversational Agent loop
 # required by the subagent fallback, mapped to suggested LLM alternatives.

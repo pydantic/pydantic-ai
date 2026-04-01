@@ -94,7 +94,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import MCP, ImageGeneration, WebFetch, WebSearch
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-1-20250414',
+    'anthropic:claude-sonnet-4-6',
     capabilities=[
         # Auto-detects DuckDuckGo as local fallback
         WebSearch(),
