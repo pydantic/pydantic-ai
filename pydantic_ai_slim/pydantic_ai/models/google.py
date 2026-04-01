@@ -1327,13 +1327,13 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
             if item.provider_name == provider_name:
                 if item.tool_name == CodeExecutionTool.kind:
                     part['executable_code'] = cast(ExecutableCodeDict, item.args_as_dict())
-                elif tool_type := _BUILTIN_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name):
+                elif tool_type := _BUILTIN_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name):  # pragma: no branch
                     part['tool_call'] = {'id': item.tool_call_id, 'tool_type': tool_type, 'args': item.args_as_dict()}
         elif isinstance(item, BuiltinToolReturnPart):
             if item.provider_name == provider_name:
                 if item.tool_name == CodeExecutionTool.kind and isinstance(item.content, dict):
                     part['code_execution_result'] = cast(CodeExecutionResultDict, item.content)  # pyright: ignore[reportUnknownMemberType]
-                elif tool_type := _BUILTIN_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name):
+                elif tool_type := _BUILTIN_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name):  # pragma: no branch
                     tool_content: dict[str, Any] = (  # pyright: ignore[reportUnknownVariableType]
                         item.content if isinstance(item.content, dict) else {'result': item.content}  # pyright: ignore[reportUnknownMemberType]
                     )
