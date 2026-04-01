@@ -1064,7 +1064,7 @@ class AnthropicModel(Model):
         if system_prompt:
             return system_prompt, anthropic_messages
 
-        return '', anthropic_messages
+        return [], anthropic_messages
 
     @staticmethod
     def _limit_cache_points(

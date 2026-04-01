@@ -879,10 +879,7 @@ class Model(ABC):
         """
         if output_instr := params.prompted_output_instructions:
             parts = [*(params.instruction_parts or []), InstructionPart(content=output_instr)]
-            # Re-sort static before dynamic to maintain the ordering invariant
-            # that Anthropic/Bedrock cache placement depends on.
-            parts.sort(key=lambda p: p.dynamic)
-            return replace(params, instruction_parts=parts)
+            return replace(params, instruction_parts=InstructionPart.sorted(parts))
         return params
 
     @property
@@ -982,12 +979,19 @@ class Model(ABC):
     def _get_instructions(
         messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters | None = None
     ) -> str | None:
-        """Get instructions from the first ModelRequest found when iterating messages in reverse.
+        """Get the joined instructions string for the current request.
 
-        In the case that a "mock" request was generated to include a tool-return part for a result tool,
-        we want to use the instructions from the second-to-most-recent request (which should correspond to the
-        original request that generated the response that resulted in the tool-return part).
+        When `model_request_parameters` is provided (normal model request flow), returns
+        the joined content of `instruction_parts` which already includes prompted output
+        instructions and is properly sorted.
+
+        Falls back to reading `ModelRequest.instructions` from message history when
+        `model_request_parameters` is not available (e.g. OTel span attributes).
         """
+        if model_request_parameters and model_request_parameters.instruction_parts:
+            return InstructionPart.join(model_request_parameters.instruction_parts)
+
+        # Fallback: read from message history (used by OTel when model_request_parameters is unavailable)
         instructions = None
 
         last_two_requests: list[ModelRequest] = []
@@ -1000,33 +1004,12 @@ class Model(ABC):
                     instructions = message.instructions
                     break
 
-        # If we don't have two requests, and we didn't already return instructions, there are definitely not any:
         if instructions is None and len(last_two_requests) == 2:
             most_recent_request = last_two_requests[0]
             second_most_recent_request = last_two_requests[1]
 
-            # If we've gotten this far and the most recent request consists of only tool-return parts or retry-prompt parts,
-            # we use the instructions from the second-to-most-recent request. This is necessary because when handling
-            # result tools, we generate a "mock" ModelRequest with a tool-return part for it, and that ModelRequest will not
-            # have the relevant instructions from the agent.
-
-            # While it's possible that you could have a message history where the most recent request has only tool returns,
-            # I believe there is no way to achieve that would _change_ the instructions without manually crafting the most
-            # recent message. That might make sense in principle for some usage pattern, but it's enough of an edge case
-            # that I think it's not worth worrying about, since you can work around this by inserting another ModelRequest
-            # with no parts at all immediately before the request that has the tool calls (that works because we only look
-            # at the two most recent ModelRequests here).
-
-            # If you have a use case where this causes pain, please open a GitHub issue and we can discuss alternatives.
-
             if all(p.part_kind == 'tool-return' or p.part_kind == 'retry-prompt' for p in most_recent_request.parts):
                 instructions = second_most_recent_request.instructions
-
-        if model_request_parameters and (output_instructions := model_request_parameters.prompted_output_instructions):
-            if instructions:
-                instructions = '\n\n'.join([instructions, output_instructions])
-            else:
-                instructions = output_instructions
 
         return instructions
 

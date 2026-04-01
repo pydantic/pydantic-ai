@@ -676,6 +676,12 @@ def test_instructions_with_structured_output(
                         'gen_ai.system': 'test',
                     },
                     {
+                        'index': 0,
+                        'message': {'content': 'Here are some instructions', 'role': 'system'},
+                        'gen_ai.system': 'test',
+                        'event.name': 'gen_ai.choice',
+                    },
+                    {
                         'event.name': 'gen_ai.choice',
                         'index': 0,
                         'message': {
@@ -2451,6 +2457,12 @@ def test_static_function_instructions_in_agent_run_span(
                         'gen_ai.system': 'test',
                     },
                     {
+                        'index': 0,
+                        'message': {'content': 'Here are some instructions', 'role': 'system'},
+                        'gen_ai.system': 'test',
+                        'event.name': 'gen_ai.choice',
+                    },
+                    {
                         'event.name': 'gen_ai.choice',
                         'index': 0,
                         'message': {
@@ -2695,6 +2707,12 @@ def test_dynamic_function_instructions_in_agent_run_span(
                         'role': 'user',
                         'gen_ai.message.index': 0,
                         'gen_ai.system': 'test',
+                    },
+                    {
+                        'index': 0,
+                        'message': {'content': 'This is step 1', 'role': 'system'},
+                        'gen_ai.system': 'test',
+                        'event.name': 'gen_ai.choice',
                     },
                     {
                         'event.name': 'gen_ai.choice',
@@ -2988,6 +3006,12 @@ def test_function_instructions_with_history_in_agent_run_span(
                         'event.name': 'gen_ai.user.message',
                     },
                     {
+                        'index': 0,
+                        'message': {'content': 'Instructions for the current agent run', 'role': 'system'},
+                        'gen_ai.system': 'test',
+                        'event.name': 'gen_ai.choice',
+                    },
+                    {
                         'event.name': 'gen_ai.choice',
                         'index': 0,
                         'message': {
@@ -3201,6 +3225,12 @@ async def test_run_stream(
                         'gen_ai.system': 'test',
                         'gen_ai.message.index': 0,
                         'event.name': 'gen_ai.user.message',
+                    },
+                    {
+                        'index': 0,
+                        'message': {'content': 'Instructions for the current agent run', 'role': 'system'},
+                        'gen_ai.system': 'test',
+                        'event.name': 'gen_ai.choice',
                     },
                     {
                         'index': 0,

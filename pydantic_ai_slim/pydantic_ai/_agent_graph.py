@@ -780,10 +780,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
         # Fetch instructions now that dynamic toolsets have been resolved by for_run_step.
-        # Sort static before dynamic so models can rely on this ordering for cache placement.
         instruction_parts = await _get_instructions(ctx, run_context)
         if instruction_parts:
-            instruction_parts = sorted(instruction_parts, key=lambda p: p.dynamic) or None
+            instruction_parts = _messages.InstructionPart.sorted(instruction_parts) or None
         self.request.instructions = _messages.InstructionPart.join(instruction_parts) if instruction_parts else None
 
         # Validate after instructions are resolved; self.request was appended above so [:-1] is prior history

@@ -1147,12 +1147,25 @@ class OpenAIChatModel(Model):
             else:
                 assert_never(message)
         if instruction_parts := model_request_parameters.instruction_parts:
+            system_prompt_role = OpenAIModelProfile.from_profile(self.profile).openai_system_prompt_role or 'system'
             system_prompt_count = next(
-                (i for i, m in enumerate(openai_messages) if m.get('role') != 'system'), len(openai_messages)
+                (i for i, m in enumerate(openai_messages) if m.get('role') != system_prompt_role), len(openai_messages)
             )
-            openai_messages[system_prompt_count:system_prompt_count] = [
-                chat.ChatCompletionSystemMessageParam(content=part.content, role='system') for part in instruction_parts
-            ]
+            if system_prompt_role == 'developer':
+                instruction_messages: list[chat.ChatCompletionMessageParam] = [
+                    chat.ChatCompletionDeveloperMessageParam(role='developer', content=part.content)
+                    for part in instruction_parts
+                ]
+            elif system_prompt_role == 'user':
+                instruction_messages = [
+                    chat.ChatCompletionUserMessageParam(role='user', content=part.content) for part in instruction_parts
+                ]
+            else:
+                instruction_messages = [
+                    chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
+                    for part in instruction_parts
+                ]
+            openai_messages[system_prompt_count:system_prompt_count] = instruction_messages
         return openai_messages
 
     @staticmethod

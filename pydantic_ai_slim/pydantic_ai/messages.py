@@ -1413,6 +1413,11 @@ class InstructionPart:
         """Join instruction parts into a single string, separated by double newlines."""
         return '\n\n'.join(p.content for p in parts).strip() or None
 
+    @staticmethod
+    def sorted(parts: Sequence[InstructionPart]) -> list[InstructionPart]:
+        """Sort instruction parts with static (`dynamic=False`) before dynamic, preserving relative order."""
+        return sorted(parts, key=lambda p: p.dynamic)
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
