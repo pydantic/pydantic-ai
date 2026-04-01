@@ -39,27 +39,25 @@ from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception,
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from mistralai import (
+    from mistralai.client import Mistral
+    from mistralai.client.errors import SDKError
+    from mistralai.client.models import (
         AssistantMessage as MistralAssistantMessage,
         ChatCompletionChoice as MistralChatCompletionChoice,
+        ChatCompletionResponse as MistralChatCompletionResponse,
         CompletionChunk as MistralCompletionChunk,
+        CompletionEvent as MistralCompletionEvent,
         CompletionResponseStreamChoice as MistralCompletionResponseStreamChoice,
         CompletionResponseStreamChoiceFinishReason as MistralCompletionResponseStreamChoiceFinishReason,
         ContentChunk as MistralContentChunk,
         DeltaMessage as MistralDeltaMessage,
         FunctionCall as MistralFunctionCall,
-        Mistral,
         ReferenceChunk as MistralReferenceChunk,
         TextChunk as MistralTextChunk,
+        ToolCall as MistralToolCall,
         UsageInfo as MistralUsageInfo,
     )
-    from mistralai.models import (
-        ChatCompletionResponse as MistralChatCompletionResponse,
-        CompletionEvent as MistralCompletionEvent,
-        SDKError,
-        ToolCall as MistralToolCall,
-    )
-    from mistralai.types.basemodel import Unset as MistralUnset
+    from mistralai.client.types.basemodel import Unset as MistralUnset
 
     from pydantic_ai.models.mistral import (
         MistralModel,
