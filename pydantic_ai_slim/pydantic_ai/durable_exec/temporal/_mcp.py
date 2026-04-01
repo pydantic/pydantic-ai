@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
@@ -12,7 +12,10 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 
-from ._run_context import TemporalRunContext, deserialize_run_context_with_agent
+if TYPE_CHECKING:
+    from pydantic_ai.agent.abstract import AbstractAgent
+
+from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
     CallToolParams,
     CallToolResult,
@@ -31,8 +34,10 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
         tool_activity_config: dict[str, ActivityConfig | Literal[False]],
         deps_type: type[AgentDepsT],
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
+        agent: AbstractAgent[AgentDepsT, Any] | None = None,
     ):
         super().__init__(toolset)
+        self._agent = agent
         self.activity_config = activity_config
 
         self.tool_activity_config: dict[str, ActivityConfig] = {}
@@ -47,7 +52,7 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
         self.run_context_type = run_context_type
 
         async def get_tools_activity(params: GetToolsParams, deps: AgentDepsT) -> dict[str, ToolDefinition]:
-            run_context = deserialize_run_context_with_agent(
+            run_context = deserialize_run_context(
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
             tools = await self.wrapped.get_tools(run_context)
@@ -63,7 +68,7 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
         )
 
         async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
-            run_context = deserialize_run_context_with_agent(
+            run_context = deserialize_run_context(
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
             assert isinstance(params.tool_def, ToolDefinition)

@@ -40,7 +40,7 @@ from pydantic_ai.tools import (
 )
 
 from ._model import TemporalModel, TemporalProviderFactory
-from ._run_context import TemporalRunContext, deserialize_run_context_with_agent
+from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import TemporalWrapperToolset, temporalize_toolset
 
 if TYPE_CHECKING:
@@ -148,7 +148,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             # and that only ends up calling `event_stream_handler` if it is set.
             assert self.event_stream_handler is not None
 
-            run_context = deserialize_run_context_with_agent(
+            run_context = deserialize_run_context(
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self.wrapped
             )
 
@@ -176,8 +176,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             event_stream_handler=self.event_stream_handler,
             models=models,
             provider_factory=provider_factory,
+            agent=self.wrapped,
         )
-        temporal_model._agent = self.wrapped  # pyright: ignore[reportPrivateUsage]
         activities.extend(temporal_model.temporal_activities)
         self._temporal_model = temporal_model
 
@@ -197,7 +197,11 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 self.run_context_type,
             )
             if isinstance(toolset, TemporalWrapperToolset):
-                toolset._agent = self.wrapped  # pyright: ignore[reportPrivateUsage]
+                # Set agent on toolsets created by custom temporalize_toolset_func
+                # that don't accept the agent parameter. The default
+                # temporalize_toolset passes it through the constructor.
+                if toolset._agent is None:  # pyright: ignore[reportPrivateUsage]
+                    toolset._agent = self.wrapped  # pyright: ignore[reportPrivateUsage]
                 activities.extend(toolset.temporal_activities)
             return toolset
 

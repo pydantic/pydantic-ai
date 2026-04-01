@@ -177,6 +177,7 @@ def temporalize_toolset(
     tool_activity_config: dict[str, ActivityConfig | Literal[False]],
     deps_type: type[AgentDepsT],
     run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
+    agent: AbstractAgent[AgentDepsT, Any] | None = None,
 ) -> AbstractToolset[AgentDepsT]:
     """Temporalize a toolset.
 
@@ -187,6 +188,7 @@ def temporalize_toolset(
         tool_activity_config: The Temporal activity config to use for specific tools identified by tool name.
         deps_type: The type of agent's dependencies object. It needs to be serializable using Pydantic's `TypeAdapter`.
         run_context_type: The `TemporalRunContext` (sub)class that's used to serialize and deserialize the run context.
+        agent: The agent instance to attach to deserialized run contexts in activities.
     """
     if isinstance(toolset, FunctionToolset):
         from ._function_toolset import TemporalFunctionToolset
@@ -198,6 +200,7 @@ def temporalize_toolset(
             tool_activity_config=tool_activity_config,
             deps_type=deps_type,
             run_context_type=run_context_type,
+            agent=agent,
         )
 
     if isinstance(toolset, DynamicToolset):
@@ -210,6 +213,7 @@ def temporalize_toolset(
             tool_activity_config=tool_activity_config,
             deps_type=deps_type,
             run_context_type=run_context_type,
+            agent=agent,
         )
 
     try:
@@ -227,6 +231,7 @@ def temporalize_toolset(
                 tool_activity_config=tool_activity_config,
                 deps_type=deps_type,
                 run_context_type=run_context_type,
+                agent=agent,
             )
 
     try:
@@ -244,6 +249,7 @@ def temporalize_toolset(
                 tool_activity_config=tool_activity_config,
                 deps_type=deps_type,
                 run_context_type=run_context_type,
+                agent=agent,
             )
 
     return toolset

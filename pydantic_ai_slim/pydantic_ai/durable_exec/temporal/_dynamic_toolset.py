@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
@@ -13,7 +13,10 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 
-from ._run_context import TemporalRunContext, deserialize_run_context_with_agent
+if TYPE_CHECKING:
+    from pydantic_ai.agent.abstract import AbstractAgent
+
+from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
     CallToolParams,
     CallToolResult,
@@ -46,15 +49,17 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
         tool_activity_config: dict[str, ActivityConfig | Literal[False]],
         deps_type: type[AgentDepsT],
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
+        agent: AbstractAgent[AgentDepsT, Any] | None = None,
     ):
         super().__init__(toolset)
+        self._agent = agent
         self.activity_config = activity_config
         self.tool_activity_config = tool_activity_config
         self.run_context_type = run_context_type
 
         async def get_tools_activity(params: GetToolsParams, deps: AgentDepsT) -> dict[str, _ToolInfo]:
             """Activity that calls the dynamic function and returns tool definitions."""
-            ctx = deserialize_run_context_with_agent(
+            ctx = deserialize_run_context(
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
 
@@ -75,7 +80,7 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
 
         async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
             """Activity that instantiates the dynamic toolset and calls the tool."""
-            ctx = deserialize_run_context_with_agent(
+            ctx = deserialize_run_context(
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
 

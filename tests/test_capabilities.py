@@ -7144,3 +7144,28 @@ class TestModelRetryFromHooks:
                 ),
             ]
         )
+
+
+class TestCtxAgentInCapability:
+    """Test that ctx.agent is available in capability hooks."""
+
+    async def test_ctx_agent_in_hooks(self):
+        hook_agent_names: list[str | None] = []
+
+        @dataclass
+        class AgentTrackingCap(AbstractCapability[Any]):
+            async def before_run(self, ctx: RunContext[Any]) -> None:
+                hook_agent_names.append(ctx.agent.name if ctx.agent else None)
+
+            async def before_model_request(
+                self,
+                ctx: RunContext[Any],
+                request_context: ModelRequestContext,
+            ) -> ModelRequestContext:
+                hook_agent_names.append(ctx.agent.name if ctx.agent else None)
+                return request_context
+
+        agent = Agent(FunctionModel(simple_model_function), name='hook_test_agent', capabilities=[AgentTrackingCap()])
+        await agent.run('hello')
+        assert all(name == 'hook_test_agent' for name in hook_agent_names)
+        assert len(hook_agent_names) >= 2  # at least before_run + before_model_request

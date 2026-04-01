@@ -38,7 +38,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """The model used in this run."""
     usage: RunUsage
     """LLM usage associated with the run."""
-    agent: AbstractAgent[Any, Any] | None = field(default=None, repr=False)
+    agent: AbstractAgent[RunContextAgentDepsT, Any] | None = field(default=None, repr=False)
     """The agent running this context, or `None` if not set."""
     prompt: str | Sequence[_messages.UserContent] | None = None
     """The original user prompt passed to the run."""
