@@ -131,6 +131,7 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/groq:meta-llama/llama-prompt-guard-2-22m',
         'gateway/groq:meta-llama/llama-prompt-guard-2-86m',
         'gateway/groq:meta-llama/llama-guard-4-12b',
+        'gateway/groq:meta-llama/llama-4-maverick-17b-128e-instruct',
         'gateway/groq:playai-tts',
         'gateway/groq:playai-tts-arabic',
         'gateway/groq:qwen/qwen-3-32b',
