@@ -740,7 +740,7 @@ class OpenAIChatModel(Model):
             return await self.client.chat.completions.create(
                 model=self.model_name,
                 messages=openai_messages,
-                parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
+                parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT) if tools else OMIT,
                 tools=tools or OMIT,
                 tool_choice=tool_choice or OMIT,
                 stream=stream,
@@ -1751,7 +1751,7 @@ class OpenAIResponsesModel(Model):
                 input=openai_messages,
                 model=self.model_name,
                 instructions=instructions,
-                parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
+                parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT) if tools else OMIT,
                 tools=tools or OMIT,
                 tool_choice=tool_choice or OMIT,
                 max_output_tokens=model_settings.get('max_tokens', OMIT),
