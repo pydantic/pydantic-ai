@@ -54,6 +54,7 @@ from ..messages import (
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -141,6 +142,7 @@ def _map_api_errors(model_name: str) -> Iterator[None]:
 
 
 __all__ = (
+    'DEPRECATED_OPENAI_MODELS',
     'OpenAIModel',
     'OpenAIChatModel',
     'OpenAIResponsesModel',
@@ -149,6 +151,34 @@ __all__ = (
     'OpenAIResponsesModelSettings',
     'OpenAIModelName',
 )
+
+DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset(
+    {
+        # https://developers.openai.com/api/docs/deprecations#2025-11-18-chatgpt-4o-latest-snapshot
+        'chatgpt-4o-latest',
+        # https://developers.openai.com/api/docs/deprecations#2025-11-17-codex-mini-latest-model-snapshot
+        'codex-mini-latest',
+        # https://developers.openai.com/api/docs/deprecations#2025-09-26-legacy-gpt-model-snapshots
+        'gpt-4-0125-preview',
+        'gpt-4-1106-preview',
+        'gpt-4-turbo-preview',
+        # https://developers.openai.com/api/docs/deprecations#2024-06-06-gpt-4-32k-and-vision-preview-models
+        'gpt-4-32k',
+        'gpt-4-32k-0314',
+        'gpt-4-32k-0613',
+        'gpt-4-vision-preview',
+        # https://developers.openai.com/api/docs/deprecations#2025-06-10-gpt-4o-audio-preview-2024-10-01
+        'gpt-4o-audio-preview-2024-10-01',
+        # Does not exist
+        'gpt-5.1-mini',
+        # https://developers.openai.com/api/docs/deprecations#2025-04-28-o1-preview-and-o1-mini
+        'o1-mini',
+        'o1-mini-2024-09-12',
+        'o1-preview',
+        'o1-preview-2024-09-12',
+    }
+)
+"""Models that are deprecated or don't exist but are still present in the OpenAI SDK's type definitions."""
 
 OpenAIModelName = str | AllModels
 """
@@ -194,6 +224,24 @@ _OPENAI_ASPECT_RATIO_TO_SIZE: dict[ImageAspectRatio, Literal['1024x1024', '1024x
 
 _OPENAI_IMAGE_SIZE = Literal['auto', '1024x1024', '1024x1536', '1536x1024']
 _OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = _utils.get_args(_OPENAI_IMAGE_SIZE)
+
+
+class _ChatCompletion(chat.ChatCompletion):
+    """Relaxes strict Literal validation on fields that OpenAI-compatible providers may return non-standard values for."""
+
+    model_config = {'title': 'ChatCompletion'}
+
+    service_tier: str | None = None  # type: ignore[reportIncompatibleVariableOverride]
+    """OpenAI-compatible providers can return arbitrary ``service_tier`` values (e.g. ``"standard"``, ``"on_demand"``)."""
+
+
+class _ChatCompletionChunk(ChatCompletionChunk):  # pyright: ignore[reportUnusedClass] — subclassed in openrouter.py
+    """Relaxes strict Literal validation on fields that OpenAI-compatible providers may return non-standard values for."""
+
+    model_config = {'title': 'ChatCompletionChunk'}
+
+    service_tier: str | None = None  # type: ignore[reportIncompatibleVariableOverride]
+    """OpenAI-compatible providers can return arbitrary ``service_tier`` values (e.g. ``"standard"``, ``"on_demand"``)."""
 
 
 class _AzureContentFilterResultDetail(BaseModel):
@@ -660,7 +708,7 @@ class OpenAIChatModel(Model):
         model_response = self._process_response(response)
         return model_response
 
-    def _get_reasoning_effort(
+    def _translate_thinking(
         self,
         model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
@@ -752,7 +800,7 @@ class OpenAIChatModel(Model):
             return await self.client.chat.completions.create(
                 model=self.model_name,
                 messages=openai_messages,
-                parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
+                parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT) if tools else OMIT,
                 tools=tools or OMIT,
                 tool_choice=tool_choice or OMIT,
                 stream=stream,
@@ -762,7 +810,7 @@ class OpenAIChatModel(Model):
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 response_format=response_format or OMIT,
                 seed=model_settings.get('seed', OMIT),
-                reasoning_effort=self._get_reasoning_effort(model_settings, model_request_parameters),
+                reasoning_effort=self._translate_thinking(model_settings, model_request_parameters),
                 user=model_settings.get('openai_user', OMIT),
                 web_search_options=web_search_options or OMIT,
                 service_tier=model_settings.get('openai_service_tier', OMIT),
@@ -789,12 +837,12 @@ class OpenAIChatModel(Model):
         except APIConnectionError as e:
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
-    def _validate_completion(self, response: chat.ChatCompletion) -> chat.ChatCompletion:
+    def _validate_completion(self, response: chat.ChatCompletion) -> _ChatCompletion:
         """Hook that validates chat completions before processing.
 
         This method may be overridden by subclasses of `OpenAIChatModel` to apply custom completion validations.
         """
-        return chat.ChatCompletion.model_validate(response.model_dump())
+        return _ChatCompletion.model_validate(response.model_dump())
 
     def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any] | None:
         """Hook that response content to provider details.
@@ -1141,7 +1189,9 @@ class OpenAIChatModel(Model):
             else:
                 assert_never(message)
         if instructions := self._get_instructions(messages, model_request_parameters):
-            system_prompt_count = sum(1 for m in openai_messages if m.get('role') == 'system')
+            system_prompt_count = next(
+                (i for i, m in enumerate(openai_messages) if m.get('role') != 'system'), len(openai_messages)
+            )
             openai_messages.insert(
                 system_prompt_count, chat.ChatCompletionSystemMessageParam(content=instructions, role='system')
             )
@@ -1306,11 +1356,21 @@ class OpenAIChatModel(Model):
         raise NotImplementedError('VideoUrl is not supported in OpenAI Chat Completions user prompts')
 
     async def _map_content_item(
-        self, item: str | ImageUrl | BinaryContent | AudioUrl | DocumentUrl | VideoUrl | UploadedFile | CachePoint
+        self,
+        item: str
+        | TextContent
+        | ImageUrl
+        | BinaryContent
+        | AudioUrl
+        | DocumentUrl
+        | VideoUrl
+        | UploadedFile
+        | CachePoint,
     ) -> ChatCompletionContentPartParam | None:
         """Map a single content item to a chat completion content part, or None to filter it out."""
-        if isinstance(item, str):
-            return ChatCompletionContentPartTextParam(text=item, type='text')
+        if isinstance(item, str | TextContent):
+            text = item if isinstance(item, str) else item.content
+            return ChatCompletionContentPartTextParam(text=text, type='text')
         elif isinstance(item, ImageUrl):
             return await self._map_image_url_item(item)
         elif isinstance(item, BinaryContent):
@@ -1702,7 +1762,7 @@ class OpenAIResponsesModel(Model):
             previous_response_id, messages = self._get_previous_response_id_and_new_messages(messages)
 
         instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
-        reasoning = self._get_reasoning(model_settings, model_request_parameters)
+        reasoning = self._translate_thinking(model_settings, model_request_parameters)
 
         text: responses.ResponseTextConfigParam | None = None
         if model_request_parameters.output_mode == 'native':
@@ -1718,7 +1778,9 @@ class OpenAIResponsesModel(Model):
             # > Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'.
             # Apparently they're only checking input messages for "JSON", not instructions.
             assert isinstance(instructions, str)
-            system_prompt_count = sum(1 for m in openai_messages if m.get('role') == 'system')
+            system_prompt_count = next(
+                (i for i, m in enumerate(openai_messages) if m.get('role') != 'system'), len(openai_messages)
+            )
             openai_messages.insert(
                 system_prompt_count, responses.EasyInputMessageParam(role='system', content=instructions)
             )
@@ -1765,7 +1827,7 @@ class OpenAIResponsesModel(Model):
                 input=openai_messages,
                 model=self.model_name,
                 instructions=instructions,
-                parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
+                parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT) if tools else OMIT,
                 tools=tools or OMIT,
                 tool_choice=tool_choice or OMIT,
                 max_output_tokens=model_settings.get('max_tokens', OMIT),
@@ -1797,7 +1859,7 @@ class OpenAIResponsesModel(Model):
         except APIConnectionError as e:
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
-    def _get_reasoning(
+    def _translate_thinking(
         self,
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
@@ -2226,8 +2288,9 @@ class OpenAIResponsesModel(Model):
         else:
             content = []
             for item in part.content:
-                if isinstance(item, str):
-                    content.append(responses.ResponseInputTextParam(text=item, type='input_text'))
+                if isinstance(item, str | TextContent):
+                    text = item if isinstance(item, str) else item.content
+                    content.append(responses.ResponseInputTextParam(text=text, type='input_text'))
                 elif isinstance(item, UploadedFile):
                     if item.provider_name != self.system:
                         raise UserError(

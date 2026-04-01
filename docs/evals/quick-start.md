@@ -37,6 +37,7 @@ from pydantic_evals.evaluators import Contains, EqualsExpected
 
 # Create a dataset with test cases
 dataset = Dataset(
+    name='uppercase_tests',
     cases=[
         Case(
             name='uppercase_basic',
@@ -117,6 +118,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import Contains, IsInstance
 
 dataset = Dataset(
+    name='dict_validation',
     cases=[
         Case(inputs={'data': 'required_key present'}, expected_output={'result': 'success'}),
     ],
@@ -136,6 +138,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import LLMJudge
 
 dataset = Dataset(
+    name='llm_judge_test',
     cases=[
         Case(inputs='What is the capital of France?', expected_output='Paris'),
     ],
@@ -158,6 +161,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import MaxDuration
 
 dataset = Dataset(
+    name='performance_test',
     cases=[
         Case(inputs='test input', expected_output='test output'),
     ],

@@ -31,10 +31,12 @@ from pydantic_ai import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
     _utils,
@@ -43,7 +45,7 @@ from pydantic_ai import (
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.builtin_tools import AbstractBuiltinTool, CodeExecutionTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
-from pydantic_ai.messages import UploadedFile, is_multi_modal_content
+from pydantic_ai.messages import is_multi_modal_content
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
 from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP
 from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
@@ -571,7 +573,7 @@ class BedrockConverseModel(Model):
             provider_details=provider_details,
         )
 
-    def _get_thinking_fields(
+    def _translate_thinking(
         self,
         model_settings: BedrockModelSettings,
         model_request_parameters: ModelRequestParameters,
@@ -665,12 +667,13 @@ class BedrockConverseModel(Model):
                 'bedrock_additional_model_response_fields_paths', None
             ):
                 params['additionalModelResponseFieldPaths'] = additional_model_response_fields_paths
-            if additional_model_requests_fields := self._get_thinking_fields(model_settings, model_request_parameters):
-                params['additionalModelRequestFields'] = additional_model_requests_fields
             if prompt_variables := model_settings.get('bedrock_prompt_variables', None):
                 params['promptVariables'] = prompt_variables
             if service_tier := model_settings.get('bedrock_service_tier', None):
                 params['serviceTier'] = service_tier
+
+        if additional_model_requests_fields := self._translate_thinking(settings, model_request_parameters):
+            params['additionalModelRequestFields'] = additional_model_requests_fields
 
         with _map_api_errors(self.model_name):
             if stream:
@@ -1019,8 +1022,9 @@ class BedrockConverseModel(Model):
             content.append({'text': part.content})
         else:
             for item in part.content:
-                if isinstance(item, str):
-                    content.append({'text': item})
+                if isinstance(item, str | TextContent):
+                    text = item if isinstance(item, str) else item.content
+                    content.append({'text': text})
                 elif isinstance(item, (BinaryContent, ImageUrl, DocumentUrl, VideoUrl)):
                     content.append(await BedrockConverseModel._map_file_to_content_block(item, document_count))
                 elif isinstance(item, AudioUrl):

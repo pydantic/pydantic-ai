@@ -21,7 +21,7 @@ Pydantic AI ships with several capabilities that cover common needs:
 | [`Hooks`][pydantic_ai.capabilities.Hooks] | Decorator-based [lifecycle hook](hooks.md) registration | — |
 | [`WebSearch`][pydantic_ai.capabilities.WebSearch] | Web search — builtin when supported, local fallback otherwise | Yes |
 | [`WebFetch`][pydantic_ai.capabilities.WebFetch] | URL fetching — builtin when supported, custom local fallback | Yes |
-| [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | Image generation — builtin when supported, custom local fallback | Yes |
+| [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | Image generation — builtin when supported, subagent fallback via `fallback_model` | Yes |
 | [`MCP`][pydantic_ai.capabilities.MCP] | MCP server — builtin when supported, direct connection otherwise | Yes |
 | [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] | Filters or modifies [tool definitions](tools.md) per step | — |
 | [`PrefixTools`][pydantic_ai.capabilities.PrefixTools] | Wraps a capability and prefixes its tool names | Yes |
@@ -91,15 +91,18 @@ Each accepts `builtin` and `local` keyword arguments to control which side is us
 
 ```python {title="provider_adaptive_tools.py" test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import MCP, WebFetch, WebSearch
+from pydantic_ai.capabilities import MCP, ImageGeneration, WebFetch, WebSearch
 
 agent = Agent(
-    'openai:gpt-5.2',
+    'anthropic:claude-sonnet-4-6',
     capabilities=[
         # Auto-detects DuckDuckGo as local fallback
         WebSearch(),
         # Builtin URL fetching; provide local= for fallback
         WebFetch(),
+        # Builtin when the model supports it; falls back to a subagent
+        # running the specified LLM with image generation support
+        ImageGeneration(fallback_model='openai-responses:gpt-5.4'),
         # Auto-detects transport from URL
         MCP(url='https://mcp.example.com/api'),
     ],
@@ -841,6 +844,12 @@ print(f'Output: {result.output}')
 ## Third-party capabilities
 
 Capabilities are the recommended way for third-party packages to extend Pydantic AI, since they can bundle tools with hooks, instructions, and model settings. See [Extensibility](extensibility.md) for the full ecosystem, including [third-party toolsets](toolsets.md#third-party-toolsets) that can also be wrapped as capabilities.
+
+### Agent Skills
+
+Capabilities that implement [Agent Skills](https://agentskills.io) support help agents efficiently discover and perform specific tasks:
+
+* [`pydantic-ai-skills`](https://github.com/DougTrajano/pydantic-ai-skills) - `SkillsCapability` implements Agent Skills support with progressive disclosure (load skills on-demand to reduce tokens). Supports filesystem and programmatic skills; compatible with [agentskills.io](https://agentskills.io).
 
 To add your package to this page, open a pull request.
 

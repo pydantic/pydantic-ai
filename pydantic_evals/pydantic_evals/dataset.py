@@ -36,6 +36,7 @@ from pydantic_ai._spec import build_registry, build_schema_types, load_from_regi
 from pydantic_evals._utils import get_event_loop
 
 from ._utils import get_unwrapped_function_name, logfire_span, task_group_gather
+from ._warnings import PydanticEvalsDeprecationWarning
 from .evaluators import EvaluationResult, Evaluator
 from .evaluators._base import BaseEvaluator
 from .evaluators._run_evaluator import run_evaluator
@@ -196,6 +197,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             return ctx.output == ctx.expected_output
 
     dataset = Dataset(
+        name='uppercase_tests',
         cases=[
             Case(name='test1', inputs={'text': 'Hello'}, expected_output='HELLO'),
             Case(name='test2', inputs={'text': 'World'}, expected_output='WORLD'),
@@ -226,7 +228,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     """
 
     name: str | None = None
-    """Optional name of the dataset."""
+    """Name of the dataset. Required in future versions."""
     cases: list[Case[InputsT, OutputT, MetadataT]]
     """List of test cases in the dataset."""
     evaluators: list[Evaluator[InputsT, OutputT, MetadataT]] = []
@@ -245,11 +247,18 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         """Initialize a new dataset with test cases and optional evaluators.
 
         Args:
-            name: Optional name for the dataset.
+            name: Name for the dataset. Omitting this is deprecated and will raise an error in a future version.
             cases: Sequence of test cases to include in the dataset.
             evaluators: Optional sequence of evaluators to apply to all cases in the dataset.
             report_evaluators: Optional sequence of report evaluators that run on the full evaluation report.
         """
+        if name is None:
+            warnings.warn(
+                'Omitting the `name` parameter is deprecated. Please provide a name for your `Dataset`.',
+                PydanticEvalsDeprecationWarning,
+                stacklevel=2,
+            )
+
         case_names = set[str]()
         for case in cases:
             if case.name is None:
@@ -727,9 +736,9 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             cases.append(row)
         if errors:
             raise ExceptionGroup(f'{len(errors)} error(s) loading evaluators from registry', errors[:3])
-        result = cls(name=dataset_model.name, cases=cases, report_evaluators=report_evaluators)
-        if result.name is None:
-            result.name = default_name
+        # Use default_name if no name was provided in the serialized data
+        name = dataset_model.name if dataset_model.name is not None else default_name
+        result = cls(name=name, cases=cases, report_evaluators=report_evaluators)
         result.evaluators = dataset_evaluators
         return result
 
@@ -974,6 +983,36 @@ class _TaskRun:
         self.attributes[name] = value
 
 
+def _extract_span_tree_metrics(task_run: _TaskRun, span_tree: SpanTree) -> None:
+    """Extract standard metrics (requests, cost, token usage) from a span tree.
+
+    Iterates the span tree looking for LLM request spans (identified by the
+    ``gen_ai.request.model`` attribute) and extracts:
+
+    - ``requests``: count of ``gen_ai.operation.name == 'chat'`` spans
+    - ``cost``: sum of ``operation.cost`` values
+    - Token usage from ``gen_ai.usage.*`` and ``gen_ai.usage.details.*`` attributes
+    """
+    # Idea for making this more configurable: replace the following logic with a call to a user-provided function
+    #   of type Callable[[_TaskRun, SpanTree], None] or similar, (maybe no _TaskRun and just use the public APIs).
+    #   That way users can customize this logic. We'd default to a function that does the current thing but also
+    #   allow `None` to disable it entirely.
+    for node in span_tree:
+        if 'gen_ai.request.model' not in node.attributes:
+            continue  # we only want to count the below specifically for the individual LLM requests, not agent runs
+        for k, v in node.attributes.items():
+            if k == 'gen_ai.operation.name' and v == 'chat':
+                task_run.increment_metric('requests', 1)
+            elif not isinstance(v, int | float):
+                continue
+            elif k == 'operation.cost':
+                task_run.increment_metric('cost', v)
+            elif k.startswith('gen_ai.usage.details.'):
+                task_run.increment_metric(k.removeprefix('gen_ai.usage.details.'), v)
+            elif k.startswith('gen_ai.usage.'):
+                task_run.increment_metric(k.removeprefix('gen_ai.usage.'), v)
+
+
 async def _run_task(
     task: Callable[[InputsT], Awaitable[OutputT] | OutputT],
     case: Case[InputsT, OutputT, MetadataT],
@@ -1024,24 +1063,7 @@ async def _run_task(
     task_run, task_output, duration, span_tree = await _run_once()
 
     if isinstance(span_tree, SpanTree):  # pragma: no branch
-        # Idea for making this more configurable: replace the following logic with a call to a user-provided function
-        #   of type Callable[[_TaskRun, SpanTree], None] or similar, (maybe no _TaskRun and just use the public APIs).
-        #   That way users can customize this logic. We'd default to a function that does the current thing but also
-        #   allow `None` to disable it entirely.
-        for node in span_tree:
-            if 'gen_ai.request.model' not in node.attributes:
-                continue  # we only want to count the below specifically for the individual LLM requests, not agent runs
-            for k, v in node.attributes.items():
-                if k == 'gen_ai.operation.name' and v == 'chat':
-                    task_run.increment_metric('requests', 1)
-                elif not isinstance(v, int | float):
-                    continue
-                elif k == 'operation.cost':
-                    task_run.increment_metric('cost', v)
-                elif k.startswith('gen_ai.usage.details.'):
-                    task_run.increment_metric(k.removeprefix('gen_ai.usage.details.'), v)
-                elif k.startswith('gen_ai.usage.'):
-                    task_run.increment_metric(k.removeprefix('gen_ai.usage.'), v)
+        _extract_span_tree_metrics(task_run, span_tree)
 
     return EvaluatorContext[InputsT, OutputT, MetadataT](
         name=case.name,

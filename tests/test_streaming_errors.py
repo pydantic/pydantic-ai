@@ -127,12 +127,12 @@ with try_import() as huggingface_imports:
     from .models.test_huggingface import MockHuggingFace
 
 with try_import() as mistral_imports:
-    from mistralai.models import (
+    from mistralai.client.errors import SDKError
+    from mistralai.client.models import (
         CompletionChunk as MistralCompletionChunk,
         CompletionEvent as MistralCompletionEvent,
         CompletionResponseStreamChoice as MistralCompletionResponseStreamChoice,
         DeltaMessage as MistralDeltaMessage,
-        SDKError,
         UsageInfo as MistralUsageInfo,
     )
 

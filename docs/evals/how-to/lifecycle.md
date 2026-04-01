@@ -46,6 +46,7 @@ class SetupFromMetadata(CaseLifecycle[str, str, dict]):
 
 
 dataset = Dataset(
+    name='setup_teardown',
     cases=[
         Case(name='no_prefix', inputs='hello', metadata={'prefix': ''}),
         Case(name='with_prefix', inputs='hello', metadata={'prefix': 'PREFIX:'}),
@@ -91,6 +92,7 @@ class ConditionalCleanup(CaseLifecycle[str, str, dict]):
 
 
 dataset = Dataset(
+    name='conditional_cleanup',
     cases=[
         Case(name='success_case', inputs='hello', metadata={'keep_on_failure': True}),
         Case(name='failure_case', inputs='fail', metadata={'keep_on_failure': True}),
@@ -137,6 +139,7 @@ class CheckLength(Evaluator):
 
 
 dataset = Dataset(
+    name='context_enrichment',
     cases=[Case(name='short', inputs='hi'), Case(name='long', inputs='hello world')],
     evaluators=[CheckLength()],
 )
@@ -166,7 +169,7 @@ class GenericMetricEnricher(CaseLifecycle):
         return ctx
 
 
-dataset = Dataset(cases=[Case(inputs='test')])
+dataset = Dataset(name='generic_lifecycle', cases=[Case(inputs='test')])
 report = dataset.evaluate_sync(lambda inputs: inputs, lifecycle=GenericMetricEnricher)
 
 print(report.cases[0].metrics['custom'])
