@@ -1416,104 +1416,107 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         # Don't attempt recovery for GeneratorExit/KeyboardInterrupt —
                         # awaiting _wrap_task during cleanup could delay shutdown.
                         if isinstance(_run_error, (GeneratorExit, KeyboardInterrupt)):
+                            if not _short_circuited:
+                                _run_done.set()
+                                if not _wrap_task.done():
+                                    _wrap_task.cancel()
                             raise
                         # Don't re-raise yet — give wrap_run a chance to recover.
                         # If wrap_run catches the error from handler() and returns
                         # a recovery result, the exception will be suppressed.
+                    if agent_run.result is not None:
+                        run_metadata = self._resolve_and_store_metadata(agent_run.ctx, metadata)
+                    else:
+                        run_metadata = graph_run.state.metadata
+
+                    if not _short_circuited:
+                        _run_done.set()
+                        if _run_error is None and agent_run.result is not None:
+                            await _finalize_result(await _wrap_task)
+                        elif _run_error is not None:
+                            # Error path: await wrap_run to see if it recovers.
+                            # _do_run() re-raises _run_error; if wrap_run catches
+                            # it and returns a result, recovery succeeds.
+                            try:
+                                await _finalize_result(await _wrap_task)
+                            except BaseException as _wrap_exc:
+                                # Attach wrap_run's own errors as context so they're
+                                # visible in tracebacks (but don't mask the original).
+                                # Skip CancelledError: it's expected cancellation propagation,
+                                # and setting __context__ on it causes hangs on Python 3.10.
+                                if (
+                                    not isinstance(_wrap_exc, asyncio.CancelledError)
+                                    and _wrap_exc is not _run_error
+                                ):
+                                    _run_error.__context__ = _wrap_exc  # pragma: no cover — only fires for bugs in wrap_run implementations
+                        elif (
+                            not _wrap_task.done()
+                        ):  # pragma: no branch — _run_done.set() can't complete _wrap_task synchronously
+                            _wrap_task.cancel()
+                            try:
+                                await _wrap_task
+                            except (asyncio.CancelledError, BaseException):
+                                pass
+
+                    # If wrap_run didn't recover, give on_run_error a chance.
+                    if _run_error is not None:
+                        try:
+                            _result = await run_capability.on_run_error(run_ctx, error=_run_error)
+                        except BaseException as _on_error_exc:
+                            _run_error = _on_error_exc
+                        else:
+                            await _finalize_result(_result)
+
+                    # If on_run_error didn't recover either, re-raise.
+                    # In an @asynccontextmanager, not re-raising suppresses the exception.
+                    if _run_error is not None:
+                        raise _run_error
+
+                    final_result = agent_run.result
+                    if (
+                        message_history is None
+                        and session_id is not None
+                        and self._memory is not None
+                        and final_result is not None
+                    ):
+                        try:
+                            await self._memory.save(session_id, final_result.all_messages())
+                        except Exception as e:
+                            raise exceptions.UserError(
+                                'Agent run completed successfully, but saving message history to the configured '
+                                f'memory store failed for session_id={session_id!r}.'
+                            ) from e
+                    elif (
+                        message_history is None
+                        and session_id is not None
+                        and self._memory is not None
+                        and final_result is None
+                    ):
+                        warnings.warn(
+                            'An agent run was started with `session_id`, but no final result was produced, so message '
+                            'history was not saved. This can happen when using streaming APIs and the stream is not '
+                            'fully consumed.',
+                            stacklevel=2,
+                        )
+                    if (
+                        instrumentation_settings
+                        and instrumentation_settings.include_content
+                        and run_span.is_recording()
+                        and final_result is not None
+                    ):
+                        run_span.set_attribute(
+                            'final_result',
+                            (
+                                final_result.output
+                                if isinstance(final_result.output, str)
+                                else json.dumps(InstrumentedModel.serialize_any(final_result.output))
+                            ),
+                        )
                 finally:
                     # Always restore context vars, even on
                     # GeneratorExit/KeyboardInterrupt.
                     for _var, _token in _context_tokens:
                         _var.reset(_token)
-
-                if agent_run.result is not None:
-                    run_metadata = self._resolve_and_store_metadata(agent_run.ctx, metadata)
-                else:
-                    run_metadata = graph_run.state.metadata
-
-                if not _short_circuited:
-                    _run_done.set()
-                    if _run_error is None and agent_run.result is not None:
-                        await _finalize_result(await _wrap_task)
-                    elif _run_error is not None:
-                        # Error path: await wrap_run to see if it recovers.
-                        # _do_run() re-raises _run_error; if wrap_run catches
-                        # it and returns a result, recovery succeeds.
-                        try:
-                            await _finalize_result(await _wrap_task)
-                        except BaseException as _wrap_exc:
-                            # Attach wrap_run's own errors as context so they're
-                            # visible in tracebacks (but don't mask the original).
-                            # Skip CancelledError: it's expected cancellation propagation,
-                            # and setting __context__ on it causes hangs on Python 3.10.
-                            if (
-                                not isinstance(_wrap_exc, asyncio.CancelledError)
-                                and _wrap_exc is not _run_error
-                            ):
-                                _run_error.__context__ = _wrap_exc  # pragma: no cover — only fires for bugs in wrap_run implementations
-                    elif (
-                        not _wrap_task.done()
-                    ):  # pragma: no branch — _run_done.set() can't complete _wrap_task synchronously
-                        _wrap_task.cancel()
-                        try:
-                            await _wrap_task
-                        except (asyncio.CancelledError, BaseException):
-                            pass
-
-                # If wrap_run didn't recover, give on_run_error a chance.
-                if _run_error is not None:
-                    try:
-                        _result = await run_capability.on_run_error(run_ctx, error=_run_error)
-                    except BaseException as _on_error_exc:
-                        _run_error = _on_error_exc
-                    else:
-                        await _finalize_result(_result)
-
-                # If on_run_error didn't recover either, re-raise.
-                # In an @asynccontextmanager, not re-raising suppresses the exception.
-                if _run_error is not None:
-                    raise _run_error
-
-                final_result = agent_run.result
-                if (
-                    message_history is None
-                    and session_id is not None
-                    and self._memory is not None
-                    and final_result is not None
-                ):
-                    try:
-                        await self._memory.save(session_id, final_result.all_messages())
-                    except Exception as e:
-                        raise exceptions.UserError(
-                            'Agent run completed successfully, but saving message history to the configured '
-                            f'memory store failed for session_id={session_id!r}.'
-                        ) from e
-                elif (
-                    message_history is None
-                    and session_id is not None
-                    and self._memory is not None
-                    and final_result is None
-                ):
-                    warnings.warn(
-                        'An agent run was started with `session_id`, but no final result was produced, so message '
-                        'history was not saved. This can happen when using streaming APIs and the stream is not '
-                        'fully consumed.',
-                        stacklevel=2,
-                    )
-                if (
-                    instrumentation_settings
-                    and instrumentation_settings.include_content
-                    and run_span.is_recording()
-                    and final_result is not None
-                ):
-                    run_span.set_attribute(
-                        'final_result',
-                        (
-                            final_result.output
-                            if isinstance(final_result.output, str)
-                            else json.dumps(InstrumentedModel.serialize_any(final_result.output))
-                        ),
-                    )
         finally:
             try:
                 try:
