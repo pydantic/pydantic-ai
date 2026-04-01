@@ -348,7 +348,8 @@ async def safe_download(
         if resolved.is_https:
             extensions['sni_hostname'] = resolved.hostname
 
-        request_headers: dict[str, str] = {**effective_headers, 'Host': resolved.hostname}
+        request_headers: dict[str, str] = {k: v for k, v in effective_headers.items() if k.lower() != 'host'}
+        request_headers['Host'] = resolved.hostname
 
         # Make request with Host header set to original hostname
         response = await client.get(
