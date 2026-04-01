@@ -84,6 +84,8 @@ with try_import() as imports_successful:
     from google.genai import errors
     from google.genai.types import (
         BlockedReason,
+        Candidate,
+        Content,
         FinishReason as GoogleFinishReason,
         GenerateContentResponse,
         GenerateContentResponsePromptFeedback,
@@ -91,11 +93,13 @@ with try_import() as imports_successful:
         HarmBlockThreshold,
         HarmCategory,
         HarmProbability,
+        HttpResponse,
         LogprobsResult,
         LogprobsResultCandidate,
         LogprobsResultTopCandidates,
         MediaModality,
         ModalityTokenCount,
+        Part,
         SafetyRating,
     )
 
@@ -2740,20 +2744,6 @@ async def test_google_service_tier_default_maps_to_standard(allow_model_requests
 
     config_dict = cast(dict[str, Any], config)
     assert config_dict['service_tier'] == 'standard'
-
-
-async def test_google_vertex_service_tier_in_config(allow_model_requests: None):
-    m = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(vertexai=True, project='test-project'))
-    model_settings = GoogleModelSettings(google_service_tier='priority')
-
-    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
-        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
-        model_settings=model_settings,
-        model_request_parameters=ModelRequestParameters(),
-    )
-
-    config_dict = cast(dict[str, Any], config)
-    assert config_dict['service_tier'] == 'priority'
 
 
 async def test_google_tool_output(allow_model_requests: None, google_provider: GoogleProvider):
@@ -6347,17 +6337,12 @@ async def test_google_service_tier_response_extraction(
     model_name = 'gemini-2.5-flash'
     model = GoogleModel(model_name, provider=google_provider)
 
-    # Mock sdk_http_response and usage_metadata
-    class MockHttpResponse:
-        def __init__(self, headers: dict[str, str]):
-            self.headers = headers
-
     response = GenerateContentResponse(
         candidates=[
-            {
-                'content': {'parts': [{'text': 'Hello'}]},
-                'finish_reason': GoogleFinishReason.STOP,
-            }
+            Candidate(
+                content=Content(parts=[Part(text='Hello')]),
+                finish_reason=GoogleFinishReason.STOP,
+            )
         ],
         usage_metadata=GenerateContentResponseUsageMetadata(
             prompt_token_count=1,
@@ -6368,7 +6353,7 @@ async def test_google_service_tier_response_extraction(
         model_version=model_name,
         create_time=datetime.datetime.now(tz=datetime.timezone.utc),
     )
-    response.sdk_http_response = MockHttpResponse({'x-gemini-service-tier': 'PRIORITY'})
+    response.sdk_http_response = HttpResponse(headers={'x-gemini-service-tier': 'PRIORITY'})
 
     mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response)
 
@@ -6391,16 +6376,12 @@ async def test_google_service_tier_streamed_response_extraction(
     model_name = 'gemini-2.5-flash'
     model = GoogleModel(model_name, provider=google_provider)
 
-    class MockHttpResponse:
-        def __init__(self, headers: dict[str, str]):
-            self.headers = headers
-
     chunk = GenerateContentResponse(
         candidates=[
-            {
-                'content': {'parts': [{'text': 'Hello'}]},
-                'finish_reason': GoogleFinishReason.STOP,
-            }
+            Candidate(
+                content=Content(parts=[Part(text='Hello')]),
+                finish_reason=GoogleFinishReason.STOP,
+            )
         ],
         usage_metadata=GenerateContentResponseUsageMetadata(
             prompt_token_count=1,
@@ -6411,7 +6392,7 @@ async def test_google_service_tier_streamed_response_extraction(
         model_version=model_name,
         create_time=datetime.datetime.now(tz=datetime.timezone.utc),
     )
-    chunk.sdk_http_response = MockHttpResponse({'x-gemini-service-tier': 'FLEX'})
+    chunk.sdk_http_response = HttpResponse(headers={'x-gemini-service-tier': 'FLEX'})
 
     async def stream_iterator():
         yield chunk

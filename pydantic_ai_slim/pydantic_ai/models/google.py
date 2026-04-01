@@ -94,6 +94,7 @@ try:
         Part,
         PartDict,
         SafetySettingDict,
+        ServiceTier,
         ThinkingConfigDict,
         ToolCodeExecutionDict,
         ToolConfigDict,
@@ -638,7 +639,7 @@ class GoogleModel(Model):
             safety_settings=model_settings.get('google_safety_settings'),
             thinking_config=self._get_thinking_config(model_settings, model_request_parameters),
             labels=model_settings.get('google_labels'),
-            service_tier=service_tier,
+            service_tier=cast(ServiceTier, service_tier),
             media_resolution=model_settings.get('google_video_resolution'),
             cached_content=model_settings.get('google_cached_content'),
             tools=cast(ToolListUnionDict, tools),
@@ -687,7 +688,11 @@ class GoogleModel(Model):
         if response.create_time is not None:  # pragma: no branch
             vendor_details['timestamp'] = response.create_time
 
-        if response.sdk_http_response and (service_tier := response.sdk_http_response.headers.get('x-gemini-service-tier')):
+        if (
+            response.sdk_http_response
+            and response.sdk_http_response.headers
+            and (service_tier := response.sdk_http_response.headers.get('x-gemini-service-tier'))
+        ):
             vendor_details['service_tier'] = service_tier.lower()
 
         if candidate is None or candidate.content is None or candidate.content.parts is None:
@@ -979,8 +984,10 @@ class GeminiStreamedResponse(StreamedResponse):
             async for chunk in self._response:
                 self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url)
 
-                if chunk.sdk_http_response and (
-                    service_tier := chunk.sdk_http_response.headers.get('x-gemini-service-tier')
+                if (
+                    chunk.sdk_http_response
+                    and chunk.sdk_http_response.headers
+                    and (service_tier := chunk.sdk_http_response.headers.get('x-gemini-service-tier'))
                 ):
                     self.provider_details = {**(self.provider_details or {}), 'service_tier': service_tier.lower()}
 
