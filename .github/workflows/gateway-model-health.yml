@@ -2,6 +2,7 @@ name: Gateway Model Health
 
 on:
   schedule:
+    # Run weekly on Monday at 10:00 UTC.
     - cron: '0 10 * * 1'
   workflow_dispatch: {}
 
@@ -17,8 +18,6 @@ jobs:
   gateway-model-health:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    environment:
-      name: gateway-model-health
     env:
       CI: true
       PYDANTIC_AI_GATEWAY_API_KEY: ${{ secrets.PYDANTIC_AI_GATEWAY_API_KEY }}
@@ -32,13 +31,6 @@ jobs:
           python-version: "3.12"
           enable-cache: true
           cache-suffix: gateway-model-health
-
-      - name: Ensure gateway secret is configured
-        run: |
-          test -n "$PYDANTIC_AI_GATEWAY_API_KEY" || {
-            echo "PYDANTIC_AI_GATEWAY_API_KEY is not configured."
-            exit 1
-          }
 
       - name: Install dependencies
         run: uv sync --all-extras --no-extra outlines-vllm-offline
