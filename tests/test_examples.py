@@ -54,6 +54,7 @@ with try_import() as imports_successful:
     # We check whether pydantic_ai_examples is importable as a proxy for whether all extras are installed, as some docs examples require them
     import pydantic_ai_examples  # pyright: ignore[reportUnusedImport] # noqa: F401
 
+    from pydantic_evals.online import OnlineEvalConfig
     from pydantic_evals.reporting import EvaluationReport
 
 
@@ -163,6 +164,9 @@ def test_docs_examples(
             super().print(*args, **kwargs)
 
     mocker.patch('pydantic_evals.dataset.EvaluationReport', side_effect=CustomEvaluationReport)
+
+    # Reset global DEFAULT_CONFIG so configure() calls in doc examples don't leak between tests
+    mocker.patch('pydantic_evals.online.DEFAULT_CONFIG', OnlineEvalConfig())
 
     mocker.patch('pydantic_ai.mcp.MCPServerSSE', return_value=MockMCPServer())
     mocker.patch('pydantic_ai.mcp.MCPServerStreamableHTTP', return_value=MockMCPServer())
@@ -334,8 +338,7 @@ class MockMCPServer(AbstractToolset[Any]):
     def id(self) -> str | None:
         return None  # pragma: no cover
 
-    @property
-    def instructions(self) -> str | None:
+    async def get_instructions(self, ctx: RunContext[Any]) -> str | None:
         return None
 
     async def __aenter__(self) -> MockMCPServer:
@@ -1088,6 +1091,7 @@ def mock_infer_embedding_model(model: EmbeddingModel | str) -> EmbeddingModel:
         'voyage-3.5': 1024,
         'all-MiniLM-L6-v2': 384,
         'gemini-embedding-001': 3072,
+        'gemini-embedding-2-preview': 3072,
     }
     dimensions = dimensions_map.get(model_name, 8)
     return TestEmbeddingModel(model_name, provider_name=provider_name, dimensions=dimensions)
