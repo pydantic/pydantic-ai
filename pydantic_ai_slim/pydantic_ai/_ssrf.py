@@ -330,6 +330,9 @@ async def safe_download(
     """
     current_url = url
     redirects_followed = 0
+    original_hostname = urlparse(url).hostname
+    _sensitive_headers = frozenset(('authorization', 'cookie', 'proxy-authorization'))
+    effective_headers = dict(headers) if headers else {}
 
     client = cached_async_http_client(timeout=timeout)
     while True:
@@ -345,7 +348,7 @@ async def safe_download(
         if resolved.is_https:
             extensions['sni_hostname'] = resolved.hostname
 
-        request_headers: dict[str, str] = {**(headers or {}), 'Host': resolved.hostname}
+        request_headers: dict[str, str] = {**effective_headers, 'Host': resolved.hostname}
 
         # Make request with Host header set to original hostname
         response = await client.get(
@@ -367,6 +370,12 @@ async def safe_download(
                 raise ValueError('Redirect response missing Location header')
 
             current_url = resolve_redirect_url(current_url, location)
+
+            # Strip sensitive headers on cross-origin redirects (RFC 7235)
+            redirect_hostname = urlparse(current_url).hostname
+            if redirect_hostname != original_hostname:
+                effective_headers = {k: v for k, v in effective_headers.items() if k.lower() not in _sensitive_headers}
+
             continue
 
         # Not a redirect, we're done
