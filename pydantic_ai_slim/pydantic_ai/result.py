@@ -219,7 +219,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 result_data = cast(OutputDataT, message.images[0])
                 for validator in self._output_validators:
                     result_data = await validator.validate(
-                        result_data, replace(self._run_ctx, partial_output=allow_partial)
+                        result_data, replace(self._run_ctx, partial_output=allow_partial), wrap_validation_errors=False
                     )
                 return result_data
             elif text_processor := self._output_schema.text_processor:

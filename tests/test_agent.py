@@ -8806,29 +8806,41 @@ class TestOverrideWithModelSettings:
 
 
 async def test_image_output_validators_run():
-    """Test that output validators are called when the model returns an image."""
-    validator_called = False
+    """Test that output validators are called and can modify image output."""
 
     def return_image(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[FilePart(content=BinaryImage(data=b'fake-png', media_type='image/png'))])
+        return ModelResponse(parts=[FilePart(content=BinaryImage(data=b'original', media_type='image/png'))])
 
     image_profile = ModelProfile(supports_image_output=True)
     agent = Agent(FunctionModel(return_image, profile=image_profile), output_type=BinaryImage)
 
     @agent.output_validator
     def validate_output(ctx: RunContext[None], output: BinaryImage) -> BinaryImage:
-        nonlocal validator_called
-        validator_called = True
-        return output
+        return BinaryImage(data=b'modified', media_type=output.media_type)
 
     result = await agent.run('Give me an image')
     assert isinstance(result.output, BinaryImage)
-    assert validator_called, 'output_validator was not called for image output'
+    assert result.output.data == b'modified', 'validator should be able to modify the output'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Give me an image', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[FilePart(content=BinaryImage(data=b'original', media_type='image/png'))],
+                usage=RequestUsage(input_tokens=54, output_tokens=8),
+                model_name='function:return_image:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
-async def test_image_output_validators_run_stream():
-    """Test that output validators are called when streaming a model image response."""
-    validator_called = False
+async def test_image_output_validator_model_retry():
+    """Test that ModelRetry from image validator raises UnexpectedModelBehavior in streaming."""
 
     class ImageStreamedResponse(StreamedResponse):
         async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -8890,15 +8902,86 @@ async def test_image_output_validators_run_stream():
 
     @agent.output_validator
     def validate_output(ctx: RunContext[None], output: BinaryImage) -> BinaryImage:
-        nonlocal validator_called
-        validator_called = True
-        return output
+        raise ModelRetry('image validation failed')
+
+    with pytest.raises(
+        UnexpectedModelBehavior,
+        match='Output validation failed during streaming, and retries are not supported',
+    ):
+        async with agent.run_stream('Give me an image') as stream:
+            await stream.get_output()
+
+
+async def test_image_output_validators_run_stream():
+    """Test that output validators are called and can modify image output during streaming."""
+
+    class ImageStreamedResponse(StreamedResponse):
+        async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+            self._usage = RequestUsage()
+            yield self._parts_manager.handle_part(
+                vendor_part_id=0,
+                part=FilePart(content=BinaryImage(data=b'original', media_type='image/png')),
+            )
+
+        @property
+        def model_name(self) -> str:
+            return 'image-model'
+
+        @property
+        def provider_name(self) -> str:
+            return 'test'
+
+        @property
+        def provider_url(self) -> str:
+            return 'https://test.example.com'
+
+        @property
+        def timestamp(self) -> datetime:
+            return datetime(2024, 1, 1)
+
+    class ImageStreamModel(Model):
+        @property
+        def system(self) -> str:  # pragma: no cover
+            return 'test'
+
+        @property
+        def model_name(self) -> str:
+            return 'image-model'
+
+        @property
+        def base_url(self) -> str:  # pragma: no cover
+            return 'https://test.example.com'
+
+        async def request(  # pragma: no cover
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            return ModelResponse(parts=[FilePart(content=BinaryImage(data=b'original', media_type='image/png'))])
+
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            run_context: RunContext | None = None,
+        ) -> AsyncIterator[StreamedResponse]:
+            yield ImageStreamedResponse(model_request_parameters=model_request_parameters)
+
+    image_profile = ModelProfile(supports_image_output=True)
+    agent = Agent(ImageStreamModel(profile=image_profile), output_type=BinaryImage)
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], output: BinaryImage) -> BinaryImage:
+        return BinaryImage(data=b'modified', media_type=output.media_type)
 
     async with agent.run_stream('Give me an image') as stream:
         result = await stream.get_output()
 
     assert isinstance(result, BinaryImage)
-    assert validator_called, 'output_validator was not called for streamed image output'
+    assert result.data == b'modified', 'validator should be able to modify the output'
 
 
 # endregion
