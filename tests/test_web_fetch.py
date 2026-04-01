@@ -295,6 +295,8 @@ class TestWebFetchLocalTool:
             allow_local=True,
             timeout=60,
             headers={'Accept': 'text/markdown, text/html;q=0.9, */*;q=0.8'},
+            allowed_domains=None,
+            blocked_domains=None,
         )
 
     async def test_safe_download_error_raises_model_retry(self):
@@ -327,23 +329,21 @@ class TestWebFetchLocalTool:
             with pytest.raises(ModelRetry, match='Failed to fetch'):
                 await tool('https://example.com/missing')
 
-    async def test_invalid_url_no_hostname(self):
-        """URL without hostname raises ModelRetry."""
+    async def test_invalid_url_raises_model_retry(self):
+        """URL without valid protocol raises ModelRetry."""
         from pydantic_ai.exceptions import ModelRetry
 
-        tool = WebFetchLocalTool(
-            max_content_length=None, allow_local_urls=False, timeout=30, allowed_domains=['example.com']
-        )
-        with pytest.raises(ModelRetry, match='no hostname found'):
+        tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+        with pytest.raises(ModelRetry, match='Failed to fetch'):
             await tool('not-a-url')
 
     async def test_allowed_domains_permits(self):
-        """Allowed domain passes validation."""
+        """Allowed domain passes validation and is forwarded to safe_download."""
         mock_response = _html_response('<html><body>ok</body></html>')
 
         with patch(
             'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
-        ):
+        ) as mock_dl:
             tool = WebFetchLocalTool(
                 max_content_length=None, allow_local_urls=False, timeout=30, allowed_domains=['example.com']
             )
@@ -351,34 +351,45 @@ class TestWebFetchLocalTool:
 
         assert isinstance(result, dict)
         assert result['url'] == 'https://example.com/page'
+        assert mock_dl.call_args[1]['allowed_domains'] == ['example.com']
 
     async def test_allowed_domains_blocks(self):
-        """Non-allowed domain raises ModelRetry."""
+        """Non-allowed domain raises ModelRetry (domain check enforced by safe_download)."""
         from pydantic_ai.exceptions import ModelRetry
 
-        tool = WebFetchLocalTool(
-            max_content_length=None, allow_local_urls=False, timeout=30, allowed_domains=['example.com']
-        )
-        with pytest.raises(ModelRetry, match='not in the allowed domains'):
-            await tool('https://evil.com/page')
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download',
+            new_callable=AsyncMock,
+            side_effect=ValueError("Domain 'evil.com' is not in the allowed domains list."),
+        ):
+            tool = WebFetchLocalTool(
+                max_content_length=None, allow_local_urls=False, timeout=30, allowed_domains=['example.com']
+            )
+            with pytest.raises(ModelRetry, match='Failed to fetch'):
+                await tool('https://evil.com/page')
 
     async def test_blocked_domains_blocks(self):
-        """Blocked domain raises ModelRetry."""
+        """Blocked domain raises ModelRetry (domain check enforced by safe_download)."""
         from pydantic_ai.exceptions import ModelRetry
 
-        tool = WebFetchLocalTool(
-            max_content_length=None, allow_local_urls=False, timeout=30, blocked_domains=['evil.com']
-        )
-        with pytest.raises(ModelRetry, match='is blocked'):
-            await tool('https://evil.com/page')
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download',
+            new_callable=AsyncMock,
+            side_effect=ValueError("Domain 'evil.com' is blocked."),
+        ):
+            tool = WebFetchLocalTool(
+                max_content_length=None, allow_local_urls=False, timeout=30, blocked_domains=['evil.com']
+            )
+            with pytest.raises(ModelRetry, match='Failed to fetch'):
+                await tool('https://evil.com/page')
 
     async def test_blocked_domains_permits(self):
-        """Non-blocked domain passes validation."""
+        """Non-blocked domain passes validation and is forwarded to safe_download."""
         mock_response = _html_response('<html><body>ok</body></html>')
 
         with patch(
             'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
-        ):
+        ) as mock_dl:
             tool = WebFetchLocalTool(
                 max_content_length=None, allow_local_urls=False, timeout=30, blocked_domains=['evil.com']
             )
@@ -386,6 +397,7 @@ class TestWebFetchLocalTool:
 
         assert isinstance(result, dict)
         assert result['url'] == 'https://example.com/page'
+        assert mock_dl.call_args[1]['blocked_domains'] == ['evil.com']
 
     async def test_fetch_markdown_response(self):
         """Server returning text/markdown is used as-is without markdownify conversion."""

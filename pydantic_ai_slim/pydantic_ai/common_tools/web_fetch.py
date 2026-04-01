@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import KW_ONLY, dataclass, field
-from urllib.parse import urlparse
 
 import httpx
 from typing_extensions import Any, TypedDict
@@ -83,8 +82,6 @@ class WebFetchLocalTool:
         Returns:
             The fetched page content.
         """
-        _check_domain(url, self.allowed_domains, self.blocked_domains)
-
         request_headers = {'Accept': 'text/markdown, text/html;q=0.9, */*;q=0.8'}
         if self.headers:
             request_headers.update(self.headers)
@@ -95,6 +92,8 @@ class WebFetchLocalTool:
                 allow_local=self.allow_local_urls,
                 timeout=self.timeout,
                 headers=request_headers,
+                allowed_domains=self.allowed_domains,
+                blocked_domains=self.blocked_domains,
             )
         except (ValueError, httpx.HTTPStatusError, httpx.RequestError) as e:
             raise ModelRetry(f'Failed to fetch {url}: {e}') from e
@@ -129,17 +128,6 @@ class WebFetchLocalTool:
             content = content[: self.max_content_length] + '\n\n[Content truncated]'
 
         return WebFetchResult(url=url, title=title, content=content)
-
-
-def _check_domain(url: str, allowed_domains: list[str] | None, blocked_domains: list[str] | None) -> None:
-    """Validate URL domain against allowed/blocked lists. Raises `ModelRetry` on violation."""
-    hostname = urlparse(url).hostname
-    if not hostname:
-        raise ModelRetry('Invalid URL: no hostname found.')
-    if allowed_domains is not None and hostname not in allowed_domains:
-        raise ModelRetry(f'Domain {hostname!r} is not in the allowed domains list. Allowed: {allowed_domains}')
-    if blocked_domains is not None and hostname in blocked_domains:
-        raise ModelRetry(f'Domain {hostname!r} is blocked. Try a different URL.')
 
 
 _TITLE_RE = re.compile(r'<title[^>]*>(.*?)</title>', re.IGNORECASE | re.DOTALL)

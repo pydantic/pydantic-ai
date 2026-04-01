@@ -4374,7 +4374,7 @@ def test_web_search_with_constraints():
 
 
 def test_web_search_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
-    """WebSearch._default_local() returns None when duckduckgo is not installed."""
+    """WebSearch._default_local() warns and returns None when duckduckgo is not installed."""
     import builtins
 
     original_import = builtins.__import__
@@ -4385,13 +4385,14 @@ def test_web_search_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
         return original_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, '__import__', mock_import)
-    cap = WebSearch(builtin=False)
+    with pytest.warns(UserWarning, match='duckduckgo'):
+        cap = WebSearch(builtin=False)
     # With builtin disabled and no duckduckgo, local is None
     assert cap.local is None
 
 
 def test_web_fetch_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
-    """WebFetch._default_local() returns None when markdownify is not installed."""
+    """WebFetch._default_local() warns and returns None when markdownify is not installed."""
     import builtins
 
     original_import = builtins.__import__
@@ -4402,7 +4403,8 @@ def test_web_fetch_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
         return original_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, '__import__', mock_import)
-    cap = WebFetch(builtin=False)
+    with pytest.warns(UserWarning, match='web-fetch'):
+        cap = WebFetch(builtin=False)
     # With builtin disabled and no markdownify, local is None
     assert cap.local is None
 

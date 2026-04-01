@@ -17,6 +17,10 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
 
     Uses the model's builtin URL fetching when available, falling back to a local
     function tool (markdownify-based fetch by default) when it isn't.
+
+    The local fallback requires the `web-fetch` optional group::
+
+        pip install "pydantic-ai-slim[web-fetch]"
     """
 
     allowed_domains: list[str] | None
@@ -82,6 +86,15 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
                 blocked_domains=self.blocked_domains,
             )
         except ImportError:
+            import warnings
+
+            warnings.warn(
+                'WebFetch local fallback requires the `web-fetch` optional group — '
+                '`pip install "pydantic-ai-slim[web-fetch]"`. '
+                'Without it, WebFetch only works with models that support it natively.',
+                UserWarning,
+                stacklevel=2,
+            )
             return None
 
     def _requires_builtin(self) -> bool:
