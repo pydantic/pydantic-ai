@@ -15,6 +15,7 @@ from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets.abstract import ToolsetTool
+from pydantic_ai.mcp import ProcessToolCallback
 
 try:
     from fastmcp.client import Client
@@ -100,6 +101,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         tool_error_behavior: Literal['model_retry', 'error'] = 'model_retry',
         include_instructions: bool = False,
         id: str | None = None,
+        process_tool_call: ProcessToolCallback | None = None,
     ) -> None:
         if isinstance(client, Client):
             self.client = client
@@ -110,6 +112,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         self.max_retries = max_retries
         self.tool_error_behavior = tool_error_behavior
         self.include_instructions = include_instructions
+        self.process_tool_call = process_tool_call
 
         self._enter_lock: Lock = Lock()
         self._running_count: int = 0
@@ -190,12 +193,28 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
                 for mcp_tool in await self.client.list_tools()
             }
 
-    async def call_tool(
-        self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
+    async def direct_call_tool(
+        self,
+        name: str,
+        args: dict[str, Any],
+        metadata: dict[str, Any] | None = None,
     ) -> Any:
-        async with self:
+        """Call a tool on the server.
+
+        Args:
+            name: The name of the tool to call.
+            args: The arguments to pass to the tool.
+            metadata: Request-level metadata (optional)
+
+        Returns:
+            The result of the tool call.
+
+        Raises:
+            ModelRetry: If the tool call fails.
+        """
+        async with self:  # Ensure server is running
             try:
-                call_tool_result: CallToolResult = await self.client.call_tool(name=name, arguments=tool_args)
+                call_tool_result: CallToolResult = await self.client.call_tool(name=name, arguments=args, meta=metadata)
             except ToolError as e:
                 if self.tool_error_behavior == 'model_retry':
                     raise ModelRetry(message=str(e)) from e
@@ -208,6 +227,19 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
 
         # Otherwise, return the content
         return _map_fastmcp_tool_results(parts=call_tool_result.content)
+
+    async def call_tool(
+        self,
+        name: str,
+        tool_args: dict[str, Any],
+        ctx: RunContext[Any],
+        tool: ToolsetTool[Any],
+    ) -> Any:
+
+        if self.process_tool_call is not None:
+            return await self.process_tool_call(ctx, self.direct_call_tool, name, tool_args)
+        else:
+            return await self.direct_call_tool(name, tool_args)
 
     def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
         return ToolsetTool[AgentDepsT](
