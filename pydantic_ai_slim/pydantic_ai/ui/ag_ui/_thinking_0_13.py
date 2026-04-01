@@ -22,7 +22,7 @@ from ag_ui.core import (
 )
 
 from ...messages import ThinkingPart, ThinkingPartDelta
-from ._utils import thinking_encrypted_metadata
+from ._utils import REASONING_MESSAGE_ROLE, thinking_encrypted_metadata
 
 if TYPE_CHECKING:
     from ...output import OutputDataT
@@ -37,7 +37,7 @@ async def handle_thinking_start(
     if part.content:
         yield ReasoningStartEvent(message_id=self._reasoning_message_id)
         self._reasoning_started = True
-        yield ReasoningMessageStartEvent(message_id=self._reasoning_message_id, role='assistant')
+        yield ReasoningMessageStartEvent(message_id=self._reasoning_message_id, role=REASONING_MESSAGE_ROLE)  # pyright: ignore[reportArgumentType]
         yield ReasoningMessageContentEvent(message_id=self._reasoning_message_id, delta=part.content)
         self._reasoning_text = True
 
@@ -54,7 +54,7 @@ async def handle_thinking_delta(
         self._reasoning_started = True
 
     if not self._reasoning_text:
-        yield ReasoningMessageStartEvent(message_id=message_id, role='assistant')
+        yield ReasoningMessageStartEvent(message_id=message_id, role=REASONING_MESSAGE_ROLE)  # pyright: ignore[reportArgumentType]
         self._reasoning_text = True
 
     yield ReasoningMessageContentEvent(message_id=message_id, delta=delta.content_delta)

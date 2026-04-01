@@ -82,7 +82,13 @@ except ImportError as e:  # pragma: no cover
     ) from e
 
 if TYPE_CHECKING:
-    from ag_ui.core import ReasoningMessage
+    from ag_ui.core import (
+        AudioInputContent,
+        DocumentInputContent,
+        ImageInputContent,
+        ReasoningMessage,
+        VideoInputContent,
+    )
     from starlette.requests import Request
 
     from ...agent import AbstractAgent
@@ -94,27 +100,21 @@ else:
         class ReasoningMessage:
             """Stub for ag-ui-protocol < 0.1.13 — no instances exist, so pattern matching is a no-op."""
 
+    try:
+        from ag_ui.core import AudioInputContent, DocumentInputContent, ImageInputContent, VideoInputContent
+    except ImportError:  # pragma: no cover
 
-try:
-    from ag_ui.core import (
-        AudioInputContent,  # pyright: ignore[reportAttributeAccessIssue,reportUnknownVariableType]
-        DocumentInputContent,  # pyright: ignore[reportAttributeAccessIssue,reportUnknownVariableType]
-        ImageInputContent,  # pyright: ignore[reportAttributeAccessIssue,reportUnknownVariableType]
-        VideoInputContent,  # pyright: ignore[reportAttributeAccessIssue,reportUnknownVariableType]
-    )
-except ImportError:  # pragma: no cover
+        class ImageInputContent:
+            """Stub for ag-ui-protocol < 0.1.15."""
 
-    class ImageInputContent:
-        """Stub for ag-ui-protocol < 0.1.15."""
+        class AudioInputContent:
+            """Stub for ag-ui-protocol < 0.1.15."""
 
-    class AudioInputContent:
-        """Stub for ag-ui-protocol < 0.1.15."""
+        class VideoInputContent:
+            """Stub for ag-ui-protocol < 0.1.15."""
 
-    class VideoInputContent:
-        """Stub for ag-ui-protocol < 0.1.15."""
-
-    class DocumentInputContent:
-        """Stub for ag-ui-protocol < 0.1.15."""
+        class DocumentInputContent:
+            """Stub for ag-ui-protocol < 0.1.15."""
 
 
 __all__ = ['AGUIAdapter']
@@ -137,7 +137,7 @@ class _AGUIFrontendToolset(ExternalToolset[AgentDepsT]):
                 ToolDefinition(
                     name=tool.name,
                     description=tool.description,
-                    parameters_json_schema=tool.parameters,
+                    parameters_json_schema=tool.parameters or {},
                 )
                 for tool in tools
             ]
@@ -158,13 +158,19 @@ def _user_content_to_input(
     item: str | TextContent | ImageUrl | VideoUrl | AudioUrl | DocumentUrl | BinaryContent | UploadedFile | CachePoint,
     *,
     use_multimodal: bool = False,
-) -> TextInputContent | BinaryInputContent | None:
+) -> (
+    TextInputContent
+    | BinaryInputContent
+    | ImageInputContent
+    | AudioInputContent
+    | VideoInputContent
+    | DocumentInputContent
+    | None
+):
     """Convert a user content item to AG-UI input content.
 
     When `use_multimodal` is True (ag-ui >= 0.1.15), media URLs are emitted as typed
     multimodal input content (e.g. `ImageInputContent`) instead of generic `BinaryInputContent`.
-    The actual return type is then wider than annotated; the annotation is kept narrow for
-    backward-compat typechecking against ag-ui-protocol < 0.1.15.
     """
     if isinstance(item, str):
         return TextInputContent(type='text', text=item)
@@ -172,11 +178,15 @@ def _user_content_to_input(
         return TextInputContent(type='text', text=item.content)
     elif isinstance(item, (ImageUrl, VideoUrl, AudioUrl, DocumentUrl)):
         if use_multimodal:
-            from ._multimodal import media_url_to_multimodal  # pyright: ignore[reportUnknownVariableType]
+            from ._multimodal import media_url_to_multimodal
 
-            return media_url_to_multimodal(item)  # pyright: ignore[reportUnknownVariableType]
+            return media_url_to_multimodal(item)
         return BinaryInputContent(type='binary', url=item.url, mime_type=item.media_type or '')
     elif isinstance(item, BinaryContent):
+        if use_multimodal:
+            from ._multimodal import binary_to_multimodal
+
+            return binary_to_multimodal(item)
         return BinaryInputContent(type='binary', data=item.base64, mime_type=item.media_type)
     elif isinstance(item, UploadedFile):
         # UploadedFile holds an opaque provider file_id (e.g. 'file-abc123'), not a URL or
@@ -316,7 +326,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                     | DocumentInputContent()
                                 ):
                                     from ._multimodal import (
-                                        multimodal_input_to_content,  # pyright: ignore[reportUnknownVariableType]
+                                        multimodal_input_to_content,
                                     )
 
                                     user_prompt_content.append(multimodal_input_to_content(part))
@@ -471,7 +481,14 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         use_multimodal = parse_ag_ui_version(ag_ui_version) >= MULTIMODAL_VERSION
         result: list[Message] = []
         system_content: list[str] = []
-        user_content: list[TextInputContent | BinaryInputContent] = []
+        user_content: list[
+            TextInputContent
+            | BinaryInputContent
+            | ImageInputContent
+            | AudioInputContent
+            | VideoInputContent
+            | DocumentInputContent
+        ] = []
 
         for part in msg.parts:
             if isinstance(part, SystemPromptPart):

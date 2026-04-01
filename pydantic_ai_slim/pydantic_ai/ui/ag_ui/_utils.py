@@ -14,7 +14,10 @@ REASONING_VERSION = (0, 1, 13)
 """AG-UI version that introduced REASONING_* events (replacing THINKING_*)."""
 
 MULTIMODAL_VERSION = (0, 1, 15)
-"""AG-UI version that introduced typed multimodal input content (Image/Audio/Video/Document)."""
+"""AG-UI version that introduced typed multimodal input content (Image/Audio/Video/Document).
+
+Also changed `ReasoningMessageStartEvent.role` from `'assistant'` to `'reasoning'`.
+"""
 
 BUILTIN_TOOL_CALL_ID_PREFIX: Final[str] = 'pyd_ai_builtin'
 
@@ -74,6 +77,11 @@ def detect_ag_ui_version() -> str:
 
 DEFAULT_AG_UI_VERSION: str = detect_ag_ui_version()
 """The default AG-UI version, auto-detected from the installed `ag-ui-protocol` package."""
+
+REASONING_MESSAGE_ROLE: str = (
+    'reasoning' if parse_ag_ui_version(DEFAULT_AG_UI_VERSION) >= MULTIMODAL_VERSION else 'assistant'
+)
+"""The correct `role` value for `ReasoningMessageStartEvent`, based on the installed SDK version."""
 
 
 def thinking_encrypted_metadata(part: ThinkingPart) -> dict[str, Any]:

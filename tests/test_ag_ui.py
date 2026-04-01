@@ -1161,7 +1161,7 @@ async def test_thinking_with_signature() -> None:
                 'type': 'REASONING_MESSAGE_START',
                 'timestamp': IsInt(),
                 'messageId': reasoning_id,
-                'role': 'assistant',
+                'role': 'reasoning',
             },
             {
                 'type': 'REASONING_MESSAGE_CONTENT',
@@ -1229,7 +1229,7 @@ async def test_thinking_consecutive_signatures() -> None:
                 'type': 'REASONING_MESSAGE_START',
                 'timestamp': IsInt(),
                 'messageId': r0,
-                'role': 'assistant',
+                'role': 'reasoning',
             },
             {'type': 'REASONING_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': r0, 'delta': 'First thought'},
             {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': r0},
@@ -1247,7 +1247,7 @@ async def test_thinking_consecutive_signatures() -> None:
                 'type': 'REASONING_MESSAGE_START',
                 'timestamp': IsInt(),
                 'messageId': r1,
-                'role': 'assistant',
+                'role': 'reasoning',
             },
             {'type': 'REASONING_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': r1, 'delta': 'Second thought'},
             {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': r1},
@@ -1265,7 +1265,7 @@ async def test_thinking_consecutive_signatures() -> None:
                 'type': 'REASONING_MESSAGE_START',
                 'timestamp': IsInt(),
                 'messageId': r2,
-                'role': 'assistant',
+                'role': 'reasoning',
             },
             {'type': 'REASONING_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': r2, 'delta': 'Third thought'},
             {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': r2},
@@ -1357,7 +1357,7 @@ async def test_reasoning_events_with_all_metadata() -> None:
     assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
         [
             {'type': 'REASONING_START', 'message_id': IsStr()},
-            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': 'assistant'},
+            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': 'reasoning'},
             {'type': 'REASONING_MESSAGE_CONTENT', 'message_id': IsStr(), 'delta': 'Thinking content'},
             {'type': 'REASONING_MESSAGE_END', 'message_id': IsStr()},
             {
@@ -3599,7 +3599,7 @@ async def test_thinking_delta_v013() -> None:
     assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
         [
             {'type': 'REASONING_START', 'message_id': IsStr()},
-            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': 'assistant'},
+            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': 'reasoning'},
             {'type': 'REASONING_MESSAGE_CONTENT', 'message_id': IsStr(), 'delta': 'chunk1'},
         ]
     )
@@ -3632,7 +3632,7 @@ async def test_thinking_delta_v013_after_content_start() -> None:
     assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
         [
             {'type': 'REASONING_START', 'message_id': IsStr()},
-            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': 'assistant'},
+            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': 'reasoning'},
             {'type': 'REASONING_MESSAGE_CONTENT', 'message_id': IsStr(), 'delta': 'initial'},
             {'type': 'REASONING_MESSAGE_CONTENT', 'message_id': IsStr(), 'delta': 'more'},
         ]
@@ -3689,7 +3689,7 @@ async def test_thinking_end_v013_no_encrypted_metadata() -> None:
     assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
         [
             {'type': 'REASONING_START', 'message_id': IsStr()},
-            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': 'assistant'},
+            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': 'reasoning'},
             {'type': 'REASONING_MESSAGE_CONTENT', 'message_id': IsStr(), 'delta': 'text'},
             {'type': 'REASONING_MESSAGE_END', 'message_id': IsStr()},
             {'type': 'REASONING_END', 'message_id': IsStr()},
@@ -3718,7 +3718,7 @@ async def test_thinking_encrypted_metadata_partial_fields() -> None:
     assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
         [
             {'type': 'REASONING_START', 'message_id': IsStr()},
-            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': 'assistant'},
+            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': 'reasoning'},
             {'type': 'REASONING_MESSAGE_CONTENT', 'message_id': IsStr(), 'delta': 'Thoughts'},
             {'type': 'REASONING_MESSAGE_END', 'message_id': IsStr()},
             {

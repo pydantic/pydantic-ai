@@ -1,13 +1,7 @@
-# pyright: reportAttributeAccessIssue=false
-# pyright: reportUnknownVariableType=false
-# pyright: reportUnknownMemberType=false
-# pyright: reportUnknownParameterType=false
-# pyright: reportUnknownArgumentType=false
 """Multimodal input content conversion for AG-UI protocol >= 0.1.15.
 
 This module is lazy-imported only when the caller has verified that
 ag-ui-protocol >= 0.1.15 is installed, so these imports will succeed.
-Pyright suppressions are needed because the development dependency pins 0.1.13.
 """
 
 from __future__ import annotations
@@ -18,6 +12,7 @@ from ag_ui.core import (
     AudioInputContent,
     DocumentInputContent,
     ImageInputContent,
+    InputContentDataSource,
     InputContentUrlSource,
     VideoInputContent,
 )
@@ -38,6 +33,22 @@ def media_url_to_multimodal(
     """Convert a media URL to typed multimodal AG-UI input content."""
     source = InputContentUrlSource(type='url', value=item.url, mime_type=item.media_type or '')
     return _URL_TYPE_MAP[type(item)](source=source)
+
+
+_MEDIA_PREFIX_TO_CONTENT: dict[str, type] = {
+    'image': ImageInputContent,
+    'audio': AudioInputContent,
+    'video': VideoInputContent,
+}
+
+
+def binary_to_multimodal(
+    item: BinaryContent,
+) -> ImageInputContent | AudioInputContent | VideoInputContent | DocumentInputContent:
+    """Convert BinaryContent to typed multimodal AG-UI input content based on media type prefix."""
+    source = InputContentDataSource(type='data', value=item.base64, mime_type=item.media_type)
+    content_cls = _MEDIA_PREFIX_TO_CONTENT.get(item.media_type.split('/', 1)[0], DocumentInputContent)
+    return content_cls(source=source)
 
 
 def multimodal_input_to_content(
