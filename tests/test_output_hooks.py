@@ -1994,7 +1994,9 @@ class TestOutputHookEdgeCases:
                 tracer=NoOpTracer(),
                 instrumentation_version=0,
             )
-            return await run_output_with_hooks(processor, 'hello', run_context=ctx, capability=None, output_mode='text')
+            return await run_output_with_hooks(
+                processor, text='hello', run_context=ctx, capability=None, output_mode='text'
+            )
 
         result = asyncio.get_event_loop().run_until_complete(run())
         assert result == 'hello'
@@ -2022,7 +2024,7 @@ class TestOutputHookEdgeCases:
                 instrumentation_version=0,
             )
             return await run_output_with_hooks(
-                processor, '{"value": 42}', run_context=ctx, capability=None, output_mode='prompted'
+                processor, text='{"value": 42}', run_context=ctx, capability=None, output_mode='prompted'
             )
 
         result = asyncio.get_event_loop().run_until_complete(run())
@@ -2054,7 +2056,9 @@ class TestOutputHookEdgeCases:
                 tracer=NoOpTracer(),
                 instrumentation_version=0,
             )
-            return await run_output_with_hooks(processor, 'hello', run_context=ctx, capability=None, output_mode='text')
+            return await run_output_with_hooks(
+                processor, text='hello', run_context=ctx, capability=None, output_mode='text'
+            )
 
         result = asyncio.get_event_loop().run_until_complete(run())
         assert result == 'HELLO'
@@ -2083,7 +2087,7 @@ class TestOutputHookEdgeCases:
             )
             return await run_output_with_hooks(
                 processor,
-                '{"result": {"kind": "MyOutput", "data": {"value": 7}}}',
+                text='{"result": {"kind": "MyOutput", "data": {"value": 7}}}',
                 run_context=ctx,
                 capability=None,
                 output_mode='prompted',
@@ -2117,7 +2121,7 @@ class TestOutputHookEdgeCases:
                 instrumentation_version=0,
             )
             return await run_output_with_hooks(
-                processor, 'not valid json', run_context=ctx, capability=None, output_mode='prompted'
+                processor, text='not valid json', run_context=ctx, capability=None, output_mode='prompted'
             )
 
         with pytest.raises(ToolRetryError):
@@ -2147,7 +2151,7 @@ class TestOutputHookEdgeCases:
                 instrumentation_version=0,
             )
             return await run_output_with_hooks(
-                processor, 'not valid json', run_context=ctx, capability=None, output_mode='prompted'
+                processor, text='not valid json', run_context=ctx, capability=None, output_mode='prompted'
             )
 
         with pytest.raises(ToolRetryError):

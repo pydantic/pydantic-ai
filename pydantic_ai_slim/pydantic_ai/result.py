@@ -231,7 +231,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 run_ctx = replace(self._run_ctx, partial_output=allow_partial)
                 result_data = await run_output_with_hooks(
                     text_processor,
-                    text,
+                    text=text,
                     run_context=run_ctx,
                     capability=self._tool_manager.root_capability,
                     output_mode=self._output_schema.mode,

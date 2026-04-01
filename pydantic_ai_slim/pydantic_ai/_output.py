@@ -90,24 +90,25 @@ def _build_output_handlers(
     correct inner processor. The kind is stored per-invocation in closure state, avoiding
     the race condition of shared instance state.
     """
-    _union_kind: list[str] = []  # Per-invocation storage; list to allow mutation in closure
+    _union_kind: str | None = None
 
     async def do_validate(data: str | dict[str, Any]) -> Any:
+        nonlocal _union_kind
         result = processor.validate(
             data,
             allow_partial=allow_partial,
             validation_context=run_context.validation_context,
         )
         if isinstance(result, _UnionValidatedOutput):
-            _union_kind.append(result.kind)
+            _union_kind = result.kind
             return result.data
         return result
 
     async def do_execute(output: Any) -> Any:
-        if _union_kind:
+        if _union_kind is not None:
             # Normal path: re-wrap with the kind resolved during validation
             return await processor.call(
-                _UnionValidatedOutput(kind=_union_kind[0], data=output), run_context, wrap_validation_errors
+                _UnionValidatedOutput(kind=_union_kind, data=output), run_context, wrap_validation_errors
             )
         if isinstance(processor, UnionOutputProcessor):
             # Error recovery path: validation failed and on_output_validate_error returned
@@ -128,8 +129,12 @@ def _build_output_handlers(
     return do_validate, do_execute
 
 
-def _make_retry_prompt(e: ModelRetry, run_context: RunContext[Any]) -> ToolRetryError:
-    m = _messages.RetryPromptPart(content=e.message, tool_name=run_context.tool_name)
+def _make_retry_prompt(e: ValidationError | ModelRetry, run_context: RunContext[Any]) -> ToolRetryError:
+    if isinstance(e, ValidationError):
+        content: list[Any] | str = e.errors(include_url=False)
+    else:
+        content = e.message
+    m = _messages.RetryPromptPart(content=content, tool_name=run_context.tool_name)
     if run_context.tool_call_id:
         m.tool_call_id = run_context.tool_call_id
     return ToolRetryError(m)
@@ -160,10 +165,7 @@ async def run_output_validate_hooks(
         except (ValidationError, ModelRetry) as e:
             if allow_partial:
                 if wrap_validation_errors and isinstance(e, ValidationError):  # pragma: no cover
-                    m = _messages.RetryPromptPart(content=e.errors(include_url=False), tool_name=run_context.tool_name)
-                    if run_context.tool_call_id:
-                        m.tool_call_id = run_context.tool_call_id
-                    raise ToolRetryError(m) from e
+                    raise _make_retry_prompt(e, run_context) from e
                 raise
             try:
                 validated = await capability.on_output_validate_error(
@@ -171,17 +173,7 @@ async def run_output_validate_hooks(
                 )
             except (ValidationError, ModelRetry) as hook_error:
                 if wrap_validation_errors:
-                    if isinstance(hook_error, ValidationError):
-                        m = _messages.RetryPromptPart(
-                            content=hook_error.errors(include_url=False), tool_name=run_context.tool_name
-                        )
-                        if run_context.tool_call_id:
-                            m.tool_call_id = run_context.tool_call_id
-                    else:
-                        m = _messages.RetryPromptPart(content=hook_error.message, tool_name=run_context.tool_name)
-                        if run_context.tool_call_id:
-                            m.tool_call_id = run_context.tool_call_id
-                    raise ToolRetryError(m) from hook_error
+                    raise _make_retry_prompt(hook_error, run_context) from hook_error
                 raise
 
         return await capability.after_output_validate(run_context, output_context=output_context, output=validated)
@@ -233,8 +225,8 @@ async def run_output_execute_hooks(
 
 async def run_output_with_hooks(
     processor: BaseOutputProcessor[OutputDataT],
-    text: str,
     *,
+    text: str,
     run_context: RunContext[AgentDepsT],
     capability: AbstractCapability[AgentDepsT] | None,
     output_mode: OutputMode,
@@ -743,16 +735,15 @@ class BaseOutputProcessor(ABC, Generic[OutputDataT]):
         """Execute output function on validated output. Default: identity (returns output as-is)."""
         return output
 
+    @abstractmethod
     def get_output_context(
         self,
         mode: OutputMode,
         tool_call: _messages.ToolCallPart | None = None,
         tool_def: ToolDefinition | None = None,
-    ) -> OutputContext:  # pragma: no cover — overridden by all subclasses
+    ) -> OutputContext:
         """Return context information about this processor for output hooks."""
-        return OutputContext(
-            mode=mode, output_type=None, object_def=None, has_function=False, tool_call=tool_call, tool_def=tool_def
-        )
+        raise NotImplementedError()
 
 
 @dataclass(kw_only=True)

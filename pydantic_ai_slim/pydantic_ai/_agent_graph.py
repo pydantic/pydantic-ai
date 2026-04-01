@@ -1167,7 +1167,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
         result_data = await _output.run_output_with_hooks(
             text_processor,
-            text,
+            text=text,
             run_context=run_context,
             capability=ctx.deps.root_capability,
             output_mode=ctx.deps.output_schema.mode,
