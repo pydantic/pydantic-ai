@@ -7,7 +7,7 @@ import httpx
 import pytest
 from typing_extensions import TypedDict
 
-from pydantic_ai.models import KnownModelName
+from pydantic_ai.models import UNSUPPORTED_GATEWAY_MODEL_NAMES, KnownModelName
 from pydantic_ai.providers.gateway import ModelProvider as GatewayModelProvider
 
 from ..conftest import try_import
@@ -96,6 +96,7 @@ def test_known_model_names():  # pragma: lax no cover
         f'gateway/{provider}:{model_name}'
         for provider in GatewayModelProvider.__args__
         for model_name in get_model_names(_PROVIDER_TO_MODEL_NAMES[provider])
+        if f'gateway/{provider}:{model_name}' not in UNSUPPORTED_GATEWAY_MODEL_NAMES
     ]
 
     extra_names = ['test']

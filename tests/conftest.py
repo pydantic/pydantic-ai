@@ -349,6 +349,12 @@ def pytest_addoption(parser: Any) -> None:
         dest='xai_proto_include_json',
         help='Include JSON representations in xAI proto cassette YAML files.',
     )
+    parser.addoption(
+        '--run-gateway-live',
+        action='store_true',
+        default=False,
+        help='Run live gateway smoke tests that make real paid model requests.',
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -495,6 +501,11 @@ def groq_api_key() -> str:
 @pytest.fixture(scope='session')
 def anthropic_api_key() -> str:
     return os.getenv('ANTHROPIC_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def gateway_api_key() -> str | None:
+    return os.getenv('PYDANTIC_AI_GATEWAY_API_KEY', os.getenv('PAIG_API_KEY'))
 
 
 @pytest.fixture(scope='session')
