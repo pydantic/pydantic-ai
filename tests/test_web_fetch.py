@@ -387,7 +387,6 @@ class TestWebFetchLocalTool:
         assert isinstance(result, dict)
         assert result['url'] == 'https://example.com/page'
 
-
     async def test_fetch_markdown_response(self):
         """Server returning text/markdown is used as-is without markdownify conversion."""
         markdown_content = '# Hello\n\nThis is **markdown** from the server.'
