@@ -95,10 +95,13 @@ try:
         PartDict,
         SafetySettingDict,
         ThinkingConfigDict,
+        ToolCall,
         ToolCodeExecutionDict,
         ToolConfigDict,
         ToolDict,
         ToolListUnionDict,
+        ToolResponse,
+        ToolType,
         UrlContextDict,
         UrlContextMetadata,
         VideoMetadataDict,
@@ -111,6 +114,14 @@ except ImportError as _import_error:
 
 
 _FILE_SEARCH_QUERY_PATTERN = re.compile(r'file_search\.query\(query=(["\'])((?:\\.|(?!\1).)*?)\1\)')
+
+_TOOL_TYPE_TO_BUILTIN_TOOL_NAME: dict[ToolType, str] = {
+    ToolType.GOOGLE_SEARCH_WEB: WebSearchTool.kind,
+    ToolType.URL_CONTEXT: WebFetchTool.kind,
+    ToolType.FILE_SEARCH: FileSearchTool.kind,
+}
+
+_BUILTIN_TOOL_NAME_TO_TOOL_TYPE: dict[str, ToolType] = {v: k for k, v in _TOOL_TYPE_TO_BUILTIN_TOOL_NAME.items()}
 
 
 LatestGoogleModelNames = Literal[
@@ -286,18 +297,23 @@ class GoogleModel(Model):
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
-        supports_native_output_with_builtin_tools = GoogleModelProfile.from_profile(
-            self.profile
-        ).google_supports_native_output_with_builtin_tools
+        google_profile = GoogleModelProfile.from_profile(self.profile)
         if model_request_parameters.builtin_tools and model_request_parameters.output_tools:
-            if model_request_parameters.output_mode == 'auto':
-                output_mode = 'native' if supports_native_output_with_builtin_tools else 'prompted'
-                model_request_parameters = replace(model_request_parameters, output_mode=output_mode)
-            else:
-                output_mode = 'NativeOutput' if supports_native_output_with_builtin_tools else 'PromptedOutput'
-                raise UserError(
-                    f'Google does not support output tools and built-in tools at the same time. Use `output_type={output_mode}(...)` instead.'
-                )
+            if not google_profile.google_supports_tool_combination:
+                if model_request_parameters.output_mode == 'auto':
+                    output_mode = (
+                        'native' if google_profile.google_supports_native_output_with_builtin_tools else 'prompted'
+                    )
+                    model_request_parameters = replace(model_request_parameters, output_mode=output_mode)
+                else:
+                    output_mode = (
+                        'NativeOutput'
+                        if google_profile.google_supports_native_output_with_builtin_tools
+                        else 'PromptedOutput'
+                    )
+                    raise UserError(
+                        f'This model does not support output tools and built-in tools at the same time. Use `output_type={output_mode}(...)` instead.'
+                    )
         return super().prepare_request(model_settings, model_request_parameters)
 
     async def request(
@@ -443,7 +459,8 @@ class GoogleModel(Model):
 
         if model_request_parameters.builtin_tools:
             if model_request_parameters.function_tools:
-                raise UserError('Google does not support function tools and built-in tools at the same time.')
+                if not GoogleModelProfile.from_profile(self.profile).google_supports_tool_combination:
+                    raise UserError('This model does not support function tools and built-in tools at the same time.')
 
             for tool in model_request_parameters.builtin_tools:
                 if isinstance(tool, WebSearchTool):
@@ -470,13 +487,20 @@ class GoogleModel(Model):
     def _get_tool_config(
         self, model_request_parameters: ModelRequestParameters, tools: list[ToolDict] | None
     ) -> ToolConfigDict | None:
+        has_builtin_tools = bool(model_request_parameters.builtin_tools)
+        supports_tool_combination = GoogleModelProfile.from_profile(self.profile).google_supports_tool_combination
         if not model_request_parameters.allow_text_output and tools:
             names: list[str] = []
             for tool in tools:
                 for function_declaration in tool.get('function_declarations') or []:
                     if name := function_declaration.get('name'):  # pragma: no branch
                         names.append(name)
-            return _tool_config(names)
+            tool_config = _tool_config(names)
+            if has_builtin_tools and supports_tool_combination:
+                tool_config['include_server_side_tool_invocations'] = True
+            return tool_config
+        elif has_builtin_tools and supports_tool_combination:
+            return ToolConfigDict(include_server_side_tool_invocations=True)
         else:
             return None
 
@@ -575,9 +599,10 @@ class GoogleModel(Model):
         response_schema = None
         if model_request_parameters.output_mode == 'native':
             if model_request_parameters.function_tools:
-                raise UserError(
-                    'Google does not support `NativeOutput` and function tools at the same time. Use `output_type=ToolOutput(...)` instead.'
-                )
+                if not GoogleModelProfile.from_profile(self.profile).google_supports_tool_combination:
+                    raise UserError(
+                        'This model does not support `NativeOutput` and function tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+                    )
             response_mime_type = 'application/json'
             output_object = model_request_parameters.output_object
             assert output_object is not None
@@ -1076,6 +1101,14 @@ class GeminiStreamedResponse(StreamedResponse):
                                 provider_details=provider_details,
                             ),
                         )
+                    elif part.tool_call:
+                        tool_call_part = _map_tool_call(part.tool_call, self.provider_name)
+                        tool_call_part.provider_details = provider_details
+                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_call_part)
+                    elif part.tool_response:
+                        tool_response_part = _map_tool_response(part.tool_response, self.provider_name)
+                        tool_response_part.provider_details = provider_details
+                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_response_part)
                     elif part.executable_code is not None:
                         part_obj = self._handle_executable_code_streaming(part.executable_code)
                         part_obj.provider_details = provider_details
@@ -1232,16 +1265,21 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
             if item.provider_name == provider_name:
                 if item.tool_name == CodeExecutionTool.kind:
                     part['executable_code'] = cast(ExecutableCodeDict, item.args_as_dict())
-                elif item.tool_name == WebSearchTool.kind:
-                    # Web search calls are not sent back
-                    pass
+                elif tool_type := _BUILTIN_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name):
+                    part['tool_call'] = {'id': item.tool_call_id, 'tool_type': tool_type, 'args': item.args_as_dict()}
         elif isinstance(item, BuiltinToolReturnPart):
             if item.provider_name == provider_name:
                 if item.tool_name == CodeExecutionTool.kind and isinstance(item.content, dict):
                     part['code_execution_result'] = cast(CodeExecutionResultDict, item.content)  # pyright: ignore[reportUnknownMemberType]
-                elif item.tool_name == WebSearchTool.kind:
-                    # Web search results are not sent back
-                    pass
+                elif tool_type := _BUILTIN_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name):
+                    tool_content: dict[str, Any] = (  # pyright: ignore[reportUnknownVariableType]
+                        item.content if isinstance(item.content, dict) else {'result': item.content}  # pyright: ignore[reportUnknownMemberType]
+                    )
+                    part['tool_response'] = {
+                        'id': item.tool_call_id,
+                        'tool_type': tool_type,
+                        'response': tool_content,
+                    }
         elif isinstance(item, FilePart):
             content = item.content
             inline_data_dict: BlobDict = {'data': content.data, 'mime_type': content.media_type}
@@ -1293,6 +1331,10 @@ def _process_part(
         item = ToolCallPart(tool_name=part.function_call.name, args=part.function_call.args)
         if part.function_call.id is not None:
             item.tool_call_id = part.function_call.id  # pragma: no cover
+    elif part.tool_call:
+        item = _map_tool_call(part.tool_call, provider_name)
+    elif part.tool_response:
+        item = _map_tool_response(part.tool_response, provider_name)
     elif inline_data := part.inline_data:
         data = inline_data.data
         mime_type = inline_data.mime_type
@@ -1426,6 +1468,28 @@ def _map_code_execution_result(
         tool_name=CodeExecutionTool.kind,
         content=code_execution_result.model_dump(mode='json'),
         tool_call_id=tool_call_id,
+    )
+
+
+def _map_tool_call(tool_call: ToolCall, provider_name: str) -> BuiltinToolCallPart:
+    tool_type = tool_call.tool_type
+    tool_name = _TOOL_TYPE_TO_BUILTIN_TOOL_NAME[tool_type] if tool_type else str(tool_type)
+    return BuiltinToolCallPart(
+        provider_name=provider_name,
+        tool_name=tool_name,
+        tool_call_id=tool_call.id or _utils.generate_tool_call_id(),
+        args=tool_call.args,
+    )
+
+
+def _map_tool_response(tool_response: ToolResponse, provider_name: str) -> BuiltinToolReturnPart:
+    tool_type = tool_response.tool_type
+    tool_name = _TOOL_TYPE_TO_BUILTIN_TOOL_NAME[tool_type] if tool_type else str(tool_type)
+    return BuiltinToolReturnPart(
+        provider_name=provider_name,
+        tool_name=tool_name,
+        tool_call_id=tool_response.id or _utils.generate_tool_call_id(),
+        content=tool_response.response,
     )
 
 

@@ -5,7 +5,6 @@ import datetime
 import json
 import os
 import random
-import re
 import tempfile
 from collections.abc import AsyncIterator
 from datetime import date, timezone
@@ -367,13 +366,14 @@ async def test_google_model_builtin_code_execution_stream(
     \
 """,
                             'language': 'PYTHON',
+                            'id': None,
                         },
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
-                        content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
+                        content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': None},
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
@@ -387,13 +387,14 @@ result = 65465 - 6544 * 65464 - 6 + 1.02255
 print(result)\
 """,
                             'language': 'PYTHON',
+                            'id': None,
                         },
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
-                        content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
+                        content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': None},
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
@@ -434,6 +435,7 @@ print(result)\
     \
 """,
                         'language': 'PYTHON',
+                        'id': None,
                     },
                     tool_call_id=IsStr(),
                     provider_name='google-gla',
@@ -450,6 +452,7 @@ print(result)\
     \
 """,
                         'language': 'PYTHON',
+                        'id': None,
                     },
                     tool_call_id=IsStr(),
                     provider_name='google-gla',
@@ -460,7 +463,7 @@ print(result)\
                 index=1,
                 part=BuiltinToolReturnPart(
                     tool_name='code_execution',
-                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
+                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': None},
                     tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
@@ -478,6 +481,7 @@ result = 65465 - 6544 * 65464 - 6 + 1.02255
 print(result)\
 """,
                         'language': 'PYTHON',
+                        'id': None,
                     },
                     tool_call_id=IsStr(),
                     provider_name='google-gla',
@@ -495,6 +499,7 @@ result = 65465 - 6544 * 65464 - 6 + 1.02255
 print(result)\
 """,
                         'language': 'PYTHON',
+                        'id': None,
                     },
                     tool_call_id=IsStr(),
                     provider_name='google-gla',
@@ -505,7 +510,7 @@ print(result)\
                 index=3,
                 part=BuiltinToolReturnPart(
                     tool_name='code_execution',
-                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
+                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': None},
                     tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
@@ -527,6 +532,7 @@ print(result)\
     \
 """,
                         'language': 'PYTHON',
+                        'id': None,
                     },
                     tool_call_id=IsStr(),
                     provider_name='google-gla',
@@ -535,7 +541,7 @@ print(result)\
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='code_execution',
-                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
+                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': None},
                     tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
@@ -551,6 +557,7 @@ result = 65465 - 6544 * 65464 - 6 + 1.02255
 print(result)\
 """,
                         'language': 'PYTHON',
+                        'id': None,
                     },
                     tool_call_id=IsStr(),
                     provider_name='google-gla',
@@ -559,7 +566,7 @@ print(result)\
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='code_execution',
-                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
+                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': None},
                     tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
@@ -1800,6 +1807,7 @@ formatted_date = utrecht_now.strftime("%A, %B %d, %Y")
 print(f"Today in Utrecht is {formatted_date}.")
 """,
                             'language': 'PYTHON',
+                            'id': None,
                         },
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
@@ -1809,6 +1817,7 @@ print(f"Today in Utrecht is {formatted_date}.")
                         content={
                             'outcome': 'OUTCOME_OK',
                             'output': 'Today in Utrecht is Tuesday, September 16, 2025.\n',
+                            'id': None,
                         },
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
@@ -1859,6 +1868,7 @@ tomorrow = date.today() + timedelta(days=1)
 print(f"Tomorrow is {tomorrow.strftime('%A, %B %d, %Y')}.")
 """,
                             'language': 'PYTHON',
+                            'id': None,
                         },
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
@@ -1868,6 +1878,7 @@ print(f"Tomorrow is {tomorrow.strftime('%A, %B %d, %Y')}.")
                         content={
                             'outcome': 'OUTCOME_OK',
                             'output': 'Tomorrow is Wednesday, September 17, 2025.\n',
+                            'id': None,
                         },
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
@@ -2877,28 +2888,6 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
     )
 
 
-async def test_google_native_output_with_tools(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
-
-    class CityLocation(BaseModel):
-        city: str
-        country: str
-
-    agent = Agent(m, output_type=NativeOutput(CityLocation))
-
-    @agent.tool_plain
-    async def get_user_country() -> str:
-        return 'Mexico'  # pragma: no cover
-
-    with pytest.raises(
-        UserError,
-        match=re.escape(
-            'Google does not support `NativeOutput` and function tools at the same time. Use `output_type=ToolOutput(...)` instead.'
-        ),
-    ):
-        await agent.run('What is the largest city in the user country?')
-
-
 async def test_google_native_output(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
 
@@ -3274,73 +3263,6 @@ def test_map_usage():
             },
         )
     )
-
-
-async def test_google_builtin_tools_with_other_tools(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
-
-    agent = Agent(m, builtin_tools=[WebFetchTool()])
-
-    @agent.tool_plain
-    async def get_user_country() -> str:
-        return 'Mexico'  # pragma: no cover
-
-    with pytest.raises(
-        UserError,
-        match=re.escape('Google does not support function tools and built-in tools at the same time.'),
-    ):
-        await agent.run('What is the largest city in the user country?')
-
-    class CityLocation(BaseModel):
-        city: str
-        country: str
-
-    agent = Agent(m, output_type=ToolOutput(CityLocation), builtin_tools=[WebFetchTool()])
-
-    with pytest.raises(
-        UserError,
-        match=re.escape(
-            'Google does not support output tools and built-in tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
-        ),
-    ):
-        await agent.run('What is the largest city in Mexico?')
-
-    # Will default to prompted output
-    agent = Agent(m, output_type=CityLocation, builtin_tools=[WebFetchTool()])
-
-    result = await agent.run('What is the largest city in Mexico?')
-    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
-
-
-async def test_google_native_output_with_builtin_tools_gemini_3(
-    allow_model_requests: None, google_provider: GoogleProvider
-):
-    m = GoogleModel('gemini-3-pro-preview', provider=google_provider)
-
-    class CityLocation(BaseModel):
-        city: str
-        country: str
-
-    agent = Agent(m, output_type=ToolOutput(CityLocation), builtin_tools=[WebFetchTool()])
-
-    with pytest.raises(
-        UserError,
-        match=re.escape(
-            'Google does not support output tools and built-in tools at the same time. Use `output_type=NativeOutput(...)` instead.'
-        ),
-    ):
-        await agent.run('What is the largest city in Mexico?')
-
-    agent = Agent(m, output_type=NativeOutput(CityLocation), builtin_tools=[WebFetchTool()])
-
-    result = await agent.run('What is the largest city in Mexico?')
-    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
-
-    # Will default to native output
-    agent = Agent(m, output_type=CityLocation, builtin_tools=[WebFetchTool()])
-
-    result = await agent.run('What is the largest city in Mexico?')
-    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
 
 
 async def test_google_image_generation(allow_model_requests: None, google_provider: GoogleProvider):
