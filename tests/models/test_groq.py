@@ -46,7 +46,6 @@ from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
-    InstructionPart,
 )
 from pydantic_ai.output import NativeOutput, PromptedOutput
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -5438,9 +5437,6 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                 ],
                 timestamp=IsDatetime(),
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
-                instruction_parts=[
-                    InstructionPart(content='Be concise. Never use pretty double quotes, just regular ones.')
-                ],
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -5482,9 +5478,6 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                 ],
                 timestamp=IsDatetime(),
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
-                instruction_parts=[
-                    InstructionPart(content='Be concise. Never use pretty double quotes, just regular ones.')
-                ],
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -5519,9 +5512,6 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                 ],
                 timestamp=IsDatetime(),
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
-                instruction_parts=[
-                    InstructionPart(content='Be concise. Never use pretty double quotes, just regular ones.')
-                ],
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -5576,9 +5566,6 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
                 ],
                 timestamp=IsDatetime(),
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
-                instruction_parts=[
-                    InstructionPart(content='Be concise. Never use pretty double quotes, just regular ones.')
-                ],
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -5624,9 +5611,6 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
                 ],
                 timestamp=IsDatetime(),
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
-                instruction_parts=[
-                    InstructionPart(content='Be concise. Never use pretty double quotes, just regular ones.')
-                ],
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -5661,9 +5645,6 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
                 ],
                 timestamp=IsDatetime(),
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
-                instruction_parts=[
-                    InstructionPart(content='Be concise. Never use pretty double quotes, just regular ones.')
-                ],
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -5709,9 +5690,6 @@ async def test_tool_use_failed_error_with_text(allow_model_requests: None, groq_
                 ],
                 timestamp=IsDatetime(),
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
-                instruction_parts=[
-                    InstructionPart(content='Be concise. Never use pretty double quotes, just regular ones.')
-                ],
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -5741,9 +5719,6 @@ async def test_tool_use_failed_error_with_text(allow_model_requests: None, groq_
                 ],
                 timestamp=IsDatetime(),
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
-                instruction_parts=[
-                    InstructionPart(content='Be concise. Never use pretty double quotes, just regular ones.')
-                ],
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -5815,9 +5790,6 @@ async def test_tool_use_failed_error_streaming_with_text(allow_model_requests: N
                 ],
                 timestamp=IsDatetime(),
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
-                instruction_parts=[
-                    InstructionPart(content='Be concise. Never use pretty double quotes, just regular ones.')
-                ],
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -5857,9 +5829,6 @@ We need to respond with just the string maybe, not JSON, and no tool call. So ju
                 ],
                 timestamp=IsDatetime(),
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
-                instruction_parts=[
-                    InstructionPart(content='Be concise. Never use pretty double quotes, just regular ones.')
-                ],
                 run_id=IsStr(),
             ),
             ModelResponse(

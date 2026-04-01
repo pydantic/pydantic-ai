@@ -372,7 +372,7 @@ class GeminiModel(Model):
                 contents.append(_content_model_response(m))
             else:
                 assert_never(m)
-        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
+        if instruction_parts := model_request_parameters.instruction_parts:
             for part in instruction_parts:
                 sys_prompt_parts.append(_GeminiTextPart(text=part.content))
         return sys_prompt_parts, contents

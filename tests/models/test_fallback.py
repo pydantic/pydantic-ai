@@ -25,7 +25,7 @@ from pydantic_ai import (
     ToolDefinition,
     UserPromptPart,
 )
-from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolReturnPart
+from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolReturnPart, InstructionPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel, ResponseRejected
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -169,6 +169,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
                         'thinking': None,
                     },
                     'logfire.span_type': 'span',
@@ -283,6 +284,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
                         'thinking': None,
                     },
                     'logfire.span_type': 'span',
@@ -399,6 +401,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
                         'thinking': None,
                     },
                     'logfire.json_schema': {
@@ -813,6 +816,7 @@ Always respond with a JSON object that's compatible with this schema:
 
 Don't include any text or Markdown fencing before or after.
 """,
+                instruction_parts=[InstructionPart(content='Be kind')],
             )
         )
 
@@ -900,6 +904,7 @@ Don't include any text or Markdown fencing before or after.
 """,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': [{'content': 'Be kind', 'dynamic': False, 'part_kind': 'instruction'}],
                         'thinking': None,
                     },
                     'logfire.span_type': 'span',

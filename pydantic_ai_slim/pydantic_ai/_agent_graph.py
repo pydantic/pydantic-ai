@@ -416,6 +416,7 @@ async def _get_instructions(
 
 async def _prepare_request_parameters(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+    instruction_parts: list[_messages.InstructionPart] | None,
 ) -> models.ModelRequestParameters:
     """Build tools and create an agent model."""
     output_schema = ctx.deps.output_schema
@@ -451,7 +452,7 @@ async def _prepare_request_parameters(
                 if t is not None:
                     builtin_tools.append(t)
 
-    return models.ModelRequestParameters(
+    params = models.ModelRequestParameters(
         function_tools=function_tools,
         builtin_tools=builtin_tools,
         output_mode=output_schema.mode,
@@ -460,7 +461,17 @@ async def _prepare_request_parameters(
         prompted_output_template=prompted_output_template,
         allow_text_output=output_schema.allows_text,
         allow_image_output=output_schema.allows_image,
+        instruction_parts=instruction_parts,
     )
+
+    # Append prompted_output_instructions to instruction_parts so models that use structured
+    # instruction parts (for per-part system messages or cache placement) also get them.
+    if output_instr := params.prompted_output_instructions:
+        if params.instruction_parts is None:
+            params.instruction_parts = []
+        params.instruction_parts.append(_messages.InstructionPart(content=output_instr, dynamic=True))
+
+    return params
 
 
 @dataclasses.dataclass
@@ -543,7 +554,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             )
             self._did_stream = True
             ctx.state.usage.requests += 1
-            skip_mrp = await _prepare_request_parameters(ctx)
+            skip_mrp = await _prepare_request_parameters(ctx, instruction_parts=None)
             skip_sr = _SkipStreamedResponse(model_request_parameters=skip_mrp, _response=e.response)
             agent_stream = self._build_agent_stream(ctx, skip_sr, skip_mrp)
             yield agent_stream
@@ -776,18 +787,17 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
         # Fetch instructions now that dynamic toolsets have been resolved by for_run_step.
-        # Sort static before dynamic to match __post_init__ behavior (which doesn't re-run on mutation).
+        # Sort static before dynamic so models can rely on this ordering for cache placement.
         instruction_parts = await _get_instructions(ctx, run_context)
         if instruction_parts:
-            instruction_parts = sorted(instruction_parts, key=lambda p: p.dynamic)
-        self.request.instruction_parts = instruction_parts or None
+            instruction_parts = sorted(instruction_parts, key=lambda p: p.dynamic) or None
         self.request.instructions = _messages.InstructionPart.join(instruction_parts) if instruction_parts else None
 
         # Validate after instructions are resolved; self.request was appended above so [:-1] is prior history
         if not ctx.state.message_history[:-1] and not self.request.parts and not self.request.instructions:
             raise exceptions.UserError('No message history, user prompt, or instructions provided')
 
-        model_request_parameters = await _prepare_request_parameters(ctx)
+        model_request_parameters = await _prepare_request_parameters(ctx, instruction_parts)
         model_settings = ctx.deps.get_model_settings(run_context) or ModelSettings()
         run_context.model_settings = model_settings
 

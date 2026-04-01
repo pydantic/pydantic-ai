@@ -64,7 +64,6 @@ from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     CachePoint,
-    InstructionPart,
     UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
@@ -258,11 +257,6 @@ async def test_xai_request_structured_response_tool_output(allow_model_requests:
                 parts=[UserPromptPart(content='What is the largest city in the user country?', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 instructions='Call `get_user_country` first, then call `final_result` with the JSON result.',
-                instruction_parts=[
-                    InstructionPart(
-                        content='Call `get_user_country` first, then call `final_result` with the JSON result.'
-                    )
-                ],
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -287,11 +281,6 @@ async def test_xai_request_structured_response_tool_output(allow_model_requests:
                 ],
                 timestamp=IsDatetime(),
                 instructions='Call `get_user_country` first, then call `final_result` with the JSON result.',
-                instruction_parts=[
-                    InstructionPart(
-                        content='Call `get_user_country` first, then call `final_result` with the JSON result.'
-                    )
-                ],
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2363,11 +2352,6 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                 ],
                 timestamp=IsDatetime(),
                 instructions='Use tools to get the users city and then use the web search tool to find a famous landmark in that city.',
-                instruction_parts=[
-                    InstructionPart(
-                        content='Use tools to get the users city and then use the web search tool to find a famous landmark in that city.'
-                    )
-                ],
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -2404,11 +2388,6 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                 ],
                 timestamp=IsDatetime(),
                 instructions='Use tools to get the users city and then use the web search tool to find a famous landmark in that city.',
-                instruction_parts=[
-                    InstructionPart(
-                        content='Use tools to get the users city and then use the web search tool to find a famous landmark in that city.'
-                    )
-                ],
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -4564,24 +4543,7 @@ async def test_xai_prompted_output_json_object(allow_model_requests: None):
         [
             {
                 'model': XAI_NON_REASONING_MODEL,
-                'messages': [
-                    {
-                        'content': [
-                            {
-                                'text': """\
-
-Always respond with a JSON object that's compatible with this schema:
-
-{"properties": {"answer": {"type": "string"}}, "required": ["answer"], "title": "SimpleResult", "type": "object"}
-
-Don't include any text or Markdown fencing before or after.
-"""
-                            }
-                        ],
-                        'role': 'ROLE_SYSTEM',
-                    },
-                    {'content': [{'text': 'What is the meaning of life?'}], 'role': 'ROLE_USER'},
-                ],
+                'messages': [{'content': [{'text': 'What is the meaning of life?'}], 'role': 'ROLE_USER'}],
                 'tools': None,
                 'tool_choice': None,
                 'response_format': {'format_type': 'FORMAT_TYPE_JSON_OBJECT'},

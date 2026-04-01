@@ -2703,15 +2703,17 @@ async def test_bedrock_cache_instructions_mixed_static_dynamic(
     messages: list[ModelMessage] = [
         ModelRequest(
             parts=[UserPromptPart(content='Hi!')],
-            instruction_parts=[
-                InstructionPart(content='Static instructions.', dynamic=False),
-                InstructionPart(content='Dynamic context.', dynamic=True),
-            ],
         )
     ]
+    model_request_parameters = ModelRequestParameters(
+        instruction_parts=[
+            InstructionPart(content='Static instructions.', dynamic=False),
+            InstructionPart(content='Dynamic context.', dynamic=True),
+        ],
+    )
     system_prompt, _ = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
         messages,
-        ModelRequestParameters(),
+        model_request_parameters,
         BedrockModelSettings(bedrock_cache_instructions=True),
     )
     # Cache point should be after the static instruction, before the dynamic one

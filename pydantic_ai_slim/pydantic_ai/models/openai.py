@@ -1146,15 +1146,13 @@ class OpenAIChatModel(Model):
                 openai_messages.append(self._map_model_response(message))
             else:
                 assert_never(message)
-        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
+        if instruction_parts := model_request_parameters.instruction_parts:
             system_prompt_count = next(
                 (i for i, m in enumerate(openai_messages) if m.get('role') != 'system'), len(openai_messages)
             )
-            for i, part in enumerate(instruction_parts):
-                openai_messages.insert(
-                    system_prompt_count + i,
-                    chat.ChatCompletionSystemMessageParam(content=part.content, role='system'),
-                )
+            openai_messages[system_prompt_count:system_prompt_count] = [
+                chat.ChatCompletionSystemMessageParam(content=part.content, role='system') for part in instruction_parts
+            ]
         return openai_messages
 
     @staticmethod
@@ -2225,7 +2223,7 @@ class OpenAIResponsesModel(Model):
                         assert_never(item)
             else:
                 assert_never(message)
-        instructions = self._get_joined_instructions(messages, model_request_parameters) or OMIT
+        instructions = self._get_instructions(messages, model_request_parameters) or OMIT
         return instructions, openai_messages
 
     def _map_json_schema(self, o: OutputObjectDefinition) -> responses.ResponseFormatTextJSONSchemaConfigParam:

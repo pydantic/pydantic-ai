@@ -1535,7 +1535,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             }
         else:
             # Store the last instructions here for convenience
-            last_instructions = InstrumentedModel._get_joined_instructions(message_history)  # pyright: ignore[reportPrivateUsage]
+            last_instructions = InstrumentedModel._get_instructions(message_history)  # pyright: ignore[reportPrivateUsage]
             attrs: dict[str, Any] = {
                 'pydantic_ai.all_messages': json.dumps(settings.messages_to_otel_messages(list(message_history))),
                 **settings.system_instructions_attributes(last_instructions),

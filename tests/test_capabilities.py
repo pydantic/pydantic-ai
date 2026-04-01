@@ -40,7 +40,6 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import (
     AgentStreamEvent,
-    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -3569,14 +3568,6 @@ class TestRunWithSpec:
 original
 also from spec\
 """,
-                    instruction_parts=[
-                        InstructionPart(
-                            content="""\
-original
-also from spec\
-"""
-                        )
-                    ],
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -3731,14 +3722,6 @@ also from spec\
 agent-level
 from-spec\
 """,
-                    instruction_parts=[
-                        InstructionPart(
-                            content="""\
-agent-level
-from-spec\
-"""
-                        )
-                    ],
                     run_id=IsStr(),
                 ),
                 ModelResponse(

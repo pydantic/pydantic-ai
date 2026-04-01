@@ -995,7 +995,7 @@ class AnthropicModel(Model):
                     anthropic_messages.append(BetaMessageParam(role='assistant', content=assistant_content_params))
             else:
                 assert_never(m)
-        instruction_parts = self._get_instruction_parts(messages, model_request_parameters)
+        instruction_parts = model_request_parameters.instruction_parts
         system_prompt = '\n\n'.join(system_prompt_parts)
 
         # Add cache_control to the last message content if anthropic_cache_messages is enabled

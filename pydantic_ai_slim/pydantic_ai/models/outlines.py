@@ -427,7 +427,7 @@ class OutlinesModel(Model):
         """Turn the model messages into an Outlines Chat instance."""
         chat = Chat()
 
-        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
+        if instruction_parts := model_request_parameters.instruction_parts:
             for part in instruction_parts:
                 chat.add_system_message(part.content)
 

@@ -42,7 +42,7 @@ from pydantic_ai import (
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.builtin_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.exceptions import ContentFilterError
-from pydantic_ai.messages import SystemPromptPart, UploadedFile
+from pydantic_ai.messages import InstructionPart, SystemPromptPart, UploadedFile
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
@@ -4233,11 +4233,13 @@ async def test_openai_chat_instructions_after_system_prompts(allow_model_request
                 SystemPromptPart(content='System prompt 2'),
                 UserPromptPart(content='Hello'),
             ],
-            instructions='Instructions content',
         ),
     ]
+    model_request_parameters = ModelRequestParameters(
+        instruction_parts=[InstructionPart(content='Instructions content')],
+    )
 
-    openai_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    openai_messages = await model._map_messages(messages, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
 
     # Verify order: system1, system2, instructions, user
     assert len(openai_messages) == 4
@@ -4262,11 +4264,13 @@ async def test_openai_chat_instructions_after_only_system_prompts(allow_model_re
                 SystemPromptPart(content='System prompt 1'),
                 SystemPromptPart(content='System prompt 2'),
             ],
-            instructions='Instructions content',
         ),
     ]
+    model_request_parameters = ModelRequestParameters(
+        instruction_parts=[InstructionPart(content='Instructions content')],
+    )
 
-    openai_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    openai_messages = await model._map_messages(messages, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
 
     assert openai_messages == snapshot(
         [
@@ -4283,10 +4287,13 @@ async def test_openai_chat_instructions_with_no_mapped_messages(allow_model_requ
     model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
 
     messages: list[ModelRequest | ModelResponse] = [
-        ModelRequest(parts=[], instructions='Instructions content'),
+        ModelRequest(parts=[]),
     ]
+    model_request_parameters = ModelRequestParameters(
+        instruction_parts=[InstructionPart(content='Instructions content')],
+    )
 
-    openai_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    openai_messages = await model._map_messages(messages, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
 
     assert openai_messages == snapshot(
         [
@@ -4309,11 +4316,13 @@ async def test_openai_chat_instructions_do_not_split_tool_call_history(allow_mod
         ModelRequest(parts=[SystemPromptPart(content='CONVERSATION SUMMARY:\n...')]),
         ModelRequest(
             parts=[UserPromptPart(content='New user message')],
-            instructions='You are a helpful assistant.',
         ),
     ]
+    model_request_parameters = ModelRequestParameters(
+        instruction_parts=[InstructionPart(content='You are a helpful assistant.')],
+    )
 
-    openai_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    openai_messages = await model._map_messages(messages, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
 
     assert [message['role'] for message in openai_messages] == [
         'system',

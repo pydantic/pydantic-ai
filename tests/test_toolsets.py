@@ -1764,7 +1764,6 @@ async def test_concurrent_runs_dont_share_state():
 async def test_custom_toolset_returning_plain_str_instructions():
     """A custom AbstractToolset returning a plain str from get_instructions is treated as dynamic."""
     from pydantic_ai import Agent
-    from pydantic_ai.messages import InstructionPart
 
     class PlainStrInstructionsToolset(FunctionToolset[None]):
         """A toolset that overrides get_instructions to return a plain str instead of InstructionPart."""
@@ -1776,5 +1775,3 @@ async def test_custom_toolset_returning_plain_str_instructions():
     result = await agent.run('Hello')
     first_message = result.all_messages()[0]
     assert first_message.instructions == 'Custom toolset instruction.'  # type: ignore[union-attr]
-    # The instruction should be wrapped as dynamic InstructionPart
-    assert first_message.instruction_parts == [InstructionPart(content='Custom toolset instruction.', dynamic=True)]  # type: ignore[union-attr]

@@ -639,6 +639,17 @@ class ModelRequestParameters:
     allow_text_output: bool = True
     allow_image_output: bool = False
 
+    instruction_parts: list[InstructionPart] | None = None
+    """Structured instruction parts with metadata about their origin (static vs dynamic).
+
+    Static instructions (`dynamic=False`) come from literal strings passed to `Agent(instructions=...)`.
+    Dynamic instructions (`dynamic=True`) come from `@agent.instructions` functions, `TemplateStr`,
+    or toolset `get_instructions()` methods.
+
+    Models that support granular caching (e.g. Anthropic, Bedrock) use this to place cache
+    boundaries at the static/dynamic instruction boundary.
+    """
+
     thinking: ThinkingLevel | None = None
     """Resolved thinking/reasoning configuration for this request.
 
@@ -950,55 +961,56 @@ class Model(ABC):
         return None
 
     @staticmethod
-    def _get_instruction_parts(
+    def _get_instructions(
         messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters | None = None
-    ) -> list[InstructionPart] | None:
-        """Get structured instruction parts from the most recent ModelRequest.
+    ) -> str | None:
+        """Get instructions from the first ModelRequest found when iterating messages in reverse.
 
-        Like `_get_instructions`, falls back to the second-to-most-recent request when the most recent
-        request consists only of tool-return or retry-prompt parts (a "mock" request for result tools).
+        In the case that a "mock" request was generated to include a tool-return part for a result tool,
+        we want to use the instructions from the second-to-most-recent request (which should correspond to the
+        original request that generated the response that resulted in the tool-return part).
         """
+        instructions = None
+
         last_two_requests: list[ModelRequest] = []
         for message in reversed(messages):
             if isinstance(message, ModelRequest):
                 last_two_requests.append(message)
                 if len(last_two_requests) == 2:
                     break
+                if message.instructions is not None:
+                    instructions = message.instructions
+                    break
 
-        parts: list[InstructionPart] | None = None
+        # If we don't have two requests, and we didn't already return instructions, there are definitely not any:
+        if instructions is None and len(last_two_requests) == 2:
+            most_recent_request = last_two_requests[0]
+            second_most_recent_request = last_two_requests[1]
 
-        if last_two_requests:
-            most_recent = last_two_requests[0]
-            if most_recent.instruction_parts is not None:
-                parts = list(most_recent.instruction_parts)
-            elif len(last_two_requests) == 2 and all(
-                p.part_kind == 'tool-return' or p.part_kind == 'retry-prompt' for p in most_recent.parts
-            ):
-                second = last_two_requests[1]
-                if second.instruction_parts is not None:
-                    parts = list(second.instruction_parts)
+            # If we've gotten this far and the most recent request consists of only tool-return parts or retry-prompt parts,
+            # we use the instructions from the second-to-most-recent request. This is necessary because when handling
+            # result tools, we generate a "mock" ModelRequest with a tool-return part for it, and that ModelRequest will not
+            # have the relevant instructions from the agent.
 
-        if model_request_parameters and (output_instr := model_request_parameters.prompted_output_instructions):
-            if parts is None:
-                parts = []
-            parts.append(InstructionPart(content=output_instr, dynamic=True))
+            # While it's possible that you could have a message history where the most recent request has only tool returns,
+            # I believe there is no way to achieve that would _change_ the instructions without manually crafting the most
+            # recent message. That might make sense in principle for some usage pattern, but it's enough of an edge case
+            # that I think it's not worth worrying about, since you can work around this by inserting another ModelRequest
+            # with no parts at all immediately before the request that has the tool calls (that works because we only look
+            # at the two most recent ModelRequests here).
 
-        return parts or None
+            # If you have a use case where this causes pain, please open a GitHub issue and we can discuss alternatives.
 
-    @staticmethod
-    def _get_joined_instructions(
-        messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters | None = None
-    ) -> str | None:
-        """Get the joined instructions string from the most recent ModelRequest.
+            if all(p.part_kind == 'tool-return' or p.part_kind == 'retry-prompt' for p in most_recent_request.parts):
+                instructions = second_most_recent_request.instructions
 
-        This is a convenience wrapper around `_get_instruction_parts` that returns the instructions
-        as a single joined string, for models that need a single string (e.g. OpenAI Responses API,
-        function model, instrumented model).
-        """
-        parts = Model._get_instruction_parts(messages, model_request_parameters)
-        if parts:
-            return InstructionPart.join(parts)
-        return None
+        if model_request_parameters and (output_instructions := model_request_parameters.prompted_output_instructions):
+            if instructions:
+                instructions = '\n\n'.join([instructions, output_instructions])
+            else:
+                instructions = output_instructions
+
+        return instructions
 
 
 @dataclass

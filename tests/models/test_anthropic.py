@@ -50,6 +50,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
+    InstructionPart,
     UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters
@@ -8821,11 +8822,13 @@ async def test_anthropic_system_prompts_and_instructions_ordering():
                 SystemPromptPart(content='System prompt 2'),
                 UserPromptPart(content='Hello'),
             ],
-            instructions='Instructions content',
         ),
     ]
+    model_request_parameters = ModelRequestParameters(
+        instruction_parts=[InstructionPart(content='Instructions content')],
+    )
 
-    system_prompt, anthropic_messages = await m._map_message(messages, ModelRequestParameters(), {})  # pyright: ignore[reportPrivateUsage]
+    system_prompt, anthropic_messages = await m._map_message(messages, model_request_parameters, {})  # pyright: ignore[reportPrivateUsage]
 
     # Verify system prompts and instructions are joined in order: system1, system2, instructions
     assert system_prompt == snapshot(

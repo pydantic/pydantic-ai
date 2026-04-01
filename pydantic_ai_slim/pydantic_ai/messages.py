@@ -1430,24 +1430,8 @@ class ModelRequest:
     timestamp: datetime | None = None
     """The timestamp when the request was sent to the model."""
 
-    instructions: Annotated[
-        str | None,
-        # `instructions` is serialized for backward compat but is derived from `instruction_parts`
-        # when available. On deserialization of old messages without `instruction_parts`, the string
-        # is used to synthesize a single static InstructionPart in __post_init__.
-        pydantic.Field(validation_alias=pydantic.AliasChoices('instructions')),
-    ] = None
-    """The joined instructions string, derived from `instruction_parts` when available."""
-
-    instruction_parts: list[InstructionPart] | None = field(default=None, repr=False, compare=False)
-    """Structured instruction parts with metadata about their origin (static vs dynamic).
-
-    When set, `instructions` is automatically derived as the joined content of all parts,
-    and parts are sorted so that static instructions come before dynamic ones.
-
-    Models that support granular caching (e.g. Anthropic, Bedrock) use this to place cache
-    boundaries at the static/dynamic instruction boundary.
-    """
+    instructions: str | None = None
+    """The instructions string for this request, rendered from structured instruction parts."""
 
     kind: Literal['request'] = 'request'
     """Message type identifier, this is available on all parts as a discriminator."""
@@ -1457,18 +1441,6 @@ class ModelRequest:
 
     metadata: dict[str, Any] | None = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
-
-    def __post_init__(self):
-        if self.instruction_parts is not None:
-            # Sort static (dynamic=False) before dynamic (dynamic=True), preserving relative order within each group
-            self.instruction_parts = sorted(self.instruction_parts, key=lambda p: p.dynamic) or None
-            # Derive the joined instructions string from the structured parts
-            if self.instruction_parts:
-                self.instructions = InstructionPart.join(self.instruction_parts)
-        elif self.instructions is not None:
-            # Backward compat: old serialized messages or user_text_prompt() only have an instructions string.
-            # Synthesize a single static InstructionPart so models can always rely on instruction_parts.
-            self.instruction_parts = [InstructionPart(content=self.instructions)]
 
     @classmethod
     def user_text_prompt(cls, user_prompt: str, *, instructions: str | None = None) -> ModelRequest:
