@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from genai_prices import UpdatePrices
 
+_updater: UpdatePrices | None = None
+
 
 def update_in_background() -> None:
     """Start fetching the latest model pricing data from GitHub in the background.
@@ -14,16 +16,24 @@ def update_in_background() -> None:
     If the fetch fails (e.g. no network access), pricing silently falls back to
     the data bundled with the installed `genai-prices` package.
 
+    This is a fire-and-forget convenience wrapper. If you need more control
+    (e.g. stopping the thread, configuring the update interval, or waiting
+    for the first fetch), use
+    [`genai_prices.UpdatePrices`](https://github.com/pydantic/genai-prices) directly
+    as a context manager or via its `start()`/`stop()` methods.
+
     Example:
     ```python {test="skip"}
-    import pydantic_ai
+    from pydantic_ai import prices
 
-    pydantic_ai.prices.update_in_background()
-
-    agent = pydantic_ai.Agent('openai:gpt-5.2')
+    prices.update_in_background()
     ```
     """
+    global _updater
+    if _updater is not None:
+        return
     try:
-        UpdatePrices().start()
+        _updater = UpdatePrices()
+        _updater.start()
     except Exception:
-        pass
+        _updater = None

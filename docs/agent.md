@@ -450,6 +450,28 @@ prices.update_in_background()
 
 If the fetch fails (e.g. no network access), pricing silently falls back to the data bundled with the installed `genai-prices` package.
 
+If you need more control over the background thread (e.g. stopping it, configuring the update interval, or waiting for the first fetch to complete), use [`genai_prices.UpdatePrices`](https://github.com/pydantic/genai-prices) directly. It can be used as a context manager for automatic cleanup:
+
+```python {test="skip"}
+from genai_prices import UpdatePrices
+
+with UpdatePrices(update_interval=1800) as updater:
+    # Pricing data is refreshed every 30 minutes in the background.
+    # The background thread is automatically stopped when the context exits.
+    ...
+```
+
+Or managed manually with `start()` and `stop()`:
+
+```python {test="skip"}
+from genai_prices import UpdatePrices
+
+updater = UpdatePrices()
+updater.start(wait=True)  # Wait for the first fetch to complete before continuing.
+# ...
+updater.stop()
+```
+
 #### Streaming All Events and Output
 
 Here is an example of streaming an agent run in combination with `async for` iteration:

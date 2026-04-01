@@ -4,7 +4,16 @@ from unittest.mock import MagicMock
 import pytest
 from pytest_mock import MockerFixture
 
+import pydantic_ai.prices as prices_mod
 from pydantic_ai.prices import update_in_background
+
+
+@pytest.fixture(autouse=True)
+def _reset_updater():
+    """Reset the module-level singleton before each test."""
+    prices_mod._updater = None  # pyright: ignore[reportPrivateUsage]
+    yield
+    prices_mod._updater = None  # pyright: ignore[reportPrivateUsage]
 
 
 def test_update_in_background_calls_start(mocker: MockerFixture):
@@ -13,6 +22,15 @@ def test_update_in_background_calls_start(mocker: MockerFixture):
     update_in_background()
     mock_cls.assert_called_once()
     mock_cls.return_value.start.assert_called_once()
+    assert prices_mod._updater is mock_cls.return_value  # pyright: ignore[reportPrivateUsage]
+
+
+def test_update_in_background_is_idempotent(mocker: MockerFixture):
+    """Verify calling update_in_background() twice only creates one updater."""
+    mock_cls = mocker.patch('pydantic_ai.prices.UpdatePrices')
+    update_in_background()
+    update_in_background()
+    mock_cls.assert_called_once()
 
 
 def _start_raises(m: MagicMock) -> None:
@@ -35,3 +53,4 @@ def test_update_in_background_suppresses_errors(mocker: MockerFixture, setup_moc
     mock_cls = mocker.patch('pydantic_ai.prices.UpdatePrices')
     setup_mock(mock_cls)
     update_in_background()
+    assert prices_mod._updater is None  # pyright: ignore[reportPrivateUsage]
