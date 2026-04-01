@@ -878,10 +878,11 @@ class Model(ABC):
         or cache placement) also receive the prompted output format instructions.
         """
         if output_instr := params.prompted_output_instructions:
-            return replace(
-                params,
-                instruction_parts=[*(params.instruction_parts or []), InstructionPart(content=output_instr)],
-            )
+            parts = [*(params.instruction_parts or []), InstructionPart(content=output_instr)]
+            # Re-sort static before dynamic to maintain the ordering invariant
+            # that Anthropic/Bedrock cache placement depends on.
+            parts.sort(key=lambda p: p.dynamic)
+            return replace(params, instruction_parts=parts)
         return params
 
     @property
