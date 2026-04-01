@@ -1274,7 +1274,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             'model_name': model_used.model_name if model_used else 'no-model',
             'agent_name': agent_name,
             'gen_ai.agent.name': agent_name,
-            'pydantic_ai.run_id': state.run_id,
+            'gen_ai.agent.call.id': state.run_id,
+            'gen_ai.operation.name': 'invoke_agent',
             'logfire.msg': f'{agent_name} run',
         }
         if self._description is not None:
@@ -1292,7 +1293,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             async with AsyncExitStack() as stack:
                 if run_span.is_recording():
                     ctx = _otel_set_baggage('gen_ai.agent.name', agent_name)
-                    ctx = _otel_set_baggage('pydantic_ai.run_id', state.run_id, context=ctx)
+                    ctx = _otel_set_baggage('gen_ai.agent.call.id', state.run_id, context=ctx)
                     token = _otel_attach(ctx)
                     stack.callback(_otel_detach, token)
                 await stack.enter_async_context(

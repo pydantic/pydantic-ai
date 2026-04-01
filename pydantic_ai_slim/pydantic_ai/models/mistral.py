@@ -56,38 +56,38 @@ from . import (
 )
 
 try:
-    from mistralai import (
-        UNSET,
+    from mistralai.client import Mistral
+    from mistralai.client.errors import SDKError
+    from mistralai.client.models import (
+        ChatCompletionChoiceFinishReason as MistralFinishReason,
+        ChatCompletionRequestMessage as MistralMessages,
+        ChatCompletionResponse as MistralChatCompletionResponse,
         CompletionChunk as MistralCompletionChunk,
-        Content as MistralContent,
+        CompletionEvent as MistralCompletionEvent,
         ContentChunk as MistralContentChunk,
         DocumentURLChunk as MistralDocumentURLChunk,
         FunctionCall as MistralFunctionCall,
         ImageURL as MistralImageURL,
         ImageURLChunk as MistralImageURLChunk,
-        Mistral,
-        OptionalNullable as MistralOptionalNullable,
         ReferenceChunk as MistralReferenceChunk,
         TextChunk as MistralTextChunk,
         ThinkChunk as MistralThinkChunk,
-        ToolChoiceEnum as MistralToolChoiceEnum,
-    )
-    from mistralai.models import (
-        ChatCompletionResponse as MistralChatCompletionResponse,
-        CompletionEvent as MistralCompletionEvent,
-        FinishReason as MistralFinishReason,
-        Messages as MistralMessages,
-        SDKError,
         Tool as MistralTool,
         ToolCall as MistralToolCall,
+        ToolChoiceEnum as MistralToolChoiceEnum,
     )
-    from mistralai.models.assistantmessage import AssistantMessage as MistralAssistantMessage
-    from mistralai.models.function import Function as MistralFunction
-    from mistralai.models.systemmessage import SystemMessage as MistralSystemMessage
-    from mistralai.models.toolmessage import ToolMessage as MistralToolMessage
-    from mistralai.models.usermessage import UserMessage as MistralUserMessage
-    from mistralai.types.basemodel import Unset as MistralUnset
-    from mistralai.utils.eventstreaming import EventStreamAsync as MistralEventStreamAsync
+    from mistralai.client.models.assistantmessage import (
+        AssistantMessage as MistralAssistantMessage,
+        AssistantMessageContent as MistralContent,
+    )
+    from mistralai.client.models.function import Function as MistralFunction
+    from mistralai.client.models.systemmessage import SystemMessage as MistralSystemMessage
+    from mistralai.client.models.thinkchunk import Thinking as MistralThinking
+    from mistralai.client.models.toolmessage import ToolMessage as MistralToolMessage
+    from mistralai.client.models.usermessage import UserMessage as MistralUserMessage
+    from mistralai.client.types import UNSET, OptionalNullable as MistralOptionalNullable
+    from mistralai.client.types.basemodel import Unset as MistralUnset
+    from mistralai.client.utils.eventstreaming import EventStreamAsync as MistralEventStreamAsync
 except ImportError as e:  # pragma: lax no cover
     raise ImportError(
         'Please install `mistral` to use the Mistral model, '
@@ -544,7 +544,7 @@ class MistralModel(Model):
                     mistral_messages.append(msg)
             elif isinstance(message, ModelResponse):
                 content_chunks: list[MistralContentChunk] = []
-                thinking_chunks: list[MistralTextChunk | MistralReferenceChunk] = []
+                thinking_chunks: list[MistralThinking] = []
                 tool_calls: list[MistralToolCall] = []
 
                 for part in message.parts:
@@ -568,7 +568,10 @@ class MistralModel(Model):
             else:
                 assert_never(message)
         if instructions := self._get_instructions(messages, model_request_parameters):
-            system_prompt_count = sum(1 for m in mistral_messages if isinstance(m, MistralSystemMessage))
+            system_prompt_count = next(
+                (i for i, m in enumerate(mistral_messages) if not isinstance(m, MistralSystemMessage)),
+                len(mistral_messages),
+            )
             mistral_messages.insert(system_prompt_count, MistralSystemMessage(content=instructions))
 
         # Post-process messages to insert fake assistant message after tool message if followed by user message

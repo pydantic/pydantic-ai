@@ -911,6 +911,16 @@ async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_cal
     assert get_mock_chat_completion_kwargs(mock_client)[0]['parallel_tool_calls'] == parallel_tool_calls
 
 
+async def test_parallel_tool_calls_not_sent_without_tools(allow_model_requests: None) -> None:
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, model_settings=ModelSettings(parallel_tool_calls=True))
+
+    await agent.run('Hello')
+    assert 'parallel_tool_calls' not in get_mock_chat_completion_kwargs(mock_client)[0]
+
+
 async def test_image_url_input(allow_model_requests: None):
     c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
@@ -4249,6 +4259,91 @@ async def test_openai_chat_instructions_after_system_prompts(allow_model_request
             {'role': 'user', 'content': 'Hello'},
         ]
     )
+
+
+async def test_openai_chat_instructions_after_only_system_prompts(allow_model_requests: None):
+    """Test that instructions are appended after a history made entirely of system prompts."""
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='System prompt 1'),
+                SystemPromptPart(content='System prompt 2'),
+            ],
+            instructions='Instructions content',
+        ),
+    ]
+
+    openai_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert openai_messages == snapshot(
+        [
+            {'role': 'system', 'content': 'System prompt 1'},
+            {'role': 'system', 'content': 'System prompt 2'},
+            {'content': 'Instructions content', 'role': 'system'},
+        ]
+    )
+
+
+async def test_openai_chat_instructions_with_no_mapped_messages(allow_model_requests: None):
+    """Test that instructions are inserted even when there are no mapped messages yet."""
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[], instructions='Instructions content'),
+    ]
+
+    openai_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert openai_messages == snapshot(
+        [
+            {'content': 'Instructions content', 'role': 'system'},
+        ]
+    )
+
+
+async def test_openai_chat_instructions_do_not_split_tool_call_history(allow_model_requests: None):
+    """Test that instructions are inserted before tool-call history when a later system prompt exists."""
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call_abc123')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='my_tool', content='result', tool_call_id='call_abc123')]),
+        ModelResponse(parts=[TextPart('Done.')]),
+        ModelRequest(parts=[UserPromptPart(content='Next question?')]),
+        ModelResponse(parts=[TextPart('Answer.')]),
+        ModelRequest(parts=[SystemPromptPart(content='CONVERSATION SUMMARY:\n...')]),
+        ModelRequest(
+            parts=[UserPromptPart(content='New user message')],
+            instructions='You are a helpful assistant.',
+        ),
+    ]
+
+    openai_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert [message['role'] for message in openai_messages] == [
+        'system',
+        'assistant',
+        'tool',
+        'assistant',
+        'user',
+        'assistant',
+        'system',
+        'user',
+    ]
+    assistant_message = cast(chat.ChatCompletionAssistantMessageParam, openai_messages[1])
+    tool_message = cast(dict[str, Any], openai_messages[2])
+    tool_calls = assistant_message.get('tool_calls')
+    assert tool_calls is not None
+    first_tool_call = cast(dict[str, Any], next(iter(tool_calls)))
+    assert openai_messages[0] == {'role': 'system', 'content': 'You are a helpful assistant.'}
+    assert first_tool_call['id'] == 'call_abc123'
+    assert tool_message['tool_call_id'] == 'call_abc123'
+    assert openai_messages[6] == {'role': 'system', 'content': 'CONVERSATION SUMMARY:\n...'}
 
 
 def test_openai_chat_audio_default_base64(allow_model_requests: None):

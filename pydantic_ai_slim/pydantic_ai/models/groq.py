@@ -321,7 +321,7 @@ class GroqModel(Model):
                 model=self._model_name,
                 messages=groq_messages,
                 n=1,
-                parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
+                parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN) if tools else NOT_GIVEN,
                 tools=tools or NOT_GIVEN,
                 tool_choice=tool_choice or NOT_GIVEN,
                 stop=model_settings.get('stop_sequences', NOT_GIVEN),
@@ -459,7 +459,9 @@ class GroqModel(Model):
             else:
                 assert_never(message)
         if instructions := self._get_instructions(messages, model_request_parameters):
-            system_prompt_count = sum(1 for m in groq_messages if m.get('role') == 'system')
+            system_prompt_count = next(
+                (i for i, m in enumerate(groq_messages) if m.get('role') != 'system'), len(groq_messages)
+            )
             groq_messages.insert(
                 system_prompt_count, chat.ChatCompletionSystemMessageParam(role='system', content=instructions)
             )
