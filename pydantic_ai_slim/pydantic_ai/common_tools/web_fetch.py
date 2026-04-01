@@ -88,7 +88,7 @@ class WebFetchLocalTool:
                 allow_local=self.allow_local_urls,
                 timeout=self.timeout,
             )
-        except (ValueError, httpx.HTTPStatusError) as e:
+        except (ValueError, httpx.HTTPStatusError, httpx.RequestError) as e:
             raise ModelRetry(f'Failed to fetch {url}: {e}') from e
 
         media_type = response.headers.get('content-type', '')
