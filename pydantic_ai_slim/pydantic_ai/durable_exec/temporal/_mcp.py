@@ -68,7 +68,9 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
         )
 
         async def get_instructions_activity(params: GetToolsParams, deps: AgentDepsT) -> str | list[str] | None:
-            run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
+            run_context = deserialize_run_context(
+                self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
+            )
             async with self.wrapped:
                 return await self.wrapped.get_instructions(run_context)
 
