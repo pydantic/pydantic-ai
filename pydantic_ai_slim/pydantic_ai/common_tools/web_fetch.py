@@ -195,5 +195,5 @@ def web_fetch_tool(
             headers=headers,
         ).__call__,
         name='web_fetch',
-        description='Fetches the content of a web page at the given URL and returns it as markdown.',
+        description='Fetches the content of a web page at the given URL and returns it as markdown or binary content.',
     )
