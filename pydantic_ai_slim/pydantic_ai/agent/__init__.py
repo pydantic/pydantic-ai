@@ -1401,7 +1401,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     r = await run_capability.after_run(run_ctx, result=r)
                     agent_run._result_override = r  # pyright: ignore[reportPrivateUsage]
                     _run_error = None
-
                 try:
                     _short_circuited = _wrap_task.done() and not _run_ready.is_set()
                     if _short_circuited:
