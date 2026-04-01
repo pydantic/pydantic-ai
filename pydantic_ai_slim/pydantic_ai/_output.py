@@ -223,7 +223,7 @@ async def run_output_execute_hooks(
     except ModelRetry as e:
         if wrap_validation_errors:
             raise _make_retry_prompt(e, run_context) from e
-        raise
+        raise  # pragma: no cover — streaming partial validation; ModelRetry from hooks propagates as-is
 
 
 async def run_output_with_hooks(
