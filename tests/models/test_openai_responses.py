@@ -152,6 +152,26 @@ async def test_openai_responses_image_detail_vendor_metadata(allow_model_request
     assert all(part['detail'] == 'high' for part in image_parts)
 
 
+async def test_parallel_tool_calls_not_sent_without_tools(allow_model_requests: None) -> None:
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='world', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(parallel_tool_calls=True))
+
+    await agent.run('Hello')
+    assert 'parallel_tool_calls' not in get_mock_responses_kwargs(mock_client)[0]
+
+
 @pytest.mark.parametrize(
     ('aspect_ratio', 'explicit_size', 'expected_size'),
     [
