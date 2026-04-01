@@ -197,11 +197,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 self.run_context_type,
             )
             if isinstance(toolset, TemporalWrapperToolset):
-                # Set agent on toolsets created by custom temporalize_toolset_func
-                # that don't accept the agent parameter. The default
-                # temporalize_toolset passes it through the constructor.
-                if toolset._agent is None:  # pyright: ignore[reportPrivateUsage]
-                    toolset._agent = self.wrapped  # pyright: ignore[reportPrivateUsage]
+                toolset._agent = self.wrapped  # pyright: ignore[reportPrivateUsage]
                 activities.extend(toolset.temporal_activities)
             return toolset
 
