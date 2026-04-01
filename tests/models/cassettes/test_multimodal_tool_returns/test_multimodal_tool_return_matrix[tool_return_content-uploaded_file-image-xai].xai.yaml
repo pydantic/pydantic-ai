@@ -1,0 +1,172 @@
+version: 1
+interactions:
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: Use the get_file tool now to retrieve a image file, then describe
+            what you received.
+        role: ROLE_USER
+      model: grok-4-1-fast-non-reasoning
+      tools:
+      - function:
+          name: get_file
+          parameters: '{"additionalProperties": false, "properties": {}, "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+    raw: !!binary |
+      CloKVgpUVXNlIHRoZSBnZXRfZmlsZSB0b29sIG5vdyB0byByZXRyaWV2ZSBhIGltYWdlIGZpbGUs
+      IHRoZW4gZGVzY3JpYmUgd2hhdCB5b3UgcmVjZWl2ZWQuEAESG2dyb2stNC0xLWZhc3Qtbm9uLXJl
+      YXNvbmluZ4oBUQpPCghnZXRfZmlsZSJDeyJhZGRpdGlvbmFsUHJvcGVydGllcyI6IGZhbHNlLCAi
+      cHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifZIBAggB
+  response_sample:
+    json:
+      id: f5701b72-3e7f-f96f-a94a-dbba184c2905
+      outputs:
+      - finish_reason: REASON_TOOL_CALLS
+        message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call_17564532
+            type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: get_file
+              arguments: '{}'
+      created: '2026-03-04T20:36:26.942067509Z'
+      model: grok-4-1-fast-non-reasoning
+      system_fingerprint: fp_1daff7bd79
+      usage:
+        completion_tokens: 15
+        prompt_tokens: 359
+        total_tokens: 374
+        prompt_text_tokens: 359
+        cached_prompt_text_tokens: 158
+      settings:
+        parallel_tool_calls: true
+        temperature: 0.7
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - function:
+            name: get_file
+            parameters: '{"additionalProperties": false, "properties": {}, "type":
+              "object"}'
+        top_p: 0.95
+    raw: !!binary |
+      CiRmNTcwMWI3Mi0zZTdmLWY5NmYtYTk0YS1kYmJhMTg0YzI5MDUSKwgEGicQAhojCg1jYWxsXzE3
+      NTY0NTMyEAEYAVIOCghnZXRfZmlsZRICe30qDAjKr6LNBhC1npvBAzIbZ3Jvay00LTEtZmFzdC1u
+      b24tcmVhc29uaW5nOg1mcF8xZGFmZjdiZDc5ShIIDxDnAhj2AiDnAjieAVjg9yFaYxABLTMzMz86
+      AggBQlEKTwoIZ2V0X2ZpbGUiQ3siYWRkaXRpb25hbFByb3BlcnRpZXMiOiBmYWxzZSwgInByb3Bl
+      cnRpZXMiOiB7fSwgInR5cGUiOiAib2JqZWN0In1NMzNzPw==
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: Use the get_file tool now to retrieve a image file, then describe
+            what you received.
+        role: ROLE_USER
+      - content:
+        - text: ''
+        role: ROLE_ASSISTANT
+        tool_calls:
+        - id: call_17564532
+          type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+          status: TOOL_CALL_STATUS_COMPLETED
+          function:
+            name: get_file
+            arguments: '{}'
+      - content:
+        - file:
+            file_id: file_20ac2a79-38a3-40ae-83d0-0a604d8fd316
+        role: ROLE_USER
+      - content:
+        - text: File attached
+        role: ROLE_TOOL
+      model: grok-4-1-fast-non-reasoning
+      tools:
+      - function:
+          name: get_file
+          parameters: '{"additionalProperties": false, "properties": {}, "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+    raw: !!binary |
+      CloKVgpUVXNlIHRoZSBnZXRfZmlsZSB0b29sIG5vdyB0byByZXRyaWV2ZSBhIGltYWdlIGZpbGUs
+      IHRoZW4gZGVzY3JpYmUgd2hhdCB5b3UgcmVjZWl2ZWQuEAEKKwoCCgAQAiIjCg1jYWxsXzE3NTY0
+      NTMyEAEYAVIOCghnZXRfZmlsZRICe30KMQotGisKKWZpbGVfMjBhYzJhNzktMzhhMy00MGFlLTgz
+      ZDAtMGE2MDRkOGZkMzE2EAEKEwoPCg1GaWxlIGF0dGFjaGVkEAUSG2dyb2stNC0xLWZhc3Qtbm9u
+      LXJlYXNvbmluZ4oBUQpPCghnZXRfZmlsZSJDeyJhZGRpdGlvbmFsUHJvcGVydGllcyI6IGZhbHNl
+      LCAicHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifZIBAggB
+  response_sample:
+    json:
+      id: 44a9d496-87b9-9797-9e53-f3d0ad171d44
+      outputs:
+      - finish_reason: REASON_TOOL_CALLS
+        message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call_30186963
+            type: TOOL_CALL_TYPE_ATTACHMENT_SEARCH_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: read_attachment
+              arguments: '{"key":"kiwi.jpg","query":"Describe the image in detail,
+                including what it shows, colors, and any notable features."}'
+      - finish_reason: REASON_STOP
+        index: 2
+        message:
+          content: "The image is a close-up, straight-on photograph of a perfectly\
+            \ sliced horizontal cross-section through the middle of a fresh kiwi fruit,\
+            \ set against a plain white background. \n\nKey details:\n- **Skin**:\
+            \ Thin, fuzzy, golden-brown to light tan outer edge with visible fine\
+            \ hairs.\n- **Flesh**: Vibrant, juicy bright green (lime to emerald tones),\
+            \ smooth and even.\n- **Center**: Creamy white to pale yellow-white core,\
+            \ surrounded by a symmetrical starburst pattern of tiny dark brown to\
+            \ black edible seeds arranged in radial lines.\n\nIt's a clean, appetizing\
+            \ studio shot highlighting the fruit's classic star-like appearance, with\
+            \ bright even lighting and high contrast between the green flesh, white\
+            \ core, and dark seeds."
+          role: ROLE_ASSISTANT
+      created: '2026-03-04T20:36:29.989325213Z'
+      model: grok-4-1-fast-non-reasoning
+      system_fingerprint: fp_1daff7bd79
+      usage:
+        completion_tokens: 199
+        prompt_tokens: 2196
+        total_tokens: 2395
+        prompt_text_tokens: 2196
+        cached_prompt_text_tokens: 1066
+        server_side_tools_used:
+        - SERVER_SIDE_TOOL_ATTACHMENT_SEARCH
+      settings:
+        parallel_tool_calls: true
+        temperature: 0.7
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - function:
+            name: get_file
+            parameters: '{"additionalProperties": false, "properties": {}, "type":
+              "object"}'
+        top_p: 0.95
+    raw: !!binary |
+      CiQ0NGE5ZDQ5Ni04N2I5LTk3OTctOWU1My1mM2QwYWQxNzFkNDQSqAEIBBqjARACGp4BCg1jYWxs
+      XzMwMTg2OTYzEAcYAVKIAQoPcmVhZF9hdHRhY2htZW50EnV7ImtleSI6Imtpd2kuanBnIiwicXVl
+      cnkiOiJEZXNjcmliZSB0aGUgaW1hZ2UgaW4gZGV0YWlsLCBpbmNsdWRpbmcgd2hhdCBpdCBzaG93
+      cywgY29sb3JzLCBhbmQgYW55IG5vdGFibGUgZmVhdHVyZXMuIn0S2AUIAxACGtEFCswFVGhlIGlt
+      YWdlIGlzIGEgY2xvc2UtdXAsIHN0cmFpZ2h0LW9uIHBob3RvZ3JhcGggb2YgYSBwZXJmZWN0bHkg
+      c2xpY2VkIGhvcml6b250YWwgY3Jvc3Mtc2VjdGlvbiB0aHJvdWdoIHRoZSBtaWRkbGUgb2YgYSBm
+      cmVzaCBraXdpIGZydWl0LCBzZXQgYWdhaW5zdCBhIHBsYWluIHdoaXRlIGJhY2tncm91bmQuIAoK
+      S2V5IGRldGFpbHM6Ci0gKipTa2luKio6IFRoaW4sIGZ1enp5LCBnb2xkZW4tYnJvd24gdG8gbGln
+      aHQgdGFuIG91dGVyIGVkZ2Ugd2l0aCB2aXNpYmxlIGZpbmUgaGFpcnMuCi0gKipGbGVzaCoqOiBW
+      aWJyYW50LCBqdWljeSBicmlnaHQgZ3JlZW4gKGxpbWUgdG8gZW1lcmFsZCB0b25lcyksIHNtb290
+      aCBhbmQgZXZlbi4KLSAqKkNlbnRlcioqOiBDcmVhbXkgd2hpdGUgdG8gcGFsZSB5ZWxsb3ctd2hp
+      dGUgY29yZSwgc3Vycm91bmRlZCBieSBhIHN5bW1ldHJpY2FsIHN0YXJidXJzdCBwYXR0ZXJuIG9m
+      IHRpbnkgZGFyayBicm93biB0byBibGFjayBlZGlibGUgc2VlZHMgYXJyYW5nZWQgaW4gcmFkaWFs
+      IGxpbmVzLgoKSXQncyBhIGNsZWFuLCBhcHBldGl6aW5nIHN0dWRpbyBzaG90IGhpZ2hsaWdodGlu
+      ZyB0aGUgZnJ1aXQncyBjbGFzc2ljIHN0YXItbGlrZSBhcHBlYXJhbmNlLCB3aXRoIGJyaWdodCBl
+      dmVuIGxpZ2h0aW5nIGFuZCBoaWdoIGNvbnRyYXN0IGJldHdlZW4gdGhlIGdyZWVuIGZsZXNoLCB3
+      aGl0ZSBjb3JlLCBhbmQgZGFyayBzZWVkcy4QAioMCM2vos0GEJ3P39cDMhtncm9rLTQtMS1mYXN0
+      LW5vbi1yZWFzb25pbmc6DWZwXzFkYWZmN2JkNzlKFwjHARCUERjbEiCUETiqCEoBCFjg+tIZWmMQ
+      AS0zMzM/OgIIAUJRCk8KCGdldF9maWxlIkN7ImFkZGl0aW9uYWxQcm9wZXJ0aWVzIjogZmFsc2Us
+      ICJwcm9wZXJ0aWVzIjoge30sICJ0eXBlIjogIm9iamVjdCJ9TTMzcz8=

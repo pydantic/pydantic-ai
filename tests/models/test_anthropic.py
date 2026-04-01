@@ -34,6 +34,7 @@ from pydantic_ai import (
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -316,7 +317,7 @@ async def test_async_request_prompt_caching(allow_model_requests: None):
 async def test_cache_point_adds_cache_control(allow_model_requests: None):
     """Test that CachePoint correctly adds cache_control to content blocks.
 
-    By default, CachePoint uses ttl='5m'. For non-Bedrock clients, the ttl field is included.
+    By default, CachePoint uses ttl='5m'.
     """
     c = completion_message(
         [BetaTextBlock(text='response', type='text')],
@@ -364,7 +365,7 @@ async def test_cache_point_multiple_markers(allow_model_requests: None):
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     content = completion_kwargs['messages'][0]['content']
 
-    # Default ttl='5m' for non-Bedrock clients
+    # Default ttl='5m'
     assert content == snapshot(
         [
             {'text': 'First chunk', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
@@ -412,7 +413,7 @@ async def test_cache_point_with_image_content(allow_model_requests: None):
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     content = completion_kwargs['messages'][0]['content']
 
-    # Default ttl='5m' for non-Bedrock clients
+    # Default ttl='5m'
     assert content == snapshot(
         [
             {
@@ -463,8 +464,8 @@ def test_cache_control_unsupported_param_type():
         m._add_cache_control_to_last_param(params)  # type: ignore[arg-type]  # Testing internal method
 
 
-def test_build_cache_control_bedrock_omits_ttl():
-    """Test that _build_cache_control automatically omits TTL for Bedrock clients."""
+def test_build_cache_control_bedrock_includes_ttl():
+    """Test that _build_cache_control includes TTL for Bedrock clients."""
     from unittest.mock import MagicMock
 
     from anthropic import AsyncAnthropicBedrock
@@ -475,12 +476,12 @@ def test_build_cache_control_bedrock_omits_ttl():
 
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_bedrock_client))
 
-    # Verify cache_control is built without TTL for Bedrock
+    # Verify cache_control includes TTL for Bedrock
     cache_control = m._build_cache_control('5m')  # pyright: ignore[reportPrivateUsage]
-    assert cache_control == {'type': 'ephemeral'}  # No 'ttl' field
+    assert cache_control == {'type': 'ephemeral', 'ttl': '5m'}
 
     cache_control_1h = m._build_cache_control('1h')  # pyright: ignore[reportPrivateUsage]
-    assert cache_control_1h == {'type': 'ephemeral'}  # TTL still omitted
+    assert cache_control_1h == {'type': 'ephemeral', 'ttl': '1h'}
 
 
 def test_build_cache_control_standard_client_includes_ttl():
@@ -609,6 +610,50 @@ async def test_anthropic_cache_tools(allow_model_requests: None):
                 'description': '',
                 'input_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
                 'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            },
+        ]
+    )
+
+
+async def test_anthropic_eager_input_streaming(allow_model_requests: None):
+    """Test that anthropic_eager_input_streaming sets eager_input_streaming on all tools."""
+    c = completion_message(
+        [BetaTextBlock(text='Tool result', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        system_prompt='Test system prompt',
+        model_settings=AnthropicModelSettings(anthropic_eager_input_streaming=True),
+    )
+
+    @agent.tool_plain
+    def tool_one() -> str:  # pragma: no cover
+        return 'one'
+
+    @agent.tool_plain
+    def tool_two() -> str:  # pragma: no cover
+        return 'two'
+
+    await agent.run('test prompt')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    tools = completion_kwargs['tools']
+    assert tools == snapshot(
+        [
+            {
+                'name': 'tool_one',
+                'description': '',
+                'input_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'eager_input_streaming': True,
+            },
+            {
+                'name': 'tool_two',
+                'description': '',
+                'input_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'eager_input_streaming': True,
             },
         ]
     )
@@ -1594,6 +1639,48 @@ async def test_stream_structured(allow_model_requests: None):
                 )
 
 
+async def test_text_content_input(allow_model_requests: None, anthropic_api_key: str):
+    """Test that _map_message correctly maps a user message with TextContent."""
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    messages = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='System instructions.'),
+                UserPromptPart(
+                    content=[
+                        'Hello Pydantic AI!',
+                        TextContent(content='This is awesome', metadata={'font': 'bold'}),
+                        TextContent(content='', metadata={'font': 'italic'}),  # Empty content would be filtered out
+                    ]
+                ),
+            ],
+        ),
+        ModelResponse(
+            parts=[TextPart(content='Hello Human!')],
+        ),
+    ]
+    m = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        {},
+    )
+    assert m == snapshot(
+        (
+            'System instructions.',
+            [
+                {
+                    'role': 'user',
+                    'content': [
+                        {'text': 'Hello Pydantic AI!', 'type': 'text'},
+                        {'text': 'This is awesome', 'type': 'text'},
+                    ],
+                },
+                {'role': 'assistant', 'content': [{'text': 'Hello Human!', 'type': 'text'}]},
+            ],
+        )
+    )
+
+
 async def test_image_url_input(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
@@ -1798,108 +1885,6 @@ async def test_document_url_text_force_download() -> None:
 
         mock_download.assert_called_once()
         assert mock_download.call_args[0][0].url == 'https://example.com/doc.txt'
-
-
-async def test_image_as_binary_content_tool_response(
-    allow_model_requests: None, anthropic_api_key: str, image_content: BinaryContent
-):
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(m)
-
-    @agent.tool_plain
-    async def get_image() -> BinaryContent:
-        return image_content
-
-    result = await agent.run(['What fruit is in the image you can get from the get_image tool?'])
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content=['What fruit is in the image you can get from the get_image tool?'],
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsNow(tz=timezone.utc),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    TextPart(content="I'll get the image and identify the fruit in it."),
-                    ToolCallPart(tool_name='get_image', args={}, tool_call_id='toolu_01W2SWpTnHpv1vZaLEknhfkj'),
-                ],
-                usage=RequestUsage(
-                    input_tokens=555,
-                    output_tokens=49,
-                    details={
-                        'cache_creation_input_tokens': 0,
-                        'cache_read_input_tokens': 0,
-                        'input_tokens': 555,
-                        'output_tokens': 49,
-                    },
-                ),
-                model_name='claude-sonnet-4-5-20250929',
-                timestamp=IsDatetime(),
-                provider_name='anthropic',
-                provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'tool_use'},
-                provider_response_id='msg_01HQ5juE8oecrwBkoYMJi5fp',
-                finish_reason='tool_call',
-                run_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='get_image',
-                        content='See file 241a70',
-                        tool_call_id='toolu_01W2SWpTnHpv1vZaLEknhfkj',
-                        timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(content=['This is file 241a70:', image_content], timestamp=IsDatetime()),
-                ],
-                timestamp=IsNow(tz=timezone.utc),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    TextPart(
-                        content='The fruit in the image is a **kiwi** (also known as kiwifruit). The image shows a cross-section of the kiwi, revealing its distinctive bright green flesh, small black seeds arranged in a radial pattern around the pale center, and the brown fuzzy skin around the edge.'
-                    )
-                ],
-                usage=RequestUsage(
-                    input_tokens=1100,
-                    output_tokens=68,
-                    details={
-                        'cache_creation_input_tokens': 0,
-                        'cache_read_input_tokens': 0,
-                        'input_tokens': 1100,
-                        'output_tokens': 68,
-                    },
-                ),
-                model_name='claude-sonnet-4-5-20250929',
-                timestamp=IsDatetime(),
-                provider_name='anthropic',
-                provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_015Cd8nysLLEjXi7JEm7A9DF',
-                finish_reason='stop',
-                run_id=IsStr(),
-            ),
-        ]
-    )
-
-
-@pytest.mark.parametrize('media_type', ('audio/wav', 'audio/mpeg'))
-async def test_audio_as_binary_content_input(allow_model_requests: None, media_type: str):
-    c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
-    mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m)
-
-    base64_content = b'//uQZ'
-
-    with pytest.raises(RuntimeError, match='Unsupported binary content media type for Anthropic'):
-        await agent.run(['hello', BinaryContent(data=base64_content, media_type=media_type)])
 
 
 def test_model_status_error(allow_model_requests: None) -> None:
@@ -3067,6 +3052,89 @@ async def test_anthropic_opus_46_features(
     if has_thinking:
         assert any(isinstance(p, ThinkingPart) for p in response.parts)
     assert any(isinstance(p, TextPart) for p in response.parts)
+
+
+@pytest.mark.parametrize(
+    'thinking_value,expected_thinking,expected_effort',
+    [
+        pytest.param(True, {'type': 'adaptive'}, None, id='true-adaptive'),
+        pytest.param('high', {'type': 'adaptive'}, 'high', id='high-adaptive-with-effort'),
+        pytest.param('low', {'type': 'adaptive'}, 'low', id='low-adaptive-with-effort'),
+        pytest.param('medium', {'type': 'adaptive'}, 'medium', id='medium-adaptive-with-effort'),
+        pytest.param('xhigh', {'type': 'adaptive'}, 'max', id='xhigh-maps-to-max'),
+    ],
+)
+async def test_anthropic_unified_thinking_adaptive_model(
+    allow_model_requests: None,
+    thinking_value: bool | str,
+    expected_thinking: dict[str, str],
+    expected_effort: str | None,
+):
+    """Verify that unified thinking on adaptive models sends {type: 'adaptive'} + output_config effort."""
+    from anthropic._types import omit as OMIT
+
+    responses = [
+        completion_message(
+            [BetaTextBlock(text='4', type='text')],
+            usage=BetaUsage(input_tokens=10, output_tokens=1),
+        ),
+    ]
+    mock_client = MockAnthropic.create_mock(responses)
+    m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, model_settings=ModelSettings(thinking=thinking_value))  # pyright: ignore[reportArgumentType]
+
+    await agent.run('What is 2+2?')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['thinking'] == expected_thinking
+
+    if expected_effort is not None:
+        assert kwargs['output_config'] == {'effort': expected_effort}
+    else:
+        assert kwargs.get('output_config') is None or kwargs['output_config'] is OMIT
+
+
+async def test_anthropic_unified_thinking_non_adaptive_model(allow_model_requests: None):
+    """Verify that unified thinking on non-adaptive models sends {type: 'enabled', budget_tokens: N}."""
+    from anthropic._types import omit as OMIT
+
+    responses = [
+        completion_message(
+            [BetaTextBlock(text='4', type='text')],
+            usage=BetaUsage(input_tokens=10, output_tokens=1),
+        ),
+    ]
+    mock_client = MockAnthropic.create_mock(responses)
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, model_settings=ModelSettings(thinking='high'))
+
+    await agent.run('What is 2+2?')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['thinking'] == {'type': 'enabled', 'budget_tokens': 16384}
+    # Non-adaptive models don't support effort
+    assert kwargs.get('output_config') is None or kwargs['output_config'] is OMIT
+
+
+async def test_anthropic_unified_thinking_false_omits_param(allow_model_requests: None):
+    """Verify that thinking=False does not send a thinking parameter at all."""
+    from anthropic._types import omit as OMIT
+
+    responses = [
+        completion_message(
+            [BetaTextBlock(text='4', type='text')],
+            usage=BetaUsage(input_tokens=10, output_tokens=1),
+        ),
+    ]
+    mock_client = MockAnthropic.create_mock(responses)
+    m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, model_settings=ModelSettings(thinking=False))
+
+    await agent.run('What is 2+2?')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    # thinking=False on always-thinking model is silently ignored — thinking param is OMIT
+    assert kwargs.get('thinking') is OMIT
 
 
 async def test_anthropic_opus_46_adaptive_thinking_rejects_tool_output(allow_model_requests: None):
@@ -8604,3 +8672,140 @@ Instructions content\
     # Verify user message is in anthropic_messages
     assert len(anthropic_messages) == 1
     assert anthropic_messages[0]['role'] == 'user'
+
+
+async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None):
+    """Test that malformed JSON tool args don't crash the Anthropic retry path.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4430.
+
+    When a tool call has malformed JSON arguments, a RetryPromptPart is correctly
+    created. But when the message history is re-sent to Anthropic, the previous
+    tool call's args are parsed via args_as_dict() which raises ValueError on
+    invalid JSON, crashing the retry flow before the model can self-correct.
+    """
+    bad_args = '{"query": "bad query", "file_ids":[4556]</parameter>\n<parameter name="limit": 8}'
+
+    # First response: the model "fixes" the tool call and returns text
+    fixed_response = completion_message(
+        [BetaTextBlock(text='Here is the corrected result.', type='text')],
+        BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(fixed_response)
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    # Construct message_history with a malformed tool call + retry prompt
+    # exactly as described in the issue
+    message_history: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='search_knowledge',
+                    tool_call_id='toolu_123',
+                    args=bad_args,
+                ),
+            ],
+            timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        ),
+        ModelRequest(
+            parts=[
+                RetryPromptPart(
+                    tool_name='search_knowledge',
+                    tool_call_id='toolu_123',
+                    content='Invalid JSON: expected `,` or `}` at line 1 column 99',
+                ),
+            ],
+        ),
+    ]
+
+    # This should NOT raise ValueError — args_as_dict() now gracefully handles
+    # malformed JSON by returning {'INVALID_JSON': ...}, allowing the retry to proceed.
+    result = await agent.run(
+        'Please fix the tool call and try again.',
+        message_history=message_history,
+    )
+    assert result.output == 'Here is the corrected result.'
+    assert result.all_messages() == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='search_knowledge',
+                        args="""\
+{"query": "bad query", "file_ids":[4556]</parameter>
+<parameter name="limit": 8}\
+""",
+                        tool_call_id='toolu_123',
+                    )
+                ],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Invalid JSON: expected `,` or `}` at line 1 column 99',
+                        tool_name='search_knowledge',
+                        tool_call_id='toolu_123',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='Please fix the tool call and try again.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Here is the corrected result.')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5, details={'input_tokens': 10, 'output_tokens': 5}),
+                model_name='claude-3-5-haiku-123',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+    # Verify the INVALID_JSON wrapper was actually sent to the Anthropic API
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['messages'] == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'id': 'toolu_123',
+                        'type': 'tool_use',
+                        'name': 'search_knowledge',
+                        'input': {
+                            'INVALID_JSON': """\
+{"query": "bad query", "file_ids":[4556]</parameter>
+<parameter name="limit": 8}\
+""",
+                        },
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'tool_use_id': 'toolu_123',
+                        'type': 'tool_result',
+                        'content': """\
+Invalid JSON: expected `,` or `}` at line 1 column 99
+
+Fix the errors and try again.\
+""",
+                        'is_error': True,
+                    },
+                    {'text': 'Please fix the tool call and try again.', 'type': 'text'},
+                ],
+            },
+        ]
+    )

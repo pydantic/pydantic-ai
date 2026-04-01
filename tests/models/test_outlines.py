@@ -8,13 +8,14 @@ from __future__ import annotations as _annotations
 import json
 import os
 from collections.abc import Callable
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai import Agent, ModelRetry, TextContent, UnexpectedModelBehavior
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -35,6 +36,7 @@ from pydantic_ai.messages import (
     UploadedFile,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
@@ -480,6 +482,31 @@ async def test_multi_turn_async_model(mock_async_model: OutlinesModel) -> None:
     result1 = await agent.run('First message')
     result2 = await agent.run('Second message', message_history=result1.all_messages())
     assert result2.output == 'test'
+
+
+@skip_if_transformers_imports_unsuccessful
+async def test_text_content_input(transformers_multimodal_model: OutlinesModel):
+    messages = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='You are a helpful assistant'),
+                UserPromptPart(
+                    content=['Hello', TextContent(content='This is additional text content', metadata={'key': 'value'})]
+                ),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='Hi')]),
+    ]
+    m = await transformers_multimodal_model._format_prompt(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    assert asdict(m) == snapshot(
+        {
+            'messages': [
+                {'role': 'system', 'content': 'You are a helpful assistant'},
+                {'role': 'user', 'content': ['Hello', 'This is additional text content']},
+                {'role': 'assistant', 'content': 'Hi'},
+            ]
+        }
+    )
 
 
 @skip_if_transformers_imports_unsuccessful

@@ -294,22 +294,17 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                     ],
                                 ),
                                 BasicSpan(
-                                    content='running 1 tool',
+                                    content='running tool: get_country',
+                                    children=[BasicSpan(content=IsStr(regex=r'Call Tool: get_country-\w+'))],
+                                ),
+                                BasicSpan(
+                                    content=IsStr(regex=r'Handle Stream Event-\w+'),
                                     children=[
+                                        BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='running tool: get_country',
-                                            children=[BasicSpan(content=IsStr(regex=r'Call Tool: get_country-\w+'))],
-                                        ),
-                                        BasicSpan(
-                                            content=IsStr(regex=r'Handle Stream Event-\w+'),
-                                            children=[
-                                                BasicSpan(content='ctx.run_step=1'),
-                                                BasicSpan(
-                                                    content=IsStr(
-                                                        regex=r'\{"result":\{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","metadata":null,"timestamp":"[^"]+","part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
-                                                    )
-                                                ),
-                                            ],
+                                            content=IsStr(
+                                                regex=r'\{"result":\{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","metadata":null,"timestamp":"[^"]+","part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
+                                            )
                                         ),
                                     ],
                                 ),
@@ -373,44 +368,37 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                     ],
                                 ),
                                 BasicSpan(
-                                    content='running 2 tools',
+                                    content='running tool: get_weather',
                                     children=[
                                         BasicSpan(
-                                            content='running tool: get_weather',
-                                            children=[
-                                                BasicSpan(
-                                                    content=IsStr(regex=r'Call Tool: get_weather-\w+'),
-                                                    children=[BasicSpan(content=IsStr(regex=r'get_weather-\w+'))],
-                                                )
-                                            ],
-                                        ),
+                                            content=IsStr(regex=r'Call Tool: get_weather-\w+'),
+                                            children=[BasicSpan(content=IsStr(regex=r'get_weather-\w+'))],
+                                        )
+                                    ],
+                                ),
+                                BasicSpan(
+                                    content=IsStr(regex=r'Handle Stream Event-\w+'),
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content=IsStr(regex=r'Handle Stream Event-\w+'),
-                                            children=[
-                                                BasicSpan(content='ctx.run_step=2'),
-                                                BasicSpan(
-                                                    content=IsStr(
-                                                        regex=r'\{"result":\{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","metadata":null,"timestamp":"[^"]+","part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
-                                                    )
-                                                ),
-                                            ],
+                                            content=IsStr(
+                                                regex=r'\{"result":\{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","metadata":null,"timestamp":"[^"]+","part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
+                                            )
                                         ),
+                                    ],
+                                ),
+                                BasicSpan(
+                                    content='running tool: get_product_name',
+                                    children=[BasicSpan(content=IsStr(regex=r'Call MCP Tool: get_product_name-\w+'))],
+                                ),
+                                BasicSpan(
+                                    content=IsStr(regex=r'Handle Stream Event-\w+'),
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='running tool: get_product_name',
-                                            children=[
-                                                BasicSpan(content=IsStr(regex=r'Call MCP Tool: get_product_name-\w+'))
-                                            ],
-                                        ),
-                                        BasicSpan(
-                                            content=IsStr(regex=r'Handle Stream Event-\w+'),
-                                            children=[
-                                                BasicSpan(content='ctx.run_step=2'),
-                                                BasicSpan(
-                                                    content=IsStr(
-                                                        regex=r'\{"result":\{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","metadata":null,"timestamp":"[^"]+","part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
-                                                    )
-                                                ),
-                                            ],
+                                            content=IsStr(
+                                                regex=r'\{"result":\{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","metadata":null,"timestamp":"[^"]+","part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
+                                            )
                                         ),
                                     ],
                                 ),
