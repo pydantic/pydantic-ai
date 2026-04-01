@@ -22,7 +22,6 @@ def test_update_in_background_calls_start(mocker: MockerFixture):
     update_in_background()
     mock_cls.assert_called_once()
     mock_cls.return_value.start.assert_called_once()
-    assert prices_mod._updater is mock_cls.return_value  # pyright: ignore[reportPrivateUsage]
 
 
 def test_update_in_background_is_idempotent(mocker: MockerFixture):
@@ -49,8 +48,15 @@ def _constructor_raises(m: MagicMock) -> None:
     ],
 )
 def test_update_in_background_suppresses_errors(mocker: MockerFixture, setup_mock: Callable[[MagicMock], None]):
-    """Verify update_in_background() silently catches exceptions from UpdatePrices."""
+    """Verify update_in_background() silently catches exceptions and allows retry."""
     mock_cls = mocker.patch('pydantic_ai.prices.UpdatePrices')
     setup_mock(mock_cls)
     update_in_background()
-    assert prices_mod._updater is None  # pyright: ignore[reportPrivateUsage]
+
+    # After failure, a subsequent call should retry (not be stuck thinking an updater exists).
+    mock_cls.reset_mock()
+    mock_cls.side_effect = None
+    mock_cls.return_value.start.side_effect = None
+    update_in_background()
+    mock_cls.assert_called_once()
+    mock_cls.return_value.start.assert_called_once()
