@@ -1391,9 +1391,8 @@ async def process_tool_calls(  # noqa: C901
     else:
         calls_to_run.extend(tool_calls_by_kind['function'])
 
-    # Then, we handle unknown tool calls
+    # Unknown tools use per-tool retry handling via ModelRetry in ToolManager
     if tool_calls_by_kind['unknown']:
-        ctx.state.increment_retries(ctx.deps.max_result_retries)
         calls_to_run.extend(tool_calls_by_kind['unknown'])
 
     calls_to_run_results: dict[str, DeferredToolResult] = {}
