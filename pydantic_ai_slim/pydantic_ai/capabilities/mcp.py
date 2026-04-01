@@ -105,11 +105,11 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
         if self.url.endswith('/sse'):
             from pydantic_ai.mcp import MCPServerSSE
 
-            return MCPServerSSE(self.url, headers=local_headers or None)
+            return MCPServerSSE(self.url, headers=local_headers or None, include_instructions=True)
 
         from pydantic_ai.mcp import MCPServerStreamableHTTP
 
-        return MCPServerStreamableHTTP(self.url, headers=local_headers or None)
+        return MCPServerStreamableHTTP(self.url, headers=local_headers or None, include_instructions=True)
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
         toolset = super().get_toolset()
