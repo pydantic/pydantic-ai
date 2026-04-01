@@ -353,7 +353,7 @@ def _capture_inputs(sig: inspect.Signature, args: tuple[Any, ...], kwargs: dict[
 
 def _build_sampling_context(
     evaluator: Evaluator,
-    inputs: dict[str, Any],
+    inputs: Any,
     metadata: dict[str, Any] | None,
     call_seed: float,
 ) -> SamplingContext:

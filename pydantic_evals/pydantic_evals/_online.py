@@ -32,7 +32,7 @@ OnErrorCallback = Callable[
     [Exception, EvaluatorContext, Evaluator, OnErrorLocation],
     None | Awaitable[None],
 ]
-SamplingContextBuilder = Callable[[Evaluator, dict[str, Any], dict[str, Any] | None, float], Any]
+SamplingContextBuilder = Callable[[Evaluator, Any, dict[str, Any] | None, float], Any]
 
 
 @runtime_checkable
@@ -195,7 +195,7 @@ def _should_evaluate(
 def sample_evaluators(
     online_evals: Sequence[OnlineEvaluatorLike],
     config: OnlineEvalConfigLike,
-    inputs: dict[str, Any],
+    inputs: Any,
     *,
     build_sampling_context: SamplingContextBuilder,
 ) -> list[OnlineEvaluatorLike]:

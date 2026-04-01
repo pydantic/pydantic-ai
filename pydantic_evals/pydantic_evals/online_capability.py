@@ -118,7 +118,7 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
     @staticmethod
     def _build_sampling_context(
         evaluator: Evaluator,
-        inputs: dict[str, Any],
+        inputs: Any,
         metadata: dict[str, Any] | None,
         call_seed: float,
     ) -> SamplingContext:
@@ -145,8 +145,8 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
         ):
             return await handler()
 
-        # Build a synthetic inputs dict for sampling context
-        inputs: dict[str, Any] = {'prompt': ctx.prompt}
+        # Use the raw prompt so sampling and evaluation see the same inputs value.
+        inputs = ctx.prompt
 
         # Determine which evaluators are sampled (before running the agent)
         sampled = _online_internal.sample_evaluators(
@@ -180,7 +180,7 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
 
         context = EvaluatorContext(
             name=self.name or ctx.run_id or 'agent',
-            inputs=ctx.prompt,
+            inputs=inputs,
             output=result.output,
             expected_output=None,
             metadata=metadata,

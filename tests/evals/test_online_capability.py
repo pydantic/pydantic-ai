@@ -18,6 +18,7 @@ with try_import() as imports_successful:
     from pydantic_evals.online import (
         OnlineEvalConfig,
         OnlineEvaluator,
+        SamplingContext,
         SpanReference,
         configure,
         disable_evaluation,
@@ -166,6 +167,44 @@ async def test_sampling_zero_rate():
     await wait_for_evaluations()
 
     assert len(collector.calls) == 0
+
+
+@pytest.mark.anyio
+async def test_sampling_context_inputs_match_evaluator_inputs():
+    """Sampling and evaluation see the same agent inputs value."""
+    collector = Collector()
+    sampled_inputs: list[Any] = []
+    config = OnlineEvalConfig(default_sink=collector)
+
+    def capture_rate(ctx: SamplingContext) -> bool:
+        sampled_inputs.append(ctx.inputs)
+        return True
+
+    @dataclass
+    class InputsMatchSampled(Evaluator):
+        def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
+            return ctx.inputs == sampled_inputs[0]
+
+    agent = Agent(
+        TestModel(),
+        capabilities=[
+            OnlineEvaluation(
+                evaluators=[OnlineEvaluator(evaluator=InputsMatchSampled(), sample_rate=capture_rate)],
+                config=config,
+            ),
+        ],
+    )
+
+    await agent.run('hello')
+    await wait_for_evaluations()
+
+    assert sampled_inputs == ['hello']
+    assert len(collector.calls) == 1
+    results, failures, ctx = collector.calls[0]
+    assert len(results) == 1
+    assert results[0].value is True
+    assert len(failures) == 0
+    assert ctx.inputs == 'hello'
 
 
 @pytest.mark.anyio
