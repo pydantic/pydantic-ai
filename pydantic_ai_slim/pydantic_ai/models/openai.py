@@ -130,6 +130,7 @@ except ImportError as _import_error:
 
 
 __all__ = (
+    'DEPRECATED_OPENAI_MODELS',
     'OpenAIModel',
     'OpenAIChatModel',
     'OpenAIResponsesModel',
@@ -138,6 +139,34 @@ __all__ = (
     'OpenAIResponsesModelSettings',
     'OpenAIModelName',
 )
+
+DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset(
+    {
+        # https://developers.openai.com/api/docs/deprecations#2025-11-18-chatgpt-4o-latest-snapshot
+        'chatgpt-4o-latest',
+        # https://developers.openai.com/api/docs/deprecations#2025-11-17-codex-mini-latest-model-snapshot
+        'codex-mini-latest',
+        # https://developers.openai.com/api/docs/deprecations#2025-09-26-legacy-gpt-model-snapshots
+        'gpt-4-0125-preview',
+        'gpt-4-1106-preview',
+        'gpt-4-turbo-preview',
+        # https://developers.openai.com/api/docs/deprecations#2024-06-06-gpt-4-32k-and-vision-preview-models
+        'gpt-4-32k',
+        'gpt-4-32k-0314',
+        'gpt-4-32k-0613',
+        'gpt-4-vision-preview',
+        # https://developers.openai.com/api/docs/deprecations#2025-06-10-gpt-4o-audio-preview-2024-10-01
+        'gpt-4o-audio-preview-2024-10-01',
+        # Does not exist
+        'gpt-5.1-mini',
+        # https://developers.openai.com/api/docs/deprecations#2025-04-28-o1-preview-and-o1-mini
+        'o1-mini',
+        'o1-mini-2024-09-12',
+        'o1-preview',
+        'o1-preview-2024-09-12',
+    }
+)
+"""Models that are deprecated or don't exist but are still present in the OpenAI SDK's type definitions."""
 
 OpenAIModelName = str | AllModels
 """
@@ -759,7 +788,7 @@ class OpenAIChatModel(Model):
             return await self.client.chat.completions.create(
                 model=self.model_name,
                 messages=openai_messages,
-                parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
+                parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT) if tools else OMIT,
                 tools=tools or OMIT,
                 tool_choice=tool_choice or OMIT,
                 stream=stream,
@@ -1784,7 +1813,7 @@ class OpenAIResponsesModel(Model):
                 input=openai_messages,
                 model=self.model_name,
                 instructions=instructions,
-                parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
+                parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT) if tools else OMIT,
                 tools=tools or OMIT,
                 tool_choice=tool_choice or OMIT,
                 max_output_tokens=model_settings.get('max_tokens', OMIT),

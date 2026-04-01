@@ -1275,6 +1275,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             'agent_name': agent_name,
             'gen_ai.agent.name': agent_name,
             'gen_ai.agent.call.id': state.run_id,
+            'gen_ai.operation.name': 'invoke_agent',
             'logfire.msg': f'{agent_name} run',
         }
         if self._description is not None:

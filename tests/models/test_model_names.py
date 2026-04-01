@@ -20,7 +20,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.groq import GroqModelName
     from pydantic_ai.models.huggingface import HuggingFaceModelName
     from pydantic_ai.models.mistral import MistralModelName
-    from pydantic_ai.models.openai import OpenAIModelName
+    from pydantic_ai.models.openai import DEPRECATED_OPENAI_MODELS, OpenAIModelName
     from pydantic_ai.models.xai import XaiModelName
     from pydantic_ai.providers.deepseek import DeepSeekModelName
     from pydantic_ai.providers.grok import GrokModelName
@@ -30,6 +30,7 @@ if not imports_successful():  # pragma: lax no cover
     # Define placeholders so the module can be loaded for test collection
     AnthropicModelName = BedrockModelName = CohereModelName = GoogleModelName = None
     GroqModelName = HuggingFaceModelName = MistralModelName = OpenAIModelName = None
+    DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
     DeepSeekModelName = GrokModelName = XaiModelName = MoonshotAIModelName = None
 
 pytestmark = [
@@ -74,6 +75,10 @@ _PROVIDER_TO_MODEL_NAMES = {
     'openai': OpenAIModelName,
 }
 
+_PROVIDER_DEPRECATED_MODELS: dict[str, frozenset[str]] = {
+    'openai': DEPRECATED_OPENAI_MODELS,
+}
+
 
 def test_known_model_names():  # pragma: lax no cover
     # Coverage seems to be misbehaving..?
@@ -84,10 +89,14 @@ def test_known_model_names():  # pragma: lax no cover
             else:
                 yield from get_model_names(arg)
 
+    def is_deprecated(provider: str, model_name: str) -> bool:
+        return model_name in _PROVIDER_DEPRECATED_MODELS.get(provider, frozenset())
+
     all_generated_names = [
         f'{provider}:{n}'
         for provider, model_names in _PROVIDER_TO_MODEL_NAMES.items()
         for n in get_model_names(model_names)
+        if not is_deprecated(provider, n)
     ]
 
     cerebras_names = get_cerebras_model_names()
@@ -97,6 +106,7 @@ def test_known_model_names():  # pragma: lax no cover
         for provider in GatewayModelProvider.__args__
         for model_name in get_model_names(_PROVIDER_TO_MODEL_NAMES[provider])
         if f'gateway/{provider}:{model_name}' not in UNSUPPORTED_GATEWAY_MODEL_NAMES
+        if not is_deprecated(provider, model_name)
     ]
 
     extra_names = ['test']
