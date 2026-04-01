@@ -15,6 +15,7 @@ import httpx
 from typing_extensions import Any, TypedDict
 
 from pydantic_ai._ssrf import safe_download
+from pydantic_ai._utils import is_text_like_media_type
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import BinaryContent
 from pydantic_ai.tools import Tool
@@ -95,7 +96,7 @@ class WebFetchLocalTool:
 
         title = ''
 
-        if _is_text_like_media_type(media_type):
+        if not media_type or is_text_like_media_type(media_type):
             text = response.text
 
             if not media_type or media_type in ('text/html', 'application/xhtml+xml'):
@@ -129,19 +130,6 @@ def _check_domain(url: str, allowed_domains: list[str] | None, blocked_domains: 
         raise ModelRetry(f'Domain {hostname!r} is not in the allowed domains list. Allowed: {allowed_domains}')
     if blocked_domains is not None and hostname in blocked_domains:
         raise ModelRetry(f'Domain {hostname!r} is blocked. Try a different URL.')
-
-
-def _is_text_like_media_type(media_type: str) -> bool:
-    """Check if a media type represents text-like content."""
-    return (
-        not media_type
-        or media_type.startswith('text/')
-        or media_type == 'application/json'
-        or media_type.endswith('+json')
-        or media_type == 'application/xml'
-        or media_type.endswith('+xml')
-        or media_type in ('application/x-yaml', 'application/yaml')
-    )
 
 
 _TITLE_RE = re.compile(r'<title[^>]*>(.*?)</title>', re.IGNORECASE | re.DOTALL)
