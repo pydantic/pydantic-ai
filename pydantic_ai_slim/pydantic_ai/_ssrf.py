@@ -374,7 +374,9 @@ async def safe_download(
             # Strip sensitive headers on cross-origin redirects (RFC 7235)
             redirect_hostname = urlparse(current_url).hostname
             if redirect_hostname != original_hostname:
-                effective_headers: dict[str, str] = {k: v for k, v in effective_headers.items() if k.lower() not in _sensitive_headers}
+                effective_headers: dict[str, str] = {
+                    k: v for k, v in effective_headers.items() if k.lower() not in _sensitive_headers
+                }
 
             continue
 
