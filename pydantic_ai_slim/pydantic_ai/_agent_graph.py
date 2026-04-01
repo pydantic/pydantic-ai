@@ -47,6 +47,7 @@ from .tools import (
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from .agent.abstract import AbstractAgent
     from .models.instrumented import InstrumentationSettings
 
 __all__ = (
@@ -138,6 +139,8 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     tracer: Tracer
     instrumentation_settings: InstrumentationSettings | None
+
+    agent: AbstractAgent[DepsT, Any] | None = None
 
 
 class AgentNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[NodeRunEndT]]):
@@ -1213,6 +1216,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
     """Build a `RunContext` object from the current agent graph run context."""
     run_context = RunContext[DepsT](
         deps=ctx.deps.user_deps,
+        agent=ctx.deps.agent,
         model=ctx.deps.model,
         usage=ctx.state.usage,
         prompt=ctx.deps.prompt,

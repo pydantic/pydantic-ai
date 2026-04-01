@@ -75,11 +75,14 @@ hooks = Hooks()
 
 @hooks.on.before_model_request
 async def log_request(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
-    print(f'Sending {len(request_context.messages)} messages')
+    agent_name = ctx.agent.name if ctx.agent else 'unknown'
+    print(f'[{agent_name}] Sending {len(request_context.messages)} messages')
     return request_context
 
-agent = Agent('openai:gpt-5.2', capabilities=[hooks])
+agent = Agent('openai:gpt-5.2', name='my_agent', capabilities=[hooks])
 ```
+
+All hooks receive [`RunContext`][pydantic_ai.tools.RunContext], which provides access to the running agent via [`ctx.agent`][pydantic_ai.tools.RunContext.agent] — useful for logging, metrics, and other cross-cutting concerns that need to identify which agent is running.
 
 See the dedicated [Hooks](hooks.md) page for the full API: decorator and constructor registration, timeouts, tool filtering, wrap hooks, per-event hooks, and more.
 
