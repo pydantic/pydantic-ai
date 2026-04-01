@@ -7155,17 +7155,18 @@ class TestCtxAgentInCapability:
         @dataclass
         class AgentTrackingCap(AbstractCapability[Any]):
             async def before_run(self, ctx: RunContext[Any]) -> None:
-                hook_agent_names.append(ctx.agent.name if ctx.agent else None)
+                assert ctx.agent is not None
+                hook_agent_names.append(ctx.agent.name)
 
             async def before_model_request(
                 self,
                 ctx: RunContext[Any],
                 request_context: ModelRequestContext,
             ) -> ModelRequestContext:
-                hook_agent_names.append(ctx.agent.name if ctx.agent else None)
+                assert ctx.agent is not None
+                hook_agent_names.append(ctx.agent.name)
                 return request_context
 
         agent = Agent(FunctionModel(simple_model_function), name='hook_test_agent', capabilities=[AgentTrackingCap()])
         await agent.run('hello')
-        assert all(name == 'hook_test_agent' for name in hook_agent_names)
-        assert len(hook_agent_names) >= 2  # at least before_run + before_model_request
+        assert hook_agent_names == ['hook_test_agent', 'hook_test_agent']

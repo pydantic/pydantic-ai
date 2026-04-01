@@ -3670,9 +3670,10 @@ def test_tool_ctx_agent():
 
     @agent.tool
     def get_agent_info(ctx: RunContext[None]) -> str:
-        tool_agent_names.append(ctx.agent.name if ctx.agent else None)
-        tool_output_types.append(ctx.agent.output_type if ctx.agent else None)
-        return f'agent={ctx.agent.name if ctx.agent else None}'
+        assert ctx.agent is not None
+        tool_agent_names.append(ctx.agent.name)
+        tool_output_types.append(ctx.agent.output_type)
+        return f'agent={ctx.agent.name}'
 
     result = agent.run_sync('Hello')
     assert result.output == snapshot(0)
@@ -3734,7 +3735,8 @@ def test_tool_ctx_agent_in_output_validator():
 
     @agent.output_validator
     def check_agent(ctx: RunContext[None], output: str) -> str:
-        validator_agent_names.append(ctx.agent.name if ctx.agent else None)
+        assert ctx.agent is not None
+        validator_agent_names.append(ctx.agent.name)
         return output
 
     result = agent.run_sync('Hello')

@@ -13,10 +13,10 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 
+from ._run_context import TemporalRunContext, deserialize_run_context
+
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
-
-from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
     CallToolParams,
     CallToolResult,
