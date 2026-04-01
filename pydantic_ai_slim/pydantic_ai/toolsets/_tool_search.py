@@ -45,7 +45,6 @@ class _SearchIndexEntry:
     name_lower: str
     description: str | None
     description_lower: str | None
-    response_dict: dict[str, str | None]
 
 
 @dataclass(kw_only=True)
@@ -94,7 +93,6 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
                 name_lower=name.lower(),
                 description=tool.tool_def.description,
                 description_lower=tool.tool_def.description.lower() if tool.tool_def.description else None,
-                response_dict={'name': name, 'description': tool.tool_def.description},
             )
             for name, tool in deferred.items()
             if name not in discovered
@@ -167,7 +165,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         for entry in search_tool.search_index:
             searchable = entry.name_lower + (' ' + entry.description_lower if entry.description_lower else '')
             if any(term in searchable for term in terms):
-                matches.append(entry.response_dict)
+                matches.append({'name': entry.name, 'description': entry.description})
                 if len(matches) >= _MAX_SEARCH_RESULTS:
                     break
 
