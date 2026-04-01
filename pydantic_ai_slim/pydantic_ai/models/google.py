@@ -628,12 +628,12 @@ class GoogleModel(Model):
             }
             return ThinkingConfigDict(include_thoughts=True, thinking_budget=budget_map[thinking])
 
-    async def _build_content_and_config(
+    async def _build_content_and_config(  # noqa: C901
         self,
         messages: list[ModelMessage],
         model_settings: GoogleModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[list[ContentUnionDict], GenerateContentConfigDict]:
+    ) -> tuple[list[ContentUnionDict], GenerateContentConfigDict | GenerationConfigDict]:
         tools, image_config = self._get_tools(model_request_parameters)
         if model_request_parameters.function_tools and not self.profile.supports_tools:
             raise UserError('Tools are not supported by this model.')
@@ -697,7 +697,6 @@ class GoogleModel(Model):
             safety_settings=model_settings.get('google_safety_settings'),
             thinking_config=self._translate_thinking(model_settings, model_request_parameters),
             labels=model_settings.get('google_labels'),
-            service_tier=cast(ServiceTier, service_tier_str),
             media_resolution=model_settings.get('google_video_resolution'),
             cached_content=model_settings.get('google_cached_content'),
             tools=cast(ToolListUnionDict, tools),
@@ -707,6 +706,9 @@ class GoogleModel(Model):
             response_modalities=modalities,
             image_config=image_config,
         )
+
+        if service_tier_str is not None:
+            config['service_tier'] = cast(ServiceTier, service_tier_str)
 
         # Validate logprobs settings
         logprobs_requested = model_settings.get('google_logprobs')

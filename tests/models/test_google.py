@@ -2760,6 +2760,22 @@ async def test_google_service_tier_default_maps_to_standard(allow_model_requests
     assert config_dict['service_tier'] == 'standard'
 
 
+async def test_google_service_tier_not_in_config_when_unset(allow_model_requests: None):
+    """Test that `service_tier` is completely omitted from the config when not configured."""
+    # This field has an explicit not-set test as it serves two different APIs
+    # with two different mechanisms, making it a tad more complex than others.
+    m = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings={},
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    assert 'service_tier' not in config_dict
+
+
 async def test_google_tool_output(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
 
@@ -6506,8 +6522,8 @@ async def test_google_service_tier_vertex_headers(
     config_dict = cast(dict[str, Any], config)
     headers = config_dict['http_options']['headers']
 
-    # For Vertex-specific tiers, the `service_tier` config parameter should not be populated.
-    assert config_dict.get('service_tier') is None
+    # For Vertex-specific tiers, the `service_tier` config parameter should be omitted.
+    assert 'service_tier' not in config_dict
 
     routing_header_names = {'X-Vertex-AI-LLM-Request-Type', 'X-Vertex-AI-LLM-Shared-Request-Type'}
     actual_routing_headers = {k: v for k, v in headers.items() if k in routing_header_names}
@@ -6528,6 +6544,7 @@ async def test_google_service_tier_not_set_no_headers(allow_model_requests: None
     config_dict = cast(dict[str, Any], config)
     headers = config_dict['http_options']['headers']
 
+    assert 'service_tier' not in config_dict
     assert 'X-Vertex-AI-LLM-Request-Type' not in headers
     assert 'X-Vertex-AI-LLM-Shared-Request-Type' not in headers
 
