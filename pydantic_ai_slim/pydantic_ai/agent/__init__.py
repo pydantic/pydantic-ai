@@ -1401,6 +1401,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     r = await run_capability.after_run(run_ctx, result=r)
                     agent_run._result_override = r  # pyright: ignore[reportPrivateUsage]
                     _run_error = None
+
                 try:
                     _short_circuited = _wrap_task.done() and not _run_ready.is_set()
                     if _short_circuited:
@@ -1416,10 +1417,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         # Don't attempt recovery for GeneratorExit/KeyboardInterrupt —
                         # awaiting _wrap_task during cleanup could delay shutdown.
                         if isinstance(_run_error, (GeneratorExit, KeyboardInterrupt)):
-                            if not _short_circuited:
+                            if not _short_circuited:  # pragma: no cover
                                 _run_done.set()
                                 if not _wrap_task.done():
-                                    _wrap_task.cancel()
+                                    _wrap_task.cancel()  # pragma: no cover
                             raise
                         # Don't re-raise yet — give wrap_run a chance to recover.
                         # If wrap_run catches the error from handler() and returns
@@ -1444,11 +1445,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                                 # visible in tracebacks (but don't mask the original).
                                 # Skip CancelledError: it's expected cancellation propagation,
                                 # and setting __context__ on it causes hangs on Python 3.10.
-                                if (
-                                    not isinstance(_wrap_exc, asyncio.CancelledError)
-                                    and _wrap_exc is not _run_error
-                                ):
-                                    _run_error.__context__ = _wrap_exc  # pragma: no cover — only fires for bugs in wrap_run implementations
+                                if not isinstance(_wrap_exc, asyncio.CancelledError) and _wrap_exc is not _run_error:
+                                    _run_error.__context__ = (
+                                        _wrap_exc  # pragma: no cover — only fires for bugs in wrap_run implementations
+                                    )
                         elif (
                             not _wrap_task.done()
                         ):  # pragma: no branch — _run_done.set() can't complete _wrap_task synchronously
