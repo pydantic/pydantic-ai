@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from contextvars import ContextVar
@@ -189,15 +190,22 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                     "Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) need to have a unique `id` in order to be used with Temporal. The ID will be used to identify the toolset's activities within the workflow."
                 )
 
-            toolset = temporalize_toolset_func(
+            args: tuple[Any, ...] = (
                 toolset,
                 activity_name_prefix,
                 activity_config | toolset_activity_config.get(id, {}),
                 tool_activity_config.get(id, {}),
                 self.deps_type,
                 self.run_context_type,
-                self.wrapped,
             )
+            # Pass agent if the function accepts it (backward compat with old 6-arg callables)
+            try:
+                params = inspect.signature(temporalize_toolset_func).parameters
+                if len(params) > 6:
+                    args = (*args, self.wrapped)
+            except (ValueError, TypeError):
+                pass
+            toolset = temporalize_toolset_func(*args)
             if isinstance(toolset, TemporalWrapperToolset):
                 activities.extend(toolset.temporal_activities)
             return toolset
