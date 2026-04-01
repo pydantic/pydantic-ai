@@ -299,6 +299,7 @@ async def safe_download(
     allow_local: bool = False,
     max_redirects: int = _MAX_REDIRECTS,
     timeout: int = _DEFAULT_TIMEOUT,
+    headers: dict[str, str] | None = None,
 ) -> httpx.Response:
     """Download content from a URL with SSRF protection.
 
@@ -316,6 +317,9 @@ async def safe_download(
                     Cloud metadata endpoints are always blocked regardless.
         max_redirects: Maximum number of redirects to follow (default: 10).
         timeout: Request timeout in seconds (default: 30).
+        headers: Additional HTTP headers to include in the request.
+                The ``Host`` header is always set to the original hostname
+                and cannot be overridden.
 
     Returns:
         The httpx.Response object.
@@ -341,10 +345,12 @@ async def safe_download(
         if resolved.is_https:
             extensions['sni_hostname'] = resolved.hostname
 
+        request_headers: dict[str, str] = {**(headers or {}), 'Host': resolved.hostname}
+
         # Make request with Host header set to original hostname
         response = await client.get(
             request_url,
-            headers={'Host': resolved.hostname},
+            headers=request_headers,
             extensions=extensions,
             follow_redirects=False,
         )

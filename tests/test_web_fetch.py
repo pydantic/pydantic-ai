@@ -290,7 +290,12 @@ class TestWebFetchLocalTool:
             tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=True, timeout=60)
             await tool('http://localhost:8080')
 
-        mock_dl.assert_called_once_with('http://localhost:8080', allow_local=True, timeout=60)
+        mock_dl.assert_called_once_with(
+            'http://localhost:8080',
+            allow_local=True,
+            timeout=60,
+            headers={'Accept': 'text/markdown, text/html;q=0.9, */*;q=0.8'},
+        )
 
     async def test_safe_download_error_raises_model_retry(self):
         """Errors from safe_download are converted to ModelRetry."""
@@ -381,6 +386,96 @@ class TestWebFetchLocalTool:
 
         assert isinstance(result, dict)
         assert result['url'] == 'https://example.com/page'
+
+
+    async def test_fetch_markdown_response(self):
+        """Server returning text/markdown is used as-is without markdownify conversion."""
+        markdown_content = '# Hello\n\nThis is **markdown** from the server.'
+        mock_response = httpx.Response(
+            200,
+            text=markdown_content,
+            headers={'content-type': 'text/markdown; charset=utf-8'},
+            request=httpx.Request('GET', 'https://example.com/page'),
+        )
+
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com/page')
+
+        assert isinstance(result, dict)
+        assert result['content'] == markdown_content
+        assert result['title'] == ''
+
+    async def test_fetch_x_markdown_response(self):
+        """Server returning text/x-markdown is used as-is."""
+        markdown_content = '## Test'
+        mock_response = httpx.Response(
+            200,
+            text=markdown_content,
+            headers={'content-type': 'text/x-markdown'},
+            request=httpx.Request('GET', 'https://example.com'),
+        )
+
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com')
+
+        assert isinstance(result, dict)
+        assert result['content'] == '## Test'
+
+    async def test_default_accept_header(self):
+        """Default Accept header requests text/markdown."""
+        mock_response = _html_response('<html><body>ok</body></html>')
+
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
+        ) as mock_dl:
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            await tool('https://example.com')
+
+        call_headers = mock_dl.call_args[1]['headers']
+        assert 'text/markdown' in call_headers['Accept']
+
+    async def test_custom_headers(self):
+        """Custom headers are passed through to safe_download."""
+        mock_response = _html_response('<html><body>ok</body></html>')
+
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
+        ) as mock_dl:
+            tool = WebFetchLocalTool(
+                max_content_length=None,
+                allow_local_urls=False,
+                timeout=30,
+                headers={'Authorization': 'Bearer token123'},
+            )
+            await tool('https://example.com')
+
+        call_headers = mock_dl.call_args[1]['headers']
+        assert call_headers['Authorization'] == 'Bearer token123'
+        assert 'text/markdown' in call_headers['Accept']
+
+    async def test_custom_accept_header_overrides_default(self):
+        """User-provided Accept header overrides the default."""
+        mock_response = _html_response('<html><body>ok</body></html>')
+
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
+        ) as mock_dl:
+            tool = WebFetchLocalTool(
+                max_content_length=None,
+                allow_local_urls=False,
+                timeout=30,
+                headers={'Accept': 'text/html'},
+            )
+            await tool('https://example.com')
+
+        call_headers = mock_dl.call_args[1]['headers']
+        assert call_headers['Accept'] == 'text/html'
 
 
 class TestWebFetchToolFactory:

@@ -65,6 +65,9 @@ class WebFetchLocalTool:
     blocked_domains: list[str] | None = field(default=None)
     """Never fetch from these domains (exact hostname match). Raises `ModelRetry` on violation."""
 
+    headers: dict[str, str] | None = field(default=None)
+    """Additional HTTP headers to include in the request."""
+
     async def __call__(self, url: str) -> WebFetchResult | BinaryContent:
         """Fetches the content of a web page at the given URL and returns it as markdown.
 
@@ -82,11 +85,16 @@ class WebFetchLocalTool:
         """
         _check_domain(url, self.allowed_domains, self.blocked_domains)
 
+        request_headers = {'Accept': 'text/markdown, text/html;q=0.9, */*;q=0.8'}
+        if self.headers:
+            request_headers.update(self.headers)
+
         try:
             response = await safe_download(
                 url,
                 allow_local=self.allow_local_urls,
                 timeout=self.timeout,
+                headers=request_headers,
             )
         except (ValueError, httpx.HTTPStatusError, httpx.RequestError) as e:
             raise ModelRetry(f'Failed to fetch {url}: {e}') from e
@@ -99,7 +107,9 @@ class WebFetchLocalTool:
         if not media_type or is_text_like_media_type(media_type):
             text = response.text
 
-            if not media_type or media_type in ('text/html', 'application/xhtml+xml'):
+            if media_type in ('text/markdown', 'text/x-markdown'):
+                content = text
+            elif not media_type or media_type in ('text/html', 'application/xhtml+xml'):
                 title = _extract_title(text)
                 content = md(text, strip=['img', 'script', 'style'])
             elif media_type == 'application/json':
@@ -153,10 +163,16 @@ def web_fetch_tool(
     timeout: int = 30,
     allowed_domains: list[str] | None = None,
     blocked_domains: list[str] | None = None,
+    headers: dict[str, str] | None = None,
 ) -> Tool[Any]:
     """Creates a web fetch tool that fetches URLs and converts content to markdown.
 
     This tool uses SSRF protection via `pydantic_ai._ssrf.safe_download`.
+
+    By default, sends ``Accept: text/markdown`` to request markdown directly from
+    servers that support it (e.g. Cloudflare, Vercel, Mintlify). This reduces
+    token usage and improves content quality. Falls back to HTML-to-markdown
+    conversion when the server doesn't support markdown responses.
 
     Args:
         max_content_length: Maximum character length of returned content.
@@ -166,6 +182,8 @@ def web_fetch_tool(
         timeout: Request timeout in seconds. Defaults to 30.
         allowed_domains: Only fetch from these domains (exact hostname match). Raises `ModelRetry` on violation.
         blocked_domains: Never fetch from these domains (exact hostname match). Raises `ModelRetry` on violation.
+        headers: Additional HTTP headers to include in requests.
+            Overrides the default ``Accept: text/markdown`` header if ``Accept`` is provided.
     """
     return Tool[Any](
         WebFetchLocalTool(
@@ -174,6 +192,7 @@ def web_fetch_tool(
             timeout=timeout,
             allowed_domains=allowed_domains,
             blocked_domains=blocked_domains,
+            headers=headers,
         ).__call__,
         name='web_fetch',
         description='Fetches the content of a web page at the given URL and returns it as markdown.',
