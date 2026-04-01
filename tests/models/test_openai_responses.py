@@ -26,6 +26,7 @@ from pydantic_ai import (
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -149,6 +150,26 @@ async def test_openai_responses_image_detail_vendor_metadata(allow_model_request
     ]
     assert image_parts
     assert all(part['detail'] == 'high' for part in image_parts)
+
+
+async def test_parallel_tool_calls_not_sent_without_tools(allow_model_requests: None) -> None:
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='world', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(parallel_tool_calls=True))
+
+    await agent.run('Hello')
+    assert 'parallel_tool_calls' not in get_mock_responses_kwargs(mock_client)[0]
 
 
 @pytest.mark.parametrize(
@@ -10147,3 +10168,14 @@ async def test_openai_responses_refusal_streaming(allow_model_requests: None):
     assert response_msg['parts'] == []
     assert response_msg['finish_reason'] == 'content_filter'
     assert response_msg['provider_details']['refusal'] == "I can't help with that."
+
+
+async def test_openai_responses_text_content_input(allow_model_requests: None, openai_api_key: str):
+    """Test that text content in ModelRequest is correctly mapped to OpenAI messages."""
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
+    m = await model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        part=UserPromptPart(content=['test', TextContent(content='test2', metadata={'key': 'value'})])
+    )
+    assert m == snapshot(
+        {'role': 'user', 'content': [{'text': 'test', 'type': 'input_text'}, {'text': 'test2', 'type': 'input_text'}]}
+    )

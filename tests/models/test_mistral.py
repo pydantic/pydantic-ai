@@ -20,6 +20,7 @@ from pydantic_ai import (
     ModelResponse,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -53,9 +54,11 @@ with try_import() as imports_successful:
         DeltaMessage as MistralDeltaMessage,
         FunctionCall as MistralFunctionCall,
         ReferenceChunk as MistralReferenceChunk,
+        TextChunk,
         TextChunk as MistralTextChunk,
         ToolCall as MistralToolCall,
         UsageInfo as MistralUsageInfo,
+        UserMessage,
     )
     from mistralai.client.types.basemodel import Unset as MistralUnset
 
@@ -2090,6 +2093,21 @@ async def test_image_as_binary_content_tool_response(
             ),
         ]
     )
+
+
+async def test_text_content_input(allow_model_requests: None):
+    c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
+    mock_client = MockMistralAI.create_mock(c)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+
+    part = UserPromptPart(
+        content=[
+            'Hello',
+            TextContent(content='This is some text content.', metadata={'key': 'value'}),
+        ]
+    )
+    m = await model._map_user_prompt(part)  # pyright: ignore[reportPrivateUsage]
+    assert m == snapshot(UserMessage(content=[TextChunk(text='Hello'), TextChunk(text='This is some text content.')]))
 
 
 async def test_image_url_input(allow_model_requests: None):
