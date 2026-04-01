@@ -1204,6 +1204,22 @@ async def test_agent_without_model():
         TemporalAgent(Agent(name='test_agent'))
 
 
+async def test_old_temporalize_toolset_func_compat():
+    """Old 6-arg temporalize_toolset_func implementations still work."""
+    from pydantic_ai.durable_exec.temporal._toolset import temporalize_toolset
+
+    def old_style_func(
+        toolset: Any, prefix: Any, config: Any, tool_config: Any, deps_type: Any, run_context_type: Any
+    ) -> Any:
+        return temporalize_toolset(toolset, prefix, config, tool_config, deps_type, run_context_type)
+
+    TemporalAgent(
+        Agent(model=model, name='old_compat_agent'),
+        activity_config=BASE_ACTIVITY_CONFIG,
+        temporalize_toolset_func=old_style_func,  # pyright: ignore[reportArgumentType]
+    )
+
+
 async def test_toolset_without_id():
     with pytest.raises(
         UserError,

@@ -199,12 +199,12 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 self.run_context_type,
             )
             # Pass agent if the function accepts it (backward compat with old 6-arg callables)
-            try:
-                params = inspect.signature(temporalize_toolset_func).parameters
-                if len(params) > 6:
-                    args = (*args, self.wrapped)
-            except (ValueError, TypeError):
-                pass
+            positional_kinds = {inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD}
+            n_positional = sum(
+                1 for p in inspect.signature(temporalize_toolset_func).parameters.values() if p.kind in positional_kinds
+            )
+            if n_positional > 6:
+                args = (*args, self.wrapped)
             toolset = temporalize_toolset_func(*args)
             if isinstance(toolset, TemporalWrapperToolset):
                 activities.extend(toolset.temporal_activities)
