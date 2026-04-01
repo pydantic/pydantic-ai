@@ -21,7 +21,7 @@ from opentelemetry.trace import Span, SpanKind, Tracer, TracerProvider, get_trac
 from opentelemetry.util.types import AttributeValue
 from pydantic import TypeAdapter
 
-from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
+from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, get_agent_run_baggage_attributes
 
 from .. import _otel_messages
 from .._run_context import RunContext
@@ -456,6 +456,7 @@ class InstrumentedModel(WrapperModel):
             'gen_ai.operation.name': operation,
             **self.model_attributes(self.wrapped),
             **self.model_request_parameters_attributes(model_request_parameters),
+            **get_agent_run_baggage_attributes(),
             'logfire.json_schema': json.dumps(
                 {
                     'type': 'object',

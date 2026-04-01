@@ -29,6 +29,7 @@ from ...messages import (
     ModelResponse,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -254,6 +255,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     case _:
                                         file = DocumentUrl(url=part.url, media_type=part.media_type)
                         user_prompt_content.append(file)
+                    elif isinstance(part, DataUIPart):
+                        # Contains custom data that shouldn't be sent to the model
+                        pass
                     else:  # pragma: no cover
                         raise ValueError(f'Unsupported user message part type: {type(part)}')
 
@@ -747,6 +751,8 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
         for item in part.content:
             if isinstance(item, str):
                 ui_parts.append(TextUIPart(text=item, state='done'))
+            elif isinstance(item, TextContent):
+                ui_parts.append(TextUIPart(text=item.content, state='done'))
             elif isinstance(item, BinaryContent):
                 ui_parts.append(FileUIPart(url=item.data_uri, media_type=item.media_type))
             elif isinstance(item, ImageUrl | AudioUrl | VideoUrl | DocumentUrl):

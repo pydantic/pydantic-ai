@@ -845,6 +845,12 @@ print(f'Output: {result.output}')
 
 Capabilities are the recommended way for third-party packages to extend Pydantic AI, since they can bundle tools with hooks, instructions, and model settings. See [Extensibility](extensibility.md) for the full ecosystem, including [third-party toolsets](toolsets.md#third-party-toolsets) that can also be wrapped as capabilities.
 
+### Agent Skills
+
+Capabilities that implement [Agent Skills](https://agentskills.io) support help agents efficiently discover and perform specific tasks:
+
+* [`pydantic-ai-skills`](https://github.com/DougTrajano/pydantic-ai-skills) - `SkillsCapability` implements Agent Skills support with progressive disclosure (load skills on-demand to reduce tokens). Supports filesystem and programmatic skills; compatible with [agentskills.io](https://agentskills.io).
+
 To add your package to this page, open a pull request.
 
 ## Publishing capabilities
