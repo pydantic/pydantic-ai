@@ -1,0 +1,21 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "1a805b3da2699c32cd01b02a7d9c9d7c19b194ce",
+  "prompts": {
+    "a830ee78bbdaab35": {
+      "agent_id": {
+        "tool": "github-copilot-jetbrains",
+        "id": "1775136896011",
+        "model": "unknown"
+      },
+      "human_author": "Alex Hall",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 3,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    }
+  }
+}
