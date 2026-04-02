@@ -114,15 +114,10 @@ def _build_output_handlers(
             # Error recovery path: validation failed and on_output_validate_error returned
             # data directly. Try to match against inner processors by type so the output
             # function still runs.
-            for inner in processor._processors.values():  # pyright: ignore[reportPrivateUsage]
-                if inner._output_type is not None:  # pyright: ignore[reportPrivateUsage]  # pragma: no branch
-                    try:
-                        if isinstance(output, inner._output_type):  # pyright: ignore[reportPrivateUsage]
-                            if inner.outer_typed_dict_key:  # pragma: no cover — non-model-like union members are rare
-                                output = {inner.outer_typed_dict_key: output}
-                            return await inner.call(output, run_context, wrap_validation_errors)
-                    except TypeError:  # pragma: no cover — generic types (e.g. list[str]) can't be used with isinstance
-                        pass
+            match = processor.resolve_processor_for_recovered_output(output)
+            if match is not None:
+                inner, args = match
+                return await inner.call(args, run_context, wrap_validation_errors)
             return output  # pragma: no cover — no inner processor type matched the recovered data
         return await processor.call(output, run_context, wrap_validation_errors)
 
@@ -1062,6 +1057,30 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             inner_data, allow_partial=allow_partial, validation_context=validation_context
         )
         return _UnionValidatedOutput(kind=kind, data=inner_validated)
+
+    def resolve_processor_for_recovered_output(
+        self, output: Any
+    ) -> tuple[ObjectOutputProcessor[OutputDataT], Any] | None:
+        """Match a recovered output value to the correct inner processor by type.
+
+        Used by the error recovery path in output hooks: when ``on_output_validate_error``
+        returns data directly (bypassing normal union validation), this method finds which
+        inner processor can handle the recovered value so the output function still runs.
+
+        Returns ``(processor, args)`` where ``args`` is the value to pass to ``processor.call()``
+        (potentially wrapped in a dict for non-model-like types), or ``None`` if no match is found.
+        """
+        for inner in self._processors.values():
+            if inner._output_type is not None:  # pyright: ignore[reportPrivateUsage]  # pragma: no branch
+                try:
+                    if isinstance(output, inner._output_type):  # pyright: ignore[reportPrivateUsage]
+                        args: Any = output
+                        if inner.outer_typed_dict_key:  # pragma: no cover — non-model-like union members are rare
+                            args = {inner.outer_typed_dict_key: output}
+                        return inner, args
+                except TypeError:  # pragma: no cover — generic types (e.g. list[str]) can't be used with isinstance
+                    pass
+        return None
 
     async def call(
         self,

@@ -16,13 +16,21 @@ from pydantic_ai.capabilities.hooks import Hooks
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
     ModelMessage,
+    ModelRequest,
     ModelResponse,
+    RetryPromptPart,
     TextPart,
     ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.output import OutputContext, PromptedOutput, TextOutput
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.usage import RequestUsage
+
+from ._inline_snapshot import snapshot
+from .conftest import IsDatetime, IsStr
 
 pytestmark = [
     pytest.mark.anyio,
@@ -226,11 +234,40 @@ class TestOnOutputValidateErrorModelRetry:
         result = await agent.run('hello')
         assert result.output == MyOutput(value=42)
         assert call_count == 2
-        # Verify the retry message contains the ModelRetry message
-        messages = result.all_messages()
-        retry_parts = [p for m in messages for p in m.parts if hasattr(p, 'content') and p.part_kind == 'retry-prompt']
-        assert len(retry_parts) == 1
-        assert retry_parts[0].content == 'Please return a valid integer for value'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='{"value": "bad"}')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=4),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Please return a valid integer for value',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='{"value": 42}')],
+                    usage=RequestUsage(input_tokens=67, output_tokens=7),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
 
 class TestModelRetryFromOutputHooks:
@@ -410,6 +447,53 @@ class TestModelRetryFromOutputHooks:
         result = await agent.run('hello')
         assert result.output == MyOutput(value=42)
         assert call_count == 2
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='final_result', args='{"value": -1}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=4),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Negative values not allowed',
+                            tool_name='final_result',
+                            tool_call_id='call-1',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='final_result', args='{"value": 42}', tool_call_id='call-2')],
+                    usage=RequestUsage(input_tokens=62, output_tokens=8),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id='call-2',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_output_tool_after_execute_raises_model_retry(self):
         """ModelRetry from after_output_execute on a tool output triggers retry."""
@@ -1241,6 +1325,22 @@ class TestOutputHookFullLifecycle:
             'wrap_execute:after',
             'after_execute',
         ]
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='{"value": 1}')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=3),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_full_lifecycle_with_tool_output(self):
         """All output hooks fire in order for tool-based output."""
@@ -1300,6 +1400,34 @@ class TestOutputHookFullLifecycle:
             'before_execute',
             'after_execute',
         ]
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='final_result', args='{"value": 100}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=4),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id='call-1',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
 
 class TestOutputContext:
@@ -1887,7 +2015,7 @@ class TestStreamingOutputHooks:
     """Output hooks fire during streaming (partial and final validation)."""
 
     async def test_output_hooks_fire_during_streaming(self):
-        """before_output_validate fires during streaming."""
+        """Validate hooks fire on partial attempts; execute hooks fire only when partial validation succeeds."""
         from collections.abc import AsyncIterator
 
         from pydantic_ai.models.function import DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -1904,17 +2032,60 @@ class TestStreamingOutputHooks:
             async def before_output_validate(
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
             ) -> str | dict[str, Any]:
-                hook_calls.append(('validate', ctx.partial_output))
+                hook_calls.append(('before_validate', ctx.partial_output))
+                return output
+
+            async def after_output_execute(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+            ) -> Any:
+                hook_calls.append(('after_execute', ctx.partial_output))
                 return output
 
         agent = Agent(FunctionModel(stream_function=stream_fn), output_type=MyOutput, capabilities=[StreamLogCap()])
         async with agent.run_stream('hello') as stream:
-            result = await stream.get_output()
-        assert result == MyOutput(value=42)
-        # Output hooks fire during streaming validation
-        assert len(hook_calls) >= 1, f'Expected at least 1 hook call, got {len(hook_calls)}'
-        # The final validation has partial_output=False
-        assert any(not partial for _, partial in hook_calls), 'Expected at least one final validation call'
+            outputs = [o async for o in stream.stream_output(debounce_by=None)]
+        assert outputs[-1] == MyOutput(value=42)
+        # Validate hooks fire on partial attempts AND the final result
+        validate_calls = [(phase, partial) for phase, partial in hook_calls if phase == 'before_validate']
+        assert any(partial for _, partial in validate_calls), 'Expected at least one partial validation call'
+        assert any(not partial for _, partial in validate_calls), 'Expected at least one final validation call'
+        # Execute hooks fire only when validation succeeds (partial or final)
+        execute_calls = [(phase, partial) for phase, partial in hook_calls if phase == 'after_execute']
+        assert any(not partial for _, partial in execute_calls), 'Expected at least one final execute call'
+        assert stream.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args='{"value": 42}',
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=50, output_tokens=4),
+                    model_name='function::stream_fn',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
 
 class TestOutputHookEdgeCases:

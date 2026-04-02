@@ -155,7 +155,7 @@ The primary use case is **pre-parse normalization**: `before_output_validate` le
     For output tools, only output hooks fire — tool hooks (`before_tool_validate`, `before_tool_execute`, etc.) are skipped. Output hooks are the proper interception point for output processing.
 
 !!! note
-    During streaming, output hooks fire on every partial chunk as well as the final result — similar to output functions and output validators. Check `ctx.partial_output` in your hooks to distinguish partial from final results and avoid expensive work on partials.
+    During streaming, output **validation** hooks fire on every partial validation attempt as well as the final result. Output **execution** hooks fire only when partial validation succeeds, and on the final result. Check `ctx.partial_output` in your hooks to distinguish partial from final results and avoid expensive work on partials.
 
 ### Output execution hooks
 
