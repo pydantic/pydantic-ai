@@ -268,6 +268,7 @@ async def run_output_with_hooks(
 
 async def execute_traced_output_function(
     function_schema: _function_schema.FunctionSchema,
+    *,
     run_context: RunContext[AgentDepsT],
     args: dict[str, Any],
     wrap_validation_errors: bool = True,
@@ -899,7 +900,10 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
         if self._function_schema:
             output = await execute_traced_output_function(
-                self._function_schema, run_context, output, wrap_validation_errors
+                self._function_schema,
+                run_context=run_context,
+                args=output,
+                wrap_validation_errors=wrap_validation_errors,
             )
 
         return output
@@ -1185,7 +1189,9 @@ class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
     ) -> Any:
         """Execute the text output function."""
         args = {self._str_argument_name: output}
-        return await execute_traced_output_function(self._function_schema, run_context, args, wrap_validation_errors)
+        return await execute_traced_output_function(
+            self._function_schema, run_context=run_context, args=args, wrap_validation_errors=wrap_validation_errors
+        )
 
     async def process(
         self,
