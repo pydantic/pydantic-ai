@@ -5364,6 +5364,17 @@ def test_builtin_tool_from_spec_no_args():
 
 
 @pytest.mark.filterwarnings('ignore::DeprecationWarning')
+def test_builtin_or_local_no_default_local():
+    """BuiltinOrLocalTool base class _default_local() returns None."""
+    from pydantic_ai.capabilities.builtin_or_local import BuiltinOrLocalTool
+
+    cap = BuiltinOrLocalTool(builtin=WebSearchTool())
+    # Base class _default_local() returns None — no local fallback
+    assert cap.local is None
+    assert cap.get_toolset() is None
+
+
+@pytest.mark.filterwarnings('ignore::DeprecationWarning')
 def test_builtin_or_local_with_explicit_builtin():
     """BuiltinOrLocalTool used directly with an explicit builtin and local tool."""
     from pydantic_ai.capabilities.builtin_or_local import BuiltinOrLocalTool

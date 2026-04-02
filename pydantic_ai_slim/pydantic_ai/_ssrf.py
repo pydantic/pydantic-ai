@@ -295,7 +295,7 @@ def resolve_redirect_url(current_url: str, location: str) -> str:
         return urlunparse((parsed_current.scheme, parsed_current.netloc, f'{base_path}/{location}', '', '', ''))
 
 
-def _check_domain(hostname: str, allowed_domains: list[str] | None, blocked_domains: list[str] | None) -> None:
+def _check_domain(hostname: str, *, allowed_domains: list[str] | None, blocked_domains: list[str] | None) -> None:
     """Validate a hostname against allowed/blocked domain lists.
 
     Raises:
@@ -360,7 +360,7 @@ async def safe_download(
         resolved = await validate_and_resolve_url(current_url, allow_local)
 
         # Check domain restrictions (on every hop to prevent redirect bypass)
-        _check_domain(resolved.hostname, allowed_domains, blocked_domains)
+        _check_domain(resolved.hostname, allowed_domains=allowed_domains, blocked_domains=blocked_domains)
 
         # Build URL with resolved IP
         request_url = build_url_with_ip(resolved)
