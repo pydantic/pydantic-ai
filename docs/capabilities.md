@@ -21,7 +21,7 @@ Pydantic AI ships with several capabilities that cover common needs:
 | [`Hooks`][pydantic_ai.capabilities.Hooks] | Decorator-based [lifecycle hook](hooks.md) registration | — |
 | [`WebSearch`][pydantic_ai.capabilities.WebSearch] | Web search — builtin when supported, [local fallback](common-tools.md#duckduckgo-search-tool) with `duckduckgo` extra | Yes |
 | [`WebFetch`][pydantic_ai.capabilities.WebFetch] | URL fetching — builtin when supported, [local fallback](common-tools.md#web-fetch-tool) with `web-fetch` extra | Yes |
-| [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | Image generation — builtin when supported, custom local fallback | Yes |
+| [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | Image generation — builtin when supported, subagent fallback via `fallback_model` | Yes |
 | [`MCP`][pydantic_ai.capabilities.MCP] | MCP server — builtin when supported, direct connection otherwise | Yes |
 | [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] | Filters or modifies [tool definitions](tools.md) per step | — |
 | [`PrefixTools`][pydantic_ai.capabilities.PrefixTools] | Wraps a capability and prefixes its tool names | Yes |
@@ -75,11 +75,14 @@ hooks = Hooks()
 
 @hooks.on.before_model_request
 async def log_request(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
-    print(f'Sending {len(request_context.messages)} messages')
+    agent_name = ctx.agent.name if ctx.agent else 'unknown'
+    print(f'[{agent_name}] Sending {len(request_context.messages)} messages')
     return request_context
 
-agent = Agent('openai:gpt-5.2', capabilities=[hooks])
+agent = Agent('openai:gpt-5.2', name='my_agent', capabilities=[hooks])
 ```
+
+All hooks receive [`RunContext`][pydantic_ai.tools.RunContext], which provides access to the running agent via [`ctx.agent`][pydantic_ai.tools.RunContext.agent] — useful for logging, metrics, and other cross-cutting concerns that need to identify which agent is running.
 
 See the dedicated [Hooks](hooks.md) page for the full API: decorator and constructor registration, timeouts, tool filtering, wrap hooks, per-event hooks, and more.
 
@@ -91,15 +94,18 @@ Each accepts `builtin` and `local` keyword arguments to control which side is us
 
 ```python {title="provider_adaptive_tools.py" test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import MCP, WebFetch, WebSearch
+from pydantic_ai.capabilities import MCP, ImageGeneration, WebFetch, WebSearch
 
 agent = Agent(
-    'openai:gpt-5.2',
+    'anthropic:claude-sonnet-4-6',
     capabilities=[
         # Auto-detects DuckDuckGo as local fallback
         WebSearch(),
         # Auto-detects markdownify-based fetch as local fallback
         WebFetch(),
+        # Builtin when the model supports it; falls back to a subagent
+        # running the specified LLM with image generation support
+        ImageGeneration(fallback_model='openai-responses:gpt-5.4'),
         # Auto-detects transport from URL
         MCP(url='https://mcp.example.com/api'),
     ],
