@@ -34,6 +34,9 @@ class WebSearch(BuiltinOrLocalTool[AgentDepsT]):
     max_uses: int | None
     """Maximum number of web searches per run. Requires builtin support."""
 
+    dynamic_filtering: bool | None
+    """Enable dynamic filtering for search results. Builtin-only; ignored by local tools."""
+
     def __init__(
         self,
         *,
@@ -46,6 +49,7 @@ class WebSearch(BuiltinOrLocalTool[AgentDepsT]):
         blocked_domains: list[str] | None = None,
         allowed_domains: list[str] | None = None,
         max_uses: int | None = None,
+        dynamic_filtering: bool | None = None,
     ) -> None:
         self.builtin = builtin
         self.local = local
@@ -54,6 +58,7 @@ class WebSearch(BuiltinOrLocalTool[AgentDepsT]):
         self.blocked_domains = blocked_domains
         self.allowed_domains = allowed_domains
         self.max_uses = max_uses
+        self.dynamic_filtering = dynamic_filtering
         self.__post_init__()
 
     def _default_builtin(self) -> WebSearchTool:
@@ -68,6 +73,8 @@ class WebSearch(BuiltinOrLocalTool[AgentDepsT]):
             kwargs['allowed_domains'] = self.allowed_domains
         if self.max_uses is not None:
             kwargs['max_uses'] = self.max_uses
+        if self.dynamic_filtering is not None:
+            kwargs['dynamic_filtering'] = self.dynamic_filtering
         return WebSearchTool(**kwargs)
 
     def _builtin_unique_id(self) -> str:
