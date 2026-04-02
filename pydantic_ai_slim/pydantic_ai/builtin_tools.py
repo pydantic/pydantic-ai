@@ -9,6 +9,8 @@ import pydantic
 from pydantic_core import core_schema
 from typing_extensions import TypedDict, deprecated
 
+from pydantic_ai.messages import UploadedFile
+
 __all__ = (
     'AbstractBuiltinTool',
     'WebSearchTool',
@@ -188,6 +190,18 @@ class CodeExecutionTool(AbstractBuiltinTool):
     * Google
     * Bedrock (Nova2.0)
     * xAI
+    """
+
+    files: list[UploadedFile] | None = None
+    """Optional list of uploaded files to make available in the code execution environment.
+
+    Files must be uploaded via the provider's Files API before use.
+    Only files matching the model's provider will be used; files from other providers are ignored.
+
+    Supported by:
+
+    * Anthropic (requires files uploaded via Files API beta)
+    * OpenAI Responses (requires files uploaded via Files API with purpose='assistants')
     """
 
     kind: str = 'code_execution'
