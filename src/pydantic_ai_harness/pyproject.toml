@@ -24,7 +24,7 @@ classifiers = [
     'Topic :: Software Development :: Libraries',
     'Typing :: Typed',
 ]
-dependencies = ['pydantic-ai-slim>=0.1']
+dependencies = ['pydantic-ai-slim>=1.76.0']
 
 [project.urls]
 Homepage = 'https://github.com/pydantic/pydantic-harness'
@@ -34,7 +34,8 @@ Issues = 'https://github.com/pydantic/pydantic-harness/issues'
 [dependency-groups]
 dev = [
     'pytest',
-    'pytest-xdist',
+    'anyio[trio]',
+    'pytest-anyio',
     'coverage',
 ]
 lint = [
@@ -78,10 +79,14 @@ quote-style = 'single'
 [tool.pyright]
 pythonVersion = '3.10'
 typeCheckingMode = 'strict'
+executionEnvironments = [
+    { root = 'tests', reportPrivateUsage = false },
+]
 
 [tool.pytest.ini_options]
 xfail_strict = true
 filterwarnings = ['error']
+anyio_mode = 'auto'
 
 [tool.coverage.run]
 branch = true

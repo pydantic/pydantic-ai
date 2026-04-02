@@ -1,36 +1,7 @@
-# Pydantic Harness
+# Capabilities
 
-Composable, reusable capabilities for [Pydantic AI](https://ai.pydantic.dev/) agents.
-
-## What is it?
-
-Pydantic Harness provides a library of **capabilities** -- self-contained bundles of system prompts, tools, and lifecycle hooks -- that you can attach to any Pydantic AI agent to give it new powers without writing boilerplate.
-
-Each capability is an [`AbstractCapability`](https://ai.pydantic.dev/capabilities/) subclass that plugs into the agent loop via Pydantic AI's capabilities API.
-
-## Installation
-
-```bash
-pip install pydantic-harness
-```
-
-Requires Python 3.10+ and `pydantic-ai-slim>=1.76.0`.
-
-## Quick start
-
-```python
-from pydantic_ai import Agent
-from pydantic_harness import Memory, Skills, Compaction
-
-agent = Agent(
-    'openai:gpt-4o',
-    capabilities=[Memory(), Skills(), Compaction()],
-)
-
-result = agent.run_sync('Remember that my favourite colour is blue.')
-```
-
-## Available capabilities
+Each capability is an `AbstractCapability` subclass that can be attached to any
+Pydantic AI agent via the `capabilities` parameter.
 
 | Capability | Description |
 |---|---|
@@ -55,21 +26,4 @@ result = agent.run_sync('Remember that my favourite colour is blue.')
 | ToolOrphanRepair | Repair orphaned tool calls in conversation history |
 | ToolOutputManagement | Control and format tool output for the model |
 
-## Documentation
-
-- [Pydantic AI docs](https://ai.pydantic.dev/)
-- [Capabilities API](https://ai.pydantic.dev/capabilities/)
-
-## Development
-
-```bash
-make install   # install dependencies
-make lint      # ruff format check + lint
-make typecheck # pyright strict
-make test      # pytest
-make testcov   # pytest with coverage
-```
-
-## License
-
-MIT
+Detailed documentation for each capability will be added as they are merged.
