@@ -16,6 +16,7 @@ from ... import ExternalToolset, ToolDefinition
 from ...messages import (
     AudioUrl,
     BinaryContent,
+    BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentUrl,
@@ -36,16 +37,23 @@ try:
     from ag_ui.core import (
         ActivityMessage,
         AssistantMessage,
+        AudioInputContent,
         BaseEvent,
         BinaryInputContent,
         DeveloperMessage,
+        DocumentInputContent,
+        ImageInputContent,
+        InputContentDataSource,
+        InputContentUrlSource,
         Message,
+        ReasoningMessage,
         RunAgentInput,
         SystemMessage,
         TextInputContent,
         Tool as AGUITool,
         ToolMessage,
         UserMessage,
+        VideoInputContent,
     )
 
     from .. import MessagesBuilder, UIAdapter, UIEventStream
@@ -79,7 +87,7 @@ class _AGUIFrontendToolset(ExternalToolset[AgentDepsT]):
                 ToolDefinition(
                     name=tool.name,
                     description=tool.description,
-                    parameters_json_schema=tool.parameters,
+                    parameters_json_schema=tool.parameters or {'type': 'object', 'properties': {}},
                 )
                 for tool in tools
             ]
@@ -89,6 +97,18 @@ class _AGUIFrontendToolset(ExternalToolset[AgentDepsT]):
     def label(self) -> str:
         """Return the label for this toolset."""
         return 'the AG-UI frontend tools'  # pragma: no cover
+
+
+def _convert_media_source(
+    source: InputContentDataSource | InputContentUrlSource,
+    url_type: type[ImageUrl] | type[AudioUrl] | type[VideoUrl] | type[DocumentUrl],
+) -> ImageUrl | AudioUrl | VideoUrl | DocumentUrl | BinaryContent | BinaryImage:
+    """Convert an AG-UI InputContentSource to the corresponding Pydantic AI content type."""
+    match source:
+        case InputContentDataSource(value=value, mime_type=mime_type):
+            return BinaryContent.narrow_type(BinaryContent(data=b64decode(value), media_type=mime_type))
+        case _:
+            return url_type(url=source.value, media_type=source.mime_type)
 
 
 class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, OutputDataT]):
@@ -143,6 +163,14 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             match part:
                                 case TextInputContent(text=text):
                                     user_prompt_content.append(text)
+                                case ImageInputContent(source=source):
+                                    user_prompt_content.append(_convert_media_source(source, ImageUrl))
+                                case AudioInputContent(source=source):
+                                    user_prompt_content.append(_convert_media_source(source, AudioUrl))
+                                case VideoInputContent(source=source):
+                                    user_prompt_content.append(_convert_media_source(source, VideoUrl))
+                                case DocumentInputContent(source=source):
+                                    user_prompt_content.append(_convert_media_source(source, DocumentUrl))
                                 case BinaryInputContent():
                                     if part.url:
                                         try:
@@ -235,7 +263,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             )
                         )
 
-                case ActivityMessage():
+                case ActivityMessage() | ReasoningMessage():
                     pass
 
         return builder.messages

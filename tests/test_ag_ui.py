@@ -63,12 +63,17 @@ with try_import() as imports_successful:
     from ag_ui.core import (
         ActivityMessage,
         AssistantMessage,
+        AudioInputContent,
         BaseEvent,
         BinaryInputContent,
         CustomEvent,
         DeveloperMessage,
+        DocumentInputContent,
         EventType,
         FunctionCall,
+        ImageInputContent,
+        InputContentDataSource,
+        InputContentUrlSource,
         Message,
         RunAgentInput,
         StateSnapshotEvent,
@@ -78,6 +83,7 @@ with try_import() as imports_successful:
         ToolCall,
         ToolMessage,
         UserMessage,
+        VideoInputContent,
     )
     from ag_ui.encoder import EventEncoder
     from starlette.requests import Request
@@ -103,6 +109,7 @@ pytestmark = [
     pytest.mark.filterwarnings(
         'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
     ),
+    pytest.mark.filterwarnings('ignore:BinaryInputContent is deprecated:DeprecationWarning'),
 ]
 
 
@@ -1963,6 +1970,202 @@ async def test_user_message_empty_content_list_skipped() -> None:
 
     result = AGUIAdapter.load_messages(messages)
     assert result == []
+
+
+async def test_image_input_content_url_source() -> None:
+    """ImageInputContent with a URL source produces an ImageUrl."""
+    messages: list[Message] = [
+        UserMessage(
+            id='msg_1',
+            content=[
+                ImageInputContent(
+                    source=InputContentUrlSource(value='http://example.com/photo.png', mime_type='image/png'),
+                ),
+            ],
+        ),
+    ]
+
+    result = AGUIAdapter.load_messages(messages)
+    assert result == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            ImageUrl(
+                                url='http://example.com/photo.png', _media_type='image/png', media_type='image/png'
+                            )
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+        ]
+    )
+
+
+async def test_audio_input_content_url_source() -> None:
+    """AudioInputContent with a URL source produces an AudioUrl."""
+    messages: list[Message] = [
+        UserMessage(
+            id='msg_1',
+            content=[
+                AudioInputContent(
+                    source=InputContentUrlSource(value='http://example.com/track.mp3', mime_type='audio/mpeg'),
+                ),
+            ],
+        ),
+    ]
+
+    result = AGUIAdapter.load_messages(messages)
+    assert result == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            AudioUrl(
+                                url='http://example.com/track.mp3', _media_type='audio/mpeg', media_type='audio/mpeg'
+                            )
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+        ]
+    )
+
+
+async def test_video_input_content_url_source() -> None:
+    """VideoInputContent with a URL source produces a VideoUrl."""
+    messages: list[Message] = [
+        UserMessage(
+            id='msg_1',
+            content=[
+                VideoInputContent(
+                    source=InputContentUrlSource(value='http://example.com/clip.mp4', mime_type='video/mp4'),
+                ),
+            ],
+        ),
+    ]
+
+    result = AGUIAdapter.load_messages(messages)
+    assert result == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            VideoUrl(url='http://example.com/clip.mp4', _media_type='video/mp4', media_type='video/mp4')
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+        ]
+    )
+
+
+async def test_document_input_content_url_source() -> None:
+    """DocumentInputContent with a URL source produces a DocumentUrl."""
+    messages: list[Message] = [
+        UserMessage(
+            id='msg_1',
+            content=[
+                DocumentInputContent(
+                    source=InputContentUrlSource(value='http://example.com/report.pdf', mime_type='application/pdf'),
+                ),
+            ],
+        ),
+    ]
+
+    result = AGUIAdapter.load_messages(messages)
+    assert result == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            DocumentUrl(
+                                url='http://example.com/report.pdf',
+                                _media_type='application/pdf',
+                                media_type='application/pdf',
+                            )
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+        ]
+    )
+
+
+async def test_image_input_content_data_source(image_content: BinaryContent) -> None:
+    """ImageInputContent with a data source produces a BinaryContent."""
+    messages: list[Message] = [
+        UserMessage(
+            id='msg_1',
+            content=[
+                ImageInputContent(
+                    source=InputContentDataSource(value=image_content.base64, mime_type=image_content.media_type),
+                ),
+            ],
+        ),
+    ]
+
+    result = AGUIAdapter.load_messages(messages)
+    assert result == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[image_content],
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+        ]
+    )
+
+
+async def test_mixed_new_input_content_types() -> None:
+    """Multiple new InputContent types in a single UserMessage."""
+    messages: list[Message] = [
+        UserMessage(
+            id='msg_1',
+            content=[
+                TextInputContent(text='Check these files:'),
+                ImageInputContent(
+                    source=InputContentUrlSource(value='http://example.com/photo.png', mime_type='image/png'),
+                ),
+                AudioInputContent(
+                    source=InputContentUrlSource(value='http://example.com/track.mp3', mime_type='audio/mpeg'),
+                ),
+            ],
+        ),
+    ]
+
+    result = AGUIAdapter.load_messages(messages)
+    assert result == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'Check these files:',
+                            ImageUrl(
+                                url='http://example.com/photo.png', _media_type='image/png', media_type='image/png'
+                            ),
+                            AudioUrl(
+                                url='http://example.com/track.mp3', _media_type='audio/mpeg', media_type='audio/mpeg'
+                            ),
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+        ]
+    )
 
 
 async def test_builtin_tool_call() -> None:
