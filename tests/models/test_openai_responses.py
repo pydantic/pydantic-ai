@@ -10254,3 +10254,57 @@ async def test_openai_responses_compact_messages_direct(allow_model_requests: No
     assert compacted.parts[0].provider_details is not None
     assert 'encrypted_content' in compacted.parts[0].provider_details
     assert compacted.usage.input_tokens > 0
+
+
+async def test_openai_responses_compact_with_auto_previous_response_id(allow_model_requests: None, openai_api_key: str):
+    """Test compact_messages with openai_previous_response_id='auto'."""
+    from pydantic_ai.messages import CompactionPart
+    from pydantic_ai.models import ModelRequestContext
+
+    model = OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, instructions='You are a helpful assistant.')
+
+    # Build up history with provider_response_id
+    message_history: list[Any] = []
+    result = await agent.run('Hello!', message_history=message_history)
+    messages = result.all_messages()
+
+    # Compact with auto previous_response_id
+    request_context = ModelRequestContext(
+        model=model,
+        messages=messages,
+        model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
+        model_request_parameters=ModelRequestParameters(),
+    )
+    compacted = await model.compact_messages(request_context)
+
+    assert isinstance(compacted, ModelResponse)
+    assert len(compacted.parts) == 1
+    assert isinstance(compacted.parts[0], CompactionPart)
+
+
+async def test_openai_responses_compact_with_instructions(allow_model_requests: None, openai_api_key: str):
+    """Test compact_messages with custom instructions override."""
+    from pydantic_ai.messages import CompactionPart
+    from pydantic_ai.models import ModelRequestContext
+
+    model = OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, instructions='You are a helpful assistant.')
+
+    # Build up history
+    message_history: list[Any] = []
+    result = await agent.run('Hello!', message_history=message_history)
+    messages = result.all_messages()
+
+    # Compact with custom instructions
+    request_context = ModelRequestContext(
+        model=model,
+        messages=messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+    compacted = await model.compact_messages(request_context, instructions='Summarize very briefly')
+
+    assert isinstance(compacted, ModelResponse)
+    assert len(compacted.parts) == 1
+    assert isinstance(compacted.parts[0], CompactionPart)

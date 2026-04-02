@@ -8869,6 +8869,23 @@ async def test_anthropic_compaction_round_trip(allow_model_requests: None, anthr
     assert result.output  # Just verify we got a response
 
 
+async def test_anthropic_compaction_beta_header(allow_model_requests: None):
+    """Test that compact-2026-01-12 beta is added when anthropic_context_management is set."""
+    c = completion_message([BetaTextBlock(text='response', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m, model_settings=AnthropicModelSettings(anthropic_context_management={'edits': [{'type': 'compact_20260112'}]})
+    )
+
+    result = await agent.run('hello')
+    assert result.output == 'response'
+
+    # Verify the beta header was included in the API call
+    kwargs = cast(MockAnthropic, mock_client).chat_completion_kwargs[0]
+    assert 'compact-2026-01-12' in kwargs['betas']
+
+
 async def test_anthropic_compaction_in_response(allow_model_requests: None):
     """Test that BetaCompactionBlock in API response is mapped to CompactionPart."""
     from anthropic.types.beta import BetaCompactionBlock

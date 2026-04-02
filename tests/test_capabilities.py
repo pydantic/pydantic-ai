@@ -8266,5 +8266,31 @@ class TestCompaction:
         with pytest.raises(UserError, match='Compaction is not supported for'):
             await agent.run('hello')
 
+    async def test_provider_compaction_routes_to_openai(self):
+        """ProviderCompaction routes to OpenAICompaction for OpenAI models."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction, OpenAIResponsesModel
+        from pydantic_ai.providers.openai import OpenAIProvider
+
+        cap = ProviderCompaction(message_count_threshold=5, instructions='Be brief')
+        model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+        inner = cap.get_capability_for_model(model)
+        assert isinstance(inner, OpenAICompaction)
+        assert inner.message_count_threshold == 5
+        assert inner.instructions == 'Be brief'
+
+    async def test_provider_compaction_routes_to_anthropic(self):
+        """ProviderCompaction routes to AnthropicCompaction for Anthropic models."""
+        pytest.importorskip('anthropic')
+        from pydantic_ai.models.anthropic import AnthropicCompaction, AnthropicModel
+        from pydantic_ai.providers.anthropic import AnthropicProvider
+
+        cap = ProviderCompaction(token_threshold=80_000, instructions='Summarize')
+        model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='test'))
+        inner = cap.get_capability_for_model(model)
+        assert isinstance(inner, AnthropicCompaction)
+        assert inner.token_threshold == 80_000
+        assert inner.instructions == 'Summarize'
+
 
 # endregion

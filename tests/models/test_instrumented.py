@@ -1106,6 +1106,30 @@ def test_messages_to_otel_events_instructions_multiple_messages():
     )
 
 
+def test_messages_to_otel_events_compaction_part():
+    from pydantic_ai.messages import CompactionPart
+
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[CompactionPart(content='Summary of conversation.', provider_name='anthropic'), TextPart('response')]
+        ),
+    ]
+    settings = InstrumentationSettings()
+    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'content': [
+                    {'kind': 'compaction', 'text': 'Summary of conversation.'},
+                    {'kind': 'text', 'text': 'response'},
+                ],
+                'gen_ai.message.index': 0,
+                'event.name': 'gen_ai.assistant.message',
+            }
+        ]
+    )
+
+
 def test_messages_to_otel_events_image_url(document_content: BinaryContent):
     messages = [
         ModelRequest(

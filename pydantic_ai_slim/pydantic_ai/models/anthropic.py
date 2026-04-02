@@ -591,6 +591,11 @@ class AnthropicModel(Model):
         output_config = self._build_output_config(model_request_parameters, model_settings)
         betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
         betas.update(builtin_tool_betas)
+        # Add compaction beta if messages contain CompactionParts (for round-tripping)
+        if any(
+            isinstance(part, CompactionPart) for msg in messages if isinstance(msg, ModelResponse) for part in msg.parts
+        ):
+            betas.add('compact-2026-01-12')
         try:
             return await self.client.beta.messages.count_tokens(
                 system=system_prompt or OMIT,
