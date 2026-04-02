@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
-from inline_snapshot import snapshot
+from .._inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent
