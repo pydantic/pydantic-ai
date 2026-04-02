@@ -247,6 +247,25 @@ async def test_model_request_with_instruction_parts_on_parameters():
     assert response.parts[0].content == 'ok'  # type: ignore[union-attr]
 
 
+async def test_model_request_instructions_fallback_with_tool_return():
+    """Instructions from the second-to-last request are used when the last has only tool-return parts."""
+    from pydantic_ai.messages import ToolCallPart, ToolReturnPart, UserPromptPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    def check_instructions(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.instructions == 'Be helpful.'
+        return ModelResponse(parts=[TextPart(content='ok')])
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')], instructions='Be helpful.'),
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call_1')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='my_tool', content='result', tool_call_id='call_1')]),
+    ]
+
+    response = await model_request(FunctionModel(check_instructions), messages)
+    assert response.parts[0].content == 'ok'  # type: ignore[union-attr]
+
+
 async def test_model_request_stream_with_instructions_on_message():
     """Instructions set on ModelRequest are picked up in streaming mode too."""
     response_parts: list[str] = []
