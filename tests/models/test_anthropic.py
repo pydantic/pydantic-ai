@@ -8982,3 +8982,42 @@ async def test_anthropic_compaction_streaming(allow_model_requests: None):
     assert len(compaction_parts) == 1
     assert compaction_parts[0].content == 'Updated summary of conversation.'
     assert compaction_parts[0].provider_name == 'anthropic'
+
+
+async def test_anthropic_compaction_end_to_end(allow_model_requests: None, anthropic_api_key: str):
+    """End-to-end test: Anthropic returns a compaction block when context exceeds threshold."""
+    from pydantic_ai.messages import CompactionPart
+    from pydantic_ai.models.anthropic import AnthropicCompaction
+
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    # Use a 50k threshold (minimum) and pad with enough text to exceed it (~4 chars/token)
+    padding = 'The quick brown fox jumps over the lazy dog. ' * 5000  # ~230k chars ≈ ~55k tokens
+    agent = Agent(
+        model=model,
+        instructions='You are a helpful assistant. Be very brief.',
+        capabilities=[AnthropicCompaction(token_threshold=50_000)],
+    )
+
+    # First run with padded content to exceed 50k tokens
+    result = await agent.run(f'Remember this context: {padding}\n\nNow say hello.')
+
+    # The response should contain a CompactionPart (the API compacted the long context)
+    all_msgs = result.all_messages()
+    compaction_parts = [
+        part
+        for msg in all_msgs
+        if isinstance(msg, ModelResponse)
+        for part in msg.parts
+        if isinstance(part, CompactionPart)
+    ]
+    assert len(compaction_parts) >= 1, (
+        f'Expected compaction in response, got parts: {[type(p).__name__ for msg in all_msgs if isinstance(msg, ModelResponse) for p in msg.parts]}'
+    )
+    compaction = compaction_parts[0]
+    assert compaction.provider_name == 'anthropic'
+    assert compaction.content is not None  # Anthropic compaction has readable text
+
+    # Second run: verify compacted history round-trips successfully
+    result2 = await agent.run('What did I ask you to do?', message_history=result.all_messages())
+    assert result2.output  # Model should respond based on compacted context
