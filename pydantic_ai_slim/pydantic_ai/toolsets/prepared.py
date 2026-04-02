@@ -21,7 +21,7 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         original_tools = await super().get_tools(ctx)
-        original_tool_defs = [tool.tool_def.copy_for_prepare() for tool in original_tools.values()]
+        original_tool_defs = [tool.tool_def for tool in original_tools.values()]
         result = self.prepare_func(ctx, original_tool_defs)
         if inspect.isawaitable(result):
             result = await result

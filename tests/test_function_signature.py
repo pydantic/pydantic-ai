@@ -1,4 +1,4 @@
-"""Tests for Python signature generation and deduplication."""
+"""Tests for function signature generation and deduplication."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, RootModel
 
-from pydantic_ai._python_signature import (
+from pydantic_ai._function_signature import (
     FunctionParam,
     FunctionSignature,
     GenericTypeExpr,
@@ -386,8 +386,8 @@ def test_to_pascal_case_edge_cases():
     assert _to_pascal_case('my-tool-name') == 'MyToolName'
 
 
-def test_tool_def_python_signature_matches_function_based():
-    """Tool.tool_def.python_signature matches a directly generated function signature."""
+def test_tool_def_function_signature_matches_function_based():
+    """Tool.tool_def.function_signature matches a directly generated function signature."""
 
     def my_tool(x: int, y: str = 'hello') -> bool:
         """A test tool."""
@@ -397,45 +397,45 @@ def test_tool_def_python_signature_matches_function_based():
     tool_def = tool.tool_def
 
     # The cached signature should match a freshly generated one
-    cached_sig = tool_def.python_signature
+    cached_sig = tool_def.function_signature
     fresh_sig = function_to_signature(my_tool, name='my_tool', description=tool.description)
 
     assert str(cached_sig) == str(fresh_sig)
 
 
 def test_tool_definition_cached_property_reset_on_replace():
-    """dataclasses.replace() on a ToolDefinition resets the cached python_signature."""
+    """dataclasses.replace() on a ToolDefinition resets the cached function_signature."""
 
     td = ToolDefinition(
         name='test_tool',
         parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}, 'required': ['x']},
         description='Original description',
     )
-    sig1 = td.python_signature
+    sig1 = td.function_signature
     assert sig1.docstring == 'Original description'
 
     td2 = replace(td, description='New description')
-    sig2 = td2.python_signature
+    sig2 = td2.function_signature
     assert sig2.docstring == 'New description'
     # Different instances
     assert sig1 is not sig2
 
 
-def test_tool_definition_schema_based_python_signature():
-    """ToolDefinition.python_signature generates a schema-based signature."""
+def test_tool_definition_schema_based_function_signature():
+    """ToolDefinition.function_signature generates a schema-based signature."""
 
     td = ToolDefinition(
         name='schema_tool',
         parameters_json_schema={'type': 'object', 'properties': {'q': {'type': 'string'}}, 'required': ['q']},
         description='A schema-based tool',
     )
-    sig = td.python_signature
+    sig = td.function_signature
     assert sig.name == 'schema_tool'
     assert 'q' in sig.params
     assert sig.params['q'].type == 'str'
 
 
-def test_tool_from_schema_python_signature_uses_schema():
+def test_tool_from_schema_function_signature_uses_schema():
     async def handler(**kwargs: typing.Any) -> typing.Any:  # pragma: no cover
         return kwargs
 
@@ -452,7 +452,7 @@ def test_tool_from_schema_python_signature_uses_schema():
             'required': ['query'],
         },
     )
-    assert str(tool.tool_def.python_signature) == snapshot("""\
+    assert str(tool.tool_def.function_signature) == snapshot("""\
 async def search(*, query: str, limit: int | None = None) -> Any:
     \"\"\"Search documents\"\"\"
     ...\

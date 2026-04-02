@@ -135,7 +135,7 @@ async def test_function_toolset():
     assert await bar_toolset.handle_call(ToolCallPart(tool_name='bar_add', args={'a': 1, 'b': 2})) == 3
 
 
-async def test_toolset_tool_python_signature_property():
+async def test_toolset_tool_function_signature_property():
     toolset = FunctionToolset[None]()
 
     @toolset.tool_plain
@@ -145,7 +145,7 @@ async def test_toolset_tool_python_signature_property():
     managed_toolset = await ToolManager[None](toolset).for_run_step(build_run_context(None))
     assert managed_toolset.tools is not None
 
-    sig = managed_toolset.tools['add'].tool_def.python_signature
+    sig = managed_toolset.tools['add'].tool_def.function_signature
     assert sig.name == 'add'
     assert list(sig.params) == ['a', 'b']
     assert str(sig.return_type) == 'int'
