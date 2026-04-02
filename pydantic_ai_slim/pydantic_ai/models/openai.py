@@ -22,6 +22,7 @@ from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import (
     guard_tool_call_id as _guard_tool_call_id,
     is_str_dict as _is_str_dict,
+    is_text_like_media_type as _is_text_like_media_type,
     now_utc as _now_utc,
     number_to_datetime,
 )
@@ -1264,7 +1265,7 @@ class OpenAIChatModel(Model):
     async def _map_binary_content_item(self, item: BinaryContent) -> ChatCompletionContentPartParam:
         """Map a BinaryContent item to a chat completion content part."""
         profile = OpenAIModelProfile.from_profile(self.profile)
-        if self._is_text_like_media_type(item.media_type):
+        if _is_text_like_media_type(item.media_type):
             # Inline text-like binary content as a text block
             return self._inline_text_file_part(
                 item.data.decode('utf-8'),
@@ -1321,7 +1322,7 @@ class OpenAIChatModel(Model):
                 ),
                 type='file',
             )
-        if self._is_text_like_media_type(item.media_type):
+        if _is_text_like_media_type(item.media_type):
             downloaded_text = await download_item(item, data_format='text')
             return self._inline_text_file_part(
                 downloaded_text['data'],
@@ -1396,17 +1397,6 @@ class OpenAIChatModel(Model):
                 if mapped_item is not None:
                     content.append(mapped_item)
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
-
-    @staticmethod
-    def _is_text_like_media_type(media_type: str) -> bool:
-        return (
-            media_type.startswith('text/')
-            or media_type == 'application/json'
-            or media_type.endswith('+json')
-            or media_type == 'application/xml'
-            or media_type.endswith('+xml')
-            or media_type in ('application/x-yaml', 'application/yaml')
-        )
 
     @staticmethod
     def _inline_text_file_part(text: str, *, media_type: str, identifier: str) -> ChatCompletionContentPartTextParam:
