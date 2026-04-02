@@ -141,14 +141,6 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
                     nonlocal record_metrics
                     record_metrics = _record_metrics
 
-                    if not span.is_recording():
-                        return  # pragma: lax no cover
-
-                    attributes_to_set: dict[str, AttributeValue] = {
-                        **result.usage.opentelemetry_attributes(),
-                        'gen_ai.response.model': response_model,
-                    }
-
                     try:
                         price_calculation = result.cost()
                     except LookupError:
@@ -158,7 +150,16 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
                         warnings.warn(
                             f'Failed to get cost from response: {type(e).__name__}: {e}', CostCalculationFailedWarning
                         )
-                    else:
+
+                    if not span.is_recording():
+                        return  # pragma: lax no cover
+
+                    attributes_to_set: dict[str, AttributeValue] = {
+                        **result.usage.opentelemetry_attributes(),
+                        'gen_ai.response.model': response_model,
+                    }
+
+                    if price_calculation:
                         attributes_to_set['operation.cost'] = float(price_calculation.total_price)
 
                     embeddings = result.embeddings
