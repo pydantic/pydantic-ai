@@ -19,8 +19,8 @@ Pydantic AI ships with several capabilities that cover common needs:
 |---|---|:---:|
 | [`Thinking`][pydantic_ai.capabilities.Thinking] | Enables model [thinking/reasoning](thinking.md) at configurable effort | Yes |
 | [`Hooks`][pydantic_ai.capabilities.Hooks] | Decorator-based [lifecycle hook](hooks.md) registration | — |
-| [`WebSearch`][pydantic_ai.capabilities.WebSearch] | Web search — builtin when supported, local fallback otherwise | Yes |
-| [`WebFetch`][pydantic_ai.capabilities.WebFetch] | URL fetching — builtin when supported, custom local fallback | Yes |
+| [`WebSearch`][pydantic_ai.capabilities.WebSearch] | Web search — builtin when supported, [local fallback](common-tools.md#duckduckgo-search-tool) with [`duckduckgo` extra](install.md#slim-install) | Yes |
+| [`WebFetch`][pydantic_ai.capabilities.WebFetch] | URL fetching — builtin when supported, [local fallback](common-tools.md#web-fetch-tool) with [`web-fetch` extra](install.md#slim-install) | Yes |
 | [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | Image generation — builtin when supported, subagent fallback via `fallback_model` | Yes |
 | [`MCP`][pydantic_ai.capabilities.MCP] | MCP server — builtin when supported, direct connection otherwise | Yes |
 | [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] | Filters or modifies [tool definitions](tools.md) per step | — |
@@ -29,6 +29,7 @@ Pydantic AI ships with several capabilities that cover common needs:
 | [`Toolset`][pydantic_ai.capabilities.Toolset] | Wraps an [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] | — |
 | [`ProviderCompaction`][pydantic_ai.capabilities.ProviderCompaction] | Message history [compaction](models/openai.md#message-compaction) — routes to provider-specific implementation | Yes |
 | [`HistoryProcessor`][pydantic_ai.capabilities.HistoryProcessor] | Wraps a [history processor](message-history.md#processing-message-history) | — |
+| [`ThreadExecutor`][pydantic_ai.capabilities.ThreadExecutor] | Uses a custom thread executor for [sync functions](tools-advanced.md#thread-executor-for-long-running-servers) | — |
 
 The **Spec** column indicates whether the capability can be used in [agent specs](agent-spec.md) (YAML/JSON). Capabilities marked **—** take non-serializable arguments (callables, toolset objects) and can only be used in Python code.
 
@@ -86,6 +87,21 @@ Provider-specific capabilities ([`OpenAICompaction`][pydantic_ai.models.openai.O
 !!! note
     `ProviderCompaction` is not compatible with [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] because compaction data is provider-specific and cannot be used across providers.
 
+### ThreadExecutor
+
+The [`ThreadExecutor`][pydantic_ai.capabilities.ThreadExecutor] capability provides a custom [`Executor`][concurrent.futures.Executor] for running sync tool functions and other sync callbacks in threads. This is useful in long-running servers (e.g. FastAPI) where the default ephemeral threads from [`anyio.to_thread.run_sync`][anyio.to_thread.run_sync] can accumulate under sustained load:
+
+```python {test="skip"}
+from concurrent.futures import ThreadPoolExecutor
+
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import ThreadExecutor
+
+executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix='agent-worker')
+agent = Agent('openai:gpt-5.2', capabilities=[ThreadExecutor(executor)])
+```
+
+See [Thread executor for long-running servers](tools-advanced.md#thread-executor-for-long-running-servers) for more details.
 ### Hooks
 
 The [`Hooks`][pydantic_ai.capabilities.Hooks] capability provides decorator-based [lifecycle hook](#hooking-into-the-lifecycle) registration — the easiest way to intercept model requests, tool calls, and other events without subclassing [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability]:
@@ -124,7 +140,7 @@ agent = Agent(
     capabilities=[
         # Auto-detects DuckDuckGo as local fallback
         WebSearch(),
-        # Builtin URL fetching; provide local= for fallback
+        # Auto-detects markdownify-based fetch as local fallback
         WebFetch(),
         # Builtin when the model supports it; falls back to a subagent
         # running the specified LLM with image generation support
@@ -147,11 +163,14 @@ To force local-only (never use the builtin, even when the model supports it):
 MCP(url='https://mcp.example.com/api', builtin=False)
 ```
 
-Constraint fields like `allowed_domains` or `blocked_domains` require the builtin — the local fallback can't enforce them. When these are set and the model doesn't support the builtin, a [`UserError`][pydantic_ai.exceptions.UserError] is raised:
+Some constraint fields require the builtin because the local fallback can't enforce them. When these are set and the model doesn't support the builtin, a [`UserError`][pydantic_ai.exceptions.UserError] is raised. For example, [`WebSearch`][pydantic_ai.capabilities.WebSearch] domain constraints require the builtin, while [`WebFetch`][pydantic_ai.capabilities.WebFetch] enforces them locally:
 
 ```python {title="constraints.py" test="skip" lint="skip"}
 # Only search example.com — requires builtin support
 WebSearch(allowed_domains=['example.com'])
+
+# Only fetch example.com — enforced locally when builtin is unavailable
+WebFetch(allowed_domains=['example.com'])
 ```
 
 All of these capabilities are subclasses of [`BuiltinOrLocalTool`][pydantic_ai.capabilities.BuiltinOrLocalTool], which you can use directly or subclass to build your own provider-adaptive tools. For example, to pair [`CodeExecutionTool`][pydantic_ai.builtin_tools.CodeExecutionTool] with a local fallback:

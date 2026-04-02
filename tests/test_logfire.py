@@ -517,6 +517,7 @@ def test_logfire(
                                 'kind': 'function',
                                 'metadata': None,
                                 'timeout': None,
+                                'defer_loading': False,
                                 'prefer_builtin': None,
                             }
                         ],
@@ -1013,6 +1014,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                                 'kind': 'output',
                                 'metadata': None,
                                 'timeout': None,
+                                'defer_loading': False,
                                 'prefer_builtin': None,
                             }
                         ],

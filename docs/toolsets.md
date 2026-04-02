@@ -512,6 +512,20 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
+### Deferred Loading
+
+[`DeferredLoadingToolset`][pydantic_ai.toolsets.DeferredLoadingToolset] wraps a toolset and marks its tools for deferred loading, hiding them from the model until discovered via [tool search](tools-advanced.md#tool-search). This is useful for large toolsets (e.g. MCP servers with many endpoints) where loading all tool definitions into the model's context would be wasteful.
+
+[`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] also accepts `defer_loading=True` in its constructor to mark all tools for deferred loading. For other toolsets, call [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] — pass a list of tool names to hide only specific tools, or `None` (the default) to hide all.
+
+```python {title="deferred_loading_toolset.py" lint="skip" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerHTTP
+
+mcp = MCPServerHTTP('http://localhost:8000/mcp')
+agent = Agent('openai:gpt-5.2', toolsets=[mcp.defer_loading()])
+```
+
 ### Changing Tool Execution
 
 [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] wraps another toolset and delegates all responsibility to it.

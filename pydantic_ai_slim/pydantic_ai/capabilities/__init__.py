@@ -24,6 +24,7 @@ from .prefix_tools import PrefixTools
 from .prepare_tools import PrepareTools
 from .routed import RoutedCapability
 from .thinking import Thinking
+from .thread_executor import ThreadExecutor
 from .toolset import Toolset
 from .web_fetch import WebFetch
 from .web_search import WebSearch
@@ -69,6 +70,7 @@ __all__ = [
     'PrefixTools',
     'PrepareTools',
     'Thinking',
+    'ThreadExecutor',
     'Toolset',
     'WebFetch',
     'WebSearch',

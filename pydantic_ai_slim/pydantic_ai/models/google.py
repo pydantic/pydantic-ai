@@ -1358,7 +1358,7 @@ def _process_part(
         assert part.function_call.name is not None
         item = ToolCallPart(tool_name=part.function_call.name, args=part.function_call.args)
         if part.function_call.id is not None:
-            item.tool_call_id = part.function_call.id  # pragma: no cover
+            item.tool_call_id = part.function_call.id
     elif inline_data := part.inline_data:
         data = inline_data.data
         mime_type = inline_data.mime_type
