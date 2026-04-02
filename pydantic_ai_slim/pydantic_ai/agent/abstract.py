@@ -4,6 +4,7 @@ import asyncio
 import inspect
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
+from concurrent.futures import Executor
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from types import FrameType
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
@@ -1310,6 +1311,42 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
     def sequential_tool_calls() -> Iterator[None]:
         """Run tool calls sequentially during the context."""
         with ToolManager.parallel_execution_mode('sequential'):
+            yield
+
+    @staticmethod
+    @contextmanager
+    def using_thread_executor(executor: Executor) -> Iterator[None]:
+        """Use a custom executor for running sync functions in threads during the context.
+
+        By default, sync tool functions and other sync callbacks are run in threads using
+        [`anyio.to_thread.run_sync`][anyio.to_thread.run_sync], which creates ephemeral threads.
+        In long-running servers (e.g. FastAPI), this can lead to thread accumulation under sustained load.
+
+        This context manager lets you provide a bounded
+        [`ThreadPoolExecutor`][concurrent.futures.ThreadPoolExecutor] (or any
+        [`Executor`][concurrent.futures.Executor]) to control thread lifecycle:
+
+        ```python {test="skip"}
+        from concurrent.futures import ThreadPoolExecutor
+        from contextlib import asynccontextmanager
+
+        from pydantic_ai import Agent
+
+        @asynccontextmanager
+        async def lifespan(app):
+            executor = ThreadPoolExecutor(max_workers=16)
+            with Agent.using_thread_executor(executor):
+                yield
+            executor.shutdown(wait=True)
+        ```
+
+        For per-agent configuration, use the
+        [`ThreadExecutor`][pydantic_ai.capabilities.ThreadExecutor] capability instead.
+
+        Args:
+            executor: The executor to use for running sync functions.
+        """
+        with _utils.using_thread_executor(executor):
             yield
 
     @staticmethod

@@ -28,6 +28,7 @@ Pydantic AI ships with several capabilities that cover common needs:
 | [`BuiltinTool`][pydantic_ai.capabilities.BuiltinTool] | Registers a [builtin tool](builtin-tools.md) with the agent | Yes |
 | [`Toolset`][pydantic_ai.capabilities.Toolset] | Wraps an [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] | — |
 | [`HistoryProcessor`][pydantic_ai.capabilities.HistoryProcessor] | Wraps a [history processor](message-history.md#processing-message-history) | — |
+| [`ThreadExecutor`][pydantic_ai.capabilities.ThreadExecutor] | Uses a custom thread executor for [sync functions](tools-advanced.md#thread-executor-for-long-running-servers) | — |
 
 The **Spec** column indicates whether the capability can be used in [agent specs](agent-spec.md) (YAML/JSON). Capabilities marked **—** take non-serializable arguments (callables, toolset objects) and can only be used in Python code.
 
@@ -62,6 +63,22 @@ print(result.output)
 ```
 
 See [Thinking](thinking.md) for provider-specific details and the [unified thinking settings](thinking.md#unified-thinking-settings).
+
+### ThreadExecutor
+
+The [`ThreadExecutor`][pydantic_ai.capabilities.ThreadExecutor] capability provides a custom [`Executor`][concurrent.futures.Executor] for running sync tool functions and other sync callbacks in threads. This is useful in long-running servers (e.g. FastAPI) where the default ephemeral threads from [`anyio.to_thread.run_sync`][anyio.to_thread.run_sync] can accumulate under sustained load:
+
+```python {test="skip"}
+from concurrent.futures import ThreadPoolExecutor
+
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import ThreadExecutor
+
+executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix='agent-worker')
+agent = Agent('openai:gpt-4o', capabilities=[ThreadExecutor(executor)])
+```
+
+See [Thread executor for long-running servers](tools-advanced.md#thread-executor-for-long-running-servers) for more details.
 
 ### Hooks
 

@@ -8095,3 +8095,62 @@ class TestCtxAgentInCapability:
         agent = Agent(FunctionModel(simple_model_function), name='hook_test_agent', capabilities=[AgentTrackingCap()])
         await agent.run('hello')
         assert hook_agent_names == ['hook_test_agent', 'hook_test_agent']
+
+
+async def test_thread_executor_capability() -> None:
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from pydantic_ai.capabilities import ThreadExecutor
+
+    tool_threads: list[str] = []
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='check_thread', args='{}')])
+
+    executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='cap-pool')
+    try:
+        agent = Agent(FunctionModel(model_function), capabilities=[ThreadExecutor(executor)])
+
+        @agent.tool_plain
+        def check_thread() -> str:
+            tool_threads.append(threading.current_thread().name)
+            return 'ok'
+
+        result = await agent.run('test')
+        assert result.output == 'done'
+        assert len(tool_threads) == 1
+        assert tool_threads[0].startswith('cap-pool')
+    finally:
+        executor.shutdown(wait=True)
+
+
+async def test_thread_executor_static_method() -> None:
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    tool_threads: list[str] = []
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='check_thread', args='{}')])
+
+    agent = Agent(FunctionModel(model_function))
+
+    @agent.tool_plain
+    def check_thread() -> str:
+        tool_threads.append(threading.current_thread().name)
+        return 'ok'
+
+    executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='static-pool')
+    try:
+        with Agent.using_thread_executor(executor):
+            result = await agent.run('test')
+        assert result.output == 'done'
+        assert len(tool_threads) == 1
+        assert tool_threads[0].startswith('static-pool')
+    finally:
+        executor.shutdown(wait=True)
