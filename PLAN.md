@@ -1,58 +1,37 @@
-# Plan: Unified Thinking Follow-ups (All 5 Items)
+# Plan: Unified Thinking Follow-ups
 
-## Context
-
-PR #4829 merged the initial thinking fixes. Douwe explicitly deferred 5 items to follow-up PRs:
-1. **Cohere** `_translate_thinking()` (or remove profile flags)
-2. **Mistral** `_translate_thinking()` (or remove profile flags)
-3. **Profile flags** for Meta, Qwen, MoonshotAI, Harmony, ZAI
-4. **`thinking_mode` property** on `ModelProfile`
-5. **Rename Google `google_supports_thinking_level`** field
-
-## Research Findings
-
-### Cohere SDK (`cohere==5.20.6`)
-- `AsyncClientV2.chat()` accepts `thinking: Thinking | None = OMIT`
-- `Thinking(type: Literal['enabled', 'disabled'], token_budget: int | None = None)`
-- Binary on/off + optional token budget. No effort levels.
-- Response already processes `ThinkingPart` (lines 207-208).
-- **No streaming** — only `request()`, no `request_stream()`. Only need to modify `_chat()`.
-- Profile: `cohere_model_profile()` already sets `supports_thinking=True, thinking_always_enabled=True` for models with `'reasoning'` in the name.
-
-### Mistral SDK (`mistralai==1.9.11`)
-- `chat.complete_async()` and `chat.stream_async()` both accept `prompt_mode: MistralPromptMode | UNSET`
-- `MistralPromptMode = Literal["reasoning"] | UnrecognizedStr` — single value, not an enum of levels.
-- Binary: set `prompt_mode='reasoning'` to enable reasoning mode; omit to use default.
-- Response already processes `ThinkingPart` via `MistralThinkChunk` (lines 542-561).
-- **Has streaming** — need to modify `_completions_create()` (line 234) AND `_stream_completions_create()` (lines 271, 294, 313) — 4 call sites.
-- Profile: `mistral_model_profile()` already sets `supports_thinking=True, thinking_always_enabled=True` for `magistral*` models.
-
-### Existing `_translate_thinking` pattern (from Groq — simplest reference)
-```python
-# models/groq.py:246-260
-def _translate_thinking(self, model_settings, model_request_parameters):
-    if fmt := model_settings.get('groq_reasoning_format'):  # provider-specific wins
-        return fmt
-    thinking = model_request_parameters.thinking
-    if thinking is False:
-        return 'hidden'
-    if thinking is not None:
-        return 'parsed'
-    return NOT_GIVEN
-```
-All providers follow the same shape:
-1. Check provider-specific setting first (it wins)
-2. Read `model_request_parameters.thinking` (already resolved by base `prepare_request()`)
-3. Map to provider's native format
-4. Return OMIT/NOT_GIVEN/None when not applicable
+> **Parent PRs**: #4640 (capabilities), #4812 (unified thinking), #4829 (thinking fixes)
+> **Date**: 2026-04-02
+> **Branch**: `thinking-cap-context`
 
 ---
 
-## PR A: Cohere + Mistral `_translate_thinking()`
+## Background
 
-### A1. Cohere — `pydantic_ai_slim/pydantic_ai/models/cohere.py`
+The unified `thinking` setting landed across PRs #4640, #4812, and #4829. The design is simple: users set `thinking=True` or `thinking='high'` in `ModelSettings`, and each model's `_translate_thinking()` method converts that into the provider's native API format. The base `Model.prepare_request()` resolves the setting, strips it from `model_settings`, and places it on `model_request_parameters.thinking` for downstream consumption.
 
-**Add `_translate_thinking()` method** on `CohereModel` (after `_chat`, around line 199):
+This works well for Anthropic, OpenAI, Google, Groq, Bedrock, xAI, OpenRouter, and Cerebras — all of which have `_translate_thinking()` implementations. But during review, Douwe identified several gaps that were explicitly deferred to follow-up PRs. This plan covers all five of them.
+
+---
+
+## 1. Cohere: Wire up `_translate_thinking()`
+
+**Problem:** The Cohere profile sets `supports_thinking=True` and `thinking_always_enabled=True` for reasoning models, and the response handler already processes `ThinkingPart`. But the *request* side never reads `model_request_parameters.thinking` — the unified setting is silently ignored.
+
+**Cohere's API:** The SDK (`cohere==5.20.6`) exposes `thinking: Thinking | None` on `AsyncClientV2.chat()`, where `Thinking` is:
+
+```python
+Thinking(type: Literal['enabled', 'disabled'], token_budget: int | None = None)
+```
+
+This is a simple binary toggle with an optional token budget. There are no effort levels — `'low'`, `'medium'`, and `'high'` all map to the same `Thinking(type='enabled')`. Users who want fine-grained `token_budget` control can use a new `cohere_thinking` provider-specific setting.
+
+**Why this is straightforward:** Cohere has no streaming support in pydantic-ai yet, so there's only one call site to modify (`_chat()`). The SDK sentinel is `OMIT`, already imported.
+
+**Implementation:**
+
+Add `_translate_thinking()` to `CohereModel`, following the same pattern as Groq (the simplest existing reference):
+
 ```python
 def _translate_thinking(
     self,
@@ -70,38 +49,41 @@ def _translate_thinking(
     return Thinking(type='enabled')
 ```
 
-**Modify `_chat()` call** (line 183-194) — add `thinking=self._translate_thinking(model_settings, model_request_parameters)`:
+Then pass it into the `client.chat()` call alongside the existing parameters. Add `cohere_thinking: Thinking` to `CohereModelSettings` for users who need token budget control.
+
+| Unified | Cohere native |
+|---------|--------------|
+| `True` / any effort | `Thinking(type='enabled')` |
+| `False` | `Thinking(type='disabled')` |
+| omitted | `OMIT` (provider default) |
+
+**Files:** `models/cohere.py`, `tests/test_thinking.py`, `docs/thinking.md`
+
+---
+
+## 2. Mistral: Wire up `_translate_thinking()`
+
+**Problem:** Same as Cohere — the profile flags are set for Magistral models, and `ThinkingPart` is processed in responses via `MistralThinkChunk`, but the request side never passes the thinking parameter.
+
+**Mistral's API:** The SDK (`mistralai==1.9.11`) uses a different mechanism than most providers. Instead of a thinking-specific parameter, it uses `prompt_mode: MistralPromptMode`:
+
 ```python
-return await self.client.chat(
-    model=self._model_name,
-    messages=cohere_messages,
-    tools=tools or OMIT,
-    thinking=self._translate_thinking(model_settings, model_request_parameters),
-    # ... rest unchanged
-)
+MistralPromptMode = Literal["reasoning"] | UnrecognizedStr
 ```
 
-**Add import:** `from cohere import Thinking` (add to the existing import block, line 39-58).
+Setting `prompt_mode='reasoning'` enables the reasoning system prompt for Magistral models. Omitting it (via `UNSET`) uses the default behavior. Like Cohere, this is purely binary — there are no effort levels.
 
-**Note on `OMIT`:** Cohere SDK uses `OMIT` (from `cohere.v2.client`) as its sentinel for "not provided", similar to how Groq/OpenAI use `NOT_GIVEN`. Already imported at line 58.
+**What makes Mistral trickier:** Unlike Cohere's single call site, Mistral has **four** places where chat calls are made:
 
-### A2. Cohere settings — `pydantic_ai_slim/pydantic_ai/settings.py`
+1. `_completions_create()` — non-streaming
+2. `_stream_completions_create()` — streaming with function tools
+3. `_stream_completions_create()` — streaming with output tools / JSON mode
+4. `_stream_completions_create()` — plain streaming (currently only passes `model`, `messages`, `stream`, `http_headers`)
 
-No changes needed yet. The `cohere_thinking` provider-specific setting goes in `CohereModelSettings` (see below).
+All four need `prompt_mode=self._translate_thinking(...)` added. The SDK sentinel is `UNSET`, already imported.
 
-### A3. Cohere model settings — `CohereModelSettings` in `cohere.py`
+**Implementation:**
 
-Add to the existing empty `CohereModelSettings` class:
-```python
-class CohereModelSettings(ModelSettings, total=False):
-    """Settings used for a Cohere model request."""
-    cohere_thinking: Thinking
-    """Cohere-specific thinking configuration. Takes precedence over unified `thinking`."""
-```
-
-### A4. Mistral — `pydantic_ai_slim/pydantic_ai/models/mistral.py`
-
-**Add `_translate_thinking()` method** on `MistralModel`:
 ```python
 def _translate_thinking(
     self,
@@ -117,58 +99,29 @@ def _translate_thinking(
     return 'reasoning'
 ```
 
-**Key design note:** Mistral uses `UNSET` (already imported at line 60) as its "not provided" sentinel, analogous to Groq's `NOT_GIVEN` and Cohere's `OMIT`.
+For the provider-specific setting in `MistralModelSettings`, we use `Literal['reasoning']` rather than `MistralPromptMode` to avoid exposing the SDK's `UnrecognizedStr` union in our public API. This matches pydantic-ai's convention of using simple Literal types for provider-specific enums (see `GroqModelSettings.groq_reasoning_format`).
 
-**Modify ALL 4 chat call sites** to add `prompt_mode=self._translate_thinking(model_settings, model_request_parameters)`:
+| Unified | Mistral native |
+|---------|---------------|
+| `True` / any effort | `prompt_mode='reasoning'` |
+| `False` (always-on) | `UNSET` (silently ignored — Magistral can't disable) |
+| omitted | `UNSET` (provider default) |
 
-1. `_completions_create()` (line 234) — add `prompt_mode=...` param
-2. `_stream_completions_create()` with function tools (line 271) — add `prompt_mode=...`
-3. `_stream_completions_create()` with output tools / JSON mode (line 294) — add `prompt_mode=...`
-4. `_stream_completions_create()` plain (line 313) — add `prompt_mode=...`
-
-**Important:** The plain streaming path (line 313) currently only passes `model`, `messages`, `stream`, and `http_headers`. It needs to also receive `model_settings` and `model_request_parameters` to call `_translate_thinking()`. Currently the method signature does accept them but this call site doesn't pass `prompt_mode`. We just add the kwarg.
-
-**Add import:** `MistralPromptMode` needs to be imported. Check if it's already available from `mistralai.models` — it's defined in `mistralai.models.mistralpromptmode`. Add to the SDK import block.
-
-### A5. Mistral model settings — `MistralModelSettings` in `mistral.py`
-
-Add to the existing empty `MistralModelSettings` class:
-```python
-class MistralModelSettings(ModelSettings, total=False):
-    """Settings used for a Mistral model request."""
-    mistral_prompt_mode: Literal['reasoning']
-    """Mistral-specific prompt mode for reasoning. Takes precedence over unified `thinking`."""
-```
-
-Using `Literal['reasoning']` rather than `MistralPromptMode` to avoid exposing the SDK's `UnrecognizedStr` union in our public API. Matches pydantic-ai's convention of using simple Literal types for provider-specific enums.
-
-### A6. Tests — `tests/test_thinking.py`
-
-Add two new test classes following the existing pattern (e.g., `TestGroqThinkingTranslation`):
-
-**`TestCohereThinkingTranslation`:**
-- `test_thinking_true` → `Thinking(type='enabled')`
-- `test_thinking_false` → `Thinking(type='disabled')`
-- `test_effort_levels_map_to_enabled` → all of `'low'`/`'medium'`/`'high'` → `Thinking(type='enabled')` (no effort granularity)
-- `test_provider_specific_wins` → `cohere_thinking` takes precedence
-- `test_thinking_none` → returns `OMIT`
-
-**`TestMistralThinkingTranslation`:**
-- `test_thinking_true` → `'reasoning'`
-- `test_thinking_false` → `UNSET`
-- `test_effort_levels_map_to_reasoning` → all → `'reasoning'` (no granularity)
-- `test_provider_specific_wins` → `mistral_prompt_mode` takes precedence
-- `test_thinking_none` → `UNSET`
-
-### A7. Docs — `docs/thinking.md`
-
-Update the provider mapping table to reflect that Cohere and Mistral now respond to the unified `thinking` setting. Add notes that both are binary (no effort granularity).
+**Files:** `models/mistral.py`, `tests/test_thinking.py`, `docs/thinking.md`
 
 ---
 
-## PR B: Profile flags for profile-only providers
+## 3. Profile flags for profile-only providers
 
-### B1. Meta — `pydantic_ai_slim/pydantic_ai/profiles/meta.py`
+**Problem:** Several model families support thinking but their profile functions don't set `supports_thinking` or `thinking_always_enabled`. This means the unified `thinking` setting is silently dropped even when the model actually supports it — users get no feedback that their setting was ignored.
+
+These are "profile-only" providers because they're accessed through hosting providers like OpenRouter, Ollama, Fireworks, or Together, which already have model implementations. The profile is the only touch point pydantic-ai has.
+
+**Proposed changes:**
+
+### Meta (Llama-4)
+
+Llama-4 reasoning variants include `"reasoning"` in the model name (e.g., `llama-4-scout-reasoning`). They use `<think>` tags for thinking output, which is already the default on `ModelProfile.thinking_tags`. These models always think — there's no API parameter to disable it.
 
 ```python
 def meta_model_profile(model_name: str) -> ModelProfile | None:
@@ -180,78 +133,35 @@ def meta_model_profile(model_name: str) -> ModelProfile | None:
     )
 ```
 
-Llama-4 reasoning variants (e.g., `llama-4-scout-reasoning`, `llama-4-maverick-reasoning`) include "reasoning" in the name. Tag-based thinking (`<think>` tags) is already handled by `thinking_tags` default on `ModelProfile`.
+### Qwen (QwQ)
 
-### B2. Qwen — `pydantic_ai_slim/pydantic_ai/profiles/qwen.py`
+QwQ models (e.g., `qwq-32b-preview`) are Qwen's reasoning-focused family. They also use `<think>` tags and always think. The existing `qwen_model_profile()` already handles multiple model families — QwQ detection needs to be added to the default return path.
 
-Add thinking flags to QwQ models. QwQ uses `<think>` tags, already the default on `ModelProfile.thinking_tags`:
-```python
-def qwen_model_profile(model_name: str) -> ModelProfile | None:
-    is_qwq = 'qwq' in model_name.lower()
-    if model_name.startswith('qwen-3-coder'):
-        return OpenAIModelProfile(...)  # unchanged
-    if _QWEN_3_5_RE.search(model_name):
-        return ModelProfile(...)  # unchanged
-    return ModelProfile(
-        json_schema_transformer=InlineDefsJsonSchemaTransformer,
-        ignore_streamed_leading_whitespace=True,
-        supports_thinking=is_qwq,
-        thinking_always_enabled=is_qwq,
-    )
-```
+### MoonshotAI (Kimi Thinking)
 
-### B3. MoonshotAI — `pydantic_ai_slim/pydantic_ai/profiles/moonshotai.py`
+Kimi thinking models include `"thinking"` in the name (e.g., `kimi-thinking-preview`). Unlike Meta/Qwen, these are optional-thinking (not always-on), so only `supports_thinking=True` is needed.
 
-```python
-def moonshotai_model_profile(model_name: str) -> ModelProfile | None:
-    is_thinking = 'thinking' in model_name.lower()
-    return ModelProfile(
-        ignore_streamed_leading_whitespace=True,
-        supports_thinking=is_thinking,
-    )
-```
+### Harmony and ZAI
 
-### B4. Harmony — `pydantic_ai_slim/pydantic_ai/profiles/harmony.py`
+These need additional research before implementation. The original plan references `gpt-oss-120b` and `zai-glm-4.6` as thinking-capable, but we should verify this against current API documentation before setting flags. If the research doesn't clearly confirm thinking support, we skip them rather than risk setting incorrect profile flags.
 
-Need research: verify `gpt-oss-120b` actually supports thinking and what its mechanism is. If it does:
-```python
-def harmony_model_profile(model_name: str) -> ModelProfile | None:
-    profile = openai_model_profile(model_name)
-    is_reasoning = 'gpt-oss' in model_name and '120b' in model_name
-    return OpenAIModelProfile(
-        openai_supports_tool_choice_required=False,
-        ignore_streamed_leading_whitespace=True,
-        supports_thinking=is_reasoning,
-    ).update(profile)
-```
-
-### B5. ZAI — `pydantic_ai_slim/pydantic_ai/profiles/zai.py`
-
-Need research: verify `zai-glm-4.6` supports thinking. If it does:
-```python
-def zai_model_profile(model_name: str) -> ModelProfile | None:
-    is_reasoning = 'zai-glm' in model_name
-    if is_reasoning:
-        return ModelProfile(supports_thinking=True)
-    return None
-```
-
-### B6. Tests
-
-Add `TestProfileThinkingDetection` cases for each new provider in `tests/test_thinking.py`:
-- Meta: `llama-4-scout-reasoning` → `supports_thinking=True`, plain llama → `False`
-- Qwen: `qwq-32b-preview` → `supports_thinking=True`, plain qwen → `False`
-- MoonshotAI: `kimi-thinking-preview` → `True`, plain moonshot → `False`
-- Harmony: `gpt-oss-120b` → `True`
-- ZAI: `zai-glm-4.6` → `True`, other → `None`
+**Files:** `profiles/meta.py`, `profiles/qwen.py`, `profiles/moonshotai.py`, possibly `profiles/harmony.py` and `profiles/zai.py`, `tests/test_thinking.py`
 
 ---
 
-## PR C: API hygiene (thinking_mode + Google field rename)
+## 4. `thinking_mode` property on `ModelProfile`
 
-### C1. `thinking_mode` property — `pydantic_ai_slim/pydantic_ai/profiles/__init__.py`
+**Problem:** The base `prepare_request()` currently checks two booleans inline:
 
-Add derived property on `ModelProfile` (after line 73):
+```python
+if self.profile.supports_thinking or self.profile.thinking_always_enabled:
+    if not (thinking_value is False and self.profile.thinking_always_enabled):
+```
+
+This works but is a bit clunky. The two boolean flags (`supports_thinking`, `thinking_always_enabled`) represent a three-state enum that would be clearer as a derived property.
+
+**Proposal:**
+
 ```python
 @property
 def thinking_mode(self) -> Literal['unsupported', 'optional', 'always_on']:
@@ -261,78 +171,38 @@ def thinking_mode(self) -> Literal['unsupported', 'optional', 'always_on']:
     return 'always_on' if self.thinking_always_enabled else 'optional'
 ```
 
-**Optionally** refactor `prepare_request()` in `models/__init__.py` (line 781) to use it:
-```python
-# Before:
-if self.profile.supports_thinking or self.profile.thinking_always_enabled:
-    if not (thinking_value is False and self.profile.thinking_always_enabled):
-# After:
-if (mode := self.profile.thinking_mode) != 'unsupported':
-    if not (thinking_value is False and mode == 'always_on'):
-```
+This is primarily a readability improvement. Douwe agreed it was worth adding but was lukewarm on refactoring `prepare_request()` to use it ("benefit's not super clear"), so the initial scope should be limited to adding the property and using it only where it clearly improves readability.
 
-Douwe was lukewarm on the refactor part ("benefit's not super clear") — we should add the property but keep the refactor minimal. Only update `prepare_request()` if it makes things cleaner.
-
-### C2. Google field rename — `pydantic_ai_slim/pydantic_ai/profiles/google.py`
-
-Rename `google_supports_thinking_level: bool` → `google_thinking_api: Literal['budget', 'level'] | None`.
-
-**Backward compatibility concern:** Douwe said "I don't think this is worth doing, especially as it'd be backward incompatible" about a full replacement. Approach:
-1. Add new field `google_thinking_api: Literal['budget', 'level'] | None = None`
-2. Deprecate old field but keep it working during transition
-3. In `__post_init__`, if old field is set but new isn't, populate new from old
-
-**Files:**
-- `pydantic_ai_slim/pydantic_ai/profiles/google.py` — add field, update factory
-- `pydantic_ai_slim/pydantic_ai/models/google.py` — update usages of `google_supports_thinking_level` to `google_thinking_api`
-
-### C3. Tests
-
-- Test `thinking_mode` property returns correct values for each combination
-- Test Google `_translate_thinking` still works with new field name
+**Files:** `profiles/__init__.py`, optionally `models/__init__.py`, `tests/test_thinking.py`
 
 ---
 
-## Files to modify (complete list)
+## 5. Rename Google `google_supports_thinking_level`
 
-### PR A (Cohere + Mistral)
-- `pydantic_ai_slim/pydantic_ai/models/cohere.py` — add `_translate_thinking()`, modify `_chat()`, add import, add settings
-- `pydantic_ai_slim/pydantic_ai/models/mistral.py` — add `_translate_thinking()`, modify 4 call sites, add import, add settings
-- `tests/test_thinking.py` — add `TestCohereThinkingTranslation`, `TestMistralThinkingTranslation`
-- `docs/thinking.md` — update provider tables
+**Problem:** The `GoogleModelProfile` field `google_supports_thinking_level: bool` is a boolean that distinguishes between Gemini 2.5 (budget-based) and Gemini 3+ (level-based) thinking APIs. A `Literal['budget', 'level'] | None` would be more expressive and self-documenting.
 
-### PR B (Profile flags)
-- `pydantic_ai_slim/pydantic_ai/profiles/meta.py`
-- `pydantic_ai_slim/pydantic_ai/profiles/qwen.py`
-- `pydantic_ai_slim/pydantic_ai/profiles/moonshotai.py`
-- `pydantic_ai_slim/pydantic_ai/profiles/harmony.py`
-- `pydantic_ai_slim/pydantic_ai/profiles/zai.py`
-- `tests/test_thinking.py` — add profile detection tests
+**Caution:** Douwe explicitly flagged backward compatibility concerns here ("I don't think this is worth doing, especially as it'd be backward incompatible"). Since `GoogleModelProfile` is a public dataclass, users may be constructing instances with `google_supports_thinking_level=True`.
 
-### PR C (API hygiene)
-- `pydantic_ai_slim/pydantic_ai/profiles/__init__.py` — add `thinking_mode` property
-- `pydantic_ai_slim/pydantic_ai/profiles/google.py` — add `google_thinking_api` field
-- `pydantic_ai_slim/pydantic_ai/models/google.py` — update references
-- `pydantic_ai_slim/pydantic_ai/models/__init__.py` — optionally refactor `prepare_request()`
-- `tests/test_thinking.py` — add property + field tests
+**Approach:** Add the new `google_thinking_api: Literal['budget', 'level'] | None` field alongside the old one. Deprecate the old field but keep it working — in `__post_init__`, if the old field is set and the new one isn't, bridge them. This lets us migrate without breaking existing code.
+
+**Files:** `profiles/google.py`, `models/google.py`, `tests/test_thinking.py`
 
 ---
 
-## Verification
+## PR Structure
 
-```bash
-# Run thinking tests
-pytest tests/test_thinking.py -v
+These five items can be split into 2-3 PRs:
 
-# Run affected model tests
-pytest tests/models/test_cohere.py tests/models/test_mistral.py -v
+- **PR A** (Cohere + Mistral): Items 1-2. These are the most impactful — they close the "silently ignored" gap for two providers. Tightly scoped and independently testable.
+- **PR B** (Profile flags): Item 3. Independent of the model-level changes. Requires research for some providers.
+- **PR C** (API hygiene): Items 4-5. Lower priority, purely internal improvements. Can be combined or split further.
 
-# Type checking
-make typecheck
+---
 
-# Lint
-make lint
+## Testing
 
-# Full test suite
-make test
-```
+Each item follows the existing test patterns in `tests/test_thinking.py`. The test classes instantiate the model with a specific profile, call `_translate_thinking()` directly, and assert the returned provider-native value.
+
+For Cohere and Mistral, we also need to verify the values actually reach the SDK call. The existing test infrastructure for other providers (e.g., `TestGroqThinkingTranslation`) shows the pattern — construct model, prepare request, call the private method, check the output.
+
+Profile flag tests use the profile factory functions directly (e.g., `meta_model_profile('llama-4-scout-reasoning').supports_thinking` should be `True`).
