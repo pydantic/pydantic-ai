@@ -8100,6 +8100,10 @@ class TestCtxAgentInCapability:
         assert hook_agent_names == ['hook_test_agent', 'hook_test_agent']
 
 
+def test_thread_executor_not_serializable() -> None:
+    assert ThreadExecutor.get_serialization_name() is None
+
+
 async def test_thread_executor_capability() -> None:
     tool_threads: list[str] = []
 
