@@ -11,7 +11,10 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 from urllib.parse import parse_qs, urlparse
 
 import anyio.to_thread
-from botocore.exceptions import ClientError
+try:
+    from botocore.exceptions import ClientError
+except ImportError:
+    ClientError = Exception
 from typing_extensions import ParamSpec, assert_never
 
 from pydantic_ai import (
