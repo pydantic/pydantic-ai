@@ -1397,6 +1397,8 @@ class InstructionPart:
     content: str
     """The text content of this instruction block."""
 
+    _: KW_ONLY
+
     dynamic: bool = False
     """Whether this instruction came from a dynamic source (function, template, or toolset).
 

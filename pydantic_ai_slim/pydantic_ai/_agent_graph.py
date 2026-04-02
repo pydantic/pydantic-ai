@@ -550,6 +550,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             )
             self._did_stream = True
             ctx.state.usage.requests += 1
+            # instruction_parts=None is fine here: the model isn't called, we just need MRP for the wrapper
             skip_mrp = await _prepare_request_parameters(ctx, instruction_parts=None)
             skip_sr = _SkipStreamedResponse(model_request_parameters=skip_mrp, _response=e.response)
             agent_stream = self._build_agent_stream(ctx, skip_sr, skip_mrp)
