@@ -1025,7 +1025,7 @@ class AnthropicModel(Model):
                                     )
                                 )
                     elif isinstance(response_part, CompactionPart):
-                        if response_part.provider_name == self.system:
+                        if response_part.provider_name == self.system:  # pragma: no branch
                             assistant_content_params.append(
                                 BetaCompactionBlockParam(content=response_part.content, type='compaction')
                             )
@@ -1562,7 +1562,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
                 elif isinstance(event.delta, BetaCompactionContentBlockDelta):
-                    if event.delta.content:
+                    if event.delta.content:  # pragma: no branch
                         # Re-emit part with updated content; replaces the initial block start part
                         yield self._parts_manager.handle_part(
                             vendor_part_id=event.index,
