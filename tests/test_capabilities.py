@@ -8182,6 +8182,7 @@ class TestCompaction:
 
     async def test_openai_compaction_with_function_model(self):
         """OpenAICompaction is a no-op when the model is not OpenAIResponsesModel."""
+        pytest.importorskip('openai')
         from pydantic_ai.models.openai import OpenAICompaction
 
         agent = Agent(
@@ -8194,6 +8195,7 @@ class TestCompaction:
 
     def test_openai_compaction_should_compact_with_trigger(self):
         """OpenAICompaction._should_compact delegates to custom trigger."""
+        pytest.importorskip('openai')
         from pydantic_ai.models.openai import OpenAICompaction
 
         cap = OpenAICompaction(trigger=lambda msgs: len(msgs) > 2)
@@ -8208,6 +8210,7 @@ class TestCompaction:
 
     def test_openai_compaction_should_compact_no_config(self):
         """OpenAICompaction._should_compact returns False when nothing is configured."""
+        pytest.importorskip('openai')
         from pydantic_ai.models.openai import OpenAICompaction
 
         cap = OpenAICompaction()
@@ -8215,12 +8218,14 @@ class TestCompaction:
 
     def test_openai_compaction_serialization_name(self):
         """OpenAICompaction has the correct serialization name."""
+        pytest.importorskip('openai')
         from pydantic_ai.models.openai import OpenAICompaction
 
         assert OpenAICompaction.get_serialization_name() == 'OpenAICompaction'
 
     def test_anthropic_compaction_serialization_name(self):
         """AnthropicCompaction has the correct serialization name."""
+        pytest.importorskip('anthropic')
         from pydantic_ai.models.anthropic import AnthropicCompaction
 
         assert AnthropicCompaction.get_serialization_name() == 'AnthropicCompaction'
