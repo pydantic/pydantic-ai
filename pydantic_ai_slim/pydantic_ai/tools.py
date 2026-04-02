@@ -15,7 +15,7 @@ from . import _function_schema, _utils
 from ._run_context import AgentDepsT, RunContext
 from .builtin_tools import AbstractBuiltinTool
 from .exceptions import ModelRetry
-from .function_signature import FunctionSignature, function_to_signature, schema_to_signature
+from .function_signature import FunctionSignature
 from .messages import RetryPromptPart, ToolCallPart, ToolReturn
 
 __all__ = (
@@ -595,7 +595,7 @@ class ToolDefinition:
         The result is cached so that repeated access (e.g. on every agent step)
         does not re-traverse the schema.
         """
-        return schema_to_signature(
+        return FunctionSignature.from_schema(
             name=self.name,
             parameters_schema=self.parameters_json_schema,
             description=self.description,
@@ -631,7 +631,7 @@ class _FunctionToolDefinition(ToolDefinition):
     @cached_property
     def function_signature(self) -> FunctionSignature:
         if self._original_func is not None:
-            return function_to_signature(
+            return FunctionSignature.from_function(
                 self._original_func,
                 name=self.name,
                 description=self.description,
