@@ -391,9 +391,12 @@ def _json_type_to_python(json_type: str) -> str:
     return _JSON_TYPE_TO_PYTHON.get(json_type, 'Any')
 
 
+_NON_ALNUM_RE = re.compile(r'[^a-zA-Z0-9]')
+
+
 def _to_pascal_case(s: str) -> str:
     """Convert a string to PascalCase."""
-    s = re.sub(r'[^a-zA-Z0-9]', '_', s)
+    s = _NON_ALNUM_RE.sub('_', s)
     parts = s.split('_')
     result = ''.join(part.capitalize() for part in parts if part)
     if result and result[0].isdigit():
