@@ -21,6 +21,8 @@ node_modules/
 /test_tmp/
 .mcp.json
 .claude/*
+!.agents/skills/
+.agents/skills/*
 !.claude/skills/
 .claude/skills/*
 !.claude/skills/address-feedback
