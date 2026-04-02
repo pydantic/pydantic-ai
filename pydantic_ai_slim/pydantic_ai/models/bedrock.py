@@ -678,8 +678,8 @@ class BedrockConverseModel(Model):
                 params['promptVariables'] = prompt_variables
             if service_tier := model_settings.get('bedrock_service_tier', None):
                 params['serviceTier'] = service_tier
-            if additional_model_requests_fields := self._translate_thinking(settings, model_request_parameters):
-                params['additionalModelRequestFields'] = additional_model_requests_fields
+        if additional_model_requests_fields := self._translate_thinking(settings, model_request_parameters):
+            params['additionalModelRequestFields'] = additional_model_requests_fields
 
         extra_headers = None
         if model_settings:
