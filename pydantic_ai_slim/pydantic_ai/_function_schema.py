@@ -43,6 +43,7 @@ class FunctionSchema:
     """Internal information about a function schema."""
 
     function: Callable[..., Any]
+    name: str
     description: str | None
     validator: SchemaValidator
     json_schema: ObjectJsonSchema
@@ -52,17 +53,12 @@ class FunctionSchema:
     single_arg_name: str | None = None
     positional_fields: list[str] = field(default_factory=list[str])
     var_positional_field: str | None = None
+    function_signature: FunctionSignature = field(init=False)
 
-    def build_function_signature(self, *, name: str, description: str | None) -> FunctionSignature:
-        """Build a FunctionSignature from this schema's function.
-
-        Args:
-            name: The tool name (may differ from the function name).
-            description: The tool description (may differ from the docstring).
-        """
+    def __post_init__(self) -> None:
         from .function_signature import FunctionSignature as FS
 
-        return FS.from_function(self.function, name=name, description=description)
+        self.function_signature = FS.from_function(self.function, name=self.name, description=self.description)
 
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
         args, kwargs = self._call_args(args_dict, ctx)
@@ -93,6 +89,8 @@ class FunctionSchema:
 def function_schema(  # noqa: C901
     function: Callable[..., Any],
     schema_generator: type[GenerateJsonSchema],
+    *,
+    tool_name: str | None = None,
     takes_ctx: bool | None = None,
     docstring_format: DocstringFormat = 'auto',
     require_parameter_descriptions: bool = False,
@@ -101,6 +99,7 @@ def function_schema(  # noqa: C901
 
     Args:
         function: The function to build a validator and JSON schema for.
+        tool_name: The tool name. Defaults to `function.__name__`.
         takes_ctx: Whether the function takes a `RunContext` first argument.
         docstring_format: The docstring format to use.
         require_parameter_descriptions: Whether to require descriptions for all tool function parameters.
@@ -228,6 +227,7 @@ def function_schema(  # noqa: C901
         description = json_schema.pop('description', None)
 
     return FunctionSchema(
+        name=tool_name or function.__name__,
         description=description,
         validator=schema_validator,
         json_schema=check_object_json_schema(json_schema),

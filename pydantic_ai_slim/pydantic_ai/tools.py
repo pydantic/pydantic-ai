@@ -388,16 +388,17 @@ class Tool(Generic[ToolAgentDepsT]):
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
         """
         self.function = function
+        self.name = name or function.__name__
         self.function_schema = function_schema or _function_schema.function_schema(
             function,
             schema_generator,
+            tool_name=self.name,
             takes_ctx=takes_ctx,
             docstring_format=docstring_format,
             require_parameter_descriptions=require_parameter_descriptions,
         )
         self.takes_ctx = self.function_schema.takes_ctx
         self.max_retries = max_retries
-        self.name = name or function.__name__
         self.description = description or self.function_schema.description
         self.prepare = prepare
         self.args_validator = args_validator
@@ -409,10 +410,7 @@ class Tool(Generic[ToolAgentDepsT]):
         self.metadata = metadata
         self.timeout = timeout
         self.defer_loading = defer_loading
-        self._function_signature = self.function_schema.build_function_signature(
-            name=self.name,
-            description=self.description,
-        )
+        self._function_signature = self.function_schema.function_signature
 
     @classmethod
     def from_schema(
@@ -451,6 +449,7 @@ class Tool(Generic[ToolAgentDepsT]):
         """
         function_schema = _function_schema.FunctionSchema(
             function=function,
+            name=name,
             description=description,
             validator=SchemaValidator(schema=core_schema.any_schema()),
             json_schema=json_schema,
