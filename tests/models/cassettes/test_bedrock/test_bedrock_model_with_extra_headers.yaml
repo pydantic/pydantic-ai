@@ -5,7 +5,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        ZjE5MGJjYmYtMjVkMC00NDlkLThlYTUtOTZhZjM0Y2I4NTkz
+        Y2RmOGY3NTItNDUxOC00NzJkLTg0OTEtNzdmNmZkYWRlMjkx
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -21,12 +21,25 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '69'
+      - '347'
       content-type:
       - application/json
     parsed_body:
-      message: The security token included in the request is invalid.
+      metrics:
+        latencyMs: 582
+      output:
+        message:
+          content:
+          - text: Hello! How can I assist you today? Whether you have a question, need some information, or just want to chat,
+              I'm here to help.
+          role: assistant
+      stopReason: end_turn
+      usage:
+        inputTokens: 7
+        outputTokens: 33
+        serverToolUsage: {}
+        totalTokens: 40
     status:
-      code: 403
-      message: Forbidden
+      code: 200
+      message: OK
 version: 1

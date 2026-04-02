@@ -229,8 +229,34 @@ async def test_bedrock_model_with_extra_headers(allow_model_requests: None, bedr
         model_settings={'extra_headers': {'X-Custom-Test': 'pydantic-ai-val'}},
     )
 
-    assert result.output == snapshot(...)
-    assert result.all_messages() == snapshot(...)
+    assert result.output == snapshot(
+        "Hello! How can I assist you today? Whether you have a question, need some information, or just want to chat, I'm here to help."
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                instructions='You are a helpful chatbot.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="Hello! How can I assist you today? Whether you have a question, need some information, or just want to chat, I'm here to help."
+                    )
+                ],
+                usage=RequestUsage(input_tokens=7, output_tokens=33),
+                model_name='us.amazon.nova-micro-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 @pytest.mark.vcr()
@@ -253,7 +279,9 @@ async def test_bedrock_model_stream_with_extra_headers(
     ) as result:
         output = await result.get_output()
 
-    assert output == snapshot(...)
+    assert output == snapshot(
+        "Hello! How can I assist you today? Whether you have questions, need information, or just want to chat, I'm here to help."
+    )
 
 
 @pytest.mark.vcr()
