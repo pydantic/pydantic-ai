@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import inspect
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import KW_ONLY, dataclass, field
+from dataclasses import KW_ONLY, dataclass, field, replace as dataclasses_replace
 from functools import cached_property
 from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, Union, cast
 
@@ -295,6 +295,7 @@ class Tool(Generic[ToolAgentDepsT]):
     timeout: float | None
     defer_loading: bool
     function_schema: _function_schema.FunctionSchema
+    _use_schema_signature: bool = field(init=False, repr=False, default=False)
     """
     The base JSON schema for the tool's parameters.
 
@@ -466,11 +467,13 @@ class Tool(Generic[ToolAgentDepsT]):
             sequential=sequential,
             args_validator=args_validator,
         )
+        # Schema-based tools use proxy functions whose inspect signatures are meaningless.
+        tool._use_schema_signature = True
         return tool
 
     @property
     def tool_def(self) -> ToolDefinition:
-        return ToolDefinition(
+        td = ToolDefinition(
             name=self.name,
             description=self.description,
             parameters_json_schema=self.function_schema.json_schema,
@@ -481,6 +484,17 @@ class Tool(Generic[ToolAgentDepsT]):
             defer_loading=self.defer_loading,
             kind='unapproved' if self.requires_approval else 'function',
         )
+        # Pre-populate the cached_property with the function-based signature
+        # (richer types from inspect) when the function has meaningful types.
+        # Since cached_property stores in __dict__, this is picked up on access.
+        # dataclasses.replace() creates a fresh __dict__, so renamed/modified
+        # ToolDefinitions fall back to schema-based generation.
+        if not getattr(self, '_use_schema_signature', False):
+            sig = self.function_schema.function_signature
+            if self.description != self.function_schema.description:
+                sig = dataclasses_replace(sig, description=self.description)
+            td.__dict__['function_signature'] = sig
+        return td
 
     async def prepare_tool_def(self, ctx: RunContext[ToolAgentDepsT]) -> ToolDefinition | None:
         """Get the tool definition.
@@ -601,7 +615,8 @@ class ToolDefinition:
             name=self.name,
             parameters_schema=self.parameters_json_schema,
             description=self.description,
-            # TODO: replace with dedicated field, see https://github.com/pydantic/pydantic-ai/pull/3865
+            # output_schema is set by MCP tools in their metadata dict.
+            # TODO: replace with a dedicated field on ToolDefinition, see https://github.com/pydantic/pydantic-ai/pull/3865
             return_schema=(self.metadata or {}).get('output_schema'),
         )
 

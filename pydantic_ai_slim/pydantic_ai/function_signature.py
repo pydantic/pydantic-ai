@@ -7,6 +7,18 @@ JSON schemas. Used by code mode to present tools as callable functions.
 
 from __future__ import annotations
 
+__all__ = (
+    'FunctionSignature',
+    'FunctionParam',
+    'TypeSignature',
+    'TypeFieldSignature',
+    'TypeExpr',
+    'SimpleTypeExpr',
+    'LiteralTypeExpr',
+    'GenericTypeExpr',
+    'UnionTypeExpr',
+)
+
 import inspect
 import re
 import types
@@ -96,7 +108,7 @@ def _render_description(text: str, indent: str = '') -> list[str]:
     return [f'{indent}"""{text}"""']
 
 
-@dataclass
+@dataclass(kw_only=True)
 class TypeFieldSignature:
     """A single field in a TypedDict-style type definition."""
 
@@ -116,7 +128,7 @@ class TypeFieldSignature:
         return '\n'.join(lines)
 
 
-@dataclass
+@dataclass(kw_only=True)
 class TypeSignature:
     """A TypedDict-style class definition with named fields."""
 
@@ -156,7 +168,7 @@ class TypeSignature:
         return True
 
 
-@dataclass
+@dataclass(kw_only=True)
 class FunctionParam:
     """A single parameter in a function signature."""
 

@@ -191,7 +191,7 @@ async def test_toolset_tool_function_signature_property():
     assert sig.name == 'add'
     assert list(sig.params) == ['a', 'b']
     assert str(sig) == snapshot("""\
-def add(*, a: int, b: int) -> Any:
+def add(*, a: int, b: int) -> int:
     ...\
 """)
 
