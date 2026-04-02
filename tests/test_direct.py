@@ -228,6 +228,25 @@ async def test_model_request_with_instructions_on_message():
     assert response.parts[0].content == 'ok'  # type: ignore[union-attr]
 
 
+async def test_model_request_with_instruction_parts_on_parameters():
+    """When instruction_parts is explicitly set on ModelRequestParameters, it is preserved as-is."""
+    from pydantic_ai.messages import InstructionPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    def check_instructions(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.instructions == 'From params.'
+        return ModelResponse(parts=[TextPart(content='ok')])
+
+    response = await model_request(
+        FunctionModel(check_instructions),
+        [ModelRequest.user_text_prompt('Hello')],
+        model_request_parameters=ModelRequestParameters(
+            instruction_parts=[InstructionPart(content='From params.')],
+        ),
+    )
+    assert response.parts[0].content == 'ok'  # type: ignore[union-attr]
+
+
 async def test_model_request_stream_with_instructions_on_message():
     """Instructions set on ModelRequest are picked up in streaming mode too."""
     response_parts: list[str] = []
