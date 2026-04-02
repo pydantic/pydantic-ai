@@ -290,7 +290,6 @@ class TestOpenAI:
                                     'gen_ai.operation.name': 'embeddings',
                                     'gen_ai.request.model': 'text-embedding-3-small',
                                     'gen_ai.response.model': 'text-embedding-3-small',
-                                    'gen_ai.token.type': 'input',
                                 },
                                 'start_time_unix_nano': IsInt(),
                                 'time_unix_nano': IsInt(),
