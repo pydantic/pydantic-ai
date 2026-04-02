@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol
 
@@ -13,6 +13,7 @@ from ..tools import ToolDefinition, ToolsPrepareFunc
 
 if TYPE_CHECKING:
     from .approval_required import ApprovalRequiredToolset
+    from .deferred_loading import DeferredLoadingToolset
     from .filtered import FilteredToolset
     from .prefixed import PrefixedToolset
     from .prepared import PreparedToolset
@@ -135,6 +136,21 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         """
         return None
 
+    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> str | list[str] | None:
+        r"""Return instructions for how to use this toolset's tools.
+
+        Override this method to provide instructions that help the agent understand
+        how to use the tools in this toolset effectively.
+
+        Args:
+            ctx: The run context for this agent run.
+
+        Returns:
+            Instruction string (or list of strings) to add to the agent's instructions, or None if
+            no instructions. A list of strings will be joined with `\n\n` by the agent.
+        """
+        return None
+
     @abstractmethod
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         """The tools that are available in this toolset."""
@@ -215,3 +231,16 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         from .approval_required import ApprovalRequiredToolset
 
         return ApprovalRequiredToolset(self, approval_required_func)
+
+    def defer_loading(self, tool_names: Sequence[str] | None = None) -> DeferredLoadingToolset[AgentDepsT]:
+        """Returns a new toolset that marks tools for deferred loading, hiding them until discovered via tool search.
+
+        See [toolset docs](../toolsets.md#deferred-loading) for more information.
+
+        Args:
+            tool_names: Optional sequence of tool names to mark for deferred loading.
+                If `None`, all tools are marked for deferred loading.
+        """
+        from .deferred_loading import DeferredLoadingToolset
+
+        return DeferredLoadingToolset(self, tool_names=frozenset(tool_names) if tool_names is not None else None)

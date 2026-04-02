@@ -1167,6 +1167,7 @@ For systematic evaluation of agent behavior beyond runtime debugging, [Pydantic 
 from pydantic_evals import Case, Dataset
 
 dataset = Dataset(
+    name='agent_eval',
     cases=[
         Case(name='capital_question', inputs='What is the capital of France?', expected_output='Paris'),
     ]

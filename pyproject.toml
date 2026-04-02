@@ -103,6 +103,7 @@ dev = [
     "duckduckgo-search>=7.0.0",
     "exa-py>=2.0.0",
     "tavily-python>=0.5.0",
+    "markdownify>=1.2",
     "inline-snapshot>=0.19.3",
     "pytest>=9.0.0",
     "pytest-examples>=0.0.18",
@@ -264,6 +265,8 @@ filterwarnings = [
     # prefect has a Pydantic v2 compatibility issue in RRuleSchedule
     # happens only for python < 3.12 because of vllms pins
     "ignore:UnsupportedFieldAttributeWarning:UserWarning",
+    # coolname (prefect dep) uses codecs.open(), deprecated in Python 3.14
+    "ignore:codecs.open\\(\\) is deprecated:DeprecationWarning",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run

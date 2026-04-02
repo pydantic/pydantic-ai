@@ -39,15 +39,15 @@ The unified `thinking` setting maps to each provider's native format:
 
 | Provider | `thinking=True` | `thinking='high'` | Notes |
 |---|---|---|---|
-| Anthropic (Opus 4.6+) | `anthropic_thinking={'type': 'adaptive'}` | + `anthropic_effort='high'` | Adaptive thinking |
-| Anthropic (older) | `anthropic_thinking={'type': 'enabled', 'budget_tokens': 10000}` | `budget_tokens=16384` | Budget-based |
+| Anthropic (Opus 4.6+) | `anthropic_thinking={'type': 'adaptive'}` | `{type: 'adaptive'}` + `effort='high'` | All truthy values → adaptive; effort via output_config |
+| Anthropic (older) | `anthropic_thinking={'type': 'enabled', 'budget_tokens': 10000}` | `budget_tokens=16384` | Budget-based; `'low'` → 2048 tokens |
 | OpenAI | `reasoning_effort='medium'` | `reasoning_effort='high'` | |
 | Google (Gemini 3+) | `include_thoughts=True` | `thinking_level='HIGH'` | |
 | Google (Gemini 2.5) | `include_thoughts=True` | `thinking_budget=24576` | |
-| Groq | `reasoning_format='parsed'` | `reasoning_format='parsed'` | Effort ignored |
+| Groq | `reasoning_format='parsed'` | `reasoning_format='parsed'` | `thinking=False` → `'hidden'` (no true disable) |
 | OpenRouter | `reasoning.effort='medium'` | `reasoning.effort='high'` | Via `extra_body` |
-| Cerebras | *(default)* | *(default)* | Only `thinking=False` → `disable_reasoning` |
-| xAI | `reasoning_effort='high'` | `reasoning_effort='high'` | Only `'low'` and `'high'` supported |
+| Cerebras | `disable_reasoning=False` | `disable_reasoning=False` | `thinking=False` → `disable_reasoning=True` |
+| xAI | `reasoning_effort='high'` | `reasoning_effort='high'` | Only `'low'` and `'high'` |
 | Bedrock (Claude) | `thinking.type='enabled'` | `budget_tokens=16384` | No adaptive support |
 | Bedrock (OpenAI) | `reasoning_effort='medium'` | `reasoning_effort='high'` | |
 
@@ -246,11 +246,14 @@ To enable thinking, use the [`GroqModelSettings.groq_reasoning_format`][pydantic
 from pydantic_ai import Agent
 from pydantic_ai.models.groq import GroqModel, GroqModelSettings
 
-model = GroqModel('qwen-qwq-32b')
+model = GroqModel('qwen/qwen3-32b')
 settings = GroqModelSettings(groq_reasoning_format='parsed')
 agent = Agent(model, model_settings=settings)
 ...
 ```
+
+!!! note
+    Groq does not support truly disabling thinking. When `thinking=False` is set via the unified setting, Pydantic AI sends `reasoning_format='hidden'`, which suppresses reasoning output but the model may still reason internally.
 
 ## OpenRouter
 

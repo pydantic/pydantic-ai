@@ -9,11 +9,13 @@ import anyio
 from pydantic.json_schema import GenerateJsonSchema
 
 from .._run_context import AgentDepsT, RunContext
+from .._system_prompt import SystemPromptRunner
 from ..exceptions import ModelRetry, UserError
 from ..tools import (
     ArgsValidatorFunc,
     DocstringFormat,
     GenerateToolJsonSchema,
+    SystemPromptFunc,
     Tool,
     ToolFuncContext,
     ToolFuncEither,
@@ -51,6 +53,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
     schema_generator: type[GenerateJsonSchema]
+    _defer_loading: bool
 
     def __init__(
         self,
@@ -65,7 +68,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        defer_loading: bool = False,
         id: str | None = None,
+        instructions: str | SystemPromptFunc[AgentDepsT] | Sequence[str | SystemPromptFunc[AgentDepsT]] | None = None,
     ):
         """Build a new function toolset.
 
@@ -92,8 +97,13 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 Applies to all tools, unless overridden when adding a tool.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 Applies to all tools, unless overridden when adding a tool, which will be merged with the toolset's metadata.
+            defer_loading: Whether to hide tools from the model until discovered via tool search. Defaults to False.
+                See [Tool Search](../tools-advanced.md#tool-search) for more info.
+                Applies to all tools, unless overridden when adding a tool.
             id: An optional unique ID for the toolset. A toolset needs to have an ID in order to be used in a durable execution environment like Temporal,
                 in which case the ID will be used to identify the toolset's activities within the workflow.
+            instructions: Instructions for this toolset that are automatically included in the model request.
+                Can be a string, a function (sync or async, with or without `RunContext`), or a sequence of these.
         """
         self.max_retries = max_retries
         self.timeout = timeout
@@ -105,6 +115,17 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         self.sequential = sequential
         self.requires_approval = requires_approval
         self.metadata = metadata
+        self._defer_loading = defer_loading
+
+        self._instructions: list[str | SystemPromptRunner[AgentDepsT]] = []
+        if instructions is not None:
+            if isinstance(instructions, str) or callable(instructions):
+                instructions = [instructions]
+            for instruction in instructions:
+                if isinstance(instruction, str):
+                    self._instructions.append(instruction)
+                else:
+                    self._instructions.append(SystemPromptRunner(instruction))
 
         self.tools = {}
         for tool in tools:
@@ -138,6 +159,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        defer_loading: bool | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -158,6 +180,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        defer_loading: bool | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -222,6 +245,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
+            defer_loading: Whether to hide this tool until it's discovered via tool search.
+                See [Tool Search](../tools-advanced.md#tool-search) for more info.
+                If `None`, the default value is determined by the toolset.
         """
 
         def tool_decorator(
@@ -249,6 +275,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 requires_approval=requires_approval,
                 metadata=metadata,
                 timeout=timeout,
+                defer_loading=defer_loading,
             )
             if not tool.function_schema.takes_ctx:
                 warnings.warn(
@@ -282,6 +309,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        defer_loading: bool | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
     def tool_plain(
@@ -302,6 +330,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        defer_loading: bool | None = None,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
@@ -367,6 +396,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
+            defer_loading: Whether to hide this tool until it's discovered via tool search.
+                See [Tool Search](../tools-advanced.md#tool-search) for more info.
+                If `None`, the default value is determined by the toolset.
         """
 
         def tool_decorator(
@@ -389,10 +421,42 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 requires_approval=requires_approval,
                 metadata=metadata,
                 timeout=timeout,
+                defer_loading=defer_loading,
             )
             return func_
 
         return tool_decorator if func is None else tool_decorator(func)
+
+    def instructions(
+        self,
+        func: SystemPromptFunc[AgentDepsT],
+        /,
+    ) -> SystemPromptFunc[AgentDepsT]:
+        """Decorator to register an instructions function for this toolset.
+
+        The function can be sync or async, and can optionally take a
+        [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
+
+        Example:
+        ```python
+        from pydantic_ai import FunctionToolset, RunContext
+
+        toolset = FunctionToolset[int]()
+
+        @toolset.instructions
+        def my_instructions(ctx: RunContext[int]) -> str:
+            return 'Always use the search tool when looking for information.'
+
+        @toolset.tool
+        def search(ctx: RunContext[int], query: str) -> str:
+            return f'Results for: {query}'
+        ```
+
+        Args:
+            func: The instructions function to register.
+        """
+        self._instructions.append(SystemPromptRunner(func))
+        return func
 
     def add_function(
         self,
@@ -409,6 +473,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         strict: bool | None = None,
         sequential: bool | None = None,
         requires_approval: bool | None = None,
+        defer_loading: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> Tool[AgentDepsT]:
@@ -449,6 +514,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
                 If `None`, the default value is determined by the toolset.
+            defer_loading: Whether to hide this tool until it's discovered via tool search.
+                See [Tool Search](../tools-advanced.md#tool-search) for more info.
+                If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
@@ -466,6 +534,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             sequential = self.sequential
         if requires_approval is None:
             requires_approval = self.requires_approval
+        if defer_loading is None:
+            defer_loading = self._defer_loading
 
         tool = Tool[AgentDepsT](
             func,
@@ -483,6 +553,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             requires_approval=requires_approval,
             metadata=metadata,
             timeout=timeout,
+            defer_loading=defer_loading,
         )
         self.add_tool(tool)
         return tool
@@ -500,6 +571,20 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         if self.metadata is not None:
             tool.metadata = self.metadata | (tool.metadata or {})
         self.tools[tool.name] = tool
+
+    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> list[str] | None:
+        if not self._instructions:
+            return None
+        parts: list[str] = []
+        for func in self._instructions:
+            if isinstance(func, str):
+                if func.strip():
+                    parts.append(func)
+            else:
+                result = await func.run(ctx)
+                if result and result.strip():
+                    parts.append(result)
+        return parts or None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}

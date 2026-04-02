@@ -19,9 +19,9 @@ Pydantic AI ships with several capabilities that cover common needs:
 |---|---|:---:|
 | [`Thinking`][pydantic_ai.capabilities.Thinking] | Enables model [thinking/reasoning](thinking.md) at configurable effort | Yes |
 | [`Hooks`][pydantic_ai.capabilities.Hooks] | Decorator-based [lifecycle hook](hooks.md) registration | — |
-| [`WebSearch`][pydantic_ai.capabilities.WebSearch] | Web search — builtin when supported, local fallback otherwise | Yes |
-| [`WebFetch`][pydantic_ai.capabilities.WebFetch] | URL fetching — builtin when supported, custom local fallback | Yes |
-| [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | Image generation — builtin when supported, custom local fallback | Yes |
+| [`WebSearch`][pydantic_ai.capabilities.WebSearch] | Web search — builtin when supported, [local fallback](common-tools.md#duckduckgo-search-tool) with [`duckduckgo` extra](install.md#slim-install) | Yes |
+| [`WebFetch`][pydantic_ai.capabilities.WebFetch] | URL fetching — builtin when supported, [local fallback](common-tools.md#web-fetch-tool) with [`web-fetch` extra](install.md#slim-install) | Yes |
+| [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | Image generation — builtin when supported, subagent fallback via `fallback_model` | Yes |
 | [`MCP`][pydantic_ai.capabilities.MCP] | MCP server — builtin when supported, direct connection otherwise | Yes |
 | [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] | Filters or modifies [tool definitions](tools.md) per step | — |
 | [`PrefixTools`][pydantic_ai.capabilities.PrefixTools] | Wraps a capability and prefixes its tool names | Yes |
@@ -68,19 +68,21 @@ See [Thinking](thinking.md) for provider-specific details and the [unified think
 The [`Hooks`][pydantic_ai.capabilities.Hooks] capability provides decorator-based [lifecycle hook](#hooking-into-the-lifecycle) registration — the easiest way to intercept model requests, tool calls, and other events without subclassing [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability]:
 
 ```python {test="skip" lint="skip"}
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities.hooks import Hooks
-from pydantic_ai.models import ModelRequestContext
+from pydantic_ai import Agent, ModelRequestContext, RunContext
+from pydantic_ai.capabilities import Hooks
 
 hooks = Hooks()
 
 @hooks.on.before_model_request
 async def log_request(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
-    print(f'Sending {len(request_context.messages)} messages')
+    agent_name = ctx.agent.name if ctx.agent else 'unknown'
+    print(f'[{agent_name}] Sending {len(request_context.messages)} messages')
     return request_context
 
-agent = Agent('openai:gpt-5.2', capabilities=[hooks])
+agent = Agent('openai:gpt-5.2', name='my_agent', capabilities=[hooks])
 ```
+
+All hooks receive [`RunContext`][pydantic_ai.tools.RunContext], which provides access to the running agent via [`ctx.agent`][pydantic_ai.tools.RunContext.agent] — useful for logging, metrics, and other cross-cutting concerns that need to identify which agent is running.
 
 See the dedicated [Hooks](hooks.md) page for the full API: decorator and constructor registration, timeouts, tool filtering, wrap hooks, per-event hooks, and more.
 
@@ -92,15 +94,18 @@ Each accepts `builtin` and `local` keyword arguments to control which side is us
 
 ```python {title="provider_adaptive_tools.py" test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import MCP, WebFetch, WebSearch
+from pydantic_ai.capabilities import MCP, ImageGeneration, WebFetch, WebSearch
 
 agent = Agent(
-    'openai:gpt-5.2',
+    'anthropic:claude-sonnet-4-6',
     capabilities=[
         # Auto-detects DuckDuckGo as local fallback
         WebSearch(),
-        # Builtin URL fetching; provide local= for fallback
+        # Auto-detects markdownify-based fetch as local fallback
         WebFetch(),
+        # Builtin when the model supports it; falls back to a subagent
+        # running the specified LLM with image generation support
+        ImageGeneration(fallback_model='openai-responses:gpt-5.4'),
         # Auto-detects transport from URL
         MCP(url='https://mcp.example.com/api'),
     ],
@@ -119,11 +124,14 @@ To force local-only (never use the builtin, even when the model supports it):
 MCP(url='https://mcp.example.com/api', builtin=False)
 ```
 
-Constraint fields like `allowed_domains` or `blocked_domains` require the builtin — the local fallback can't enforce them. When these are set and the model doesn't support the builtin, a [`UserError`][pydantic_ai.exceptions.UserError] is raised:
+Some constraint fields require the builtin because the local fallback can't enforce them. When these are set and the model doesn't support the builtin, a [`UserError`][pydantic_ai.exceptions.UserError] is raised. For example, [`WebSearch`][pydantic_ai.capabilities.WebSearch] domain constraints require the builtin, while [`WebFetch`][pydantic_ai.capabilities.WebFetch] enforces them locally:
 
 ```python {title="constraints.py" test="skip" lint="skip"}
 # Only search example.com — requires builtin support
 WebSearch(allowed_domains=['example.com'])
+
+# Only fetch example.com — enforced locally when builtin is unavailable
+WebFetch(allowed_domains=['example.com'])
 ```
 
 All of these capabilities are subclasses of [`BuiltinOrLocalTool`][pydantic_ai.capabilities.BuiltinOrLocalTool], which you can use directly or subclass to build your own provider-adaptive tools. For example, to pair [`CodeExecutionTool`][pydantic_ai.builtin_tools.CodeExecutionTool] with a local fallback:
@@ -140,9 +148,8 @@ cap = BuiltinOrLocalTool(builtin=CodeExecutionTool(), local=my_local_executor)
 [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] wraps a [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc] as a capability, for filtering or modifying [tool definitions](tools.md) per step:
 
 ```python {title="prepare_tools_builtin.py"}
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext, ToolDefinition
 from pydantic_ai.capabilities import PrepareTools
-from pydantic_ai.tools import RunContext, ToolDefinition
 
 
 async def hide_dangerous(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
@@ -332,9 +339,8 @@ When model settings need to vary per step — for example, enabling thinking onl
 ```python {title="dynamic_settings.py"}
 from dataclasses import dataclass
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, ModelSettings, RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.settings import ModelSettings
 
 
 @dataclass
@@ -479,12 +485,12 @@ See [Iterating Over an Agent's Graph](agent.md#iterating-over-an-agents-graph) f
 
 | Hook | Signature | Purpose |
 |---|---|---|
-| [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] | `(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext` | Modify messages, settings, or parameters before the model call |
+| [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] | `(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext` | Modify messages, settings, parameters, or model before the model call |
 | [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request] | `(ctx: RunContext, *, request_context: ModelRequestContext, response: ModelResponse) -> ModelResponse` | Modify the model's response |
 | [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request] | `(ctx: RunContext, *, request_context: ModelRequestContext, handler: WrapModelRequestHandler) -> ModelResponse` | Wrap the model call |
 | [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error] | `(ctx: RunContext, *, request_context: ModelRequestContext, error: Exception) -> ModelResponse` | Handle model request errors (see [error hooks](#error-hooks)) |
 
-[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] bundles `messages`, `model_settings`, and `model_request_parameters` into a single object, making the signature future-proof.
+[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] bundles `model`, `messages`, `model_settings`, and `model_request_parameters` into a single object, making the signature future-proof. To swap the model for a given request, set `request_context.model` to a different [`Model`][pydantic_ai.models.Model] instance.
 
 To skip the model call entirely and provide a replacement response, raise [`SkipModelRequest(response)`][pydantic_ai.exceptions.SkipModelRequest] from `before_model_request` or `wrap_model_request`.
 
@@ -524,9 +530,8 @@ Capabilities can filter or modify which tool definitions the model sees on each 
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RunContext, ToolDefinition
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.tools import ToolDefinition
 
 
 @dataclass
@@ -575,10 +580,9 @@ from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import RunContext
+from pydantic_ai import AgentStreamEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
-    AgentStreamEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     PartStartEvent,
@@ -638,10 +642,9 @@ Error hooks use **raise-to-propagate, return-to-recover** semantics:
 from dataclasses import dataclass, field
 from typing import Any
 
-from pydantic_ai import RunContext
+from pydantic_ai import ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelResponse, TextPart
-from pydantic_ai.models import ModelRequestContext
 
 
 @dataclass
@@ -672,9 +675,8 @@ class ErrorLogger(AbstractCapability[Any]):
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import RunContext
+from pydantic_ai import ModelRequestContext, RunContext
 from pydantic_ai.capabilities import WrapperCapability
-from pydantic_ai.models import ModelRequestContext
 
 
 @dataclass
@@ -698,9 +700,8 @@ By default, a capability instance is shared across all runs of an agent. If your
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.models import ModelRequestContext
 
 
 @dataclass
@@ -751,10 +752,9 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelResponse, TextPart
-from pydantic_ai.models import ModelRequestContext
 
 
 @dataclass
@@ -799,15 +799,13 @@ The `wrap_*` pattern is useful when you need to observe or time both the input a
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, ModelRequestContext, RunContext, ToolDefinition
 from pydantic_ai.capabilities import (
     AbstractCapability,
     WrapModelRequestHandler,
     WrapToolExecuteHandler,
 )
 from pydantic_ai.messages import ModelResponse, ToolCallPart
-from pydantic_ai.models import ModelRequestContext
-from pydantic_ai.tools import ToolDefinition
 
 
 @dataclass
@@ -853,6 +851,12 @@ print(f'Output: {result.output}')
 
 Capabilities are the recommended way for third-party packages to extend Pydantic AI, since they can bundle tools with hooks, instructions, and model settings. See [Extensibility](extensibility.md) for the full ecosystem, including [third-party toolsets](toolsets.md#third-party-toolsets) that can also be wrapped as capabilities.
 
+### Agent Skills
+
+Capabilities that implement [Agent Skills](https://agentskills.io) support help agents efficiently discover and perform specific tasks:
+
+* [`pydantic-ai-skills`](https://github.com/DougTrajano/pydantic-ai-skills) - `SkillsCapability` implements Agent Skills support with progressive disclosure (load skills on-demand to reduce tokens). Supports filesystem and programmatic skills; compatible with [agentskills.io](https://agentskills.io).
+
 To add your package to this page, open a pull request.
 
 ## Publishing capabilities
@@ -863,8 +867,7 @@ To make a custom capability usable in [agent specs](agent-spec.md), it needs a [
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import Agent
-from pydantic_ai.agent.spec import AgentSpec
+from pydantic_ai import Agent, AgentSpec
 from pydantic_ai.capabilities import AbstractCapability
 
 
@@ -892,9 +895,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from pydantic_ai import RunContext
+from pydantic_ai import RunContext, ToolDefinition
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.tools import ToolDefinition
 
 
 @dataclass

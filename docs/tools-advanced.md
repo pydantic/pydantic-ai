@@ -450,6 +450,44 @@ The `'exhaustive'` strategy ensures all tools are executed even after a final re
 
 For more information of how `end_strategy` works with both function tools and output tools, see the [Output Tool](output.md#parallel-output-tool-calls) docs.
 
+## Tool Search
+
+Agents with many tools (e.g. [MCP servers](mcp/client.md) exposing dozens of endpoints) can suffer from context bloat and degraded tool selection. Marking tools for deferred loading hides them from the model's initial context; a `search_tools` tool is automatically injected so the model can discover hidden tools by keyword when it needs them.
+
+This is inspired by Anthropic's [Tool Search Tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool#limits-and-best-practices) for managing large tool collections. Tool search is implemented on the Pydantic AI side and works with any model. Native provider support is planned in [#4167](https://github.com/pydantic/pydantic-ai/issues/4167).
+
+For individual tools, set `defer_loading=True` on [`Tool`][pydantic_ai.tools.Tool], [`@agent.tool`][pydantic_ai.agent.Agent.tool], or [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain]. For entire toolsets (including [MCP servers](mcp/client.md) and [`FastMCPToolset`][pydantic_ai.toolsets.fastmcp.FastMCPToolset]), use the [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] method — pass a list of tool names to hide only specific tools, or `None` to hide all.
+
+```python {title="tool_search.py"}
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+
+
+@agent.tool_plain(defer_loading=True)
+def mortgage_calculator(principal: float, rate: float, years: int) -> str:
+    """Calculate monthly mortgage payment for a home loan."""
+    monthly_rate = rate / 100 / 12
+    n_payments = years * 12
+    payment = principal * (monthly_rate * (1 + monthly_rate) ** n_payments) / ((1 + monthly_rate) ** n_payments - 1)
+    return f'${payment:.2f}/month'
+```
+
+For MCP servers, use [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] to hide all tools behind search:
+
+```python {title="tool_search_mcp.py" lint="skip" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerHTTP
+
+mcp = MCPServerHTTP('http://localhost:8000/mcp')
+agent = Agent('openai:gpt-5.2', toolsets=[mcp.defer_loading()])
+```
+
+!!! note "Tool discovery and message history"
+    Discovered tools are tracked via metadata in the [message history](message-history.md). If a [history processor](message-history.md#processing-message-history) truncates messages containing discovery metadata, previously discovered tools will require re-discovery.
+
+See [`ToolDefinition.defer_loading`][pydantic_ai.tools.ToolDefinition.defer_loading] and [Deferred Loading](toolsets.md#deferred-loading) for more details.
+
 ## See Also
 
 - [Function Tools](tools.md) - Basic tool concepts and registration

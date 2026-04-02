@@ -20,10 +20,10 @@ node_modules/
 .coverage*
 /test_tmp/
 .mcp.json
-.agents/*
-.claude/*
 # need to add because of local setup, + waiting on https://github.com/pydantic/pydantic-ai/pull/4211 to merge
 .agents/*
+.claude/*
+!.claude/plans/
 !.claude/skills/
 .claude/skills/*
 !.claude/skills/address-feedback
@@ -31,3 +31,4 @@ node_modules/
 .github/.review-context/
 /.cursor/
 /.devcontainer/
+.claude/plans/

@@ -38,6 +38,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -166,6 +167,26 @@ _GOOGLE_IMAGE_OUTPUT_FORMAT = Literal['png', 'jpeg', 'webp']
 _GOOGLE_IMAGE_OUTPUT_FORMATS: tuple[_GOOGLE_IMAGE_OUTPUT_FORMAT, ...] = _utils.get_args(_GOOGLE_IMAGE_OUTPUT_FORMAT)
 
 
+GoogleServiceTier = Literal['pt_then_on_demand', 'pt_only', 'pt_then_flex', 'on_demand', 'flex_only']
+"""Values for the `google_service_tier` field on [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings].
+
+Controls Vertex AI HTTP headers for [Provisioned Throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput/use-provisioned-throughput)
+(PT) and [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo). Only applies when using the Vertex AI API.
+
+**Values:**
+
+- `'pt_then_on_demand'` (**default**): PT when quota allows, then standard on-demand spillover. No headers sent.
+- `'pt_only'`: PT only (`X-Vertex-AI-LLM-Request-Type: dedicated`). No on-demand spillover; returns 429 when over quota.
+- `'pt_then_flex'`: PT when quota allows, then [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) spillover (`X-Vertex-AI-LLM-Shared-Request-Type: flex`).
+- `'on_demand'`: Standard on-demand only (`X-Vertex-AI-LLM-Request-Type: shared`). Bypasses PT for this request.
+- `'flex_only'`: [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) only (`X-Vertex-AI-LLM-Request-Type: shared` and `X-Vertex-AI-LLM-Shared-Request-Type: flex`). Bypasses PT.
+
+Not every model or region supports every value; see the linked Google docs.
+
+Note: these headers only affect Vertex AI. When using the GLA API they are silently ignored.
+"""
+
+
 class GoogleModelSettings(ModelSettings, total=False):
     """Settings used for a Gemini model request."""
 
@@ -220,6 +241,30 @@ class GoogleModelSettings(ModelSettings, total=False):
 
     These will be included in `ModelResponse.provider_details['logprobs']`.
     """
+
+    google_service_tier: GoogleServiceTier
+    """Vertex AI routing for Provisioned Throughput and Flex PayGo. Defaults to `'pt_then_on_demand'`.
+
+    See [`GoogleServiceTier`][pydantic_ai.models.google.GoogleServiceTier] for all values, headers sent, and links to Google docs.
+    """
+
+
+def _google_vertex_service_tier_headers(service_tier: GoogleServiceTier) -> dict[str, str]:
+    """HTTP headers for Vertex AI Provisioned Throughput and Flex PayGo routing."""
+    if service_tier == 'pt_then_on_demand':
+        return {}
+    if service_tier == 'pt_only':
+        return {'X-Vertex-AI-LLM-Request-Type': 'dedicated'}
+    if service_tier == 'on_demand':
+        return {'X-Vertex-AI-LLM-Request-Type': 'shared'}
+    if service_tier == 'pt_then_flex':
+        return {'X-Vertex-AI-LLM-Shared-Request-Type': 'flex'}
+    if service_tier == 'flex_only':
+        return {
+            'X-Vertex-AI-LLM-Request-Type': 'shared',
+            'X-Vertex-AI-LLM-Shared-Request-Type': 'flex',
+        }
+    assert_never(service_tier)  # pragma: no cover
 
 
 @dataclass(init=False)
@@ -522,7 +567,7 @@ class GoogleModel(Model):
                 ) from e
             raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
 
-    def _get_thinking_config(
+    def _translate_thinking(
         self,
         model_settings: GoogleModelSettings,
         model_request_parameters: ModelRequestParameters,
@@ -597,6 +642,10 @@ class GoogleModel(Model):
         headers: dict[str, str] = {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
         if extra_headers := model_settings.get('extra_headers'):
             headers.update(extra_headers)
+
+        service_tier = model_settings.get('google_service_tier', 'pt_then_on_demand')
+        headers.update(_google_vertex_service_tier_headers(service_tier))
+
         http_options: HttpOptionsDict = {'headers': headers}
         if timeout := model_settings.get('timeout'):
             if isinstance(timeout, int | float):
@@ -615,7 +664,7 @@ class GoogleModel(Model):
             frequency_penalty=model_settings.get('frequency_penalty'),
             seed=model_settings.get('seed'),
             safety_settings=model_settings.get('google_safety_settings'),
-            thinking_config=self._get_thinking_config(model_settings, model_request_parameters),
+            thinking_config=self._translate_thinking(model_settings, model_request_parameters),
             labels=model_settings.get('google_labels'),
             media_resolution=model_settings.get('google_video_resolution'),
             cached_content=model_settings.get('google_cached_content'),
@@ -664,6 +713,10 @@ class GoogleModel(Model):
 
         if response.create_time is not None:  # pragma: no branch
             vendor_details['timestamp'] = response.create_time
+
+        # Add traffic_type to provider_details for Flex PayGo verification
+        if response.usage_metadata and response.usage_metadata.traffic_type:
+            vendor_details['traffic_type'] = response.usage_metadata.traffic_type.value
 
         if candidate is None or candidate.content is None or candidate.content.parts is None:
             parts = []
@@ -909,8 +962,9 @@ class GoogleModel(Model):
         else:
             content: list[PartDict] = []
             for item in part.content:
-                if isinstance(item, str):
-                    content.append({'text': item})
+                if isinstance(item, str | TextContent):
+                    text = item if isinstance(item, str) else item.content
+                    content.append({'text': text})
                 elif isinstance(item, (BinaryContent, FileUrl, UploadedFile)):
                     file_part = await self._map_file_to_part(item)
                     content.append(file_part)
@@ -953,6 +1007,14 @@ class GeminiStreamedResponse(StreamedResponse):
         try:
             async for chunk in self._response:
                 self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url)
+
+                # Capture traffic_type before the candidates guard, since usage_metadata
+                # may be present on chunks without candidates.
+                if chunk.usage_metadata and chunk.usage_metadata.traffic_type:
+                    self.provider_details = {
+                        **(self.provider_details or {}),
+                        'traffic_type': chunk.usage_metadata.traffic_type.value,
+                    }
 
                 if not chunk.candidates:
                     if chunk.prompt_feedback and chunk.prompt_feedback.block_reason:
@@ -1292,7 +1354,7 @@ def _process_part(
         assert part.function_call.name is not None
         item = ToolCallPart(tool_name=part.function_call.name, args=part.function_call.args)
         if part.function_call.id is not None:
-            item.tool_call_id = part.function_call.id  # pragma: no cover
+            item.tool_call_id = part.function_call.id
     elif inline_data := part.inline_data:
         data = inline_data.data
         mime_type = inline_data.mime_type

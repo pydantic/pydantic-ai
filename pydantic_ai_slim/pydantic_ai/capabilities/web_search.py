@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic_ai.builtin_tools import WebSearchTool, WebSearchUserLocation
-from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, Tool
+from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
 from .builtin_or_local import BuiltinOrLocalTool
@@ -37,7 +37,9 @@ class WebSearch(BuiltinOrLocalTool[AgentDepsT]):
     def __init__(
         self,
         *,
-        builtin: WebSearchTool | AgentBuiltinTool[AgentDepsT] | bool = True,
+        builtin: WebSearchTool
+        | Callable[[RunContext[AgentDepsT]], Awaitable[WebSearchTool | None] | WebSearchTool | None]
+        | bool = True,
         local: Tool[AgentDepsT] | Callable[..., Any] | Literal[False] | None = None,
         search_context_size: Literal['low', 'medium', 'high'] | None = None,
         user_location: WebSearchUserLocation | None = None,
@@ -77,6 +79,15 @@ class WebSearch(BuiltinOrLocalTool[AgentDepsT]):
 
             return duckduckgo_search_tool()
         except ImportError:
+            import warnings
+
+            warnings.warn(
+                'WebSearch local fallback requires the `duckduckgo` optional group — '
+                '`pip install "pydantic-ai-slim[duckduckgo]"`. '
+                'Without it, WebSearch only works with models that support it natively.',
+                UserWarning,
+                stacklevel=2,
+            )
             return None
 
     def _requires_builtin(self) -> bool:
