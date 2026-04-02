@@ -123,19 +123,12 @@ async def google_style_docstring(foo: int, bar: str) -> str:  # pragma: no cover
     return f'{foo} {bar}'
 
 
-def _serialize_tool_def(v: Any) -> Any:
-    """Serialize fallback that skips unserializable values (like callables)."""
-    return None
-
-
 async def get_json_schema(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     if len(info.function_tools) == 1:
         r = info.function_tools[0]
-        return ModelResponse(parts=[TextPart(pydantic_core.to_json(r, fallback=_serialize_tool_def).decode())])
+        return ModelResponse(parts=[TextPart(pydantic_core.to_json(r).decode())])
     else:
-        return ModelResponse(
-            parts=[TextPart(pydantic_core.to_json(info.function_tools, fallback=_serialize_tool_def).decode())]
-        )
+        return ModelResponse(parts=[TextPart(pydantic_core.to_json(info.function_tools).decode())])
 
 
 @pytest.mark.parametrize('docstring_format', ['google', 'auto'])
@@ -166,17 +159,6 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'timeout': None,
             'defer_loading': False,
             'prefer_builtin': None,
-            'function_signature': {
-                'name': 'google_style_docstring',
-                'params': {
-                    'foo': {'name': 'foo', 'type': {'name': 'int'}, 'default': None},
-                    'bar': {'name': 'bar', 'type': {'name': 'str'}, 'default': None},
-                },
-                'return_type': {'name': 'str'},
-                'description': 'Do foobar stuff, a lot.',
-                'referenced_types': [],
-                'is_async': True,
-            },
         }
     )
 
@@ -214,14 +196,6 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'timeout': None,
             'defer_loading': False,
             'prefer_builtin': None,
-            'function_signature': {
-                'name': 'sphinx_style_docstring',
-                'params': {'foo': {'name': 'foo', 'type': {'name': 'int'}, 'default': None}},
-                'return_type': {'name': 'str'},
-                'description': 'Sphinx style docstring.',
-                'referenced_types': [],
-                'is_async': False,
-            },
         }
     )
 
@@ -267,17 +241,6 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'timeout': None,
             'defer_loading': False,
             'prefer_builtin': None,
-            'function_signature': {
-                'name': 'numpy_style_docstring',
-                'params': {
-                    'foo': {'name': 'foo', 'type': {'name': 'int'}, 'default': None},
-                    'bar': {'name': 'bar', 'type': {'name': 'str'}, 'default': None},
-                },
-                'return_type': {'name': 'str'},
-                'description': 'Numpy style docstring.',
-                'referenced_types': [],
-                'is_async': False,
-            },
         }
     )
 
@@ -323,20 +286,6 @@ def test_google_style_with_returns():
             'timeout': None,
             'defer_loading': False,
             'prefer_builtin': None,
-            'function_signature': {
-                'name': 'my_tool',
-                'params': {'x': {'name': 'x', 'type': {'name': 'int'}, 'default': None}},
-                'return_type': {'name': 'str'},
-                'description': """\
-<summary>A function that does something.</summary>
-<returns>
-<type>str</type>
-<description>The result as a string.</description>
-</returns>\
-""",
-                'referenced_types': [],
-                'is_async': False,
-            },
         }
     )
 
@@ -380,20 +329,6 @@ def test_sphinx_style_with_returns():
             'timeout': None,
             'defer_loading': False,
             'prefer_builtin': None,
-            'function_signature': {
-                'name': 'my_tool',
-                'params': {'x': {'name': 'x', 'type': {'name': 'int'}, 'default': None}},
-                'return_type': {'name': 'str'},
-                'description': """\
-<summary>A sphinx function with returns.</summary>
-<returns>
-<type>str</type>
-<description>The result as a string with type.</description>
-</returns>\
-""",
-                'referenced_types': [],
-                'is_async': False,
-            },
         }
     )
 
@@ -443,20 +378,6 @@ def test_numpy_style_with_returns():
             'timeout': None,
             'defer_loading': False,
             'prefer_builtin': None,
-            'function_signature': {
-                'name': 'my_tool',
-                'params': {'x': {'name': 'x', 'type': {'name': 'int'}, 'default': None}},
-                'return_type': {'name': 'str'},
-                'description': """\
-<summary>A numpy function with returns.</summary>
-<returns>
-<type>str</type>
-<description>The result as a string with type.</description>
-</returns>\
-""",
-                'referenced_types': [],
-                'is_async': False,
-            },
         }
     )
 
@@ -494,19 +415,6 @@ def test_only_returns_type():
             'timeout': None,
             'defer_loading': False,
             'prefer_builtin': None,
-            'function_signature': {
-                'name': 'only_returns_type',
-                'params': {},
-                'return_type': {'name': 'str'},
-                'description': """\
-<returns>
-<type>str</type>
-<description>The result as a string.</description>
-</returns>\
-""",
-                'referenced_types': [],
-                'is_async': False,
-            },
         }
     )
 
@@ -535,14 +443,6 @@ def test_docstring_unknown():
             'timeout': None,
             'defer_loading': False,
             'prefer_builtin': None,
-            'function_signature': {
-                'name': 'unknown_docstring',
-                'params': {'kwargs': {'name': 'kwargs', 'type': {'name': 'int'}, 'default': None}},
-                'return_type': {'name': 'str'},
-                'description': 'Unknown style docstring.',
-                'referenced_types': [],
-                'is_async': False,
-            },
         }
     )
 
@@ -589,17 +489,6 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'timeout': None,
             'defer_loading': False,
             'prefer_builtin': None,
-            'function_signature': {
-                'name': 'google_style_docstring_no_body',
-                'params': {
-                    'foo': {'name': 'foo', 'type': {'name': 'int'}, 'default': None},
-                    'bar': {'name': 'bar', 'type': {'name': 'str'}, 'default': None},
-                },
-                'return_type': {'name': 'str'},
-                'description': '',
-                'referenced_types': [],
-                'is_async': True,
-            },
         }
     )
 
@@ -639,36 +528,6 @@ def test_takes_just_model():
             'timeout': None,
             'defer_loading': False,
             'prefer_builtin': None,
-            'function_signature': {
-                'name': 'takes_just_model',
-                'params': {
-                    'model': {
-                        'name': 'model',
-                        'type': {
-                            'name': 'Foo',
-                            'description': None,
-                            'fields': {
-                                'x': {'name': 'x', 'type': {'name': 'int'}, 'required': True, 'description': None},
-                                'y': {'name': 'y', 'type': {'name': 'str'}, 'required': True, 'description': None},
-                            },
-                        },
-                        'default': None,
-                    }
-                },
-                'return_type': {'name': 'str'},
-                'description': None,
-                'referenced_types': [
-                    {
-                        'name': 'Foo',
-                        'description': None,
-                        'fields': {
-                            'x': {'name': 'x', 'type': {'name': 'int'}, 'required': True, 'description': None},
-                            'y': {'name': 'y', 'type': {'name': 'str'}, 'required': True, 'description': None},
-                        },
-                    }
-                ],
-                'is_async': False,
-            },
         }
     )
 
@@ -717,37 +576,6 @@ def test_takes_model_and_int():
             'timeout': None,
             'defer_loading': False,
             'prefer_builtin': None,
-            'function_signature': {
-                'name': 'takes_just_model',
-                'params': {
-                    'model': {
-                        'name': 'model',
-                        'type': {
-                            'name': 'Foo',
-                            'description': None,
-                            'fields': {
-                                'x': {'name': 'x', 'type': {'name': 'int'}, 'required': True, 'description': None},
-                                'y': {'name': 'y', 'type': {'name': 'str'}, 'required': True, 'description': None},
-                            },
-                        },
-                        'default': None,
-                    },
-                    'z': {'name': 'z', 'type': {'name': 'int'}, 'default': None},
-                },
-                'return_type': {'name': 'str'},
-                'description': None,
-                'referenced_types': [
-                    {
-                        'name': 'Foo',
-                        'description': None,
-                        'fields': {
-                            'x': {'name': 'x', 'type': {'name': 'int'}, 'required': True, 'description': None},
-                            'y': {'name': 'y', 'type': {'name': 'str'}, 'required': True, 'description': None},
-                        },
-                    }
-                ],
-                'is_async': False,
-            },
         }
     )
 
@@ -1134,14 +962,6 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'timeout': None,
             'defer_loading': False,
             'prefer_builtin': None,
-            'function_signature': {
-                'name': 'tool_without_return_annotation_in_docstring',
-                'params': {},
-                'return_type': {'name': 'str'},
-                'description': "A tool that documents what it returns but doesn't have a return annotation in the docstring.",
-                'referenced_types': [],
-                'is_async': True,
-            },
         }
     )
 
@@ -1217,17 +1037,6 @@ def test_json_schema_required_parameters():
                 'timeout': None,
                 'defer_loading': False,
                 'prefer_builtin': None,
-                'function_signature': {
-                    'name': 'my_tool',
-                    'params': {
-                        'a': {'name': 'a', 'type': {'name': 'int'}, 'default': None},
-                        'b': {'name': 'b', 'type': {'name': 'int'}, 'default': '1'},
-                    },
-                    'return_type': {'name': 'int'},
-                    'description': None,
-                    'referenced_types': [],
-                    'is_async': False,
-                },
             },
             {
                 'description': None,
@@ -1246,17 +1055,6 @@ def test_json_schema_required_parameters():
                 'timeout': None,
                 'defer_loading': False,
                 'prefer_builtin': None,
-                'function_signature': {
-                    'name': 'my_tool_plain',
-                    'params': {
-                        'a': {'name': 'a', 'type': {'name': 'int'}, 'default': '1'},
-                        'b': {'name': 'b', 'type': {'name': 'int'}, 'default': None},
-                    },
-                    'return_type': {'name': 'int'},
-                    'description': None,
-                    'referenced_types': [],
-                    'is_async': False,
-                },
             },
         ]
     )
@@ -1348,17 +1146,6 @@ def test_schema_generator():
                 'timeout': None,
                 'defer_loading': False,
                 'prefer_builtin': None,
-                'function_signature': {
-                    'name': 'my_tool_1',
-                    'params': {
-                        'x': {'name': 'x', 'type': {'members': [{'name': 'str'}, {'name': 'None'}]}, 'default': 'None'},
-                        'kwargs': {'name': 'kwargs', 'type': {'name': 'Any'}, 'default': None},
-                    },
-                    'return_type': {'name': 'Any'},
-                    'description': None,
-                    'referenced_types': [],
-                    'is_async': False,
-                },
             },
             {
                 'description': None,
@@ -1376,17 +1163,6 @@ def test_schema_generator():
                 'timeout': None,
                 'defer_loading': False,
                 'prefer_builtin': None,
-                'function_signature': {
-                    'name': 'my_tool_2',
-                    'params': {
-                        'x': {'name': 'x', 'type': {'members': [{'name': 'str'}, {'name': 'None'}]}, 'default': 'None'},
-                        'kwargs': {'name': 'kwargs', 'type': {'name': 'Any'}, 'default': None},
-                    },
-                    'return_type': {'name': 'Any'},
-                    'description': None,
-                    'referenced_types': [],
-                    'is_async': False,
-                },
             },
         ]
     )
@@ -1427,36 +1203,6 @@ def test_tool_parameters_with_attribute_docstrings():
             'timeout': None,
             'defer_loading': False,
             'prefer_builtin': None,
-            'function_signature': {
-                'name': 'get_score',
-                'params': {
-                    'data': {
-                        'name': 'data',
-                        'type': {
-                            'name': 'Data',
-                            'description': None,
-                            'fields': {
-                                'a': {'name': 'a', 'type': {'name': 'int'}, 'required': True, 'description': None},
-                                'b': {'name': 'b', 'type': {'name': 'int'}, 'required': True, 'description': None},
-                            },
-                        },
-                        'default': None,
-                    }
-                },
-                'return_type': {'name': 'int'},
-                'description': None,
-                'referenced_types': [
-                    {
-                        'name': 'Data',
-                        'description': None,
-                        'fields': {
-                            'a': {'name': 'a', 'type': {'name': 'int'}, 'required': True, 'description': None},
-                            'b': {'name': 'b', 'type': {'name': 'int'}, 'required': True, 'description': None},
-                        },
-                    }
-                ],
-                'is_async': False,
-            },
         }
     )
 

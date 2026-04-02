@@ -421,8 +421,8 @@ def test_schema_hyphenated_tool_name():
     assert any('MyToolName' in rt.name for rt in sig.referenced_types)
 
 
-def test_tool_def_function_signature_matches_function_based():
-    """Tool.tool_def.function_signature matches a directly generated function signature."""
+def test_tool_def_function_signature_from_schema():
+    """Tool.tool_def.function_signature is generated from the JSON schema."""
 
     def my_tool(x: int, y: str = 'hello') -> bool:
         """A test tool."""
@@ -431,11 +431,24 @@ def test_tool_def_function_signature_matches_function_based():
     tool = Tool(my_tool)
     tool_def = tool.tool_def
 
-    # The cached signature should match a freshly generated one
-    cached_sig = tool_def.function_signature
+    sig = tool_def.function_signature
+    assert sig.name == 'my_tool'
+    assert 'x' in sig.params
+    assert 'y' in sig.params
+
+
+def test_function_schema_has_function_based_signature():
+    """FunctionSchema.function_signature uses inspect for richer type info."""
+
+    def my_tool(x: int, y: str = 'hello') -> bool:
+        """A test tool."""
+        return True  # pragma: no cover
+
+    tool = Tool(my_tool)
+    sig = tool.function_schema.function_signature
     fresh_sig = FunctionSignature.from_function(my_tool, name='my_tool', description=tool.description)
 
-    assert str(cached_sig) == str(fresh_sig)
+    assert str(sig) == str(fresh_sig)
 
 
 def test_tool_definition_function_signature_computed_from_schema():
