@@ -1010,10 +1010,28 @@ class Model(ABC):
         if model_request_parameters.instruction_parts is not None:
             return model_request_parameters.instruction_parts or None
 
-        # Fallback: synthesize from message history for direct model.request() callers
+        # Fallback: synthesize from message history for direct model.request() callers.
+        # Mirrors the last-two-requests logic from _get_instructions: if the most recent
+        # request only has tool-return/retry-prompt parts (a "mock" request for result tools),
+        # use the instructions from the second-to-most-recent request.
+        last_two_requests: list[ModelRequest] = []
         for message in reversed(messages):
-            if isinstance(message, ModelRequest) and message.instructions is not None:
-                return [InstructionPart(content=message.instructions)]
+            if isinstance(message, ModelRequest):
+                last_two_requests.append(message)
+                if len(last_two_requests) == 2:
+                    break
+                if message.instructions is not None:
+                    return [InstructionPart(content=message.instructions)]
+
+        if len(last_two_requests) == 2:
+            most_recent = last_two_requests[0]
+            second = last_two_requests[1]
+            if (
+                all(p.part_kind == 'tool-return' or p.part_kind == 'retry-prompt' for p in most_recent.parts)
+                and second.instructions is not None
+            ):
+                return [InstructionPart(content=second.instructions)]
+
         return None
 
 

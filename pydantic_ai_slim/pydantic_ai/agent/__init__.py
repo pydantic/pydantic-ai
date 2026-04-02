@@ -1482,6 +1482,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                             state.message_history,
                             graph_deps.new_message_index,
                             run_metadata,
+                            model_request_parameters=state.last_model_request_parameters,
                         )
                     )
             finally:
@@ -1530,6 +1531,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: list[_messages.ModelMessage],
         new_message_index: int,
         metadata: dict[str, Any] | None = None,
+        model_request_parameters: models.ModelRequestParameters | None = None,
     ) -> dict[str, str | int | float | bool]:
         if settings.version == 1:
             attrs = {
@@ -1538,8 +1540,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 )
             }
         else:
-            # Store the last instructions here for convenience
-            last_instructions = InstrumentedModel._get_instructions(message_history)  # pyright: ignore[reportPrivateUsage]
+            last_instructions = InstrumentedModel._get_instructions(message_history, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
             attrs: dict[str, Any] = {
                 'pydantic_ai.all_messages': json.dumps(settings.messages_to_otel_messages(list(message_history))),
                 **settings.system_instructions_attributes(last_instructions),

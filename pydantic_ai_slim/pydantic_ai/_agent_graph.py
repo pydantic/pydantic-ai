@@ -82,6 +82,8 @@ class GraphAgentState:
     metadata: dict[str, Any] | None = None
     last_max_tokens: int | None = None
     """Last-resolved `max_tokens` from model settings, used only in error messages."""
+    last_model_request_parameters: models.ModelRequestParameters | None = None
+    """Last-resolved model request parameters, used for OTel span attributes."""
 
     def check_incomplete_tool_call(self) -> None:
         """Raise `IncompleteToolCall` if the last model response was truncated mid-tool-call."""
@@ -842,6 +844,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         messages = _clean_message_history(messages)
 
         ctx.state.last_max_tokens = model_settings.get('max_tokens') if model_settings else None
+        ctx.state.last_model_request_parameters = model_request_parameters
         usage = ctx.state.usage
         if ctx.deps.usage_limits.count_tokens_before_request:
             # Copy to avoid modifying the original usage object with the counted usage
