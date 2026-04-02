@@ -4,7 +4,9 @@ import asyncio
 import contextvars
 import functools
 import os
+import threading
 from collections.abc import AsyncIterator
+from concurrent.futures import ThreadPoolExecutor
 from importlib.metadata import distributions
 
 import pytest
@@ -190,9 +192,6 @@ async def test_run_in_executor_with_disable_threads() -> None:
 
 
 async def test_run_in_executor_with_custom_executor() -> None:
-    import threading
-    from concurrent.futures import ThreadPoolExecutor
-
     main_thread = threading.current_thread()
 
     def sync_func() -> threading.Thread:
@@ -209,8 +208,6 @@ async def test_run_in_executor_with_custom_executor() -> None:
 
 
 async def test_run_in_executor_custom_executor_preserves_context_vars() -> None:
-    from concurrent.futures import ThreadPoolExecutor
-
     ctx_var = contextvars.ContextVar('test_var', default='default')
     ctx_var.set('custom_value')
 
@@ -224,9 +221,6 @@ async def test_run_in_executor_custom_executor_preserves_context_vars() -> None:
 
 
 async def test_disable_threads_takes_priority_over_custom_executor() -> None:
-    import threading
-    from concurrent.futures import ThreadPoolExecutor
-
     from pydantic_ai._utils import disable_threads
 
     main_thread = threading.current_thread()

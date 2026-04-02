@@ -31,7 +31,7 @@ class ThreadExecutor(AbstractCapability[Any]):
     from pydantic_ai.capabilities import ThreadExecutor
 
     executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix='agent-worker')
-    agent = Agent('openai:gpt-4o', capabilities=[ThreadExecutor(executor)])
+    agent = Agent('openai:gpt-5.2', capabilities=[ThreadExecutor(executor)])
     ```
 
     To set an executor for all agents globally, use

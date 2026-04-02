@@ -1326,7 +1326,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         [`ThreadPoolExecutor`][concurrent.futures.ThreadPoolExecutor] (or any
         [`Executor`][concurrent.futures.Executor]) to control thread lifecycle:
 
-        ```python {test="skip"}
+        ```python {test="skip" lint="skip"}
         from concurrent.futures import ThreadPoolExecutor
         from contextlib import asynccontextmanager
 

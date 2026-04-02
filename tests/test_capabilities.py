@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import threading
 from collections.abc import AsyncIterable, AsyncIterator, Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -21,6 +23,7 @@ from pydantic_ai.capabilities import (
     ImageGeneration,
     PrefixTools,
     Thinking,
+    ThreadExecutor,
     Toolset,
     WebFetch,
     WebSearch,
@@ -8098,11 +8101,6 @@ class TestCtxAgentInCapability:
 
 
 async def test_thread_executor_capability() -> None:
-    import threading
-    from concurrent.futures import ThreadPoolExecutor
-
-    from pydantic_ai.capabilities import ThreadExecutor
-
     tool_threads: list[str] = []
 
     def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -8128,9 +8126,6 @@ async def test_thread_executor_capability() -> None:
 
 
 async def test_thread_executor_static_method() -> None:
-    import threading
-    from concurrent.futures import ThreadPoolExecutor
-
     tool_threads: list[str] = []
 
     def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
