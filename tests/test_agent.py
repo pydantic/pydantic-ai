@@ -8982,6 +8982,23 @@ async def test_image_output_validators_run_stream():
 
     assert isinstance(result, BinaryImage)
     assert result.data == b'modified', 'validator should be able to modify the output'
+    assert stream.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Give me an image', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[FilePart(content=BinaryImage(data=b'original', media_type='image/png'))],
+                model_name='image-model',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                provider_url='https://test.example.com',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 # endregion
