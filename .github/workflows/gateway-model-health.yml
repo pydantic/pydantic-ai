@@ -16,6 +16,8 @@ permissions:
 
 jobs:
   gateway-model-health:
+    environment:
+      name: gateway-model-health
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
