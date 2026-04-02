@@ -39,6 +39,12 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
+from pydantic_ai.models.bedrock import (
+    BedrockConverseModel,
+    BedrockModelName,
+    BedrockModelSettings,
+    _AsyncIteratorWrapper,
+)
 from pydantic_ai.builtin_tools import CodeExecutionTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
@@ -346,6 +352,23 @@ async def test_bedrock_count_tokens_non_http_error():
     assert exc_info.value.message == snapshot(
         'An error occurred (TestException) when calling the count_tokens operation: broken connection'
     )
+
+
+@pytest.mark.anyio
+async def test_async_iterator_wrapper_runtime_error_non_stop_iteration():
+    class BadIterator:
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            err = RuntimeError("boom")
+            err.__cause__ = ValueError("not stop iteration")
+            raise err
+
+    wrapper = _AsyncIteratorWrapper(BadIterator())
+
+    with pytest.raises(RuntimeError):
+        await wrapper.__anext__()
 
 
 def _bedrock_arn(resource: str) -> str:
