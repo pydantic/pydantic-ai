@@ -531,7 +531,7 @@ async def test_run_stream_response_error():
             '<response>',
             "<tool-call name='unknown_tool'>None",
             "</tool-call name='unknown_tool'>",
-            "<error type='UnexpectedModelBehavior'>Exceeded maximum retries (1) for output validation</error>",
+            "<error type='UnexpectedModelBehavior'>Tool 'unknown_tool' exceeded max retries count of 1</error>",
             '</response>',
             '</stream>',
         ]

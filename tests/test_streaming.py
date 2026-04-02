@@ -770,7 +770,7 @@ async def test_call_tool_wrong_name():
         return x
 
     with capture_run_messages() as messages:
-        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(0\) for output validation'):
+        with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'foobar' exceeded max retries count of 0"):
             async with agent.run_stream('hello'):
                 pass
 

@@ -1443,6 +1443,7 @@ async def process_tool_calls(  # noqa: C901
                 else:
                     validated = await tool_manager.validate_tool_call(call)
             except exceptions.UnexpectedModelBehavior:
+                ctx.state.check_incomplete_tool_call()
                 yield _messages.FunctionToolCallEvent(call, args_valid=False)
                 raise
             validated_calls[call.tool_call_id] = validated
