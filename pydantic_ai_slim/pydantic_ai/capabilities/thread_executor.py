@@ -24,7 +24,7 @@ class ThreadExecutor(AbstractCapability[Any]):
     This capability provides a bounded [`ThreadPoolExecutor`][concurrent.futures.ThreadPoolExecutor]
     (or any [`Executor`][concurrent.futures.Executor]) to use instead, scoped to agent runs:
 
-    ```python {test="skip"}
+    ```python
     from concurrent.futures import ThreadPoolExecutor
 
     from pydantic_ai import Agent
