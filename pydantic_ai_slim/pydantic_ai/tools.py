@@ -638,4 +638,11 @@ class _FunctionToolDefinition(ToolDefinition):
             )
         return super().function_signature
 
-    __repr__ = _utils.dataclasses_no_defaults_repr
+    def __repr__(self) -> str:
+        # Show as ToolDefinition so this subclass is invisible to users.
+        kv_pairs = (
+            f'{f.name}={getattr(self, f.name)!r}'
+            for f in dataclass_fields(self)
+            if f.repr and getattr(self, f.name) != f.default
+        )
+        return f'ToolDefinition({", ".join(kv_pairs)})'

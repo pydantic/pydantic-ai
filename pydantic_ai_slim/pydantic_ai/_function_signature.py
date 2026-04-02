@@ -1,19 +1,20 @@
-"""Generate Python function signatures from functions and JSON schemas.
+"""Generate function signatures from functions and JSON schemas.
 
 This module provides utilities to represent tool definitions as human-readable
-Python function signatures, which LLMs can understand more easily than raw
-JSON schemas. Used by code mode to present tools as callable Python functions.
+function signatures, which LLMs can understand more easily than raw
+JSON schemas. Used by code mode to present tools as callable functions.
 """
 
 from __future__ import annotations
 
+import inspect
 import json
 import re
 import types
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from inspect import Parameter, Signature as InspectSignature, signature
-from typing import Any, Literal, TypeAlias, Union, cast, get_origin
+from typing import Any, Literal, TypeAlias, Union, cast, get_args, get_origin
 
 from pydantic import BaseModel, TypeAdapter
 from typing_extensions import get_type_hints
@@ -233,12 +234,11 @@ def _annotation_to_type_expr(
 
     # Handle Python 3.10+ union syntax (X | Y creates types.UnionType)
     if isinstance(annotation, types.UnionType):
-        args = getattr(annotation, '__args__', ())
-        members = [_annotation_to_type_expr(arg, referenced_types) for arg in args]
+        members = [_annotation_to_type_expr(arg, referenced_types) for arg in get_args(annotation)]
         return UnionTypeExpr(members=members)
 
-    origin = getattr(annotation, '__origin__', None)
-    args = getattr(annotation, '__args__', None)
+    origin = get_origin(annotation)
+    args = get_args(annotation)
 
     if origin is not None:
         if args:
@@ -291,14 +291,13 @@ def _collect_referenced_types(
         return
 
     # Handle Python 3.10+ union syntax (X | Y creates types.UnionType)
-    # where get_origin() returns None but __args__ is still present
     if isinstance(annotation, types.UnionType):
-        for arg in annotation.__args__:
+        for arg in get_args(annotation):
             _collect_referenced_types(arg, referenced_types, tool_name, path, mode=mode)
         return
 
     origin = get_origin(annotation)
-    args = getattr(annotation, '__args__', None)
+    args = get_args(annotation)
     if origin is not None and args:
         for arg in args:
             _collect_referenced_types(arg, referenced_types, tool_name, path, mode=mode)
@@ -363,6 +362,7 @@ def function_to_signature(
         return_type=return_type,
         docstring=description,
         referenced_types=list(referenced_types.values()),
+        is_async=inspect.iscoroutinefunction(func),
     )
 
 

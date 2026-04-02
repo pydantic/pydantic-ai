@@ -17,8 +17,6 @@ from pydantic_ai._function_signature import (
     TypeFieldSignature,
     TypeSignature,
     UnionTypeExpr,
-    _annotation_to_type_expr,  # pyright: ignore[reportPrivateUsage]
-    _to_pascal_case,  # pyright: ignore[reportPrivateUsage]
     collect_unique_referenced_types,
     dedup_referenced_types,
     function_to_signature,
@@ -374,16 +372,43 @@ def test_structurally_equal():
     assert not ts1.structurally_equal(ts3)
 
 
-def test_to_pascal_case_digit_prefix():
-    """PascalCase of a name starting with digits gets a leading underscore."""
-    assert _to_pascal_case('123_tool') == '_123Tool'
+def test_schema_nested_object_name_with_digit_prefix():
+    """Tool names starting with digits get valid PascalCase TypedDict names with leading underscore."""
+    sig = schema_to_signature(
+        name='123_tool',
+        parameters_schema={
+            'type': 'object',
+            'properties': {
+                'config': {
+                    'type': 'object',
+                    'properties': {'key': {'type': 'string'}},
+                    'required': ['key'],
+                },
+            },
+            'required': ['config'],
+        },
+    )
+    # The nested object should get a name like _123Tool + Config
+    assert any('_123Tool' in rt.name for rt in sig.referenced_types)
 
 
-def test_to_pascal_case_edge_cases():
-    """Edge cases: empty string, all-digits, hyphenated."""
-    assert _to_pascal_case('') == ''
-    assert _to_pascal_case('42') == '_42'
-    assert _to_pascal_case('my-tool-name') == 'MyToolName'
+def test_schema_hyphenated_tool_name():
+    """Hyphenated tool names (e.g. from MCP) produce valid PascalCase TypedDict names."""
+    sig = schema_to_signature(
+        name='my-tool-name',
+        parameters_schema={
+            'type': 'object',
+            'properties': {
+                'data': {
+                    'type': 'object',
+                    'properties': {'value': {'type': 'integer'}},
+                    'required': ['value'],
+                },
+            },
+            'required': ['data'],
+        },
+    )
+    assert any('MyToolName' in rt.name for rt in sig.referenced_types)
 
 
 def test_tool_def_function_signature_matches_function_based():
@@ -471,7 +496,7 @@ def test_function_signature_special_params():
         return x  # pragma: no cover
 
     assert str(function_to_signature(with_ctx, name='with_ctx')) == snapshot("""\
-async def with_ctx(*, x: int) -> int:
+def with_ctx(*, x: int) -> int:
     ...\
 """)
 
@@ -481,7 +506,7 @@ async def with_ctx(*, x: int) -> int:
     assert str(
         function_to_signature(no_annot, name='no_annot')  # pyright: ignore[reportUnknownArgumentType]
     ) == snapshot("""\
-async def no_annot(*, x: Any) -> Any:
+def no_annot(*, x: Any) -> Any:
     ...\
 """)
 
@@ -511,7 +536,7 @@ def test_function_signature_union_and_model_types():
 
     sig = function_to_signature(complex_func, name='complex_func')
     assert str(sig) == snapshot("""\
-async def complex_func(*, a: int | str, b: int | str, c: int | None = None, d: _UserInfo | None = None) -> _UserInfo:
+def complex_func(*, a: int | str, b: int | str, c: int | None = None, d: _UserInfo | None = None) -> _UserInfo:
     ...\
 """)
     assert [str(t) for t in sig.referenced_types] == snapshot(
@@ -905,11 +930,20 @@ def test_function_signature_literal_annotation():
     assert "Literal['a', 'b']" in str(sig)
 
 
-def test_annotation_to_type_expr_bare_generic():
-    """Bare generic (origin but no type args) returns the origin's type name."""
-    # typing.List has __origin__=list but no __args__
-    result = _annotation_to_type_expr(typing.List, {})  # noqa: UP006
-    assert result == 'list'
+def test_function_with_bare_generic_annotation():
+    """Bare generic (e.g. `typing.List` without type args) renders as the base type name."""
+    # Create a function with bare generic annotation via a helper module
+    # that doesn't use `from __future__ import annotations`
+    import types as t
+
+    mod = t.ModuleType('_test_bare_generic')
+    mod.__dict__['List'] = list
+    exec(
+        compile('def func(items: List) -> None: ...', '<test>', 'exec'),
+        mod.__dict__,
+    )
+    sig = function_to_signature(mod.func)
+    assert 'items: list' in str(sig)
 
 
 def test_function_signature_nameerror_fallback():
@@ -1070,7 +1104,7 @@ def test_function_signature_root_model():
     sig = function_to_signature(func_with_root_model, name='func_with_root_model')
     # RootModel produces a non-object schema, so it's referenced by name but not as a TypedDict
     assert str(sig) == snapshot("""\
-async def func_with_root_model(*, x: _IntList) -> None:
+def func_with_root_model(*, x: _IntList) -> None:
     ...\
 """)
     assert sig.referenced_types == []
@@ -1083,7 +1117,7 @@ def test_function_signature_recursive_model():
 
     sig = function_to_signature(func_with_tree, name='func_with_tree')
     assert str(sig) == snapshot("""\
-async def func_with_tree(*, x: _TreeNode) -> None:
+def func_with_tree(*, x: _TreeNode) -> None:
     ...\
 """)
     assert len(sig.referenced_types) == 1
