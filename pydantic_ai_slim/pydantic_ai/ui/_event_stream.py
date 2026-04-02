@@ -313,12 +313,11 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case BuiltinToolReturnPart():
                 async for e in self.handle_builtin_tool_return(part):
                     yield e
-            case FilePart():  # pragma: no branch
+            case FilePart():
                 async for e in self.handle_file(part):
                     yield e
-            case CompactionPart():  # pragma: no cover
-                async for e in self.handle_compaction_start(part):
-                    yield e
+            case CompactionPart():
+                pass
 
     async def handle_part_delta(self, event: PartDeltaEvent) -> AsyncIterator[EventT]:
         """Handle a PartDeltaEvent.
@@ -378,12 +377,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case BuiltinToolCallPart():
                 async for e in self.handle_builtin_tool_call_end(part):
                     yield e
-            case BuiltinToolReturnPart() | FilePart():  # pragma: no cover
+            case BuiltinToolReturnPart() | FilePart() | CompactionPart():  # pragma: no cover
                 # These don't have deltas, so they don't need to be ended.
                 pass
-            case CompactionPart():  # pragma: no cover
-                async for e in self.handle_compaction_end(part):
-                    yield e
 
     async def before_stream(self) -> AsyncIterator[EventT]:
         """Yield events before agent streaming starts.
@@ -500,24 +496,6 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         Args:
             part: The thinking part.
             followed_by_thinking: Whether the part is directly followed by another thinking part. In this case, you may not want to yield a "thinking-end" event yet.
-        """
-        return  # pragma: no cover
-        yield  # Make this an async generator
-
-    async def handle_compaction_start(self, part: CompactionPart) -> AsyncIterator[EventT]:
-        """Handle a `CompactionPart`.
-
-        Args:
-            part: The compaction part.
-        """
-        return  # pragma: no cover
-        yield  # Make this an async generator
-
-    async def handle_compaction_end(self, part: CompactionPart) -> AsyncIterator[EventT]:
-        """Handle the end of a `CompactionPart`.
-
-        Args:
-            part: The compaction part.
         """
         return  # pragma: no cover
         yield  # Make this an async generator

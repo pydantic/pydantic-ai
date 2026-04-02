@@ -36,6 +36,7 @@ def my_classifier(text: str) -> str:
 
 
 dataset = Dataset(
+    name='animal_classifier',
     cases=[
         Case(name='cat', inputs='The cat goes meow', expected_output='cat'),
         Case(name='dog', inputs='The dog barks', expected_output='dog'),
@@ -95,6 +96,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import ConfusionMatrixEvaluator
 
 dataset = Dataset(
+    name='animal_sounds',
     cases=[
         Case(inputs='meow', expected_output='cat'),
         Case(inputs='woof', expected_output='dog'),
@@ -136,6 +138,7 @@ def categorize(output: str) -> str:
 
 
 dataset = Dataset(
+    name='labels_example',
     cases=[Case(inputs='test', expected_output='positive')],
     evaluators=[ClassifyOutput()],
     report_evaluators=[
@@ -223,6 +226,7 @@ def calculate_confidence(output: str) -> float:
 
 
 dataset = Dataset(
+    name='precision_recall_example',
     cases=[
         Case(inputs='test 1', expected_output='cat'),
         Case(inputs='test 2', expected_output='dog'),
@@ -694,6 +698,7 @@ class AccuracyEvaluator(ReportEvaluator):
 
 
 dataset = Dataset(
+    name='full_example',
     cases=[
         Case(inputs='The cat meows', expected_output='cat'),
         Case(inputs='The dog barks', expected_output='dog'),

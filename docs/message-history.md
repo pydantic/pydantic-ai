@@ -341,7 +341,7 @@ reasons (filtering out sensitive information), to save costs on tokens, to give 
 custom processing logic.
 
 Pydantic AI provides a `history_processors` parameter on `Agent` that allows you to intercept and modify
-the message history before each model request.
+the message history before each model request. History processors can also be provided via the [`HistoryProcessor`][pydantic_ai.capabilities.HistoryProcessor] capability.
 
 !!! warning "History processors replace the message history"
     History processors replace the message history in the state with the processed messages, including the new user prompt part.
@@ -418,17 +418,17 @@ long_conversation_history: list[ModelMessage] = []  # Your long conversation his
 !!! warning "Be careful when slicing the message history"
     When slicing the message history, you need to make sure that tool calls and returns are paired, otherwise the LLM may return an error. For more details, refer to [this GitHub issue](https://github.com/pydantic/pydantic-ai/issues/2050#issuecomment-3019976269).
 
-#### `HistoryProcessorContext` parameter
+#### `RunContext` parameter
 
-History processors can optionally accept a [`HistoryProcessorContext`][pydantic_ai.tools.HistoryProcessorContext] parameter to access
+History processors can optionally accept a [`RunContext`][pydantic_ai.tools.RunContext] parameter to access
 additional information about the current run, such as dependencies, model information, and usage statistics:
 
 ```python {title="context_aware_processor.py"}
-from pydantic_ai import Agent, HistoryProcessorContext, ModelMessage
+from pydantic_ai import Agent, ModelMessage, RunContext
 
 
 def context_aware_processor(
-    ctx: HistoryProcessorContext[None],
+    ctx: RunContext[None],
     messages: list[ModelMessage],
 ) -> list[ModelMessage]:
     # Access current usage
@@ -443,25 +443,6 @@ agent = Agent('openai:gpt-5.2', history_processors=[context_aware_processor])
 ```
 
 This allows for more sophisticated message processing based on the current state of the agent run.
-
-#### Track usage
-
-History processors can optionally track usage by additionally returning RunUsage or RequestUsage:
-
-```python {title="track_usage_processor.py"}
-from pydantic_ai import Agent, ModelMessage, RequestUsage
-
-
-def processor_with_usage(
-    messages: list[ModelMessage],
-) -> tuple[list[ModelMessage], RequestUsage]:
-
-    return messages, RequestUsage(input_tokens=10, output_tokens=5)
-
-agent = Agent('openai:gpt-5.2', history_processors=[processor_with_usage])
-```
-
-This allows for usage tracking to include the processing done in the history processor.
 
 #### Summarize Old Messages
 

@@ -17,7 +17,6 @@ from pydantic_ai.messages import (
     BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
-    CompactionPart,
     DocumentUrl,
     FilePart,
     FunctionToolResultEvent,
@@ -30,6 +29,7 @@ from pydantic_ai.messages import (
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -69,7 +69,7 @@ with try_import() as starlette_import_successful:
         load_provider_metadata,
     )
     from pydantic_ai.ui.vercel_ai.request_types import (
-        CompactionUIPart,
+        DataUIPart,
         DynamicToolApprovalRespondedPart,
         DynamicToolInputAvailablePart,
         DynamicToolInputStreamingPart,
@@ -3434,6 +3434,72 @@ async def test_adapter_load_messages():
     )
 
 
+async def test_adapter_load_messages_with_data_ui_part_in_user_message():
+    data = SubmitMessage(
+        trigger='submit-message',
+        id='bvQXcnrJ4OA2iRKU',
+        messages=[
+            UIMessage(
+                id='foobar',
+                role='system',
+                parts=[
+                    TextUIPart(
+                        text='You are a helpful assistant.',
+                    ),
+                ],
+            ),
+            UIMessage(
+                id='BeuwNtYIjJuniHbR',
+                role='user',
+                parts=[
+                    TextUIPart(
+                        text='Hi',
+                    ),
+                    DataUIPart(
+                        id='custom-data',
+                        type='data-custom',
+                        data={'key': 'value'},
+                    ),
+                ],
+            ),
+            UIMessage(
+                id='bylfKVeyoR901rax',
+                role='assistant',
+                parts=[
+                    TextUIPart(
+                        text='Hello',
+                        state='streaming',
+                    ),
+                ],
+            ),
+        ],
+    )
+
+    messages = VercelAIAdapter.load_messages(data.messages)
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='You are a helpful assistant.',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='Hi',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Hello'),
+                ],
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
 async def test_adapter_dump_messages():
     """Test dumping Pydantic AI messages to Vercel AI format."""
     messages = [
@@ -3477,110 +3543,6 @@ async def test_adapter_dump_messages():
                 'metadata': None,
                 'parts': [{'type': 'text', 'text': 'Hi there!', 'state': 'done', 'provider_metadata': None}],
             },
-        ]
-    )
-
-
-async def test_adapter_load_compacted_messages():
-    data = SubmitMessage(
-        trigger='submit-message',
-        id='bvQXcnrJ4OA2iRKU',
-        messages=[
-            UIMessage(
-                id='BeuwNtYIjJuniHbR',
-                role='assistant',
-                parts=[
-                    CompactionUIPart(
-                        text=None,
-                        state='done',
-                        provider_metadata=dump_provider_metadata(
-                            id='cmp_082a4bdb11d5c65401698239d862108193ae5867099c6aee7f',
-                            provider_name='openai',
-                            provider_details={
-                                'id': 'cmp_082a4bdb11d5c65401698239d862108193ae5867099c6aee7f',
-                                'encrypted_content': 'gAAAAABpgjnc57C_-CW7hUXdiloPyRHOrQe98Tp38r6-L3ueZ0rUE9QKreCZ1MgHEcBlmL1O1DY4e54DHGitYKFHAbQRmdPB1eG_Pux0rGcUCrR-wevYzeUgj3sbbT7fkYS-9oA-5La8qHCg3urgxXU0s8bpjD7onMDN0uOvc0LEL4uIatixzt2abTGuXRp-F3XzB-K_yKYD5GumHOLCb8RyhA1LguP42iVUn5SZKTZu61_Z0_Tf-6veuvgID7cbcpNkzsaOTi-tJDCHK4oQPU_MnaevdswPoQLee_AWQ_V0Ncp2GRdtKdhOgRcdTnzlkNdC0rlviQIgydE62seb1a24ZT_IJNU_FrJucm1K9kVXc1yt9V9BK2Y9RW8RtQihflZQsKYajGU_b3XPlIzG0xs9Bie8V7yUh3mk5tISA118Hj7l6qhwx8bMl9ng3eseJ4fnzk22YkzSoqNAxb-0TnpcZEXht46f4SU27-Ny_om_fNZ2wFo9AXE7b3CUMWBqgNHVKGJMu1T17_7GSkIL1NcbVRKVuz9kNJ9gFbDJplhhI5BXrkFtx5G9muKvnUql-I6-uFPttdbGO04cP-8FsljV0A1yKNZZC44tB7SyN_m5RzP6inc5_DZzHILnF5FMCsfC5wIcDxRTdNI0UK--BJd4F_YkPPM-iDeE8JQBo7Th6j-j_xgCab5pz54fHBpsl32OmjYtS7pTnr7Ev1g_bFhiGdYyj-PZfruZ7VotRaVOmhlaDNzuqiM-fy3bGgwlCPCdrlyh5ghRM80w8qFcQmV619YVR39nDfJFcRqkFF48E_S9P6PuUdXlaoCUmdAc06ZkNi1096-dRxqPv2li9LWpap2T00wXQ0osRAYImkTx4QYu34BWo09wSG8FQkmuBaeO9O01V8YfSlnqlTM6hP5obiQJDdYSeVVCzO6JLXFWP4F9Ot5YWjmleRU9atCVcaXBlPV1hvJZzNJPgCignUOINoIR97HKoyErzr52zI6qqM0RWEgvUeaTzIJRE1MA57aYT_NmoYd9RqWX53GJaN1fnbO8AYtMvR_EhhH8v3WpHJhO5qVUD8q4hlussmfsHRX2-s6u-5hz4hVi37GtUTnahuZwncp0fBF6y0MbHTiT5pFszm_meBjPKcvOX6NsjO3pLYh2qEGotwS-NVhTtuvLPPJcq6ytuF5i-ztH_12lCUCnJwT-PyY9jIvNsrMsub7IqaeUWXDI0LKStjec-MQr_Jpp3qrt57li_qgefgo13VKdDsmqVj86NwSDwgbf643BflUFeu7OQRV1irbuK5gtwwlVv34uCQBLMYmeVtBlCN8UCWFIb82lFqwt9VtJPbQxBCOkCLPkerthTGLF8Gkg9sEInBNi8zy0qHIwM4tY2vybdo3ORT-ilbkQ-jVdS19979dqaFDxO49fzYvonUeLawvRZO7gb0jb_k99Tj4v77SBUE-q9GH8fVTMBqQH-fOqXixmPXJgYQTkeO2a8_SuYee-3U9e8IftBSupeerpPEYCo2Q4ONNDQg0IWk_wIvmTki5T0_LHVrP60L_fGFC-5BXXdc4WQV1SosSZHs9zZjFb-HmmK5rCm2Oelo_hx8gDN_3ctpm4OeK5Uu3b98i_hE6yJ8A7JswW3vXGidDMPNnTJUOAwi_T7qdl53ZvcX55a3OBkohDw1RgDhqJ00gv753h9fEz6eGcznIS0wVG_2zcGvahMMOsWFA2JAhhnrl0u5DlsBxhCIrISpI1D2SAXrhldnB-63bANAqpoQAxQnRzkHy-vQTJBjetVMm4_R3MIfZePa91k2PQr_yFHxlGpmRqF1a5JETn695Ewrz64pVSt_66YP2yO0EFgBjoULqzjPkqMcNWg8LEkYinOtbUEzlwM3ixnVfEGYnXTTjruOzRUDrur83O_wykacoXWSXRY1Yx0ZCDS1mTXJLo1bqgSah4D_VIDzTGP595C1tdoT9thCRC9A0tFSGGCxtXe-sTBIKULLC95rnnzVJQ3Nm6gZTaNrsh6ymEZ_YqdQaQGgcyCO9MAehfUTSeZ7lNv_0qtBsYthFFQHA2j1o2nE8sIhx3gpxhygyJx4irmArh6-LrcOc_hHy5aNOdQ6SCyC2hYaLVYZeitSWflGUfNInNo4f43wp9wyEPwC9MmQ_bbdCIH-7CpODwjLPhfa_GxOcErvm3ILSfMBZtyLHZVUVkN-I63-qLAuw9MXvhn2uOFvQij27DwUqgfOsk2UGu3X3IkYvrOu3mY2LFMyRpVtR5Fg35aBQ7qI0o0jcjfdb1rXxk0gynN5LQ4TTc8Q-MphoDqgjx0hB98DbfJgTeMkbLLy2zDfesn37cio9u2C0IGqYFfrLlkEBQehIvtG8MJBVY5xUHZccq_mpMTmVjLDSjEoNCoWJ3eyjZkD4hNArQXRPQwWcETs1xvsuojU8zJtFtChnH4-L8',
-                                'type': 'compaction',
-                                'created_by': None,
-                            },
-                        ),
-                    )
-                ],
-            ),
-        ],
-    )
-
-    messages = VercelAIAdapter.load_messages(data.messages)
-    assert messages == snapshot(
-        [
-            ModelResponse(
-                parts=[
-                    CompactionPart(
-                        id='cmp_082a4bdb11d5c65401698239d862108193ae5867099c6aee7f',
-                        provider_name='openai',
-                        provider_details={
-                            'id': 'cmp_082a4bdb11d5c65401698239d862108193ae5867099c6aee7f',
-                            'encrypted_content': 'gAAAAABpgjnc57C_-CW7hUXdiloPyRHOrQe98Tp38r6-L3ueZ0rUE9QKreCZ1MgHEcBlmL1O1DY4e54DHGitYKFHAbQRmdPB1eG_Pux0rGcUCrR-wevYzeUgj3sbbT7fkYS-9oA-5La8qHCg3urgxXU0s8bpjD7onMDN0uOvc0LEL4uIatixzt2abTGuXRp-F3XzB-K_yKYD5GumHOLCb8RyhA1LguP42iVUn5SZKTZu61_Z0_Tf-6veuvgID7cbcpNkzsaOTi-tJDCHK4oQPU_MnaevdswPoQLee_AWQ_V0Ncp2GRdtKdhOgRcdTnzlkNdC0rlviQIgydE62seb1a24ZT_IJNU_FrJucm1K9kVXc1yt9V9BK2Y9RW8RtQihflZQsKYajGU_b3XPlIzG0xs9Bie8V7yUh3mk5tISA118Hj7l6qhwx8bMl9ng3eseJ4fnzk22YkzSoqNAxb-0TnpcZEXht46f4SU27-Ny_om_fNZ2wFo9AXE7b3CUMWBqgNHVKGJMu1T17_7GSkIL1NcbVRKVuz9kNJ9gFbDJplhhI5BXrkFtx5G9muKvnUql-I6-uFPttdbGO04cP-8FsljV0A1yKNZZC44tB7SyN_m5RzP6inc5_DZzHILnF5FMCsfC5wIcDxRTdNI0UK--BJd4F_YkPPM-iDeE8JQBo7Th6j-j_xgCab5pz54fHBpsl32OmjYtS7pTnr7Ev1g_bFhiGdYyj-PZfruZ7VotRaVOmhlaDNzuqiM-fy3bGgwlCPCdrlyh5ghRM80w8qFcQmV619YVR39nDfJFcRqkFF48E_S9P6PuUdXlaoCUmdAc06ZkNi1096-dRxqPv2li9LWpap2T00wXQ0osRAYImkTx4QYu34BWo09wSG8FQkmuBaeO9O01V8YfSlnqlTM6hP5obiQJDdYSeVVCzO6JLXFWP4F9Ot5YWjmleRU9atCVcaXBlPV1hvJZzNJPgCignUOINoIR97HKoyErzr52zI6qqM0RWEgvUeaTzIJRE1MA57aYT_NmoYd9RqWX53GJaN1fnbO8AYtMvR_EhhH8v3WpHJhO5qVUD8q4hlussmfsHRX2-s6u-5hz4hVi37GtUTnahuZwncp0fBF6y0MbHTiT5pFszm_meBjPKcvOX6NsjO3pLYh2qEGotwS-NVhTtuvLPPJcq6ytuF5i-ztH_12lCUCnJwT-PyY9jIvNsrMsub7IqaeUWXDI0LKStjec-MQr_Jpp3qrt57li_qgefgo13VKdDsmqVj86NwSDwgbf643BflUFeu7OQRV1irbuK5gtwwlVv34uCQBLMYmeVtBlCN8UCWFIb82lFqwt9VtJPbQxBCOkCLPkerthTGLF8Gkg9sEInBNi8zy0qHIwM4tY2vybdo3ORT-ilbkQ-jVdS19979dqaFDxO49fzYvonUeLawvRZO7gb0jb_k99Tj4v77SBUE-q9GH8fVTMBqQH-fOqXixmPXJgYQTkeO2a8_SuYee-3U9e8IftBSupeerpPEYCo2Q4ONNDQg0IWk_wIvmTki5T0_LHVrP60L_fGFC-5BXXdc4WQV1SosSZHs9zZjFb-HmmK5rCm2Oelo_hx8gDN_3ctpm4OeK5Uu3b98i_hE6yJ8A7JswW3vXGidDMPNnTJUOAwi_T7qdl53ZvcX55a3OBkohDw1RgDhqJ00gv753h9fEz6eGcznIS0wVG_2zcGvahMMOsWFA2JAhhnrl0u5DlsBxhCIrISpI1D2SAXrhldnB-63bANAqpoQAxQnRzkHy-vQTJBjetVMm4_R3MIfZePa91k2PQr_yFHxlGpmRqF1a5JETn695Ewrz64pVSt_66YP2yO0EFgBjoULqzjPkqMcNWg8LEkYinOtbUEzlwM3ixnVfEGYnXTTjruOzRUDrur83O_wykacoXWSXRY1Yx0ZCDS1mTXJLo1bqgSah4D_VIDzTGP595C1tdoT9thCRC9A0tFSGGCxtXe-sTBIKULLC95rnnzVJQ3Nm6gZTaNrsh6ymEZ_YqdQaQGgcyCO9MAehfUTSeZ7lNv_0qtBsYthFFQHA2j1o2nE8sIhx3gpxhygyJx4irmArh6-LrcOc_hHy5aNOdQ6SCyC2hYaLVYZeitSWflGUfNInNo4f43wp9wyEPwC9MmQ_bbdCIH-7CpODwjLPhfa_GxOcErvm3ILSfMBZtyLHZVUVkN-I63-qLAuw9MXvhn2uOFvQij27DwUqgfOsk2UGu3X3IkYvrOu3mY2LFMyRpVtR5Fg35aBQ7qI0o0jcjfdb1rXxk0gynN5LQ4TTc8Q-MphoDqgjx0hB98DbfJgTeMkbLLy2zDfesn37cio9u2C0IGqYFfrLlkEBQehIvtG8MJBVY5xUHZccq_mpMTmVjLDSjEoNCoWJ3eyjZkD4hNArQXRPQwWcETs1xvsuojU8zJtFtChnH4-L8',
-                            'type': 'compaction',
-                            'created_by': None,
-                        },
-                    )
-                ],
-                timestamp=IsDatetime(),
-            )
-        ]
-    )
-
-
-async def test_adapter_dump_compacted_messages():
-    """Test dumping Pydantic AI messages to Vercel AI format."""
-    messages = [
-        ModelResponse(
-            parts=[
-                CompactionPart(
-                    id='cmp_082a4bdb11d5c65401698239d862108193ae5867099c6aee7f',
-                    provider_name='openai',
-                    provider_details={
-                        'id': 'cmp_082a4bdb11d5c65401698239d862108193ae5867099c6aee7f',
-                        'encrypted_content': 'gAAAAABpgjnc57C_-CW7hUXdiloPyRHOrQe98Tp38r6-L3ueZ0rUE9QKreCZ1MgHEcBlmL1O1DY4e54DHGitYKFHAbQRmdPB1eG_Pux0rGcUCrR-wevYzeUgj3sbbT7fkYS-9oA-5La8qHCg3urgxXU0s8bpjD7onMDN0uOvc0LEL4uIatixzt2abTGuXRp-F3XzB-K_yKYD5GumHOLCb8RyhA1LguP42iVUn5SZKTZu61_Z0_Tf-6veuvgID7cbcpNkzsaOTi-tJDCHK4oQPU_MnaevdswPoQLee_AWQ_V0Ncp2GRdtKdhOgRcdTnzlkNdC0rlviQIgydE62seb1a24ZT_IJNU_FrJucm1K9kVXc1yt9V9BK2Y9RW8RtQihflZQsKYajGU_b3XPlIzG0xs9Bie8V7yUh3mk5tISA118Hj7l6qhwx8bMl9ng3eseJ4fnzk22YkzSoqNAxb-0TnpcZEXht46f4SU27-Ny_om_fNZ2wFo9AXE7b3CUMWBqgNHVKGJMu1T17_7GSkIL1NcbVRKVuz9kNJ9gFbDJplhhI5BXrkFtx5G9muKvnUql-I6-uFPttdbGO04cP-8FsljV0A1yKNZZC44tB7SyN_m5RzP6inc5_DZzHILnF5FMCsfC5wIcDxRTdNI0UK--BJd4F_YkPPM-iDeE8JQBo7Th6j-j_xgCab5pz54fHBpsl32OmjYtS7pTnr7Ev1g_bFhiGdYyj-PZfruZ7VotRaVOmhlaDNzuqiM-fy3bGgwlCPCdrlyh5ghRM80w8qFcQmV619YVR39nDfJFcRqkFF48E_S9P6PuUdXlaoCUmdAc06ZkNi1096-dRxqPv2li9LWpap2T00wXQ0osRAYImkTx4QYu34BWo09wSG8FQkmuBaeO9O01V8YfSlnqlTM6hP5obiQJDdYSeVVCzO6JLXFWP4F9Ot5YWjmleRU9atCVcaXBlPV1hvJZzNJPgCignUOINoIR97HKoyErzr52zI6qqM0RWEgvUeaTzIJRE1MA57aYT_NmoYd9RqWX53GJaN1fnbO8AYtMvR_EhhH8v3WpHJhO5qVUD8q4hlussmfsHRX2-s6u-5hz4hVi37GtUTnahuZwncp0fBF6y0MbHTiT5pFszm_meBjPKcvOX6NsjO3pLYh2qEGotwS-NVhTtuvLPPJcq6ytuF5i-ztH_12lCUCnJwT-PyY9jIvNsrMsub7IqaeUWXDI0LKStjec-MQr_Jpp3qrt57li_qgefgo13VKdDsmqVj86NwSDwgbf643BflUFeu7OQRV1irbuK5gtwwlVv34uCQBLMYmeVtBlCN8UCWFIb82lFqwt9VtJPbQxBCOkCLPkerthTGLF8Gkg9sEInBNi8zy0qHIwM4tY2vybdo3ORT-ilbkQ-jVdS19979dqaFDxO49fzYvonUeLawvRZO7gb0jb_k99Tj4v77SBUE-q9GH8fVTMBqQH-fOqXixmPXJgYQTkeO2a8_SuYee-3U9e8IftBSupeerpPEYCo2Q4ONNDQg0IWk_wIvmTki5T0_LHVrP60L_fGFC-5BXXdc4WQV1SosSZHs9zZjFb-HmmK5rCm2Oelo_hx8gDN_3ctpm4OeK5Uu3b98i_hE6yJ8A7JswW3vXGidDMPNnTJUOAwi_T7qdl53ZvcX55a3OBkohDw1RgDhqJ00gv753h9fEz6eGcznIS0wVG_2zcGvahMMOsWFA2JAhhnrl0u5DlsBxhCIrISpI1D2SAXrhldnB-63bANAqpoQAxQnRzkHy-vQTJBjetVMm4_R3MIfZePa91k2PQr_yFHxlGpmRqF1a5JETn695Ewrz64pVSt_66YP2yO0EFgBjoULqzjPkqMcNWg8LEkYinOtbUEzlwM3ixnVfEGYnXTTjruOzRUDrur83O_wykacoXWSXRY1Yx0ZCDS1mTXJLo1bqgSah4D_VIDzTGP595C1tdoT9thCRC9A0tFSGGCxtXe-sTBIKULLC95rnnzVJQ3Nm6gZTaNrsh6ymEZ_YqdQaQGgcyCO9MAehfUTSeZ7lNv_0qtBsYthFFQHA2j1o2nE8sIhx3gpxhygyJx4irmArh6-LrcOc_hHy5aNOdQ6SCyC2hYaLVYZeitSWflGUfNInNo4f43wp9wyEPwC9MmQ_bbdCIH-7CpODwjLPhfa_GxOcErvm3ILSfMBZtyLHZVUVkN-I63-qLAuw9MXvhn2uOFvQij27DwUqgfOsk2UGu3X3IkYvrOu3mY2LFMyRpVtR5Fg35aBQ7qI0o0jcjfdb1rXxk0gynN5LQ4TTc8Q-MphoDqgjx0hB98DbfJgTeMkbLLy2zDfesn37cio9u2C0IGqYFfrLlkEBQehIvtG8MJBVY5xUHZccq_mpMTmVjLDSjEoNCoWJ3eyjZkD4hNArQXRPQwWcETs1xvsuojU8zJtFtChnH4-L8',
-                        'type': 'compaction',
-                        'created_by': None,
-                    },
-                )
-            ]
-        ),
-    ]
-
-    ui_messages = VercelAIAdapter.dump_messages(messages)
-
-    # we need to dump the BaseModels to dicts for `IsStr` to work properly in snapshot
-    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
-
-    assert ui_message_dicts == snapshot(
-        [
-            {
-                'id': IsStr(),
-                'role': 'assistant',
-                'metadata': None,
-                'parts': [
-                    {
-                        'type': 'compaction',
-                        'text': None,
-                        'state': 'done',
-                        'provider_metadata': {
-                            'pydantic_ai': {
-                                'id': 'cmp_082a4bdb11d5c65401698239d862108193ae5867099c6aee7f',
-                                'provider_name': 'openai',
-                                'provider_details': {
-                                    'id': 'cmp_082a4bdb11d5c65401698239d862108193ae5867099c6aee7f',
-                                    'encrypted_content': 'gAAAAABpgjnc57C_-CW7hUXdiloPyRHOrQe98Tp38r6-L3ueZ0rUE9QKreCZ1MgHEcBlmL1O1DY4e54DHGitYKFHAbQRmdPB1eG_Pux0rGcUCrR-wevYzeUgj3sbbT7fkYS-9oA-5La8qHCg3urgxXU0s8bpjD7onMDN0uOvc0LEL4uIatixzt2abTGuXRp-F3XzB-K_yKYD5GumHOLCb8RyhA1LguP42iVUn5SZKTZu61_Z0_Tf-6veuvgID7cbcpNkzsaOTi-tJDCHK4oQPU_MnaevdswPoQLee_AWQ_V0Ncp2GRdtKdhOgRcdTnzlkNdC0rlviQIgydE62seb1a24ZT_IJNU_FrJucm1K9kVXc1yt9V9BK2Y9RW8RtQihflZQsKYajGU_b3XPlIzG0xs9Bie8V7yUh3mk5tISA118Hj7l6qhwx8bMl9ng3eseJ4fnzk22YkzSoqNAxb-0TnpcZEXht46f4SU27-Ny_om_fNZ2wFo9AXE7b3CUMWBqgNHVKGJMu1T17_7GSkIL1NcbVRKVuz9kNJ9gFbDJplhhI5BXrkFtx5G9muKvnUql-I6-uFPttdbGO04cP-8FsljV0A1yKNZZC44tB7SyN_m5RzP6inc5_DZzHILnF5FMCsfC5wIcDxRTdNI0UK--BJd4F_YkPPM-iDeE8JQBo7Th6j-j_xgCab5pz54fHBpsl32OmjYtS7pTnr7Ev1g_bFhiGdYyj-PZfruZ7VotRaVOmhlaDNzuqiM-fy3bGgwlCPCdrlyh5ghRM80w8qFcQmV619YVR39nDfJFcRqkFF48E_S9P6PuUdXlaoCUmdAc06ZkNi1096-dRxqPv2li9LWpap2T00wXQ0osRAYImkTx4QYu34BWo09wSG8FQkmuBaeO9O01V8YfSlnqlTM6hP5obiQJDdYSeVVCzO6JLXFWP4F9Ot5YWjmleRU9atCVcaXBlPV1hvJZzNJPgCignUOINoIR97HKoyErzr52zI6qqM0RWEgvUeaTzIJRE1MA57aYT_NmoYd9RqWX53GJaN1fnbO8AYtMvR_EhhH8v3WpHJhO5qVUD8q4hlussmfsHRX2-s6u-5hz4hVi37GtUTnahuZwncp0fBF6y0MbHTiT5pFszm_meBjPKcvOX6NsjO3pLYh2qEGotwS-NVhTtuvLPPJcq6ytuF5i-ztH_12lCUCnJwT-PyY9jIvNsrMsub7IqaeUWXDI0LKStjec-MQr_Jpp3qrt57li_qgefgo13VKdDsmqVj86NwSDwgbf643BflUFeu7OQRV1irbuK5gtwwlVv34uCQBLMYmeVtBlCN8UCWFIb82lFqwt9VtJPbQxBCOkCLPkerthTGLF8Gkg9sEInBNi8zy0qHIwM4tY2vybdo3ORT-ilbkQ-jVdS19979dqaFDxO49fzYvonUeLawvRZO7gb0jb_k99Tj4v77SBUE-q9GH8fVTMBqQH-fOqXixmPXJgYQTkeO2a8_SuYee-3U9e8IftBSupeerpPEYCo2Q4ONNDQg0IWk_wIvmTki5T0_LHVrP60L_fGFC-5BXXdc4WQV1SosSZHs9zZjFb-HmmK5rCm2Oelo_hx8gDN_3ctpm4OeK5Uu3b98i_hE6yJ8A7JswW3vXGidDMPNnTJUOAwi_T7qdl53ZvcX55a3OBkohDw1RgDhqJ00gv753h9fEz6eGcznIS0wVG_2zcGvahMMOsWFA2JAhhnrl0u5DlsBxhCIrISpI1D2SAXrhldnB-63bANAqpoQAxQnRzkHy-vQTJBjetVMm4_R3MIfZePa91k2PQr_yFHxlGpmRqF1a5JETn695Ewrz64pVSt_66YP2yO0EFgBjoULqzjPkqMcNWg8LEkYinOtbUEzlwM3ixnVfEGYnXTTjruOzRUDrur83O_wykacoXWSXRY1Yx0ZCDS1mTXJLo1bqgSah4D_VIDzTGP595C1tdoT9thCRC9A0tFSGGCxtXe-sTBIKULLC95rnnzVJQ3Nm6gZTaNrsh6ymEZ_YqdQaQGgcyCO9MAehfUTSeZ7lNv_0qtBsYthFFQHA2j1o2nE8sIhx3gpxhygyJx4irmArh6-LrcOc_hHy5aNOdQ6SCyC2hYaLVYZeitSWflGUfNInNo4f43wp9wyEPwC9MmQ_bbdCIH-7CpODwjLPhfa_GxOcErvm3ILSfMBZtyLHZVUVkN-I63-qLAuw9MXvhn2uOFvQij27DwUqgfOsk2UGu3X3IkYvrOu3mY2LFMyRpVtR5Fg35aBQ7qI0o0jcjfdb1rXxk0gynN5LQ4TTc8Q-MphoDqgjx0hB98DbfJgTeMkbLLy2zDfesn37cio9u2C0IGqYFfrLlkEBQehIvtG8MJBVY5xUHZccq_mpMTmVjLDSjEoNCoWJ3eyjZkD4hNArQXRPQwWcETs1xvsuojU8zJtFtChnH4-L8',
-                                    'type': 'compaction',
-                                    'created_by': None,
-                                },
-                            }
-                        },
-                    }
-                ],
-            }
         ]
     )
 
@@ -4633,7 +4595,7 @@ async def test_adapter_dump_messages_with_invalid_json_args():
                         'tool_call_id': 'call_1',
                         'state': 'input-available',
                         'provider_executed': False,
-                        'input': '{invalid json',
+                        'input': {'INVALID_JSON': '{invalid json'},
                         'call_provider_metadata': None,
                         'approval': None,
                     }
@@ -4996,6 +4958,17 @@ async def test_adapter_load_messages_file_url_without_metadata():
                 ]
             )
         ]
+    )
+
+
+async def test_convert_user_prompt_part_text_content():
+    """Test converting a user prompt with only text content."""
+    from pydantic_ai.ui.vercel_ai._adapter import _convert_user_prompt_part  # pyright: ignore[reportPrivateUsage]
+
+    part = UserPromptPart(content=['Just some text', TextContent(content='More text', metadata={'key': 'value'})])
+    ui_parts = _convert_user_prompt_part(part)
+    assert ui_parts == snapshot(
+        [TextUIPart(text='Just some text', state='done'), TextUIPart(text='More text', state='done')]
     )
 
 

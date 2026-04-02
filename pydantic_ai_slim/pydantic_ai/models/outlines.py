@@ -32,6 +32,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -441,8 +442,9 @@ class OutlinesModel(Model):
                         elif isinstance(part.content, Sequence):
                             outlines_input: Sequence[str | Image] = []
                             for item in part.content:
-                                if isinstance(item, str):
-                                    outlines_input.append(item)
+                                if isinstance(item, str | TextContent):
+                                    text = item if isinstance(item, str) else item.content
+                                    outlines_input.append(text)
                                 elif isinstance(item, ImageUrl):
                                     image_content: DownloadedItem[bytes] = await download_item(
                                         item, data_format='bytes', type_format='mime'
@@ -487,8 +489,8 @@ class OutlinesModel(Model):
                             raise UserError(
                                 'File parts other than `BinaryImage` are not supported for Outlines models yet.'
                             )
-                    elif isinstance(part, CompactionPart):  # pragma: no cover
-                        # NOTE: We don't send CompactionPart to the providers
+                    elif isinstance(part, CompactionPart):
+                        # Compaction parts are not sent back to models that don't support compaction.
                         pass
                     else:
                         assert_never(part)

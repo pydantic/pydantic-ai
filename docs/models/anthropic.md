@@ -156,9 +156,6 @@ Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-wit
 3. **Cache Tool Definitions**: Set [`AnthropicModelSettings.anthropic_cache_tool_definitions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_tool_definitions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly
 4. **Cache All Messages**: Set [`AnthropicModelSettings.anthropic_cache_messages`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_messages] to `True` to automatically cache all messages
 
-!!! note "Amazon Bedrock"
-    When using `AsyncAnthropicBedrock`, the TTL parameter is automatically omitted from all cache control settings (including `CachePoint`, `anthropic_cache_instructions`, `anthropic_cache_tool_definitions`, and `anthropic_cache_messages`) because Bedrock doesn't support explicit TTL.
-
 ### Example 1: Automatic Message Caching
 
 Use `anthropic_cache_messages` to automatically cache all messages up to and including the newest user message:
@@ -347,3 +344,57 @@ print(f'Cache read tokens: {usage.cache_read_tokens}')
 - The cache point created by `anthropic_cache_messages` is **always preserved** (as it's the newest message cache point)
 - Additional `CachePoint` markers in messages are removed from oldest to newest when the limit is exceeded
 - This ensures critical caching (instructions/tools) is maintained while still benefiting from message-level caching
+
+## Message Compaction
+
+Anthropic supports [automatic context compaction](https://docs.anthropic.com/en/docs/build-with-claude/compaction) to manage long conversations. When input tokens exceed a configured threshold, the API automatically generates a summary that replaces older messages while preserving context.
+
+The easiest way to enable compaction is with the [`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction] capability:
+
+```python {title="anthropic_compaction.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicCompaction
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    capabilities=[AnthropicCompaction(token_threshold=100_000)],
+)
+```
+
+You can also use the provider-agnostic [`ProviderCompaction`][pydantic_ai.capabilities.ProviderCompaction] capability:
+
+```python {title="anthropic_compaction_unified.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import ProviderCompaction
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    capabilities=[ProviderCompaction(token_threshold=100_000)],
+)
+```
+
+The capability accepts:
+
+- **`token_threshold`** (default: 150,000, minimum: 50,000): Compaction triggers when input tokens exceed this value.
+- **`instructions`**: Custom instructions for how the summary should be generated.
+- **`pause_after_compaction`**: When `True`, the response stops after the compaction block with `stop_reason='compaction'`, allowing explicit handling before continuing.
+
+Alternatively, you can configure compaction directly via model settings using [`anthropic_context_management`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_context_management]:
+
+```python {title="anthropic_compaction_settings.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+agent = Agent('anthropic:claude-sonnet-4-6')
+result = agent.run_sync(
+    'Hello!',
+    model_settings=AnthropicModelSettings(
+        anthropic_context_management={
+            'edits': [{'type': 'compact_20260112', 'trigger': {'type': 'input_tokens', 'value': 100_000}}]
+        }
+    ),
+)
+```
+
+!!! note
+    Compaction blocks returned by Anthropic contain readable text summaries. They are automatically round-tripped in subsequent requests when included in the message history.

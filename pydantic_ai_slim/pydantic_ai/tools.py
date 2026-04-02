@@ -1,8 +1,9 @@
 from __future__ import annotations as _annotations
 
+import inspect
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, cast
+from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, Union, cast
 
 from pydantic import Discriminator, Tag
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
@@ -10,7 +11,7 @@ from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import ParamSpec, Self, TypeVar
 
 from . import _function_schema, _utils
-from ._run_context import AgentDepsT, HistoryProcessorContext, RunContext
+from ._run_context import AgentDepsT, RunContext
 from .builtin_tools import AbstractBuiltinTool
 from .exceptions import ModelRetry
 from .messages import RetryPromptPart, ToolCallPart, ToolReturn
@@ -20,7 +21,6 @@ __all__ = (
     'ArgsValidatorFunc',
     'DocstringFormat',
     'RunContext',
-    'HistoryProcessorContext',
     'SystemPromptFunc',
     'ToolFuncContext',
     'ToolFuncPlain',
@@ -28,6 +28,7 @@ __all__ = (
     'ToolParams',
     'ToolPrepareFunc',
     'ToolsPrepareFunc',
+    'AgentBuiltinTool',
     'BuiltinToolFunc',
     'Tool',
     'ObjectJsonSchema',
@@ -84,8 +85,12 @@ with [`RunContext`][pydantic_ai.tools.RunContext] as the first argument for depe
 
 Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure.
 """
-ToolPrepareFunc: TypeAlias = Callable[[RunContext[AgentDepsT], 'ToolDefinition'], Awaitable['ToolDefinition | None']]
+ToolPrepareFunc: TypeAlias = Callable[
+    [RunContext[AgentDepsT], 'ToolDefinition'],
+    Union[Awaitable['ToolDefinition | None'], 'ToolDefinition', None],
+]
 """Definition of a function that can prepare a tool definition at call time.
+Both sync and async functions are accepted.
 
 See [tool docs](../tools-advanced.md#tool-prepare) for more information.
 
@@ -95,7 +100,7 @@ Example — here `only_if_42` is valid as a `ToolPrepareFunc`:
 from pydantic_ai import RunContext, Tool
 from pydantic_ai.tools import ToolDefinition
 
-async def only_if_42(
+def only_if_42(
     ctx: RunContext[int], tool_def: ToolDefinition
 ) -> ToolDefinition | None:
     if ctx.deps == 42:
@@ -111,11 +116,12 @@ Usage `ToolPrepareFunc[AgentDepsT]`.
 """
 
 ToolsPrepareFunc: TypeAlias = Callable[
-    [RunContext[AgentDepsT], list['ToolDefinition']], Awaitable['list[ToolDefinition] | None']
+    [RunContext[AgentDepsT], list['ToolDefinition']],
+    Awaitable['list[ToolDefinition] | None'] | list['ToolDefinition'] | None,
 ]
 """Definition of a function that can prepare the tool definition of all tools for each step.
 This is useful if you want to customize the definition of multiple tools or you want to register
-a subset of tools for a given step.
+a subset of tools for a given step. Both sync and async functions are accepted.
 
 Example — here `turn_on_strict_if_openai` is valid as a `ToolsPrepareFunc`:
 
@@ -126,7 +132,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.tools import ToolDefinition
 
 
-async def turn_on_strict_if_openai(
+def turn_on_strict_if_openai(
     ctx: RunContext[None], tool_defs: list[ToolDefinition]
 ) -> list[ToolDefinition] | None:
     if ctx.model.system == 'openai':
@@ -146,6 +152,12 @@ BuiltinToolFunc: TypeAlias = Callable[
 
 This is useful if you want to customize the builtin tool based on the run context (e.g. user dependencies),
 or omit it completely from a step.
+"""
+
+AgentBuiltinTool: TypeAlias = AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]
+"""A builtin tool or a function that dynamically produces one.
+
+This is a convenience alias for `AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]`.
 """
 
 DocstringFormat: TypeAlias = Literal['google', 'numpy', 'sphinx', 'auto']
@@ -471,7 +483,10 @@ class Tool(Generic[ToolAgentDepsT]):
         base_tool_def = self.tool_def
 
         if self.prepare is not None:
-            return await self.prepare(ctx, base_tool_def)
+            result = self.prepare(ctx, base_tool_def)
+            if inspect.isawaitable(result):
+                return await result
+            return result
         else:
             return base_tool_def
 
@@ -547,6 +562,14 @@ class ToolDefinition:
 
     If the tool takes longer than this, a retry prompt is returned to the model.
     Defaults to None (no timeout).
+    """
+
+    prefer_builtin: str | None = None
+    """If set, this function tool is a local fallback for the builtin tool with the given unique_id.
+
+    When the model supports the corresponding builtin tool natively, this function tool is
+    removed from the request. When the model does not support the builtin, the builtin is
+    removed and this function tool stays.
     """
 
     @property

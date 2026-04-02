@@ -27,6 +27,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -367,7 +368,7 @@ class FunctionStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:  # noqa: C901
+def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:
     """Very rough guesstimate of the token usage associated with a series of messages.
 
     This is designed to be used solely to give plausible numbers for testing!
@@ -392,9 +393,7 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:  # 
                     response_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, ThinkingPart):
                     response_tokens += _estimate_string_tokens(part.content)
-                elif isinstance(part, ToolCallPart):
-                    response_tokens += 1 + _estimate_string_tokens(part.args_as_json_str())
-                elif isinstance(part, BuiltinToolCallPart):
+                elif isinstance(part, ToolCallPart | BuiltinToolCallPart):
                     response_tokens += 1 + _estimate_string_tokens(part.args_as_json_str())
                 elif isinstance(part, BuiltinToolReturnPart):
                     response_tokens += _estimate_string_tokens(part.model_response_str())
@@ -421,8 +420,9 @@ def _estimate_string_tokens(content: str | Sequence[UserContent]) -> int:
 
     tokens = 0
     for part in content:
-        if isinstance(part, str):
-            tokens += len(_TOKEN_SPLIT_RE.split(part.strip()))
+        if isinstance(part, str | TextContent):
+            text = part if isinstance(part, str) else part.content
+            tokens += len(_TOKEN_SPLIT_RE.split(text.strip()))
         elif isinstance(part, BinaryContent):
             tokens += len(part.data)
         # TODO(Marcelo): We need to study how we can estimate the tokens for AudioUrl or ImageUrl.

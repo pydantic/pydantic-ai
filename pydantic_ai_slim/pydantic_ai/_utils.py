@@ -306,6 +306,15 @@ def guard_tool_call_id(
     return t.tool_call_id or generate_tool_call_id()
 
 
+TOOL_NAME_SANITIZER = re.compile(r'[^a-zA-Z0-9_-]')
+"""Regex matching characters not allowed in tool names by most providers."""
+
+
+def sanitize_tool_name(name: str) -> str:
+    """Replace characters outside `[a-zA-Z0-9_-]` with `_`."""
+    return TOOL_NAME_SANITIZER.sub('_', name)
+
+
 def generate_tool_call_id() -> str:
     """Generate a tool call id.
 
@@ -426,6 +435,23 @@ def is_async_callable(obj: Any) -> Any:
     return inspect.iscoroutinefunction(obj) or (callable(obj) and inspect.iscoroutinefunction(obj.__call__))
 
 
+def takes_run_context(callable_obj: Callable[..., Any]) -> bool:
+    """Check if a callable takes a `RunContext` as its first argument.
+
+    Args:
+        callable_obj: The callable to check.
+
+    Returns:
+        `True` if the callable takes a `RunContext` as first argument, `False` otherwise.
+    """
+    from ._run_context import RunContext
+
+    first_param_type = get_first_param_type(callable_obj)
+    if first_param_type is None:
+        return False
+    return first_param_type is RunContext or get_origin(first_param_type) is RunContext
+
+
 def get_first_param_type(callable_obj: Callable[..., Any]) -> Any | None:
     """Get the type annotation of the first parameter of a callable.
 
@@ -463,6 +489,15 @@ def get_first_param_type(callable_obj: Callable[..., Any]) -> Any | None:
         return None
 
     return type_hints.get(first_param_name)
+
+
+def get_function_type_hints(func: Any) -> dict[str, Any]:
+    """Resolve type hints for a function, including forward references.
+
+    Wraps `pydantic._internal._typing_extra.get_function_type_hints` so callers
+    don't need to import Pydantic internals directly.
+    """
+    return _typing_extra.get_function_type_hints(func)
 
 
 def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, str]) -> None:

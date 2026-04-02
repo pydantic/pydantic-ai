@@ -34,6 +34,7 @@ from ..builtin_tools import (
     MCPServerTool,
     WebSearchTool,
 )
+from ..capabilities.abstract import AbstractCapability
 from ..exceptions import UserError
 from ..messages import (
     AudioUrl,
@@ -55,6 +56,7 @@ from ..messages import (
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -66,12 +68,13 @@ from ..messages import (
     is_multi_modal_content,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
-from ..profiles.openai import SAMPLING_PARAMS, OpenAIModelProfile, OpenAISystemPromptRole
+from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP, SAMPLING_PARAMS, OpenAIModelProfile, OpenAISystemPromptRole
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
-from ..tools import ToolDefinition
+from ..tools import AgentDepsT, ToolDefinition
 from . import (
     Model,
+    ModelRequestContext,
     ModelRequestParameters,
     OpenAIChatCompatibleProvider,
     OpenAIResponsesCompatibleProvider,
@@ -135,6 +138,7 @@ except ImportError as _import_error:
 
 
 __all__ = (
+    'DEPRECATED_OPENAI_MODELS',
     'OpenAIModel',
     'OpenAIChatModel',
     'OpenAIResponsesModel',
@@ -143,6 +147,34 @@ __all__ = (
     'OpenAIResponsesModelSettings',
     'OpenAIModelName',
 )
+
+DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset(
+    {
+        # https://developers.openai.com/api/docs/deprecations#2025-11-18-chatgpt-4o-latest-snapshot
+        'chatgpt-4o-latest',
+        # https://developers.openai.com/api/docs/deprecations#2025-11-17-codex-mini-latest-model-snapshot
+        'codex-mini-latest',
+        # https://developers.openai.com/api/docs/deprecations#2025-09-26-legacy-gpt-model-snapshots
+        'gpt-4-0125-preview',
+        'gpt-4-1106-preview',
+        'gpt-4-turbo-preview',
+        # https://developers.openai.com/api/docs/deprecations#2024-06-06-gpt-4-32k-and-vision-preview-models
+        'gpt-4-32k',
+        'gpt-4-32k-0314',
+        'gpt-4-32k-0613',
+        'gpt-4-vision-preview',
+        # https://developers.openai.com/api/docs/deprecations#2025-06-10-gpt-4o-audio-preview-2024-10-01
+        'gpt-4o-audio-preview-2024-10-01',
+        # Does not exist
+        'gpt-5.1-mini',
+        # https://developers.openai.com/api/docs/deprecations#2025-04-28-o1-preview-and-o1-mini
+        'o1-mini',
+        'o1-mini-2024-09-12',
+        'o1-preview',
+        'o1-preview-2024-09-12',
+    }
+)
+"""Models that are deprecated or don't exist but are still present in the OpenAI SDK's type definitions."""
 
 OpenAIModelName = str | AllModels
 """
@@ -188,6 +220,24 @@ _OPENAI_ASPECT_RATIO_TO_SIZE: dict[ImageAspectRatio, Literal['1024x1024', '1024x
 
 _OPENAI_IMAGE_SIZE = Literal['auto', '1024x1024', '1024x1536', '1536x1024']
 _OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = _utils.get_args(_OPENAI_IMAGE_SIZE)
+
+
+class _ChatCompletion(chat.ChatCompletion):
+    """Relaxes strict Literal validation on fields that OpenAI-compatible providers may return non-standard values for."""
+
+    model_config = {'title': 'ChatCompletion'}
+
+    service_tier: str | None = None  # type: ignore[reportIncompatibleVariableOverride]
+    """OpenAI-compatible providers can return arbitrary ``service_tier`` values (e.g. ``"standard"``, ``"on_demand"``)."""
+
+
+class _ChatCompletionChunk(ChatCompletionChunk):  # pyright: ignore[reportUnusedClass] — subclassed in openrouter.py
+    """Relaxes strict Literal validation on fields that OpenAI-compatible providers may return non-standard values for."""
+
+    model_config = {'title': 'ChatCompletionChunk'}
+
+    service_tier: str | None = None  # type: ignore[reportIncompatibleVariableOverride]
+    """OpenAI-compatible providers can return arbitrary ``service_tier`` values (e.g. ``"standard"``, ``"on_demand"``)."""
 
 
 class _AzureContentFilterResultDetail(BaseModel):
@@ -280,7 +330,11 @@ def _check_azure_content_filter(e: APIStatusError, system: str, model_name: str)
     return None
 
 
-def _drop_sampling_params_for_reasoning(profile: OpenAIModelProfile, model_settings: OpenAIChatModelSettings) -> None:
+def _drop_sampling_params_for_reasoning(
+    profile: OpenAIModelProfile,
+    model_settings: OpenAIChatModelSettings,
+    model_request_parameters: ModelRequestParameters,
+) -> None:
     """Drop sampling params when reasoning is enabled on models that support it.
 
     Reasoning models (o-series, GPT-5, GPT-5.1+) don't support sampling parameters when
@@ -291,8 +345,13 @@ def _drop_sampling_params_for_reasoning(profile: OpenAIModelProfile, model_setti
         return
 
     reasoning_effort = model_settings.get('openai_reasoning_effort')
-    # On GPT-5.1+ models, 'none' is the default
-    if profile.openai_supports_reasoning_effort_none and reasoning_effort in (None, 'none'):
+    thinking = model_request_parameters.thinking
+    # Determine if reasoning is effectively active
+    reasoning_active = reasoning_effort not in (None, 'none') or (
+        reasoning_effort is None and thinking is not None and thinking is not False
+    )
+    # On GPT-5.1+ models, sampling params are allowed when reasoning is off
+    if profile.openai_supports_reasoning_effort_none and not reasoning_active:
         return
 
     if dropped := [k for k in SAMPLING_PARAMS if k in model_settings]:
@@ -615,6 +674,7 @@ class OpenAIChatModel(Model):
         if (
             any(isinstance(tool, WebSearchTool) for tool in model_request_parameters.builtin_tools)
             and not OpenAIModelProfile.from_profile(self.profile).openai_chat_supports_web_search
+            and not any(t.prefer_builtin == 'web_search' for t in model_request_parameters.function_tools)
         ):
             raise UserError(
                 f'WebSearchTool is not supported with `OpenAIChatModel` and model {self.model_name!r}. '
@@ -643,6 +703,19 @@ class OpenAIChatModel(Model):
 
         model_response = self._process_response(response)
         return model_response
+
+    def _translate_thinking(
+        self,
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ReasoningEffort | Omit:
+        """Get reasoning effort, falling back to unified thinking when provider-specific setting is not set."""
+        if effort := model_settings.get('openai_reasoning_effort'):
+            return effort
+        thinking = model_request_parameters.thinking
+        if thinking is None:
+            return OMIT
+        return OPENAI_REASONING_EFFORT_MAP[thinking]  # type: ignore[return-value]
 
     @asynccontextmanager
     async def request_stream(
@@ -710,7 +783,7 @@ class OpenAIChatModel(Model):
         ):  # pragma: no branch
             response_format = {'type': 'json_object'}
 
-        _drop_sampling_params_for_reasoning(profile, model_settings)
+        _drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
 
         _drop_unsupported_params(profile, model_settings)
 
@@ -723,7 +796,7 @@ class OpenAIChatModel(Model):
             return await self.client.chat.completions.create(
                 model=self.model_name,
                 messages=openai_messages,
-                parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
+                parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT) if tools else OMIT,
                 tools=tools or OMIT,
                 tool_choice=tool_choice or OMIT,
                 stream=stream,
@@ -733,7 +806,7 @@ class OpenAIChatModel(Model):
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 response_format=response_format or OMIT,
                 seed=model_settings.get('seed', OMIT),
-                reasoning_effort=model_settings.get('openai_reasoning_effort', OMIT),
+                reasoning_effort=self._translate_thinking(model_settings, model_request_parameters),
                 user=model_settings.get('openai_user', OMIT),
                 web_search_options=web_search_options or OMIT,
                 service_tier=model_settings.get('openai_service_tier', OMIT),
@@ -760,12 +833,12 @@ class OpenAIChatModel(Model):
         except APIConnectionError as e:
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
-    def _validate_completion(self, response: chat.ChatCompletion) -> chat.ChatCompletion:
+    def _validate_completion(self, response: chat.ChatCompletion) -> _ChatCompletion:
         """Hook that validates chat completions before processing.
 
         This method may be overridden by subclasses of `OpenAIChatModel` to apply custom completion validations.
         """
-        return chat.ChatCompletion.model_validate(response.model_dump())
+        return _ChatCompletion.model_validate(response.model_dump())
 
     def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any] | None:
         """Hook that response content to provider details.
@@ -985,7 +1058,8 @@ class OpenAIChatModel(Model):
                 elif isinstance(item, FilePart):  # pragma: no cover
                     self._map_response_file_part(item)
                 elif isinstance(item, CompactionPart):  # pragma: no cover
-                    self._map_compaction_part(item)
+                    # Compaction parts are not sent back to the Chat Completions API.
+                    pass
                 else:
                     assert_never(item)
             return self._into_message_param()
@@ -1083,15 +1157,6 @@ class OpenAIChatModel(Model):
             # Files generated by models are not sent back to models that don't themselves generate files.
             pass
 
-        def _map_compaction_part(self, item: CompactionPart) -> None:
-            """Maps a `CompactionPart` to the response context.
-
-            This method serves as a hook that can be overridden by subclasses
-            to implement custom logic for handling compaction parts.
-            """
-            # Compaction parts are not sent back to the model.
-            pass
-
     def _map_model_response(self, message: ModelResponse) -> chat.ChatCompletionMessageParam:
         """Hook that determines how `ModelResponse` is mapped into `ChatCompletionMessageParam` objects before sending.
 
@@ -1122,7 +1187,9 @@ class OpenAIChatModel(Model):
             else:
                 assert_never(message)
         if instructions := self._get_instructions(messages, model_request_parameters):
-            system_prompt_count = sum(1 for m in openai_messages if m.get('role') == 'system')
+            system_prompt_count = next(
+                (i for i, m in enumerate(openai_messages) if m.get('role') != 'system'), len(openai_messages)
+            )
             openai_messages.insert(
                 system_prompt_count, chat.ChatCompletionSystemMessageParam(content=instructions, role='system')
             )
@@ -1287,11 +1354,21 @@ class OpenAIChatModel(Model):
         raise NotImplementedError('VideoUrl is not supported in OpenAI Chat Completions user prompts')
 
     async def _map_content_item(
-        self, item: str | ImageUrl | BinaryContent | AudioUrl | DocumentUrl | VideoUrl | UploadedFile | CachePoint
+        self,
+        item: str
+        | TextContent
+        | ImageUrl
+        | BinaryContent
+        | AudioUrl
+        | DocumentUrl
+        | VideoUrl
+        | UploadedFile
+        | CachePoint,
     ) -> ChatCompletionContentPartParam | None:
         """Map a single content item to a chat completion content part, or None to filter it out."""
-        if isinstance(item, str):
-            return ChatCompletionContentPartTextParam(text=item, type='text')
+        if isinstance(item, str | TextContent):
+            text = item if isinstance(item, str) else item.content
+            return ChatCompletionContentPartTextParam(text=text, type='text')
         elif isinstance(item, ImageUrl):
             return await self._map_image_url_item(item)
         elif isinstance(item, BinaryContent):
@@ -1434,41 +1511,87 @@ class OpenAIResponsesModel(Model):
 
     async def compact_messages(
         self,
-        messages: list[ModelRequest | ModelResponse],
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
+        request_context: ModelRequestContext,
     ) -> ModelResponse:
+        """Compact messages using the OpenAI Responses compaction endpoint.
+
+        This calls OpenAI's `responses.compact` API to produce an encrypted compaction
+        that summarizes the conversation history. The returned `ModelResponse` contains
+        a single `CompactionPart` that must be round-tripped in subsequent requests.
+
+        Args:
+            request_context: The model request context containing messages, settings, and parameters.
+
+        Returns:
+            A `ModelResponse` with a single `CompactionPart` containing the encrypted compaction data.
+        """
         check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(
-            model_settings,
-            model_request_parameters,
+            request_context.model_settings,
+            request_context.model_request_parameters,
         )
         response = await self._responses_compact(
-            messages, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
+            request_context.messages,
+            cast(OpenAIResponsesModelSettings, model_settings or {}),
+            model_request_parameters,
         )
 
-        # Handle ModelResponse
+        # Handle ModelResponse (e.g. from content filter)
         if isinstance(response, ModelResponse):  # pragma: no cover
             return response
 
         if not response.output:  # pragma: no cover
             raise UnexpectedModelBehavior('CompactedResponse returned with no output items')
+
         compaction = response.output[-1]
-
         if not isinstance(compaction, ResponseCompactionItem):  # pragma: no cover
-            raise UnexpectedModelBehavior(f'Last item in response is not a compaction, got: {response.output[-1].type}')
+            raise UnexpectedModelBehavior(f'Last item in response is not a compaction, got: {compaction.type}')
 
-        item = CompactionPart(
-            content=None, id=compaction.id, provider_name=self.system, provider_details=compaction.model_dump()
+        part = CompactionPart(
+            content=None,
+            id=compaction.id,
+            provider_name=self.system,
+            provider_details=compaction.model_dump(),
         )
         return ModelResponse(
-            parts=[item],
+            parts=[part],
             usage=_map_usage(response, self._provider.name, self._provider.base_url, self.model_name),
             provider_response_id=response.id,
             timestamp=_now_utc(),
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
         )
+
+    async def _responses_compact(
+        self,
+        messages: list[ModelMessage],
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> responses.CompactedResponse | ModelResponse:
+        """Call the OpenAI Responses compaction endpoint."""
+        previous_response_id = model_settings.get('openai_previous_response_id')
+        if previous_response_id == 'auto':
+            previous_response_id, messages = self._get_previous_response_id_and_new_messages(
+                messages, allow_no_new_messages=True
+            )
+
+        instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
+
+        try:
+            return await self.client.responses.compact(
+                input=openai_messages,
+                model=self.model_name,
+                instructions=instructions,
+                previous_response_id=previous_response_id or OMIT,
+            )
+        except APIStatusError as e:  # pragma: no cover
+            if model_response := _check_azure_content_filter(e, self.system, self.model_name):
+                return model_response
+            if (status_code := e.status_code) >= 400:
+                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
+            raise
+        except APIConnectionError as e:  # pragma: no cover
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
     async def request(
         self,
@@ -1677,37 +1800,6 @@ class OpenAIResponsesModel(Model):
             else None,
         )
 
-    async def _responses_compact(
-        self,
-        messages: list[ModelRequest | ModelResponse],
-        model_settings: OpenAIResponsesModelSettings,
-        model_request_parameters: ModelRequestParameters | None = None,
-    ) -> responses.CompactedResponse | ModelResponse:
-        previous_response_id = model_settings.get('openai_previous_response_id')
-        if previous_response_id == 'auto':
-            previous_response_id, messages = self._get_previous_response_id_and_new_messages(
-                messages, allow_no_new_messages=True
-            )
-
-        instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
-
-        try:
-            return await self.client.responses.compact(
-                input=openai_messages,
-                model=self.model_name,
-                instructions=instructions,
-                previous_response_id=previous_response_id or OMIT,
-            )
-        except APIStatusError as e:  # pragma: no cover
-            if model_response := _check_azure_content_filter(e, self.system, self.model_name):
-                return model_response
-
-            if (status_code := e.status_code) >= 400:
-                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: lax no cover
-        except APIConnectionError as e:  # pragma: no cover
-            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
-
     @overload
     async def _responses_create(
         self,
@@ -1751,7 +1843,7 @@ class OpenAIResponsesModel(Model):
             previous_response_id, messages = self._get_previous_response_id_and_new_messages(messages)
 
         instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
-        reasoning = self._get_reasoning(model_settings)
+        reasoning = self._translate_thinking(model_settings, model_request_parameters)
 
         text: responses.ResponseTextConfigParam | None = None
         if model_request_parameters.output_mode == 'native':
@@ -1767,7 +1859,9 @@ class OpenAIResponsesModel(Model):
             # > Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'.
             # Apparently they're only checking input messages for "JSON", not instructions.
             assert isinstance(instructions, str)
-            system_prompt_count = sum(1 for m in openai_messages if m.get('role') == 'system')
+            system_prompt_count = next(
+                (i for i, m in enumerate(openai_messages) if m.get('role') != 'system'), len(openai_messages)
+            )
             openai_messages.insert(
                 system_prompt_count, responses.EasyInputMessageParam(role='system', content=instructions)
             )
@@ -1777,7 +1871,7 @@ class OpenAIResponsesModel(Model):
             text = text or {}
             text['verbosity'] = verbosity
 
-        _drop_sampling_params_for_reasoning(profile, model_settings)
+        _drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
 
         _drop_unsupported_params(profile, model_settings)
 
@@ -1814,7 +1908,7 @@ class OpenAIResponsesModel(Model):
                 input=openai_messages,
                 model=self.model_name,
                 instructions=instructions,
-                parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
+                parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT) if tools else OMIT,
                 tools=tools or OMIT,
                 tool_choice=tool_choice or OMIT,
                 max_output_tokens=model_settings.get('max_tokens', OMIT),
@@ -1846,7 +1940,11 @@ class OpenAIResponsesModel(Model):
         except APIConnectionError as e:
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
-    def _get_reasoning(self, model_settings: OpenAIResponsesModelSettings) -> Reasoning | Omit:
+    def _translate_thinking(
+        self,
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> Reasoning | Omit:
         reasoning_effort = model_settings.get('openai_reasoning_effort', None)
         reasoning_summary = model_settings.get('openai_reasoning_summary', None)
         reasoning_generate_summary = model_settings.get('openai_reasoning_generate_summary', None)
@@ -1861,9 +1959,13 @@ class OpenAIResponsesModel(Model):
             )
             reasoning_summary = reasoning_generate_summary
 
+        # Fall back to unified thinking when openai_reasoning_effort is not set
+        if reasoning_effort is None and (thinking := model_request_parameters.thinking) is not None:
+            reasoning_effort = OPENAI_REASONING_EFFORT_MAP[thinking]
+
         reasoning: Reasoning = {}
         if reasoning_effort:
-            reasoning['effort'] = reasoning_effort
+            reasoning['effort'] = reasoning_effort  # type: ignore[typeddict-item]
         if reasoning_summary:
             reasoning['summary'] = reasoning_summary
         return reasoning or OMIT
@@ -1961,7 +2063,7 @@ class OpenAIResponsesModel(Model):
         }
 
     def _get_previous_response_id_and_new_messages(
-        self, messages: list[ModelMessage], allow_no_new_messages: bool = False
+        self, messages: list[ModelMessage], *, allow_no_new_messages: bool = False
     ) -> tuple[str | None, list[ModelMessage]]:
         # When `openai_previous_response_id` is set to 'auto', the most recent
         # `provider_response_id` from the message history is selected and all
@@ -1986,7 +2088,7 @@ class OpenAIResponsesModel(Model):
         self,
         messages: list[ModelMessage],
         model_settings: OpenAIResponsesModelSettings,
-        model_request_parameters: ModelRequestParameters | None = None,
+        model_request_parameters: ModelRequestParameters,
     ) -> tuple[str | Omit, list[responses.ResponseInputItemParam]]:
         """Maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam` i.e. the OpenAI Responses API input format.
 
@@ -2242,17 +2344,14 @@ class OpenAIResponsesModel(Model):
                                 )
                             )
                     elif isinstance(item, CompactionPart):
-                        provider_details = item.provider_details
-                        assert provider_details is not None and 'encrypted_content' in provider_details, (
-                            'CompactionPart requires item.provider_details with "encrypted_content"'
-                        )
-
-                        compacted_response_item = responses.ResponseCompactionItemParamParam(
-                            id=item.id,
-                            encrypted_content=provider_details['encrypted_content'],
-                            type='compaction',
-                        )
-                        openai_messages.append(compacted_response_item)
+                        if item.provider_name == self.system and item.provider_details:
+                            openai_messages.append(
+                                {
+                                    'id': item.id,
+                                    'encrypted_content': item.provider_details['encrypted_content'],
+                                    'type': 'compaction',
+                                }
+                            )
                     else:
                         assert_never(item)
             else:
@@ -2279,8 +2378,9 @@ class OpenAIResponsesModel(Model):
         else:
             content = []
             for item in part.content:
-                if isinstance(item, str):
-                    content.append(responses.ResponseInputTextParam(text=item, type='input_text'))
+                if isinstance(item, str | TextContent):
+                    text = item if isinstance(item, str) else item.content
+                    content.append(responses.ResponseInputTextParam(text=text, type='input_text'))
                 elif isinstance(item, UploadedFile):
                     if item.provider_name != self.system:
                         raise UserError(
@@ -2985,6 +3085,80 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
+
+
+class OpenAICompaction(AbstractCapability[AgentDepsT]):
+    """Compaction capability for OpenAI Responses API.
+
+    Calls the `responses.compact` endpoint via a `before_model_request` hook
+    when the trigger condition is met. The compacted history replaces the
+    original messages, keeping conversation context within manageable limits.
+
+    Example usage::
+
+        from pydantic_ai import Agent
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        agent = Agent(
+            'openai-responses:gpt-4o',
+            capabilities=[OpenAICompaction(message_count_threshold=10)],
+        )
+    """
+
+    def __init__(
+        self,
+        *,
+        message_count_threshold: int | None = None,
+        trigger: Callable[[list[ModelMessage]], bool] | None = None,
+        instructions: str | None = None,
+    ) -> None:
+        """Initialize the OpenAI compaction capability.
+
+        Args:
+            message_count_threshold: Compact when the message count exceeds this threshold.
+            trigger: Custom callable that decides whether to compact based on the current messages.
+                Takes precedence over `message_count_threshold`.
+            instructions: Custom instructions for the compaction summarization.
+        """
+        self.message_count_threshold = message_count_threshold
+        self.trigger = trigger
+        self.instructions = instructions
+
+    def _should_compact(self, messages: list[ModelMessage]) -> bool:
+        if self.trigger is not None:
+            return self.trigger(messages)
+        if self.message_count_threshold is not None:
+            return len(messages) > self.message_count_threshold
+        return False
+
+    async def before_model_request(
+        self,
+        ctx: RunContext[AgentDepsT],
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
+        model = request_context.model
+        if not isinstance(model, OpenAIResponsesModel):
+            return request_context
+
+        if not self._should_compact(request_context.messages):
+            return request_context
+
+        # Compact all messages except the last (current) request
+        compact_ctx = ModelRequestContext(
+            model=request_context.model,
+            messages=request_context.messages[:-1],
+            model_settings=request_context.model_settings,
+            model_request_parameters=request_context.model_request_parameters,
+        )
+        compacted_response = await model.compact_messages(compact_ctx)
+
+        # Replace message history with compaction + last request
+        request_context.messages = [compacted_response, request_context.messages[-1]]
+        return request_context
+
+    @classmethod
+    def get_serialization_name(cls) -> str | None:
+        return 'OpenAICompaction'
 
 
 def _make_raw_content_updater(delta: str, index: int) -> Callable[[dict[str, Any] | None], dict[str, Any]]:
