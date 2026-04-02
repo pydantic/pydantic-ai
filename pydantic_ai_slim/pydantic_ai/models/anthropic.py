@@ -1557,8 +1557,12 @@ class AnthropicStreamedResponse(StreamedResponse):
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
                 elif isinstance(event.delta, BetaCompactionContentBlockDelta):
-                    # Compaction deltas update content; for now we treat them as complete parts
-                    pass
+                    if event.delta.content:
+                        # Re-emit part with updated content; replaces the initial block start part
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=event.index,
+                            part=CompactionPart(content=event.delta.content, provider_name=self.provider_name),
+                        )
                 # TODO(Marcelo): We need to handle citations.
                 elif isinstance(event.delta, BetaCitationsDelta):
                     pass

@@ -1512,6 +1512,8 @@ class OpenAIResponsesModel(Model):
     async def compact_messages(
         self,
         request_context: ModelRequestContext,
+        *,
+        instructions: str | None = None,
     ) -> ModelResponse:
         """Compact messages using the OpenAI Responses compaction endpoint.
 
@@ -1521,6 +1523,8 @@ class OpenAIResponsesModel(Model):
 
         Args:
             request_context: The model request context containing messages, settings, and parameters.
+            instructions: Optional custom instructions for the compaction summarization.
+                If provided, these override the agent-level instructions.
 
         Returns:
             A `ModelResponse` with a single `CompactionPart` containing the encrypted compaction data.
@@ -1534,6 +1538,7 @@ class OpenAIResponsesModel(Model):
             request_context.messages,
             cast(OpenAIResponsesModelSettings, model_settings or {}),
             model_request_parameters,
+            instructions_override=instructions,
         )
 
         # Handle ModelResponse (e.g. from content filter)
@@ -1567,6 +1572,8 @@ class OpenAIResponsesModel(Model):
         messages: list[ModelMessage],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
+        *,
+        instructions_override: str | None = None,
     ) -> responses.CompactedResponse | ModelResponse:
         """Call the OpenAI Responses compaction endpoint."""
         previous_response_id = model_settings.get('openai_previous_response_id')
@@ -1576,6 +1583,8 @@ class OpenAIResponsesModel(Model):
             )
 
         instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
+        if instructions_override is not None:
+            instructions = instructions_override
 
         try:
             return await self.client.responses.compact(
@@ -3150,7 +3159,7 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
             model_settings=request_context.model_settings,
             model_request_parameters=request_context.model_request_parameters,
         )
-        compacted_response = await model.compact_messages(compact_ctx)
+        compacted_response = await model.compact_messages(compact_ctx, instructions=self.instructions)
 
         # Replace message history with compaction + last request
         request_context.messages = [compacted_response, request_context.messages[-1]]

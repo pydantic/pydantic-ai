@@ -61,7 +61,7 @@ class RoutedCapability(AbstractCapability[AgentDepsT]):
             if isinstance(model, FallbackModel):
                 raise UserError(
                     f'{type(self).__name__} is not compatible with FallbackModel '
-                    f'because compaction data is provider-specific and cannot be used across providers'
+                    f'because it produces provider-specific data that cannot be used across providers'
                 )
         except ImportError:
             pass
