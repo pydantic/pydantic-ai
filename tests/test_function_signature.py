@@ -862,7 +862,7 @@ def t_default(*, x: int = 7) -> Any:
     ...\
 """)
 
-    # Unresolvable return_schema → JSON blob in description
+    # Unresolvable return_schema keeps return type as Any
     sig3 = FunctionSignature.from_schema(
         name='t3',
         parameters_schema={'type': 'object', 'properties': {'x': {'type': 'string'}}, 'required': ['x']},
@@ -871,12 +871,7 @@ def t_default(*, x: int = 7) -> Any:
     )
     assert str(sig3) == snapshot('''\
 def t3(*, x: str) -> Any:
-    """
-    A tool
-
-    Return schema:
-    {}
-    """
+    """A tool"""
     ...\
 ''')
 

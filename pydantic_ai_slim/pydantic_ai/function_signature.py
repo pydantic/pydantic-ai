@@ -8,7 +8,6 @@ JSON schemas. Used by code mode to present tools as callable functions.
 from __future__ import annotations
 
 import inspect
-import json
 import re
 import types
 from collections.abc import Callable
@@ -299,18 +298,6 @@ class FunctionSignature:
             _process_schema_defs(return_defs, return_referenced, name)
             resolved_return_type = _schema_to_type_expr(return_schema, return_defs, return_referenced, name, 'Return')
 
-        # If return schema couldn't be resolved to a concrete type, append it as description
-        final_description = description
-        if (
-            return_schema is not None
-            and isinstance(resolved_return_type, SimpleTypeExpr)
-            and resolved_return_type.name == 'Any'
-        ):
-            return_schema_blob = json.dumps(return_schema, indent=2)
-            return_schema_note = f'\n\nReturn schema:\n{return_schema_blob}'
-            final_description = (description or '') + return_schema_note
-            final_description = final_description.strip()
-
         # Merge referenced types — dedup_referenced_types handles collisions later
         all_referenced = list(param_referenced.values()) + list(return_referenced.values())
 
@@ -318,7 +305,7 @@ class FunctionSignature:
             name=name,
             params=params,
             return_type=resolved_return_type,
-            description=final_description if final_description else None,
+            description=description,
             referenced_types=all_referenced,
         )
 
@@ -501,33 +488,6 @@ def _build_function_params(
             default_str = repr(param.default)
             params[param_name] = FunctionParam(name=param_name, type=type_expr, default=default_str)
     return params
-
-
-# Keep module-level aliases for backward compatibility and use by ToolDefinition
-def function_to_signature(
-    func: Callable[..., Any],
-    *,
-    name: str | None = None,
-    description: str | None = None,
-) -> FunctionSignature:
-    """Build a FunctionSignature from a Python function. Alias for `FunctionSignature.from_function`."""
-    return FunctionSignature.from_function(func, name=name, description=description)
-
-
-def schema_to_signature(
-    *,
-    name: str,
-    parameters_schema: dict[str, Any],
-    description: str | None = None,
-    return_schema: dict[str, Any] | None = None,
-) -> FunctionSignature:
-    """Build a FunctionSignature from a JSON schema. Alias for `FunctionSignature.from_schema`."""
-    return FunctionSignature.from_schema(
-        name=name,
-        parameters_schema=parameters_schema,
-        description=description,
-        return_schema=return_schema,
-    )
 
 
 # =============================================================================
@@ -883,8 +843,3 @@ def _replace_type_refs(sig: FunctionSignature, old_ref: TypeSignature, canonical
     for type_sig in sig.referenced_types:
         for f in type_sig.fields.values():
             f.type = _replace_in_expr(f.type)
-
-
-# Keep top-level aliases for backward compatibility
-dedup_referenced_types = FunctionSignature.dedup_referenced_types
-collect_unique_referenced_types = FunctionSignature.collect_unique_referenced_types
