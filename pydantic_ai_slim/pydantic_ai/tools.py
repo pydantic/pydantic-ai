@@ -3,7 +3,6 @@ from __future__ import annotations as _annotations
 import inspect
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field
-from functools import cached_property
 from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, Union, cast
 
 from pydantic import Discriminator, Tag
@@ -405,7 +404,10 @@ class Tool(Generic[ToolAgentDepsT]):
         self.requires_approval = requires_approval
         self.metadata = metadata
         self.timeout = timeout
-        self._tool_original_func = self.function_schema.function
+        self._function_signature = self.function_schema.build_function_signature(
+            name=self.name,
+            description=self.description,
+        )
 
     @classmethod
     def from_schema(
@@ -460,8 +462,12 @@ class Tool(Generic[ToolAgentDepsT]):
             sequential=sequential,
             args_validator=args_validator,
         )
-        # Schema-based tools use proxy functions whose signatures are not meaningful.
-        tool._tool_original_func = None
+        # Schema-based tools use proxy functions — compute signature from schema instead.
+        tool._function_signature = FunctionSignature.from_schema(
+            name=name,
+            parameters_schema=json_schema,
+            description=description,
+        )
         return tool
 
     @property
@@ -475,7 +481,7 @@ class Tool(Generic[ToolAgentDepsT]):
             metadata=self.metadata,
             timeout=self.timeout,
             kind='unapproved' if self.requires_approval else 'function',
-            original_func=self._tool_original_func,
+            function_signature=self._function_signature,
         )
 
     async def prepare_tool_def(self, ctx: RunContext[ToolAgentDepsT]) -> ToolDefinition | None:
@@ -579,13 +585,22 @@ class ToolDefinition:
     removed and this function tool stays.
     """
 
-    original_func: Callable[..., Any] | None = field(default=None, repr=False, compare=False)
-    """The original Python function, if available. Used for richer signature generation.
+    function_signature: FunctionSignature = field(default=None, repr=False, compare=False)  # type: ignore[assignment]
+    """The function signature representation for this tool.
 
-    When set, `function_signature` uses `inspect.signature()` and `get_type_hints()` for
-    richer type information (e.g. TypedDict fields, union types). When `None` (e.g. MCP tools,
-    `Tool.from_schema()`, or after deserialization), falls back to schema-based generation.
+    Pre-computed by `Tool` from the original Python function for richer type information.
+    If not provided, computed from the JSON schema in `__post_init__`.
     """
+
+    def __post_init__(self) -> None:
+        if self.function_signature is None:  # type: ignore[comparison-overlap]
+            self.function_signature = FunctionSignature.from_schema(
+                name=self.name,
+                parameters_schema=self.parameters_json_schema,
+                description=self.description,
+                # TODO: replace with dedicated field, see https://github.com/pydantic/pydantic-ai/pull/3865
+                return_schema=(self.metadata or {}).get('output_schema'),
+            )
 
     @property
     def defer(self) -> bool:
@@ -594,29 +609,5 @@ class ToolDefinition:
         See the [tools documentation](../deferred-tools.md#deferred-tools) for more info.
         """
         return self.kind in ('external', 'unapproved')
-
-    @cached_property
-    def function_signature(self) -> FunctionSignature:
-        """Generate a function signature representation for this tool.
-
-        Uses the original Python function when available for richer type information,
-        falling back to JSON schema conversion otherwise.
-
-        The result is cached so that repeated access (e.g. on every agent step)
-        does not re-traverse the schema.
-        """
-        if self.original_func is not None:
-            return FunctionSignature.from_function(
-                self.original_func,
-                name=self.name,
-                description=self.description,
-            )
-        return FunctionSignature.from_schema(
-            name=self.name,
-            parameters_schema=self.parameters_json_schema,
-            description=self.description,
-            # TODO: replace with dedicated field, see https://github.com/pydantic/pydantic-ai/pull/3865
-            return_schema=(self.metadata or {}).get('output_schema'),
-        )
 
     __repr__ = _utils.dataclasses_no_defaults_repr

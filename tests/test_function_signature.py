@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import typing
-from dataclasses import replace
 from enum import Enum
 from typing import Optional, Union
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel, RootModel
 
 from pydantic_ai._run_context import RunContext
@@ -22,6 +20,8 @@ from pydantic_ai.function_signature import (
     UnionTypeExpr,
 )
 from pydantic_ai.tools import Tool, ToolDefinition
+
+from ._inline_snapshot import snapshot
 
 pytestmark = pytest.mark.anyio
 
@@ -438,22 +438,18 @@ def test_tool_def_function_signature_matches_function_based():
     assert str(cached_sig) == str(fresh_sig)
 
 
-def test_tool_definition_cached_property_reset_on_replace():
-    """dataclasses.replace() on a ToolDefinition resets the cached function_signature."""
+def test_tool_definition_function_signature_computed_from_schema():
+    """ToolDefinition without explicit function_signature computes it from JSON schema."""
 
     td = ToolDefinition(
         name='test_tool',
         parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}, 'required': ['x']},
-        description='Original description',
+        description='A test tool',
     )
-    sig1 = td.function_signature
-    assert sig1.description == 'Original description'
-
-    td2 = replace(td, description='New description')
-    sig2 = td2.function_signature
-    assert sig2.description == 'New description'
-    # Different instances
-    assert sig1 is not sig2
+    sig = td.function_signature
+    assert sig.description == 'A test tool'
+    assert sig.name == 'test_tool'
+    assert 'x' in sig.params
 
 
 def test_tool_definition_schema_based_function_signature():

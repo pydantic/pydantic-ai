@@ -31,6 +31,7 @@ from ._utils import (
 )
 
 if TYPE_CHECKING:
+    from .function_signature import FunctionSignature
     from .tools import DocstringFormat, ObjectJsonSchema
 
 
@@ -51,6 +52,17 @@ class FunctionSchema:
     single_arg_name: str | None = None
     positional_fields: list[str] = field(default_factory=list[str])
     var_positional_field: str | None = None
+
+    def build_function_signature(self, *, name: str, description: str | None) -> FunctionSignature:
+        """Build a FunctionSignature from this schema's function.
+
+        Args:
+            name: The tool name (may differ from the function name).
+            description: The tool description (may differ from the docstring).
+        """
+        from .function_signature import FunctionSignature as FS
+
+        return FS.from_function(self.function, name=name, description=description)
 
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
         args, kwargs = self._call_args(args_dict, ctx)
