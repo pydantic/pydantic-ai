@@ -14,6 +14,7 @@ from ..tools import ToolDefinition, ToolsPrepareFunc
 
 if TYPE_CHECKING:
     from .approval_required import ApprovalRequiredToolset
+    from .deferred_loading import DeferredLoadingToolset
     from .filtered import FilteredToolset
     from .prefixed import PrefixedToolset
     from .prepared import PreparedToolset
@@ -237,3 +238,16 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         from .approval_required import ApprovalRequiredToolset
 
         return ApprovalRequiredToolset(self, approval_required_func)
+
+    def defer_loading(self, tool_names: Sequence[str] | None = None) -> DeferredLoadingToolset[AgentDepsT]:
+        """Returns a new toolset that marks tools for deferred loading, hiding them until discovered via tool search.
+
+        See [toolset docs](../toolsets.md#deferred-loading) for more information.
+
+        Args:
+            tool_names: Optional sequence of tool names to mark for deferred loading.
+                If `None`, all tools are marked for deferred loading.
+        """
+        from .deferred_loading import DeferredLoadingToolset
+
+        return DeferredLoadingToolset(self, tool_names=frozenset(tool_names) if tool_names is not None else None)

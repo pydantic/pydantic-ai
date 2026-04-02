@@ -3752,21 +3752,149 @@ class TestWebSearchCapability:
 
 class TestWebFetchCapability:
     def test_webfetch_default(self):
-        """WebFetch() provides builtin, no default local fallback."""
+        """WebFetch() provides builtin and default local fallback."""
         cap = WebFetch()
         builtins = cap.get_builtin_tools()
         assert len(builtins) == 1
         assert isinstance(builtins[0], WebFetchTool)
-        # No default local fallback — user must provide their own
-        assert cap.local is None
-        assert cap.get_toolset() is None
+        # Default local fallback is auto-detected (markdownify-based)
+        assert cap.local is not None
+        assert cap.get_toolset() is not None
 
-    def test_webfetch_requires_builtin_with_constraints(self, allow_model_requests: None):
-        """WebFetch(blocked_domains=...) with non-supporting model → UserError."""
+    def test_webfetch_default_with_nonsupporting_model(self, allow_model_requests: None):
+        """WebFetch() with a model that doesn't support builtin → markdownify fallback used."""
+        from unittest.mock import AsyncMock, patch
+
+        import httpx
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return ModelResponse(parts=[TextPart(content=f'Tool result: {part.content}')])
+            if info.function_tools:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name=info.function_tools[0].name,
+                            args='{"url": "https://example.com"}',
+                            tool_call_id='c1',
+                        )
+                    ]
+                )
+            return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
+
+        mock_response = httpx.Response(
+            200,
+            text='<html><head><title>Test</title></head><body><p>Hello</p></body></html>',
+            headers={'content-type': 'text/html'},
+            request=httpx.Request('GET', 'https://example.com'),
+        )
+
+        model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        agent = Agent(model, capabilities=[WebFetch()])
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
+        ):
+            result = agent.run_sync('fetch something')
+        # Verify the web_fetch fallback tool was actually called
+        tool_calls = [
+            part
+            for msg in result.all_messages()
+            if isinstance(msg, ModelResponse)
+            for part in msg.parts
+            if isinstance(part, ToolCallPart)
+        ]
+        assert len(tool_calls) == 1
+        assert tool_calls[0].tool_name == 'web_fetch'
+
+    def test_webfetch_local_false_with_nonsupporting_model(self, allow_model_requests: None):
+        """WebFetch(local=False) with non-supporting model → UserError."""
         model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
-        agent = Agent(model, capabilities=[WebFetch(blocked_domains=['evil.com'])])
+        agent = Agent(model, capabilities=[WebFetch(local=False)])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
+
+    def test_webfetch_builtin_false(self):
+        """WebFetch(builtin=False) → only local, no builtin registered."""
+        cap = WebFetch(builtin=False)
+        assert cap.get_builtin_tools() == []
+        toolset = cap.get_toolset()
+        assert toolset is not None
+
+    def test_webfetch_max_uses_requires_builtin(self, allow_model_requests: None):
+        """WebFetch(max_uses=...) with non-supporting model → UserError."""
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
+        agent = Agent(model, capabilities=[WebFetch(max_uses=5)])
+        with pytest.raises(UserError, match='not supported'):
+            agent.run_sync('fetch')
+
+    def test_webfetch_domains_forwarded_to_local(self, allow_model_requests: None):
+        """WebFetch(allowed_domains=...) with non-supporting model → falls back to local with domain filtering."""
+        from unittest.mock import AsyncMock, patch
+
+        import httpx
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return ModelResponse(parts=[TextPart(content=f'Tool result: {part.content}')])
+            if info.function_tools:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name=info.function_tools[0].name,
+                            args='{"url": "https://example.com"}',
+                            tool_call_id='c1',
+                        )
+                    ]
+                )
+            return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
+
+        mock_response = httpx.Response(
+            200,
+            text='<html><body><p>Hello</p></body></html>',
+            headers={'content-type': 'text/html'},
+            request=httpx.Request('GET', 'https://example.com'),
+        )
+
+        model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        agent = Agent(model, capabilities=[WebFetch(allowed_domains=['example.com'])])
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
+        ):
+            result = agent.run_sync('fetch example.com')
+        # Verify the web_fetch fallback tool was actually called with domain filtering
+        tool_calls = [
+            part
+            for msg in result.all_messages()
+            if isinstance(msg, ModelResponse)
+            for part in msg.parts
+            if isinstance(part, ToolCallPart)
+        ]
+        assert len(tool_calls) == 1
+        assert tool_calls[0].tool_name == 'web_fetch'
+
+    def test_webfetch_both_false_raises(self):
+        """WebFetch(builtin=False, local=False) → UserError at construction."""
+        with pytest.raises(UserError, match='both builtin and local cannot be False'):
+            WebFetch(builtin=False, local=False)
+
+    def test_webfetch_builtin_false_with_max_uses_raises(self):
+        """WebFetch(builtin=False, max_uses=...) → UserError at construction."""
+        with pytest.raises(UserError, match='constraint fields require the builtin tool'):
+            WebFetch(builtin=False, max_uses=5)
+
+    def test_webfetch_local_callable(self):
+        """WebFetch(local=some_function) → bare callable wrapped in Tool."""
+        from pydantic_ai.tools import Tool
+
+        def my_fetch(url: str) -> str:
+            return f'fetched {url}'  # pragma: no cover
+
+        cap = WebFetch(local=my_fetch)
+        assert isinstance(cap.local, Tool)
 
 
 class TestImageGenerationCapability:
@@ -5137,7 +5265,7 @@ def test_web_fetch_with_constraints():
     assert tool.max_uses == 5
     assert tool.enable_citations is True
     assert tool.max_content_tokens == 1000
-    # Constraint fields require builtin
+    # Only max_uses requires builtin (domains are handled locally)
     assert cap._requires_builtin() is True  # pyright: ignore[reportPrivateUsage]
 
 
@@ -5171,7 +5299,7 @@ def test_web_search_with_constraints():
 
 
 def test_web_search_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
-    """WebSearch._default_local() returns None when duckduckgo is not installed."""
+    """WebSearch._default_local() warns and returns None when duckduckgo is not installed."""
     import builtins
 
     original_import = builtins.__import__
@@ -5182,8 +5310,27 @@ def test_web_search_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
         return original_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, '__import__', mock_import)
-    cap = WebSearch(builtin=False)
+    with pytest.warns(UserWarning, match='duckduckgo'):
+        cap = WebSearch(builtin=False)
     # With builtin disabled and no duckduckgo, local is None
+    assert cap.local is None
+
+
+def test_web_fetch_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
+    """WebFetch._default_local() warns and returns None when markdownify is not installed."""
+    import builtins
+
+    original_import = builtins.__import__
+
+    def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == 'pydantic_ai.common_tools.web_fetch':
+            raise ImportError('mocked')
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', mock_import)
+    with pytest.warns(UserWarning, match='web-fetch'):
+        cap = WebFetch(builtin=False)
+    # With builtin disabled and no markdownify, local is None
     assert cap.local is None
 
 
@@ -5214,6 +5361,17 @@ def test_builtin_tool_from_spec_no_args():
 
     with pytest.raises(TypeError, match='requires either a `tool` argument'):
         BuiltinToolCapDirect.from_spec()
+
+
+@pytest.mark.filterwarnings('ignore::DeprecationWarning')
+def test_builtin_or_local_no_default_local():
+    """BuiltinOrLocalTool base class _default_local() returns None."""
+    from pydantic_ai.capabilities.builtin_or_local import BuiltinOrLocalTool
+
+    cap = BuiltinOrLocalTool(builtin=WebSearchTool())
+    # Base class _default_local() returns None — no local fallback
+    assert cap.local is None
+    assert cap.get_toolset() is None
 
 
 @pytest.mark.filterwarnings('ignore::DeprecationWarning')
