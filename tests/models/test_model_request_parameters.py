@@ -71,6 +71,7 @@ def test_model_request_parameters_are_serializable():
                     'kind': 'function',
                     'metadata': None,
                     'timeout': None,
+                    'defer_loading': False,
                     'prefer_builtin': None,
                 }
             ],
@@ -137,6 +138,7 @@ def test_model_request_parameters_are_serializable():
                     'kind': 'function',
                     'metadata': None,
                     'timeout': None,
+                    'defer_loading': False,
                     'prefer_builtin': None,
                 }
             ],
