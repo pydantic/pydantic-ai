@@ -15,12 +15,14 @@ from .abstract import (
 from .builtin_or_local import BuiltinOrLocalTool
 from .builtin_tool import BuiltinTool
 from .combined import CombinedCapability
+from .compaction import ProviderCompaction
 from .history_processor import HistoryProcessor
 from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
 from .mcp import MCP
 from .prefix_tools import PrefixTools
 from .prepare_tools import PrepareTools
+from .routed import RoutedCapability
 from .thinking import Thinking
 from .toolset import Toolset
 from .web_fetch import WebFetch
@@ -31,6 +33,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
     for cls in (
         BuiltinTool,
+        ProviderCompaction,
         HistoryProcessor,
         ImageGeneration,
         MCP,
@@ -59,6 +62,7 @@ __all__ = [
     'BuiltinTool',
     'BuiltinOrLocalTool',
     'CAPABILITY_TYPES',
+    'ProviderCompaction',
     'ImageGeneration',
     'HistoryProcessor',
     'MCP',
@@ -68,6 +72,7 @@ __all__ = [
     'Toolset',
     'WebFetch',
     'WebSearch',
+    'RoutedCapability',
     'WrapperCapability',
     'CombinedCapability',
     'HookTimeoutError',

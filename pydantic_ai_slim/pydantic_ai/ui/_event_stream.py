@@ -18,6 +18,7 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolReturnPart,
+    CompactionPart,
     FilePart,
     FileUrl,
     FinalResultEvent,
@@ -312,9 +313,11 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case BuiltinToolReturnPart():
                 async for e in self.handle_builtin_tool_return(part):
                     yield e
-            case FilePart():  # pragma: no branch
+            case FilePart():
                 async for e in self.handle_file(part):
                     yield e
+            case CompactionPart():
+                pass
 
     async def handle_part_delta(self, event: PartDeltaEvent) -> AsyncIterator[EventT]:
         """Handle a PartDeltaEvent.
@@ -374,7 +377,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case BuiltinToolCallPart():
                 async for e in self.handle_builtin_tool_call_end(part):
                     yield e
-            case BuiltinToolReturnPart() | FilePart():  # pragma: no cover
+            case BuiltinToolReturnPart() | FilePart() | CompactionPart():  # pragma: no cover
                 # These don't have deltas, so they don't need to be ended.
                 pass
 

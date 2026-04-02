@@ -8809,3 +8809,61 @@ Fix the errors and try again.\
             },
         ]
     )
+
+
+async def test_anthropic_compaction_capability_settings(allow_model_requests: None, anthropic_api_key: str):
+    """Test that AnthropicCompaction capability correctly configures model settings."""
+    from pydantic_ai.models.anthropic import AnthropicCompaction
+
+    cap = AnthropicCompaction(token_threshold=100_000, instructions='Keep it short.')
+
+    settings = cap.get_model_settings()
+    assert settings is not None
+    assert settings.get('anthropic_context_management') == {
+        'edits': [
+            {
+                'type': 'compact_20260112',
+                'trigger': {'type': 'input_tokens', 'value': 100_000},
+                'instructions': 'Keep it short.',
+            }
+        ]
+    }
+
+
+async def test_anthropic_compaction_capability_settings_with_pause(allow_model_requests: None, anthropic_api_key: str):
+    """Test that AnthropicCompaction correctly includes pause_after_compaction."""
+    from pydantic_ai.models.anthropic import AnthropicCompaction
+
+    cap = AnthropicCompaction(pause_after_compaction=True)
+    settings = cap.get_model_settings()
+    assert settings is not None
+    anthropic_settings = cast(AnthropicModelSettings, settings)
+    edit = anthropic_settings['anthropic_context_management']['edits'][0]  # type: ignore[reportUnknownMemberType]
+    assert edit['pause_after_compaction'] is True
+
+
+async def test_anthropic_compaction_round_trip(allow_model_requests: None, anthropic_api_key: str):
+    """Test that CompactionPart is correctly round-tripped in Anthropic message mapping."""
+    from pydantic_ai.messages import CompactionPart
+
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    # Create a message history that includes a CompactionPart
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello!')]),
+        ModelResponse(
+            parts=[
+                CompactionPart(content='Summary: user said hello.', provider_name='anthropic'),
+                TextPart(content='Hello! How can I help?'),
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(parts=[UserPromptPart(content='What did I say earlier?')]),
+    ]
+
+    # Run the agent with the compaction in history
+    agent = Agent(model=model, instructions='Be brief.')
+    result = await agent.run('What did I say earlier?', message_history=messages)
+
+    # The model should be able to respond based on the compacted context
+    assert result.output  # Just verify we got a response

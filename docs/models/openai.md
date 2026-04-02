@@ -208,6 +208,45 @@ print(result2.output)
 #> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
 ```
 
+#### Message Compaction
+
+The Responses API supports [compacting message history](https://platform.openai.com/docs/guides/conversation-state#compaction-advanced) to reduce token usage in long conversations. Compaction produces an encrypted summary that replaces older messages while preserving context.
+
+The easiest way to enable compaction is with the [`OpenAICompaction`][pydantic_ai.models.openai.OpenAICompaction] capability, which automatically calls the compact endpoint when the message count exceeds a threshold:
+
+```python {title="openai_compaction.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAICompaction, OpenAIResponsesModel
+
+agent = Agent(
+    OpenAIResponsesModel('gpt-4o'),
+    capabilities=[OpenAICompaction(message_count_threshold=10)],
+)
+
+message_history = []
+for question in ['What is 2+2?', 'And 3+3?', 'And 4+4?']:
+    result = agent.run_sync(question, message_history=message_history)
+    message_history = result.all_messages()
+    # After 10 messages, history is automatically compacted before each request
+```
+
+You can also use the provider-agnostic [`ProviderCompaction`][pydantic_ai.capabilities.ProviderCompaction] capability, which routes to the correct provider implementation based on the model:
+
+```python {title="openai_compaction_unified.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import ProviderCompaction
+
+agent = Agent(
+    'openai-responses:gpt-4o',
+    capabilities=[ProviderCompaction(message_count_threshold=10)],
+)
+```
+
+For advanced use cases, you can call [`compact_messages`][pydantic_ai.models.openai.OpenAIResponsesModel.compact_messages] directly on the model.
+
+!!! note
+    Compaction works best with [`openai_previous_response_id='auto'`](#automatically-referencing-earlier-responses), which lets the server-side history work alongside compaction.
+
 ## OpenAI-compatible Models
 
 Many providers and models are compatible with the OpenAI API, and can be used with `OpenAIChatModel` in Pydantic AI.

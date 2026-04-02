@@ -20,6 +20,7 @@ from pydantic_ai.capabilities import (
     BuiltinTool,
     ImageGeneration,
     PrefixTools,
+    ProviderCompaction,
     Thinking,
     Toolset,
     WebFetch,
@@ -73,6 +74,7 @@ def test_capability_types() -> None:
     assert CAPABILITY_TYPES == snapshot(
         {
             'BuiltinTool': BuiltinTool,
+            'ProviderCompaction': ProviderCompaction,
             'ImageGeneration': ImageGeneration,
             'MCP': MCP,
             'PrefixTools': PrefixTools,
@@ -1232,6 +1234,13 @@ Supported by:
                     'title': 'spec_MCP',
                     'type': 'object',
                 },
+                'spec_ProviderCompaction': {
+                    'additionalProperties': False,
+                    'properties': {'ProviderCompaction': {'$ref': '#/$defs/spec_params_ProviderCompaction'}},
+                    'required': ['ProviderCompaction'],
+                    'title': 'spec_ProviderCompaction',
+                    'type': 'object',
+                },
                 'spec_PrefixTools': {
                     'additionalProperties': False,
                     'properties': {'PrefixTools': {'$ref': '#/$defs/spec_params_PrefixTools'}},
@@ -1316,6 +1325,21 @@ Supported by:
                     'title': 'spec_params_ImageGeneration',
                     'type': 'object',
                 },
+                'spec_params_ProviderCompaction': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'instructions': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Instructions'},
+                        'token_threshold': {'title': 'Token Threshold', 'type': 'integer'},
+                        'pause_after_compaction': {'title': 'Pause After Compaction', 'type': 'boolean'},
+                        'message_count_threshold': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'title': 'Message Count Threshold',
+                        },
+                        'trigger': {'title': 'Trigger', 'type': 'null'},
+                    },
+                    'title': 'spec_params_ProviderCompaction',
+                    'type': 'object',
+                },
                 'spec_params_MCP': {
                     'additionalProperties': False,
                     'properties': {
@@ -1352,6 +1376,8 @@ Supported by:
                             'anyOf': [
                                 {'const': 'BuiltinTool', 'type': 'string'},
                                 {'$ref': '#/$defs/short_spec_BuiltinTool'},
+                                {'const': 'ProviderCompaction', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_ProviderCompaction'},
                                 {'const': 'ImageGeneration', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_ImageGeneration'},
                                 {'$ref': '#/$defs/short_spec_MCP'},
@@ -1490,6 +1516,8 @@ Supported by:
                         'anyOf': [
                             {'const': 'BuiltinTool', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_BuiltinTool'},
+                            {'const': 'ProviderCompaction', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_ProviderCompaction'},
                             {'const': 'ImageGeneration', 'type': 'string'},
                             {'$ref': '#/$defs/spec_ImageGeneration'},
                             {'$ref': '#/$defs/short_spec_MCP'},
@@ -8095,3 +8123,62 @@ class TestCtxAgentInCapability:
         agent = Agent(FunctionModel(simple_model_function), name='hook_test_agent', capabilities=[AgentTrackingCap()])
         await agent.run('hello')
         assert hook_agent_names == ['hook_test_agent', 'hook_test_agent']
+
+
+# region --- Compaction capability tests ---
+
+
+class TestCompaction:
+    async def test_compaction_routing_unsupported_model(self):
+        """ProviderCompaction raises UserError for unsupported models."""
+        agent = Agent(TestModel(), capabilities=[ProviderCompaction(message_count_threshold=2)])
+        with pytest.raises(UserError, match='Compaction is not supported for'):
+            await agent.run('hello')
+
+    async def test_compaction_routing_fallback_model(self):
+        """ProviderCompaction raises UserError for FallbackModel."""
+        from pydantic_ai.models.fallback import FallbackModel
+
+        model = FallbackModel(TestModel(), TestModel())
+        agent = Agent(model, capabilities=[ProviderCompaction(message_count_threshold=2)])
+        with pytest.raises(UserError, match='not compatible with FallbackModel'):
+            await agent.run('hello')
+
+    def test_compaction_part_serialization(self):
+        """CompactionPart round-trips through Pydantic serialization."""
+        from pydantic_ai.messages import CompactionPart, ModelMessagesTypeAdapter, ModelResponse
+
+        # Anthropic-style (text content)
+        anthropic_part = CompactionPart(content='Summary of conversation', provider_name='anthropic')
+        assert anthropic_part.has_content()
+        assert anthropic_part.part_kind == 'compaction'
+
+        # OpenAI-style (encrypted, no content)
+        openai_part = CompactionPart(
+            content=None,
+            id='cmp_123',
+            provider_name='openai',
+            provider_details={'encrypted_content': 'abc123', 'type': 'compaction'},
+        )
+        assert not openai_part.has_content()
+        assert openai_part.part_kind == 'compaction'
+
+        # Round-trip through serialization
+        response = ModelResponse(parts=[anthropic_part, openai_part])
+        messages: list[ModelMessage] = [response]
+        serialized = ModelMessagesTypeAdapter.dump_json(messages)
+        deserialized = ModelMessagesTypeAdapter.validate_json(serialized)
+        assert len(deserialized) == 1
+        assert isinstance(deserialized[0], ModelResponse)
+        parts = deserialized[0].parts
+        assert len(parts) == 2
+        assert isinstance(parts[0], CompactionPart)
+        assert parts[0].content == 'Summary of conversation'
+        assert parts[0].provider_name == 'anthropic'
+        assert isinstance(parts[1], CompactionPart)
+        assert parts[1].content is None
+        assert parts[1].id == 'cmp_123'
+        assert parts[1].provider_details == {'encrypted_content': 'abc123', 'type': 'compaction'}
+
+
+# endregion
