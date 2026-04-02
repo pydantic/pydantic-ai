@@ -562,7 +562,7 @@ class MistralModel(Model):
                 mistral_messages.append(MistralAssistantMessage(content=content_chunks, tool_calls=tool_calls))
             else:
                 assert_never(message)
-        if instruction_parts := model_request_parameters.instruction_parts:
+        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
             system_prompt_count = next(
                 (i for i, m in enumerate(mistral_messages) if not isinstance(m, MistralSystemMessage)),
                 len(mistral_messages),

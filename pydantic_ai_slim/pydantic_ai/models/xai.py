@@ -252,7 +252,7 @@ class XaiModel(Model):
                 assert_never(message)
 
         # Insert instructions as system messages after existing system messages if present
-        if instruction_parts := model_request_parameters.instruction_parts:
+        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
             system_prompt_count = next(
                 (i for i, m in enumerate(xai_messages) if m.role != chat_types.chat_pb2.MessageRole.ROLE_SYSTEM),
                 len(xai_messages),

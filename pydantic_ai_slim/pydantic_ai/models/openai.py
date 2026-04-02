@@ -1176,7 +1176,7 @@ class OpenAIChatModel(Model):
                 openai_messages.append(self._map_model_response(message))
             else:
                 assert_never(message)
-        if instruction_parts := model_request_parameters.instruction_parts:
+        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
             system_prompt_role = OpenAIModelProfile.from_profile(self.profile).openai_system_prompt_role or 'system'
             system_prompt_count = next(
                 (i for i, m in enumerate(openai_messages) if m.get('role') != system_prompt_role), len(openai_messages)

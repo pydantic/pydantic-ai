@@ -958,8 +958,10 @@ class Model(ABC):
         Falls back to reading `ModelRequest.instructions` from message history when
         `model_request_parameters` is not available (e.g. OTel span attributes).
         """
-        if model_request_parameters and model_request_parameters.instruction_parts:
-            return InstructionPart.join(model_request_parameters.instruction_parts)
+        if model_request_parameters:
+            parts = Model._get_instruction_parts(messages, model_request_parameters)
+            if parts:
+                return InstructionPart.join(parts)
 
         # Fallback: read from message history (used by OTel when model_request_parameters is unavailable)
         instructions = None
@@ -982,6 +984,25 @@ class Model(ABC):
                 instructions = second_most_recent_request.instructions
 
         return instructions
+
+    @staticmethod
+    def _get_instruction_parts(
+        messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters
+    ) -> list[InstructionPart] | None:
+        """Get structured instruction parts for the current request.
+
+        Uses `model_request_parameters.instruction_parts` when set (normal agent flow).
+        Falls back to synthesizing from `ModelRequest.instructions` in message history
+        when `instruction_parts` is `None` (e.g. direct `model.request()` calls).
+        """
+        if model_request_parameters.instruction_parts is not None:
+            return model_request_parameters.instruction_parts or None
+
+        # Fallback: synthesize from message history for direct model.request() callers
+        for message in reversed(messages):
+            if isinstance(message, ModelRequest) and message.instructions is not None:
+                return [InstructionPart(content=message.instructions)]
+        return None
 
 
 @dataclass
