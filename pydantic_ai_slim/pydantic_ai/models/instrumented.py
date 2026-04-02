@@ -351,9 +351,9 @@ class InstrumentationSettings:
                 continue
             token_attributes = {**attributes, 'gen_ai.token.type': typ}
             self.tokens_histogram.record(tokens, token_attributes)
-            if price_calculation:
-                cost = float(getattr(price_calculation, f'{typ}_price'))
-                self.cost_histogram.record(cost, token_attributes)
+        if price_calculation:
+            cost = float(price_calculation.total_price)
+            self.cost_histogram.record(cost, attributes)
 
 
 GEN_AI_SYSTEM_ATTRIBUTE = 'gen_ai.system'
@@ -502,15 +502,6 @@ class InstrumentedModel(WrapperModel):
                     nonlocal record_metrics
                     record_metrics = _record_metrics
 
-                    if not span.is_recording():
-                        return
-
-                    self.instrumentation_settings.handle_messages(messages, response, system, span, parameters)
-
-                    attributes_to_set = {
-                        **response.usage.opentelemetry_attributes(),
-                        'gen_ai.response.model': response_model,
-                    }
                     try:
                         price_calculation = response.cost()
                     except LookupError:
@@ -520,7 +511,18 @@ class InstrumentedModel(WrapperModel):
                         warnings.warn(
                             f'Failed to get cost from response: {type(e).__name__}: {e}', CostCalculationFailedWarning
                         )
-                    else:
+
+                    if not span.is_recording():
+                        return
+
+                    self.instrumentation_settings.handle_messages(messages, response, system, span, parameters)
+
+                    attributes_to_set = {
+                        **response.usage.opentelemetry_attributes(),
+                        'gen_ai.response.model': response_model,
+                    }
+
+                    if price_calculation:
                         attributes_to_set['operation.cost'] = float(price_calculation.total_price)
 
                     if response.provider_response_id is not None:

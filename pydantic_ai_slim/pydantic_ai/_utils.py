@@ -636,3 +636,18 @@ def get_event_loop():
 def is_str_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
     """Check if obj is a dict, narrowing the type to `dict[str, Any]`."""
     return isinstance(obj, dict)
+
+
+def is_text_like_media_type(media_type: str) -> bool:
+    """Check if a media type represents text-like content.
+
+    Returns True for `text/*`, JSON, XML, YAML, and their structured syntax suffixes.
+    """
+    return (
+        media_type.startswith('text/')
+        or media_type == 'application/json'
+        or media_type.endswith('+json')
+        or media_type == 'application/xml'
+        or media_type.endswith('+xml')
+        or media_type in ('application/x-yaml', 'application/yaml')
+    )

@@ -1138,6 +1138,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Build initial RunContext for for_run lifecycle hooks
         initial_ctx = RunContext[AgentDepsT](
             deps=deps,
+            agent=self,
             model=model_used,
             usage=usage,
             prompt=user_prompt,
@@ -1236,6 +1237,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,
+            agent=self,
             prompt=user_prompt,
             new_message_index=len(message_history) if message_history else 0,
             resumed_request=None,
@@ -1275,6 +1277,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             'agent_name': agent_name,
             'gen_ai.agent.name': agent_name,
             'gen_ai.agent.call.id': state.run_id,
+            'gen_ai.operation.name': 'invoke_agent',
             'logfire.msg': f'{agent_name} run',
         }
         if self._description is not None:
