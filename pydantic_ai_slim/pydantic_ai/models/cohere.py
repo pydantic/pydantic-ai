@@ -250,7 +250,9 @@ class CohereModel(Model):
                         thinking.append(item.content)
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
-                    elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart | FilePart | CompactionPart):
+                    elif isinstance(
+                        item, BuiltinToolCallPart | BuiltinToolReturnPart | FilePart | CompactionPart
+                    ):  # pragma: no cover
                         pass
                     else:
                         assert_never(item)

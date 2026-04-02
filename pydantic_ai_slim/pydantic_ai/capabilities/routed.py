@@ -70,4 +70,4 @@ class RoutedCapability(AbstractCapability[AgentDepsT]):
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
-        return None  # Subclasses should override if they want serialization support
+        return None  # pragma: no cover — Subclasses should override if they want serialization support

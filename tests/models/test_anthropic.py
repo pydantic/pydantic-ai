@@ -8867,3 +8867,101 @@ async def test_anthropic_compaction_round_trip(allow_model_requests: None, anthr
 
     # The model should be able to respond based on the compacted context
     assert result.output  # Just verify we got a response
+
+
+async def test_anthropic_compaction_in_response(allow_model_requests: None):
+    """Test that BetaCompactionBlock in API response is mapped to CompactionPart."""
+    from anthropic.types.beta import BetaCompactionBlock
+
+    from pydantic_ai.messages import CompactionPart
+
+    c = completion_message(
+        [
+            BetaCompactionBlock(content='Summary of prior conversation.', type='compaction'),
+            BetaTextBlock(text='Based on our conversation, here is my response.', type='text'),
+        ],
+        BetaUsage(input_tokens=100, output_tokens=20),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('Continue our conversation')
+    assert result.output == 'Based on our conversation, here is my response.'
+
+    # Verify the CompactionPart is in the response messages
+    response_msgs = [msg for msg in result.all_messages() if isinstance(msg, ModelResponse)]
+    assert len(response_msgs) == 1
+    compaction_parts = [p for p in response_msgs[0].parts if isinstance(p, CompactionPart)]
+    assert len(compaction_parts) == 1
+    assert compaction_parts[0].content == 'Summary of prior conversation.'
+    assert compaction_parts[0].provider_name == 'anthropic'
+
+
+async def test_anthropic_compaction_streaming(allow_model_requests: None):
+    """Test that BetaCompactionBlock in streaming response is handled correctly."""
+    from anthropic.types.beta import (
+        BetaCompactionBlock,
+        BetaCompactionContentBlockDelta,
+    )
+
+    from pydantic_ai.messages import CompactionPart
+
+    stream: list[BetaRawMessageStreamEvent] = [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id='msg_123',
+                model='claude-sonnet-4-6',
+                role='assistant',
+                type='message',
+                content=[],
+                stop_reason=None,
+                usage=BetaUsage(input_tokens=100, output_tokens=0),
+            ),
+        ),
+        BetaRawContentBlockStartEvent(
+            type='content_block_start',
+            index=0,
+            content_block=BetaCompactionBlock(content='Summary of conversation.', type='compaction'),
+        ),
+        BetaRawContentBlockDeltaEvent(
+            type='content_block_delta',
+            index=0,
+            delta=BetaCompactionContentBlockDelta(content='Updated summary of conversation.', type='compaction_delta'),
+        ),
+        BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
+        BetaRawContentBlockStartEvent(
+            type='content_block_start',
+            index=1,
+            content_block=BetaTextBlock(text='', type='text'),
+        ),
+        BetaRawContentBlockDeltaEvent(
+            type='content_block_delta',
+            index=1,
+            delta=BetaTextDelta(type='text_delta', text='Here is my response.'),
+        ),
+        BetaRawContentBlockStopEvent(type='content_block_stop', index=1),
+        BetaRawMessageDeltaEvent(
+            type='message_delta',
+            delta=Delta(stop_reason='end_turn'),
+            usage=BetaMessageDeltaUsage(output_tokens=15),
+        ),
+        BetaRawMessageStopEvent(type='message_stop'),
+    ]
+
+    mock_client = MockAnthropic.create_stream_mock(stream)
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('Continue') as result:
+        output = await result.get_output()
+    assert output == 'Here is my response.'
+
+    # Verify CompactionPart is in the response
+    response_msgs = [msg for msg in result.all_messages() if isinstance(msg, ModelResponse)]
+    assert len(response_msgs) == 1
+    compaction_parts = [p for p in response_msgs[0].parts if isinstance(p, CompactionPart)]
+    assert len(compaction_parts) == 1
+    assert compaction_parts[0].content == 'Updated summary of conversation.'
+    assert compaction_parts[0].provider_name == 'anthropic'

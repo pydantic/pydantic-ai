@@ -8180,5 +8180,86 @@ class TestCompaction:
         assert parts[1].id == 'cmp_123'
         assert parts[1].provider_details == {'encrypted_content': 'abc123', 'type': 'compaction'}
 
+    async def test_openai_compaction_with_function_model(self):
+        """OpenAICompaction is a no-op when the model is not OpenAIResponsesModel."""
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        agent = Agent(
+            FunctionModel(simple_model_function),
+            capabilities=[OpenAICompaction(message_count_threshold=2)],
+        )
+        result = await agent.run('hello')
+        # Should work fine — capability skips non-OpenAI models
+        assert result.output == 'response from model'
+
+    def test_openai_compaction_should_compact_with_trigger(self):
+        """OpenAICompaction._should_compact delegates to custom trigger."""
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        cap = OpenAICompaction(trigger=lambda msgs: len(msgs) > 2)
+        assert not cap._should_compact([ModelRequest(parts=[UserPromptPart(content='hi')])])  # pyright: ignore[reportPrivateUsage]
+        assert cap._should_compact(  # pyright: ignore[reportPrivateUsage]
+            [
+                ModelRequest(parts=[UserPromptPart(content='1')]),
+                ModelResponse(parts=[TextPart(content='r1')]),
+                ModelRequest(parts=[UserPromptPart(content='2')]),
+            ]
+        )
+
+    def test_openai_compaction_should_compact_no_config(self):
+        """OpenAICompaction._should_compact returns False when nothing is configured."""
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        cap = OpenAICompaction()
+        assert not cap._should_compact([ModelRequest(parts=[UserPromptPart(content='hi')])])  # pyright: ignore[reportPrivateUsage]
+
+    def test_openai_compaction_serialization_name(self):
+        """OpenAICompaction has the correct serialization name."""
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        assert OpenAICompaction.get_serialization_name() == 'OpenAICompaction'
+
+    def test_anthropic_compaction_serialization_name(self):
+        """AnthropicCompaction has the correct serialization name."""
+        from pydantic_ai.models.anthropic import AnthropicCompaction
+
+        assert AnthropicCompaction.get_serialization_name() == 'AnthropicCompaction'
+
+    def test_provider_compaction_serialization_name(self):
+        """ProviderCompaction has the correct serialization name."""
+        assert ProviderCompaction.get_serialization_name() == 'ProviderCompaction'
+
+    async def test_compaction_part_in_function_model_history(self):
+        """FunctionModel handles message history containing CompactionPart."""
+        from pydantic_ai.messages import CompactionPart
+
+        compaction_response = ModelResponse(
+            parts=[CompactionPart(content='Summary: user greeted.', provider_name='anthropic')],
+            provider_name='anthropic',
+        )
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart(content='Hello!')]),
+            compaction_response,
+            ModelRequest(parts=[UserPromptPart(content='How are you?')]),
+        ]
+
+        agent = Agent(FunctionModel(simple_model_function))
+        result = await agent.run('Follow up', message_history=history)
+        assert result.output == 'response from model'
+
+    async def test_routed_capability_unwraps_wrapper_model(self):
+        """RoutedCapability unwraps WrapperModel to find the underlying model."""
+        from pydantic_ai.models.wrapper import WrapperModel
+
+        class CustomWrapper(WrapperModel):
+            pass
+
+        # Wrapping a TestModel — ProviderCompaction should unwrap and then fail
+        # because TestModel is not a supported provider
+        wrapped = CustomWrapper(TestModel())
+        agent = Agent(wrapped, capabilities=[ProviderCompaction(message_count_threshold=2)])
+        with pytest.raises(UserError, match='Compaction is not supported for'):
+            await agent.run('hello')
+
 
 # endregion
