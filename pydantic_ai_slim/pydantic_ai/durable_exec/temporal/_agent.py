@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from contextvars import ContextVar
@@ -40,7 +41,7 @@ from pydantic_ai.tools import (
 )
 
 from ._model import TemporalModel, TemporalProviderFactory
-from ._run_context import TemporalRunContext
+from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import TemporalWrapperToolset, temporalize_toolset
 
 if TYPE_CHECKING:
@@ -76,6 +77,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 dict[str, ActivityConfig | Literal[False]],
                 type[AgentDepsT],
                 type[TemporalRunContext[AgentDepsT]],
+                AbstractAgent[AgentDepsT, Any] | None,
             ],
             AbstractToolset[AgentDepsT],
         ] = temporalize_toolset,
@@ -148,7 +150,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             # and that only ends up calling `event_stream_handler` if it is set.
             assert self.event_stream_handler is not None
 
-            run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
+            run_context = deserialize_run_context(
+                self.run_context_type, params.serialized_run_context, deps=deps, agent=self.wrapped
+            )
 
             async def streamed_response():
                 yield params.event
@@ -174,6 +178,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             event_stream_handler=self.event_stream_handler,
             models=models,
             provider_factory=provider_factory,
+            agent=self.wrapped,
         )
         activities.extend(temporal_model.temporal_activities)
         self._temporal_model = temporal_model
@@ -185,7 +190,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                     "Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) need to have a unique `id` in order to be used with Temporal. The ID will be used to identify the toolset's activities within the workflow."
                 )
 
-            toolset = temporalize_toolset_func(
+            args: tuple[Any, ...] = (
                 toolset,
                 activity_name_prefix,
                 activity_config | toolset_activity_config.get(id, {}),
@@ -193,6 +198,14 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 self.deps_type,
                 self.run_context_type,
             )
+            # Pass agent if the function accepts it (backward compat with old 6-arg callables)
+            positional_kinds = {inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD}
+            n_positional = sum(
+                1 for p in inspect.signature(temporalize_toolset_func).parameters.values() if p.kind in positional_kinds
+            )
+            if n_positional > 6:
+                args = (*args, self.wrapped)
+            toolset = temporalize_toolset_func(*args)
             if isinstance(toolset, TemporalWrapperToolset):
                 activities.extend(toolset.temporal_activities)
             return toolset
