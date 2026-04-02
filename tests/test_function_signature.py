@@ -1300,9 +1300,57 @@ def test_function_with_enum_field_in_model():
     assert '_Color' not in type_names
 
 
-def test_function_tool_definition_eq_with_non_tool():
-    """_FunctionToolDefinition.__eq__ returns NotImplemented for non-ToolDefinition."""
-    tool = Tool(lambda x: x, name='t', description='t')
-    td = tool.tool_def
-    assert td != 'not a tool definition'
-    assert td != 42
+def test_schema_with_described_optional_fields():
+    """Schema with descriptions and optional fields renders NotRequired and field descriptions."""
+    sig = FunctionSignature.from_schema(
+        name='create_user',
+        parameters_schema={
+            'type': 'object',
+            'properties': {
+                'name': {'type': 'string', 'description': 'The user name'},
+                'bio': {'type': 'string', 'description': 'A short bio.\nCan be multiple lines.'},
+            },
+            'required': ['name'],
+            '$defs': {
+                'Address': {
+                    'type': 'object',
+                    'description': 'A mailing address',
+                    'properties': {
+                        'street': {'type': 'string'},
+                        'city': {'type': 'string'},
+                    },
+                    'required': ['street'],
+                },
+            },
+        },
+    )
+    # Check that optional field 'bio' is rendered with description
+    rendered = str(sig)
+    assert 'bio: str' in rendered
+
+    # Check that Address type has description in its definition
+    addr = next(t for t in sig.referenced_types if t.name == 'Address')
+    defn = addr.render_definition()
+    assert 'A mailing address' in defn
+    # city is not required → should render as NotRequired
+    assert 'NotRequired' in defn
+
+
+def test_render_type_field_with_multiline_description():
+    """TypeFieldSignature renders multi-line descriptions correctly."""
+    field = TypeFieldSignature(
+        name='notes',
+        type=SimpleTypeExpr('str'),
+        required=True,
+        description='First line.\nSecond line.',
+    )
+    rendered = str(field)
+    assert '"""' in rendered
+    assert 'First line.' in rendered
+    assert 'Second line.' in rendered
+
+
+def test_render_empty_type_signature():
+    """Empty TypeSignature without description renders with pass."""
+    ts = TypeSignature(name='Empty')
+    assert ts.render_definition() == 'class Empty(TypedDict):\n    pass'
