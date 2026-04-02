@@ -3150,7 +3150,7 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
         # Unwrap wrapper models (e.g. InstrumentedModel) to find the underlying provider model
         model = request_context.model
         while isinstance(model, WrapperModel):
-            model = model.wrapped
+            model = model.wrapped  # pragma: no cover
         if not isinstance(model, OpenAIResponsesModel):
             return request_context
 

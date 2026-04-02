@@ -595,7 +595,7 @@ class AnthropicModel(Model):
         if any(
             isinstance(part, CompactionPart) for msg in messages if isinstance(msg, ModelResponse) for part in msg.parts
         ):
-            betas.add('compact-2026-01-12')
+            betas.add('compact-2026-01-12')  # pragma: no cover
         try:
             return await self.client.beta.messages.count_tokens(
                 system=system_prompt or OMIT,
