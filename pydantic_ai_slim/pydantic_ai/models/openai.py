@@ -1561,6 +1561,7 @@ class OpenAIResponsesModel(Model):
         return ModelResponse(
             parts=[part],
             usage=_map_usage(response, self._provider.name, self._provider.base_url, self.model_name),
+            model_name=self._model_name,
             provider_response_id=response.id,
             timestamp=_now_utc(),
             provider_name=self._provider.name,
