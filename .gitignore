@@ -20,6 +20,7 @@ node_modules/
 .coverage*
 /test_tmp/
 .mcp.json
+.agents/*
 .claude/*
 !.agents/skills/
 .agents/skills/*

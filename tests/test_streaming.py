@@ -792,6 +792,37 @@ async def test_call_tool_wrong_name():
     )
 
 
+async def test_invalid_output_tool_args_get_output():
+    """Regression test for https://github.com/pydantic/pydantic-ai/issues/3638."""
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        assert info.output_tools is not None and len(info.output_tools) == 1
+        yield {0: DeltaToolCall(name=info.output_tools[0].name)}
+        yield {0: DeltaToolCall(json_args='{"response": ["hello", "not_an_int"]}')}
+
+    agent = Agent(FunctionModel(stream_function=stream_fn), output_type=tuple[str, int])
+
+    with pytest.raises(UnexpectedModelBehavior, match='retries are not supported in `run_stream'):
+        async with agent.run_stream('hello') as result:
+            await result.get_output()
+
+
+async def test_invalid_output_tool_args_stream_output():
+    """Regression test for https://github.com/pydantic/pydantic-ai/issues/3638."""
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        assert info.output_tools is not None and len(info.output_tools) == 1
+        yield {0: DeltaToolCall(name=info.output_tools[0].name)}
+        yield {0: DeltaToolCall(json_args='{"response": ["hello", "not_an_int"]}')}
+
+    agent = Agent(FunctionModel(stream_function=stream_fn), output_type=tuple[str, int])
+
+    with pytest.raises(UnexpectedModelBehavior, match='retries are not supported in `run_stream'):
+        async with agent.run_stream('hello') as result:
+            async for _ in result.stream_output(debounce_by=None):
+                pass
+
+
 class TestPartialOutput:
     """Tests for `ctx.partial_output` flag in output validators and output functions."""
 
@@ -3192,24 +3223,33 @@ async def test_stream_tool_returning_user_content():
             FunctionToolResultEvent(
                 result=ToolReturnPart(
                     tool_name='get_image',
-                    content='See file bd38f5',
+                    content=ImageUrl(
+                        url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
+                    ),
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
-                ),
-                content=[
-                    'This is file bd38f5:',
-                    ImageUrl(
-                        url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg',
-                        identifier='bd38f5',
-                    ),
-                ],
+                )
             ),
             PartStartEvent(index=0, part=TextPart(content='')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"get_image":"See ')),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='file ')),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='bd38f5"}')),
-            PartEndEvent(index=0, part=TextPart(content='{"get_image":"See file bd38f5"}')),
+            PartDeltaEvent(
+                index=0,
+                delta=TextPartDelta(
+                    content_delta='{"get_image":{"url":"https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg","'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=TextPartDelta(
+                    content_delta='force_download":false,"vendor_metadata":null,"kind":"image-url","media_type":"image/jpeg","identifier":"bd38f5"}}'
+                ),
+            ),
+            PartEndEvent(
+                index=0,
+                part=TextPart(
+                    content='{"get_image":{"url":"https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg","force_download":false,"vendor_metadata":null,"kind":"image-url","media_type":"image/jpeg","identifier":"bd38f5"}}'
+                ),
+            ),
         ]
     )
 

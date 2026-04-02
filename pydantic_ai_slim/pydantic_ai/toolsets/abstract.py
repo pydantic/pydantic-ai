@@ -103,6 +103,24 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         """A hint for how to avoid name conflicts with other toolsets for use in error messages."""
         return 'Rename the tool or wrap the toolset in a `PrefixedToolset` to avoid name conflicts.'
 
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        """Return the toolset to use for this agent run.
+
+        Called once per run, before `__aenter__`. Override this to return a fresh instance
+        for per-run state isolation. Default: return `self` (shared across runs).
+        """
+        return self
+
+    async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        """Return the toolset to use for this run step.
+
+        Called at the start of each run step. Override this to return a modified
+        instance for per-step state transitions. If returning a new instance,
+        you are responsible for managing any lifecycle transitions (exiting old
+        inner toolsets, entering new ones). Default: return `self` (no per-step changes).
+        """
+        return self
+
     async def __aenter__(self) -> Self:
         """Enter the toolset context.
 
@@ -114,6 +132,21 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         """Exit the toolset context.
 
         This is where you can tear down network connections in a concrete implementation.
+        """
+        return None
+
+    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> str | list[str] | None:
+        r"""Return instructions for how to use this toolset's tools.
+
+        Override this method to provide instructions that help the agent understand
+        how to use the tools in this toolset effectively.
+
+        Args:
+            ctx: The run context for this agent run.
+
+        Returns:
+            Instruction string (or list of strings) to add to the agent's instructions, or None if
+            no instructions. A list of strings will be joined with `\n\n` by the agent.
         """
         return None
 

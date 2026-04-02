@@ -4,7 +4,7 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, merge_model_settings
 
 pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
 
@@ -44,3 +44,44 @@ async def test_stop_settings(allow_model_requests: None, model: Model) -> None:
         assert result.output.endswith('Paris')
     else:
         assert 'Paris' not in result.output
+
+
+class TestMergeModelSettingsThinking:
+    """merge_model_settings with unified thinking fields."""
+
+    def test_merge_thinking_bool_override(self):
+        base: ModelSettings = {'thinking': True}
+        overrides: ModelSettings = {'thinking': False}
+        result = merge_model_settings(base, overrides)
+        assert result is not None
+        assert result.get('thinking') is False
+
+    def test_merge_effort_override(self):
+        base: ModelSettings = {'thinking': 'low'}
+        overrides: ModelSettings = {'thinking': 'high'}
+        result = merge_model_settings(base, overrides)
+        assert result is not None
+        assert result.get('thinking') == 'high'
+
+    def test_merge_preserves_non_thinking_settings(self):
+        base: ModelSettings = {'max_tokens': 1000, 'temperature': 0.5}
+        overrides: ModelSettings = {'thinking': True}
+        result = merge_model_settings(base, overrides)
+        assert result is not None
+        assert result.get('max_tokens') == 1000
+        assert result.get('temperature') == 0.5
+        assert result.get('thinking') is True
+
+    def test_merge_with_none_returns_base(self):
+        base: ModelSettings = {'thinking': True}
+        result = merge_model_settings(base, None)
+        assert result == base
+
+    def test_merge_with_none_base_returns_overrides(self):
+        overrides: ModelSettings = {'thinking': True}
+        result = merge_model_settings(None, overrides)
+        assert result == overrides
+
+    def test_merge_with_both_none(self):
+        result = merge_model_settings(None, None)
+        assert result is None

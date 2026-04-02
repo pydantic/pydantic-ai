@@ -15,9 +15,11 @@ from .._run_context import RunContext
 from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc, number_to_datetime
 from ..exceptions import ModelAPIError
 from ..messages import (
+    AudioUrl,
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     DocumentUrl,
     FilePart,
     FinishReason,
@@ -29,11 +31,13 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
+    UserContent,
     UserPromptPart,
     VideoUrl,
 )
@@ -52,38 +56,38 @@ from . import (
 )
 
 try:
-    from mistralai import (
-        UNSET,
+    from mistralai.client import Mistral
+    from mistralai.client.errors import SDKError
+    from mistralai.client.models import (
+        ChatCompletionChoiceFinishReason as MistralFinishReason,
+        ChatCompletionRequestMessage as MistralMessages,
+        ChatCompletionResponse as MistralChatCompletionResponse,
         CompletionChunk as MistralCompletionChunk,
-        Content as MistralContent,
+        CompletionEvent as MistralCompletionEvent,
         ContentChunk as MistralContentChunk,
         DocumentURLChunk as MistralDocumentURLChunk,
         FunctionCall as MistralFunctionCall,
         ImageURL as MistralImageURL,
         ImageURLChunk as MistralImageURLChunk,
-        Mistral,
-        OptionalNullable as MistralOptionalNullable,
         ReferenceChunk as MistralReferenceChunk,
         TextChunk as MistralTextChunk,
         ThinkChunk as MistralThinkChunk,
-        ToolChoiceEnum as MistralToolChoiceEnum,
-    )
-    from mistralai.models import (
-        ChatCompletionResponse as MistralChatCompletionResponse,
-        CompletionEvent as MistralCompletionEvent,
-        FinishReason as MistralFinishReason,
-        Messages as MistralMessages,
-        SDKError,
         Tool as MistralTool,
         ToolCall as MistralToolCall,
+        ToolChoiceEnum as MistralToolChoiceEnum,
     )
-    from mistralai.models.assistantmessage import AssistantMessage as MistralAssistantMessage
-    from mistralai.models.function import Function as MistralFunction
-    from mistralai.models.systemmessage import SystemMessage as MistralSystemMessage
-    from mistralai.models.toolmessage import ToolMessage as MistralToolMessage
-    from mistralai.models.usermessage import UserMessage as MistralUserMessage
-    from mistralai.types.basemodel import Unset as MistralUnset
-    from mistralai.utils.eventstreaming import EventStreamAsync as MistralEventStreamAsync
+    from mistralai.client.models.assistantmessage import (
+        AssistantMessage as MistralAssistantMessage,
+        AssistantMessageContent as MistralContent,
+    )
+    from mistralai.client.models.function import Function as MistralFunction
+    from mistralai.client.models.systemmessage import SystemMessage as MistralSystemMessage
+    from mistralai.client.models.thinkchunk import Thinking as MistralThinking
+    from mistralai.client.models.toolmessage import ToolMessage as MistralToolMessage
+    from mistralai.client.models.usermessage import UserMessage as MistralUserMessage
+    from mistralai.client.types import UNSET, OptionalNullable as MistralOptionalNullable
+    from mistralai.client.types.basemodel import Unset as MistralUnset
+    from mistralai.client.utils.eventstreaming import EventStreamAsync as MistralEventStreamAsync
 except ImportError as e:  # pragma: lax no cover
     raise ImportError(
         'Please install `mistral` to use the Mistral model, '
@@ -498,15 +502,18 @@ class MistralModel(Model):
         raise NotImplementedError('Timeout object is not yet supported for MistralModel.')
 
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[MistralMessages]:
+        file_content: list[UserContent] = []
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
                 yield MistralSystemMessage(content=part.content)
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
+                tool_text, files = part.model_response_str_and_user_content()
+                file_content.extend(files)
                 yield MistralToolMessage(
                     tool_call_id=part.tool_call_id,
-                    content=part.model_response_str(),
+                    content=tool_text,
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
@@ -518,6 +525,8 @@ class MistralModel(Model):
                     )
             else:
                 assert_never(part)
+        if file_content:
+            yield await self._map_user_prompt(UserPromptPart(content=file_content))
 
     async def _map_messages(  # noqa: C901
         self, messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters
@@ -530,7 +539,7 @@ class MistralModel(Model):
                     mistral_messages.append(msg)
             elif isinstance(message, ModelResponse):
                 content_chunks: list[MistralContentChunk] = []
-                thinking_chunks: list[MistralTextChunk | MistralReferenceChunk] = []
+                thinking_chunks: list[MistralThinking] = []
                 tool_calls: list[MistralToolCall] = []
 
                 for part in message.parts:
@@ -554,7 +563,10 @@ class MistralModel(Model):
             else:
                 assert_never(message)
         if instructions := self._get_instructions(messages, model_request_parameters):
-            system_prompt_count = sum(1 for m in mistral_messages if isinstance(m, MistralSystemMessage))
+            system_prompt_count = next(
+                (i for i, m in enumerate(mistral_messages) if not isinstance(m, MistralSystemMessage)),
+                len(mistral_messages),
+            )
             mistral_messages.insert(system_prompt_count, MistralSystemMessage(content=instructions))
 
         # Post-process messages to insert fake assistant message after tool message if followed by user message
@@ -571,15 +583,16 @@ class MistralModel(Model):
 
         return processed_messages
 
-    async def _map_user_prompt(self, part: UserPromptPart) -> MistralUserMessage:
+    async def _map_user_prompt(self, part: UserPromptPart) -> MistralUserMessage:  # noqa: C901
         content: str | list[MistralContentChunk]
         if isinstance(part.content, str):
             content = part.content
         else:
             content = []
             for item in part.content:
-                if isinstance(item, str):
-                    content.append(MistralTextChunk(text=item))
+                if isinstance(item, str | TextContent):
+                    text = item if isinstance(item, str) else item.content
+                    content.append(MistralTextChunk(text=text))
                 elif isinstance(item, ImageUrl):
                     if item.force_download:
                         downloaded = await download_item(item, data_format='base64_uri')
@@ -594,7 +607,9 @@ class MistralModel(Model):
                     elif item.media_type == 'application/pdf':
                         content.append(MistralDocumentURLChunk(document_url=item.data_uri, type='document_url'))
                     else:
-                        raise RuntimeError('BinaryContent other than image or PDF is not supported in Mistral.')
+                        raise NotImplementedError(
+                            'BinaryContent other than image or PDF is not supported in Mistral user prompts'
+                        )
                 elif isinstance(item, DocumentUrl):
                     if item.media_type == 'application/pdf':
                         if item.force_download:
@@ -605,13 +620,17 @@ class MistralModel(Model):
                         else:
                             content.append(MistralDocumentURLChunk(document_url=item.url, type='document_url'))
                     else:
-                        raise RuntimeError('DocumentUrl other than PDF is not supported in Mistral.')
+                        raise NotImplementedError('DocumentUrl other than PDF is not supported in Mistral user prompts')
+                elif isinstance(item, AudioUrl):
+                    raise NotImplementedError('AudioUrl is not supported in Mistral user prompts')
                 elif isinstance(item, VideoUrl):
-                    raise RuntimeError('VideoUrl is not supported in Mistral.')
+                    raise NotImplementedError('VideoUrl is not supported in Mistral user prompts')
                 elif isinstance(item, UploadedFile):
-                    raise RuntimeError('UploadedFile is not supported by Mistral.')
-                else:  # pragma: no cover
-                    raise RuntimeError(f'Unsupported content type: {type(item)}')
+                    raise NotImplementedError('UploadedFile is not supported in Mistral user prompts')
+                elif isinstance(item, CachePoint):
+                    pass
+                else:
+                    assert_never(item)
         return MistralUserMessage(content=content)
 
 

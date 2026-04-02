@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
-from typing import Any, Generic, Literal, TypeVar, get_args, overload
+from typing import Any, Generic, Literal, TypeVar, cast, get_args, overload
 
 import httpx
 from typing_extensions import TypeAliasType, TypedDict
@@ -48,7 +48,7 @@ from ..messages import (
 from ..output import OutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
 from ..providers import Provider, infer_provider, infer_provider_class
-from ..settings import ModelSettings, merge_model_settings
+from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 
@@ -272,8 +272,6 @@ KnownModelName = TypeAliasType(
         'gateway/groq:playai-tts',
         'gateway/groq:playai-tts-arabic',
         'gateway/groq:qwen/qwen-3-32b',
-        'gateway/openai:chatgpt-4o-latest',
-        'gateway/openai:codex-mini-latest',
         'gateway/openai:computer-use-preview-2025-03-11',
         'gateway/openai:computer-use-preview',
         'gateway/openai:gpt-3.5-turbo-0125',
@@ -283,17 +281,10 @@ KnownModelName = TypeAliasType(
         'gateway/openai:gpt-3.5-turbo-16k-0613',
         'gateway/openai:gpt-3.5-turbo-16k',
         'gateway/openai:gpt-3.5-turbo',
-        'gateway/openai:gpt-4-0125-preview',
         'gateway/openai:gpt-4-0314',
         'gateway/openai:gpt-4-0613',
-        'gateway/openai:gpt-4-1106-preview',
-        'gateway/openai:gpt-4-32k-0314',
-        'gateway/openai:gpt-4-32k-0613',
-        'gateway/openai:gpt-4-32k',
         'gateway/openai:gpt-4-turbo-2024-04-09',
-        'gateway/openai:gpt-4-turbo-preview',
         'gateway/openai:gpt-4-turbo',
-        'gateway/openai:gpt-4-vision-preview',
         'gateway/openai:gpt-4.1-2025-04-14',
         'gateway/openai:gpt-4.1-mini-2025-04-14',
         'gateway/openai:gpt-4.1-mini',
@@ -304,7 +295,6 @@ KnownModelName = TypeAliasType(
         'gateway/openai:gpt-4o-2024-05-13',
         'gateway/openai:gpt-4o-2024-08-06',
         'gateway/openai:gpt-4o-2024-11-20',
-        'gateway/openai:gpt-4o-audio-preview-2024-10-01',
         'gateway/openai:gpt-4o-audio-preview-2024-12-17',
         'gateway/openai:gpt-4o-audio-preview-2025-06-03',
         'gateway/openai:gpt-4o-audio-preview',
@@ -330,19 +320,20 @@ KnownModelName = TypeAliasType(
         'gateway/openai:gpt-5.1-chat-latest',
         'gateway/openai:gpt-5.1-codex-max',
         'gateway/openai:gpt-5.1-codex',
-        'gateway/openai:gpt-5.1-mini',
         'gateway/openai:gpt-5.1',
         'gateway/openai:gpt-5.2-2025-12-11',
         'gateway/openai:gpt-5.2-chat-latest',
         'gateway/openai:gpt-5.2-pro-2025-12-11',
         'gateway/openai:gpt-5.2-pro',
         'gateway/openai:gpt-5.2',
+        'gateway/openai:gpt-5.3-chat-latest',
+        'gateway/openai:gpt-5.4-mini-2026-03-17',
+        'gateway/openai:gpt-5.4-mini',
+        'gateway/openai:gpt-5.4-nano-2026-03-17',
+        'gateway/openai:gpt-5.4-nano',
+        'gateway/openai:gpt-5.4',
         'gateway/openai:gpt-5',
         'gateway/openai:o1-2024-12-17',
-        'gateway/openai:o1-mini-2024-09-12',
-        'gateway/openai:o1-mini',
-        'gateway/openai:o1-preview-2024-09-12',
-        'gateway/openai:o1-preview',
         'gateway/openai:o1-pro-2025-03-19',
         'gateway/openai:o1-pro',
         'gateway/openai:o1',
@@ -480,8 +471,6 @@ KnownModelName = TypeAliasType(
         'moonshotai:moonshot-v1-32k',
         'moonshotai:moonshot-v1-8k-vision-preview',
         'moonshotai:moonshot-v1-8k',
-        'openai:chatgpt-4o-latest',
-        'openai:codex-mini-latest',
         'openai:computer-use-preview-2025-03-11',
         'openai:computer-use-preview',
         'openai:gpt-3.5-turbo-0125',
@@ -491,17 +480,10 @@ KnownModelName = TypeAliasType(
         'openai:gpt-3.5-turbo-16k-0613',
         'openai:gpt-3.5-turbo-16k',
         'openai:gpt-3.5-turbo',
-        'openai:gpt-4-0125-preview',
         'openai:gpt-4-0314',
         'openai:gpt-4-0613',
-        'openai:gpt-4-1106-preview',
-        'openai:gpt-4-32k-0314',
-        'openai:gpt-4-32k-0613',
-        'openai:gpt-4-32k',
         'openai:gpt-4-turbo-2024-04-09',
-        'openai:gpt-4-turbo-preview',
         'openai:gpt-4-turbo',
-        'openai:gpt-4-vision-preview',
         'openai:gpt-4.1-2025-04-14',
         'openai:gpt-4.1-mini-2025-04-14',
         'openai:gpt-4.1-mini',
@@ -512,7 +494,6 @@ KnownModelName = TypeAliasType(
         'openai:gpt-4o-2024-05-13',
         'openai:gpt-4o-2024-08-06',
         'openai:gpt-4o-2024-11-20',
-        'openai:gpt-4o-audio-preview-2024-10-01',
         'openai:gpt-4o-audio-preview-2024-12-17',
         'openai:gpt-4o-audio-preview-2025-06-03',
         'openai:gpt-4o-audio-preview',
@@ -538,19 +519,20 @@ KnownModelName = TypeAliasType(
         'openai:gpt-5.1-chat-latest',
         'openai:gpt-5.1-codex-max',
         'openai:gpt-5.1-codex',
-        'openai:gpt-5.1-mini',
         'openai:gpt-5.1',
         'openai:gpt-5.2-2025-12-11',
         'openai:gpt-5.2-chat-latest',
         'openai:gpt-5.2-pro-2025-12-11',
         'openai:gpt-5.2-pro',
         'openai:gpt-5.2',
+        'openai:gpt-5.3-chat-latest',
+        'openai:gpt-5.4-mini-2026-03-17',
+        'openai:gpt-5.4-mini',
+        'openai:gpt-5.4-nano-2026-03-17',
+        'openai:gpt-5.4-nano',
+        'openai:gpt-5.4',
         'openai:gpt-5',
         'openai:o1-2024-12-17',
-        'openai:o1-mini-2024-09-12',
-        'openai:o1-mini',
-        'openai:o1-preview-2024-09-12',
-        'openai:o1-preview',
         'openai:o1-pro-2025-03-19',
         'openai:o1-pro',
         'openai:o1',
@@ -626,6 +608,14 @@ class ModelRequestParameters:
     allow_text_output: bool = True
     allow_image_output: bool = False
 
+    thinking: ThinkingLevel | None = None
+    """Resolved thinking/reasoning configuration for this request.
+
+    `None` means the model should use its default behavior. Set by the base
+    `Model.prepare_request()` from the unified `thinking` field in `ModelSettings`,
+    after checking that the model's profile supports thinking.
+    """
+
     @cached_property
     def tool_defs(self) -> dict[str, ToolDefinition]:
         return {tool_def.name: tool_def for tool_def in [*self.function_tools, *self.output_tools]}
@@ -637,6 +627,20 @@ class ModelRequestParameters:
         return None
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(kw_only=True)
+class ModelRequestContext:
+    """Context for model request hooks.
+
+    Wrapping these parameters in a dataclass instead of a tuple makes the signature
+    future-proof: new fields can be added without breaking existing implementations.
+    """
+
+    model: Model
+    messages: list[ModelMessage]
+    model_settings: ModelSettings | None
+    model_request_parameters: ModelRequestParameters
 
 
 class Model(ABC):
@@ -741,6 +745,15 @@ class Model(ABC):
 
         params = self.customize_request_parameters(model_request_parameters)
 
+        # Resolve unified thinking setting and strip from model_settings
+        if model_settings and 'thinking' in model_settings:
+            thinking_value = model_settings['thinking']
+            if self.profile.supports_thinking or self.profile.thinking_always_enabled:
+                if not (thinking_value is False and self.profile.thinking_always_enabled):
+                    params = replace(params, thinking=thinking_value)
+            stripped = {k: v for k, v in model_settings.items() if k != 'thinking'}
+            model_settings = cast(ModelSettings, stripped) if stripped else None
+
         if builtin_tools := params.builtin_tools:
             # Deduplicate builtin tools
             params = replace(
@@ -779,16 +792,36 @@ class Model(ABC):
         if params.allow_image_output and not self.profile.supports_image_output:
             raise UserError('Image output is not supported by this model.')
 
-        # Check if builtin tools are supported
-        if params.builtin_tools:
+        # Check builtin tools and handle fallback swap
+        if params.builtin_tools or any(t.prefer_builtin for t in params.function_tools):
             supported_types = self.profile.supported_builtin_tools
-            unsupported = [tool for tool in params.builtin_tools if not isinstance(tool, tuple(supported_types))]
-            if unsupported:
-                unsupported_names = [type(tool).__name__ for tool in unsupported]
+
+            supported_builtins = [t for t in params.builtin_tools if isinstance(t, tuple(supported_types))]
+            unsupported_builtins = [t for t in params.builtin_tools if not isinstance(t, tuple(supported_types))]
+
+            supported_ids = {t.unique_id for t in supported_builtins}
+            unsupported_ids = {t.unique_id for t in unsupported_builtins}
+            fallback_ids = {t.prefer_builtin for t in params.function_tools if t.prefer_builtin}
+
+            # Error only for unsupported builtins that have no local fallback
+            without_fallback = unsupported_ids - fallback_ids
+            if without_fallback:
+                unsupported_names = [type(t).__name__ for t in unsupported_builtins if t.unique_id in without_fallback]
                 supported_names = [t.__name__ for t in supported_types]
                 raise UserError(
-                    f'Builtin tool(s) {unsupported_names} not supported by this model. Supported: {supported_names}'
+                    f'Builtin tool(s) {unsupported_names} not supported by this model. '
+                    f'Supported: {supported_names}. '
+                    f'To use these tools with this model, provide a local fallback via '
+                    f'BuiltinOrLocalTool(builtin=..., local=...) or the `local` parameter '
+                    f'of the capability (e.g. ImageGeneration(local=my_func)).'
                 )
+
+            # Remove local fallback tools whose preferred builtin IS supported (model handles natively)
+            # Remove unsupported builtins (their local fallbacks stay)
+            function_tools = [
+                t for t in params.function_tools if not t.prefer_builtin or t.prefer_builtin not in supported_ids
+            ]
+            params = replace(params, builtin_tools=supported_builtins, function_tools=function_tools)
 
         return model_settings, params
 

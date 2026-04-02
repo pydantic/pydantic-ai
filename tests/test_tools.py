@@ -151,6 +151,7 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'prefer_builtin': None,
         }
     )
 
@@ -186,6 +187,7 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'prefer_builtin': None,
         }
     )
 
@@ -229,6 +231,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'prefer_builtin': None,
         }
     )
 
@@ -272,6 +275,7 @@ def test_google_style_with_returns():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'prefer_builtin': None,
         }
     )
 
@@ -313,6 +317,7 @@ def test_sphinx_style_with_returns():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'prefer_builtin': None,
         }
     )
 
@@ -360,6 +365,7 @@ def test_numpy_style_with_returns():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'prefer_builtin': None,
         }
     )
 
@@ -395,6 +401,7 @@ def test_only_returns_type():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'prefer_builtin': None,
         }
     )
 
@@ -421,6 +428,7 @@ def test_docstring_unknown():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'prefer_builtin': None,
         }
     )
 
@@ -465,6 +473,7 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'prefer_builtin': None,
         }
     )
 
@@ -502,6 +511,7 @@ def test_takes_just_model():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'prefer_builtin': None,
         }
     )
 
@@ -548,6 +558,7 @@ def test_takes_model_and_int():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'prefer_builtin': None,
         }
     )
 
@@ -801,6 +812,24 @@ def test_dynamic_plain_tool_decorator():
     assert r.output == snapshot('success (no tool calls)')
 
 
+def test_sync_dynamic_tool_plain():
+    agent = Agent('test', deps_type=int)
+
+    def prepare_tool_def(ctx: RunContext[int], tool_def: ToolDefinition) -> ToolDefinition | None:
+        if ctx.deps != 42:
+            return tool_def
+
+    @agent.tool_plain(prepare=prepare_tool_def)
+    def foobar(x: int, y: str) -> str:
+        return f'{x} {y}'
+
+    r = agent.run_sync('', deps=1)
+    assert r.output == snapshot('{"foobar":"0 a"}')
+
+    r = agent.run_sync('', deps=42)
+    assert r.output == snapshot('success (no tool calls)')
+
+
 def test_dynamic_tool_decorator():
     agent = Agent('test', deps_type=int)
 
@@ -914,6 +943,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'prefer_builtin': None,
         }
     )
 
@@ -987,6 +1017,7 @@ def test_json_schema_required_parameters():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
+                'prefer_builtin': None,
             },
             {
                 'description': None,
@@ -1003,6 +1034,7 @@ def test_json_schema_required_parameters():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
+                'prefer_builtin': None,
             },
         ]
     )
@@ -1092,6 +1124,7 @@ def test_schema_generator():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
+                'prefer_builtin': None,
             },
             {
                 'description': None,
@@ -1107,6 +1140,7 @@ def test_schema_generator():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
+                'prefer_builtin': None,
             },
         ]
     )
@@ -1145,6 +1179,7 @@ def test_tool_parameters_with_attribute_docstrings():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'prefer_builtin': None,
         }
     )
 
@@ -1179,6 +1214,25 @@ def test_dynamic_tools_agent_wide():
 
     result = agent.run_sync('', deps=1)
     assert result.output == snapshot('{"foobar":"1 0 a"}')
+
+
+def test_sync_prepare_tools_agent_wide():
+    def prepare_tool_defs(ctx: RunContext[int], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+        if ctx.deps == 42:
+            return []
+        return tool_defs
+
+    agent = Agent('test', deps_type=int, prepare_tools=prepare_tool_defs)
+
+    @agent.tool_plain
+    def foobar(x: int) -> str:
+        return str(x)
+
+    result = agent.run_sync('', deps=42)
+    assert result.output == snapshot('success (no tool calls)')
+
+    result = agent.run_sync('', deps=1)
+    assert result.output == snapshot('{"foobar":"0"}')
 
 
 def test_function_tool_consistent_with_schema():
@@ -2200,11 +2254,11 @@ async def test_approval_required_toolset():
 
     toolset = FunctionToolset[None]()
 
-    @toolset.tool
+    @toolset.tool_plain
     def foo(x: int) -> int:
         return x * 2
 
-    @toolset.tool
+    @toolset.tool_plain
     def bar(x: int) -> int:
         return x * 3
 
@@ -2317,6 +2371,7 @@ async def test_approval_required_toolset():
                         content='The tool call was denied.',
                         tool_call_id='foo2',
                         timestamp=IsDatetime(),
+                        outcome='denied',
                     ),
                 ],
                 timestamp=IsDatetime(),
@@ -2423,7 +2478,7 @@ def test_tool_metadata():
     # Test with FunctionToolset.tool decorator
     toolset = FunctionToolset(metadata={'foo': 'bar'})
 
-    @toolset.tool
+    @toolset.tool_plain
     def toolset_plain_tool(a: str) -> str:
         return a.upper()  # pragma: no cover
 
@@ -3129,9 +3184,48 @@ async def test_args_validator_async():
         """Add two numbers."""
         return x + y
 
-    await agent.run('call add_numbers with x=1 and y=2', deps=42)
+    result = await agent.run('call add_numbers with x=1 and y=2', deps=42)
 
     assert validator_called
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id='pyd_ai_tool_call_id__add_numbers'
+                    )
+                ],
+                usage=RequestUsage(input_tokens=56, output_tokens=6),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='add_numbers',
+                        content=0,
+                        tool_call_id='pyd_ai_tool_call_id__add_numbers',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"add_numbers":0}')],
+                usage=RequestUsage(input_tokens=57, output_tokens=9),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 def test_args_validator_with_deps():
@@ -3177,9 +3271,48 @@ def test_args_validator_tool_direct():
         tools=[tool],
     )
 
-    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+    result = agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
 
     assert validator_called
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id='pyd_ai_tool_call_id__add_numbers'
+                    )
+                ],
+                usage=RequestUsage(input_tokens=56, output_tokens=6),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='add_numbers',
+                        content=0,
+                        tool_call_id='pyd_ai_tool_call_id__add_numbers',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"add_numbers":0}')],
+                usage=RequestUsage(input_tokens=57, output_tokens=9),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 def test_args_validator_toolset():
@@ -3203,9 +3336,48 @@ def test_args_validator_toolset():
         toolsets=[toolset],
     )
 
-    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+    result = agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
 
     assert validator_called
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id='pyd_ai_tool_call_id__add_numbers'
+                    )
+                ],
+                usage=RequestUsage(input_tokens=56, output_tokens=6),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='add_numbers',
+                        content=0,
+                        tool_call_id='pyd_ai_tool_call_id__add_numbers',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"add_numbers":0}')],
+                usage=RequestUsage(input_tokens=57, output_tokens=9),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 def test_args_validator_tool_plain():
@@ -3226,9 +3398,48 @@ def test_args_validator_tool_plain():
         """Add two numbers."""
         return x + y
 
-    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+    result = agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
 
     assert validator_called
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id='pyd_ai_tool_call_id__add_numbers'
+                    )
+                ],
+                usage=RequestUsage(input_tokens=56, output_tokens=6),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='add_numbers',
+                        content=0,
+                        tool_call_id='pyd_ai_tool_call_id__add_numbers',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"add_numbers":0}')],
+                usage=RequestUsage(input_tokens=57, output_tokens=9),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 def test_args_validator_max_retries_exceeded():
@@ -3449,3 +3660,100 @@ def test_args_validator_not_double_called_for_approved_tools():
     # Validator should have been called exactly once with approved=True
     assert len(validator_calls) == 1
     assert validator_calls[0] == (0, True)  # retry=0, approved=True
+
+
+def test_tool_ctx_agent():
+    """ctx.agent gives tools access to the running agent's properties."""
+    agent = Agent('test', name='my_agent', output_type=int)
+    tool_agent_names: list[str | None] = []
+    tool_output_types: list[Any] = []
+
+    @agent.tool
+    def get_agent_info(ctx: RunContext[None]) -> str:
+        assert ctx.agent is not None
+        tool_agent_names.append(ctx.agent.name)
+        tool_output_types.append(ctx.agent.output_type)
+        return f'agent={ctx.agent.name}'
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot(0)
+    assert tool_agent_names == ['my_agent']
+    assert tool_output_types == [int]
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_agent_info', args={}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_agent_info',
+                        content='agent=my_agent',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'response': 0}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=52, output_tokens=6),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+def test_tool_ctx_agent_in_output_validator():
+    """ctx.agent is available in output validators."""
+    agent = Agent('test', name='validated_agent')
+    validator_agent_names: list[str | None] = []
+
+    @agent.output_validator
+    def check_agent(ctx: RunContext[None], output: str) -> str:
+        assert ctx.agent is not None
+        validator_agent_names.append(ctx.agent.name)
+        return output
+
+    result = agent.run_sync('Hello')
+    assert validator_agent_names == ['validated_agent']
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
