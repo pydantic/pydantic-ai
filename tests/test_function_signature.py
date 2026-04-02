@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import typing
 from dataclasses import replace
+from enum import Enum
 from typing import Optional, Union
 
 import pytest
@@ -27,6 +28,17 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.tools import Tool, ToolDefinition
 
 pytestmark = pytest.mark.anyio
+
+
+# Module-level types for tests that need get_type_hints() resolution
+class _Color(str, Enum):
+    RED = 'red'
+    GREEN = 'green'
+
+
+class _ConfigWithEnum(BaseModel):
+    name: str
+    color: _Color
 
 
 def test_render_function_signature_with_no_params():
@@ -932,12 +944,12 @@ def test_function_signature_literal_annotation():
 
 def test_function_with_bare_generic_annotation():
     """Bare generic (e.g. `typing.List` without type args) renders as the base type name."""
-    # Create a function with bare generic annotation via a helper module
-    # that doesn't use `from __future__ import annotations`
+    # Create a function with bare generic annotation (typing.List, not list)
+    # via a helper module that doesn't use `from __future__ import annotations`
     import types as t
 
     mod = t.ModuleType('_test_bare_generic')
-    mod.__dict__['List'] = list
+    mod.__dict__['List'] = getattr(typing, 'List')  # typing.List (has origin but no args)
     exec(
         compile('def func(items: List) -> None: ...', '<test>', 'exec'),
         mod.__dict__,
@@ -1215,3 +1227,83 @@ def test_schema_empty_type_list():
         },
     )
     assert 'Any' in str(sig)
+
+
+def test_function_with_typed_dict_param():
+    """TypedDict parameters use TypeAdapter path for schema extraction."""
+    import types as t
+
+    from typing_extensions import TypedDict
+
+    # Define in a separate module to avoid `from __future__ import annotations` interference
+    mod = t.ModuleType('_test_typed_dict')
+    mod.__dict__['TypedDict'] = TypedDict
+
+    exec(
+        compile(
+            'class SearchParams(TypedDict):\n    query: str\n    limit: int\n'
+            'def search(params: SearchParams) -> str: ...',
+            '<test>',
+            'exec',
+        ),
+        mod.__dict__,
+    )
+    sig = function_to_signature(mod.search, name='search')
+    assert 'params: SearchParams' in str(sig)
+    assert any(rt.name == 'SearchParams' for rt in sig.referenced_types)
+
+
+def test_schema_optional_with_anyof_null():
+    """Optional schema params with anyOf containing null are correctly handled."""
+    sig = schema_to_signature(
+        'tool',
+        {
+            'type': 'object',
+            'properties': {
+                'name': {'type': 'string'},
+                'tag': {'anyOf': [{'type': 'string'}, {'type': 'null'}]},
+            },
+            'required': ['name'],
+        },
+    )
+    rendered = str(sig)
+    assert 'tag: str | None' in rendered
+
+
+def test_schema_optional_with_oneof_null():
+    """Optional schema params with oneOf containing null are correctly handled."""
+    sig = schema_to_signature(
+        'tool',
+        {
+            'type': 'object',
+            'properties': {
+                'name': {'type': 'string'},
+                'tag': {'oneOf': [{'type': 'string'}, {'type': 'null'}]},
+            },
+            'required': ['name'],
+        },
+    )
+    rendered = str(sig)
+    assert 'tag: str | None' in rendered
+
+
+def test_function_with_enum_field_in_model():
+    """Model with an enum field produces non-object $defs that are skipped during type collection."""
+
+    def configure(cfg: _ConfigWithEnum) -> str:
+        return cfg.name  # pragma: no cover
+
+    sig = function_to_signature(configure, name='configure')
+    assert 'cfg: _ConfigWithEnum' in str(sig)
+    # _ConfigWithEnum should be a TypedDict, but _Color (enum) should not
+    type_names = {rt.name for rt in sig.referenced_types}
+    assert '_ConfigWithEnum' in type_names
+    assert '_Color' not in type_names
+
+
+def test_function_tool_definition_eq_with_non_tool():
+    """_FunctionToolDefinition.__eq__ returns NotImplemented for non-ToolDefinition."""
+    tool = Tool(lambda x: x, name='t', description='t')
+    td = tool.tool_def
+    assert td != 'not a tool definition'
+    assert td != 42
