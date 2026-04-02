@@ -4355,6 +4355,57 @@ async def test_openai_chat_instructions_do_not_split_tool_call_history(allow_mod
     assert openai_messages[6] == {'role': 'system', 'content': 'CONVERSATION SUMMARY:\n...'}
 
 
+async def test_openai_chat_instructions_with_developer_role(allow_model_requests: None):
+    """Test that instruction parts use the developer role when configured."""
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+    model = OpenAIChatModel(
+        'gpt-4o',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(openai_system_prompt_role='developer'),
+    )
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+    ]
+    model_request_parameters = ModelRequestParameters(
+        instruction_parts=[InstructionPart(content='Be helpful')],
+    )
+
+    openai_messages = await model._map_messages(messages, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+    assert openai_messages == snapshot(
+        [
+            {'role': 'developer', 'content': 'Be helpful'},
+            {'role': 'user', 'content': 'Hello'},
+        ]
+    )
+
+
+async def test_openai_chat_instructions_with_user_role(allow_model_requests: None):
+    """Test that instruction parts use the user role when configured (e.g. o1-mini)."""
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+    model = OpenAIChatModel(
+        'o1-mini',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(openai_system_prompt_role='user'),
+    )
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+    ]
+    model_request_parameters = ModelRequestParameters(
+        instruction_parts=[InstructionPart(content='Be helpful')],
+    )
+
+    openai_messages = await model._map_messages(messages, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+    # When role is 'user', instruction parts are inserted after all leading 'user' messages
+    assert openai_messages == snapshot(
+        [
+            {'role': 'user', 'content': 'Hello'},
+            {'role': 'user', 'content': 'Be helpful'},
+        ]
+    )
+
+
 def test_openai_chat_audio_default_base64(allow_model_requests: None):
     c = completion_message(ChatCompletionMessage(content='success', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)

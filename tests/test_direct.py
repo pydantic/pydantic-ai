@@ -213,6 +213,34 @@ def set_instrument_default(value: bool):
         Agent._instrument_default = initial_value  # pyright: ignore[reportPrivateUsage]
 
 
+async def test_model_request_with_instructions_on_message():
+    """Instructions set on ModelRequest are picked up even without instruction_parts on ModelRequestParameters."""
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    def check_instructions(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.instructions == 'Be concise.'
+        return ModelResponse(parts=[TextPart(content='ok')])
+
+    response = await model_request(
+        FunctionModel(check_instructions),
+        [ModelRequest.user_text_prompt('Hello', instructions='Be concise.')],
+    )
+    assert response.parts[0].content == 'ok'  # type: ignore[union-attr]
+
+
+async def test_model_request_stream_with_instructions_on_message():
+    """Instructions set on ModelRequest are picked up in streaming mode too."""
+    response_parts: list[str] = []
+    async with model_request_stream(
+        'test',
+        [ModelRequest.user_text_prompt('Hello', instructions='Be concise.')],
+    ) as stream:
+        async for event in stream:
+            if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+                response_parts.append(event.part.content)
+    assert len(response_parts) > 0
+
+
 def test_prepare_model():
     with set_instrument_default(False):
         model = _prepare_model('test', None)
