@@ -242,7 +242,12 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             elif isinstance(last_message, _messages.ModelResponse):
                 if self.user_prompt is None:
                     # Align with the upcoming request step so we don't resolve dynamic toolsets twice.
-                    run_context = replace(build_run_context(ctx), run_step=ctx.state.run_step + 1)
+                    run_context = replace(
+                        build_run_context(ctx),
+                        run_step=ctx.state.run_step + 1,
+                        retry=ctx.state.retries,
+                        max_retries=ctx.deps.max_result_retries,
+                    )
                     ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
                     if last_message.tool_calls:
                         # Pending tool calls must be processed before any new ModelRequest, regardless
@@ -765,6 +770,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.run_step += 1
 
         run_context = build_run_context(ctx)
+        run_context = replace(
+            run_context,
+            retry=ctx.state.retries,
+            max_retries=ctx.deps.max_result_retries,
+        )
 
         # This will raise errors for any tool name conflicts.
         # Note: for_run_step may already have been called by UserPromptNode for the
@@ -1101,6 +1111,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         tool_calls: list[_messages.ToolCallPart],
     ) -> AsyncIterator[_messages.HandleResponseEvent]:
         run_context = build_run_context(ctx)
+        run_context = replace(
+            run_context,
+            retry=ctx.state.retries,
+            max_retries=ctx.deps.max_result_retries,
+        )
 
         # This will raise errors for any tool name conflicts
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
@@ -1341,6 +1356,7 @@ async def process_tool_calls(  # noqa: C901
                 yield _messages.FunctionToolCallEvent(call, args_valid=False)
                 output_parts.append(validated.validation_error.tool_retry)
                 yield _messages.FunctionToolResultEvent(validated.validation_error.tool_retry)
+                ctx.state.retries += 1
                 continue
 
             # Validation passed - execute the tool
@@ -1364,6 +1380,7 @@ async def process_tool_calls(  # noqa: C901
                 yield _messages.FunctionToolCallEvent(call, args_valid=True)
                 output_parts.append(e.tool_retry)
                 yield _messages.FunctionToolResultEvent(e.tool_retry)
+                ctx.state.retries += 1
                 continue
 
             part = _messages.ToolReturnPart(

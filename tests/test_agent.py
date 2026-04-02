@@ -8795,4 +8795,45 @@ class TestOverrideWithModelSettings:
         assert result.output == 'max_tokens=100 temperature=None'
 
 
+def test_output_validator_retry_consistency_across_paths():
+    """Output validators should see global retry info, matching the text-output path.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4385:
+    the text path sets ctx.retry/max_retries to the global output retry counter,
+    but the tool-output path was using the per-tool counter, causing inconsistent
+    ctx.retry and ctx.max_retries values in @agent.output_validator.
+
+    Using ToolOutput(max_retries=5) with output_retries=2 exposes the bug:
+    without the fix, the validator would see max_retries=5 (per-tool value)
+    instead of max_retries=2 (global output_retries, matching the text path).
+    """
+    retries_log: list[int] = []
+    max_retries_log: list[int] = []
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        args_json = '{"a": 1, "b": "foo"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=ToolOutput(Foo, max_retries=5),
+        output_retries=2,
+    )
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+        retries_log.append(ctx.retry)
+        max_retries_log.append(ctx.max_retries)
+        if ctx.retry == 2:
+            return o
+        raise ModelRetry(f'Retry {ctx.retry}')
+
+    result = agent.run_sync('Hello')
+    assert isinstance(result.output, Foo)
+
+    assert retries_log == [0, 1, 2]
+    assert max_retries_log == [2, 2, 2]
+
+
 # endregion
