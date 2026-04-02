@@ -8984,6 +8984,41 @@ async def test_anthropic_compaction_streaming(allow_model_requests: None):
     assert compaction_parts[0].provider_name == 'anthropic'
 
 
+async def test_anthropic_compaction_only_response(allow_model_requests: None):
+    """Test that a compaction-only response (pause_after_compaction=True) is handled without unnecessary retries."""
+    from anthropic.types.beta import BetaCompactionBlock
+
+    from pydantic_ai.messages import CompactionPart
+
+    # First response: compaction only (simulating pause_after_compaction=True)
+    # Second response: normal text response (after retry with compacted context)
+    mock_client = MockAnthropic.create_mock(
+        [
+            completion_message(
+                [BetaCompactionBlock(content='Summary of prior conversation.', type='compaction')],
+                BetaUsage(input_tokens=100, output_tokens=20),
+            ),
+            completion_message(
+                [BetaTextBlock(text='Hello! Based on our conversation...', type='text')],
+                BetaUsage(input_tokens=50, output_tokens=10),
+            ),
+        ]
+    )
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('Continue our conversation')
+    assert result.output == 'Hello! Based on our conversation...'
+
+    # Verify the compaction is preserved in the message history
+    all_msgs = result.all_messages()
+    compaction_parts = [
+        p for msg in all_msgs if isinstance(msg, ModelResponse) for p in msg.parts if isinstance(p, CompactionPart)
+    ]
+    assert len(compaction_parts) >= 1
+    assert compaction_parts[0].content == 'Summary of prior conversation.'
+
+
 async def test_anthropic_compaction_end_to_end(allow_model_requests: None, anthropic_api_key: str):
     """End-to-end test: Anthropic returns a compaction block when context exceeds threshold."""
     from pydantic_ai.messages import CompactionPart
