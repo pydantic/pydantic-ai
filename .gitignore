@@ -21,9 +21,10 @@ node_modules/
 /test_tmp/
 .mcp.json
 .agents/*
-.claude/*
 !.agents/skills/
 .agents/skills/*
+.claude/*
+!.claude/plans/
 !.claude/skills/
 .claude/skills/*
 !.claude/skills/address-feedback
@@ -31,3 +32,4 @@ node_modules/
 .github/.review-context/
 /.cursor/
 /.devcontainer/
+.claude/plans/
