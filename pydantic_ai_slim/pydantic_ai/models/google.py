@@ -633,7 +633,7 @@ class GoogleModel(Model):
         messages: list[ModelMessage],
         model_settings: GoogleModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[list[ContentUnionDict], GenerateContentConfigDict | GenerationConfigDict]:
+    ) -> tuple[list[ContentUnionDict], GenerateContentConfigDict]:
         tools, image_config = self._get_tools(model_request_parameters)
         if model_request_parameters.function_tools and not self.profile.supports_tools:
             raise UserError('Tools are not supported by this model.')
