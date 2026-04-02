@@ -31,3 +31,4 @@ node_modules/
 .github/.review-context/
 /.cursor/
 /.devcontainer/
+.claude/plans/
