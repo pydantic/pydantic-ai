@@ -7,6 +7,7 @@ from typing import Any, TypeVar
 from unittest.mock import AsyncMock
 
 import pytest
+from inline_snapshot import snapshot
 from typing_extensions import Self
 
 from pydantic_ai import (
@@ -28,8 +29,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.usage import RunUsage
-
-from ._inline_snapshot import snapshot
 
 pytestmark = pytest.mark.anyio
 
@@ -149,6 +148,10 @@ async def test_toolset_tool_function_signature_property():
     assert sig.name == 'add'
     assert list(sig.params) == ['a', 'b']
     assert str(sig.return_type) == 'int'
+    assert str(sig) == snapshot("""\
+def add(*, a: int, b: int) -> int:
+    ...\
+""")
 
     assert await managed_toolset.handle_call(ToolCallPart(tool_name='add', args={'a': 1, 'b': 2})) == 3
 

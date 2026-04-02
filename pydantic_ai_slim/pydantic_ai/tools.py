@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import inspect
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import KW_ONLY, dataclass, field, fields as dataclass_fields
+from dataclasses import KW_ONLY, dataclass, field
 from functools import cached_property
 from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, Union, cast
 
@@ -405,7 +405,7 @@ class Tool(Generic[ToolAgentDepsT]):
         self.requires_approval = requires_approval
         self.metadata = metadata
         self.timeout = timeout
-        self._original_func = self.function_schema.function
+        self._tool_original_func = self.function_schema.function
 
     @classmethod
     def from_schema(
@@ -460,14 +460,13 @@ class Tool(Generic[ToolAgentDepsT]):
             sequential=sequential,
             args_validator=args_validator,
         )
-        # Schema-based tools use proxy functions (e.g. def proxy(*args, **kwargs))
-        # whose signatures are not meaningful — force schema-based signature generation.
-        tool._original_func = None
+        # Schema-based tools use proxy functions whose signatures are not meaningful.
+        tool._tool_original_func = None
         return tool
 
     @property
     def tool_def(self) -> ToolDefinition:
-        return _FunctionToolDefinition(
+        return ToolDefinition(
             name=self.name,
             description=self.description,
             parameters_json_schema=self.function_schema.json_schema,
@@ -476,7 +475,7 @@ class Tool(Generic[ToolAgentDepsT]):
             metadata=self.metadata,
             timeout=self.timeout,
             kind='unapproved' if self.requires_approval else 'function',
-            original_func=self._original_func,
+            original_func=self._tool_original_func,
         )
 
     async def prepare_tool_def(self, ctx: RunContext[ToolAgentDepsT]) -> ToolDefinition | None:
@@ -580,6 +579,14 @@ class ToolDefinition:
     removed and this function tool stays.
     """
 
+    original_func: Callable[..., Any] | None = field(default=None, repr=False, compare=False)
+    """The original Python function, if available. Used for richer signature generation.
+
+    When set, `function_signature` uses `inspect.signature()` and `get_type_hints()` for
+    richer type information (e.g. TypedDict fields, union types). When `None` (e.g. MCP tools,
+    `Tool.from_schema()`, or after deserialization), falls back to schema-based generation.
+    """
+
     @property
     def defer(self) -> bool:
         """Whether calls to this tool will be deferred.
@@ -590,59 +597,26 @@ class ToolDefinition:
 
     @cached_property
     def function_signature(self) -> FunctionSignature:
-        """Generate a function signature representation from this tool's JSON schema.
+        """Generate a function signature representation for this tool.
+
+        Uses the original Python function when available for richer type information,
+        falling back to JSON schema conversion otherwise.
 
         The result is cached so that repeated access (e.g. on every agent step)
         does not re-traverse the schema.
         """
+        if self.original_func is not None:
+            return FunctionSignature.from_function(
+                self.original_func,
+                name=self.name,
+                description=self.description,
+            )
         return FunctionSignature.from_schema(
             name=self.name,
             parameters_schema=self.parameters_json_schema,
             description=self.description,
+            # TODO: replace with dedicated field, see https://github.com/pydantic/pydantic-ai/pull/3865
             return_schema=(self.metadata or {}).get('output_schema'),
         )
 
     __repr__ = _utils.dataclasses_no_defaults_repr
-
-
-@dataclass(repr=False, eq=False, init=False)
-class _FunctionToolDefinition(ToolDefinition):
-    """A tool definition that retains a reference to the original Python function for richer signature generation.
-
-    When `_original_func` is available, `function_signature` uses `inspect.signature()` and
-    `get_type_hints()` for richer type information (e.g. TypedDict fields, union types).
-    Falls back to the schema-based approach when `_original_func` is `None` (e.g. after
-    `dataclasses.replace()` or deserialization roundtrip).
-
-    `_original_func` is stored as a plain attribute (not a dataclass field) so that
-    Pydantic serialization (e.g. `pydantic_core.to_json()`) doesn't attempt to serialize
-    the callable.
-    """
-
-    def __init__(self, *, original_func: Callable[..., Any] | None = None, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self._original_func = original_func
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, ToolDefinition):
-            return NotImplemented
-        return all(getattr(self, f.name) == getattr(other, f.name) for f in dataclass_fields(ToolDefinition))
-
-    @cached_property
-    def function_signature(self) -> FunctionSignature:
-        if self._original_func is not None:
-            return FunctionSignature.from_function(
-                self._original_func,
-                name=self.name,
-                description=self.description,
-            )
-        return super().function_signature
-
-    def __repr__(self) -> str:
-        # Show as ToolDefinition so this subclass is invisible to users.
-        kv_pairs = (
-            f'{f.name}={getattr(self, f.name)!r}'
-            for f in dataclass_fields(self)
-            if f.repr and getattr(self, f.name) != f.default
-        )
-        return f'ToolDefinition({", ".join(kv_pairs)})'

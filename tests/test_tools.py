@@ -117,12 +117,19 @@ async def google_style_docstring(foo: int, bar: str) -> str:  # pragma: no cover
     return f'{foo} {bar}'
 
 
+def _serialize_tool_def(v: Any) -> Any:
+    """Serialize fallback that skips unserializable values (like callables)."""
+    return None
+
+
 async def get_json_schema(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     if len(info.function_tools) == 1:
         r = info.function_tools[0]
-        return ModelResponse(parts=[TextPart(pydantic_core.to_json(r).decode())])
+        return ModelResponse(parts=[TextPart(pydantic_core.to_json(r, fallback=_serialize_tool_def).decode())])
     else:
-        return ModelResponse(parts=[TextPart(pydantic_core.to_json(info.function_tools).decode())])
+        return ModelResponse(
+            parts=[TextPart(pydantic_core.to_json(info.function_tools, fallback=_serialize_tool_def).decode())]
+        )
 
 
 @pytest.mark.parametrize('docstring_format', ['google', 'auto'])
@@ -152,6 +159,7 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'metadata': None,
             'timeout': None,
             'prefer_builtin': None,
+            'original_func': None,
         }
     )
 
@@ -188,6 +196,7 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'metadata': None,
             'timeout': None,
             'prefer_builtin': None,
+            'original_func': None,
         }
     )
 
@@ -232,6 +241,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'metadata': None,
             'timeout': None,
             'prefer_builtin': None,
+            'original_func': None,
         }
     )
 
@@ -276,6 +286,7 @@ def test_google_style_with_returns():
             'metadata': None,
             'timeout': None,
             'prefer_builtin': None,
+            'original_func': None,
         }
     )
 
@@ -318,6 +329,7 @@ def test_sphinx_style_with_returns():
             'metadata': None,
             'timeout': None,
             'prefer_builtin': None,
+            'original_func': None,
         }
     )
 
@@ -366,6 +378,7 @@ def test_numpy_style_with_returns():
             'metadata': None,
             'timeout': None,
             'prefer_builtin': None,
+            'original_func': None,
         }
     )
 
@@ -402,6 +415,7 @@ def test_only_returns_type():
             'metadata': None,
             'timeout': None,
             'prefer_builtin': None,
+            'original_func': None,
         }
     )
 
@@ -429,6 +443,7 @@ def test_docstring_unknown():
             'metadata': None,
             'timeout': None,
             'prefer_builtin': None,
+            'original_func': None,
         }
     )
 
@@ -474,6 +489,7 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'metadata': None,
             'timeout': None,
             'prefer_builtin': None,
+            'original_func': None,
         }
     )
 
@@ -512,6 +528,7 @@ def test_takes_just_model():
             'metadata': None,
             'timeout': None,
             'prefer_builtin': None,
+            'original_func': None,
         }
     )
 
@@ -559,6 +576,7 @@ def test_takes_model_and_int():
             'metadata': None,
             'timeout': None,
             'prefer_builtin': None,
+            'original_func': None,
         }
     )
 
@@ -944,6 +962,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'metadata': None,
             'timeout': None,
             'prefer_builtin': None,
+            'original_func': None,
         }
     )
 
@@ -1018,6 +1037,7 @@ def test_json_schema_required_parameters():
                 'metadata': None,
                 'timeout': None,
                 'prefer_builtin': None,
+                'original_func': None,
             },
             {
                 'description': None,
@@ -1035,6 +1055,7 @@ def test_json_schema_required_parameters():
                 'metadata': None,
                 'timeout': None,
                 'prefer_builtin': None,
+                'original_func': None,
             },
         ]
     )
@@ -1125,6 +1146,7 @@ def test_schema_generator():
                 'metadata': None,
                 'timeout': None,
                 'prefer_builtin': None,
+                'original_func': None,
             },
             {
                 'description': None,
@@ -1141,6 +1163,7 @@ def test_schema_generator():
                 'metadata': None,
                 'timeout': None,
                 'prefer_builtin': None,
+                'original_func': None,
             },
         ]
     )
@@ -1180,6 +1203,7 @@ def test_tool_parameters_with_attribute_docstrings():
             'metadata': None,
             'timeout': None,
             'prefer_builtin': None,
+            'original_func': None,
         }
     )
 

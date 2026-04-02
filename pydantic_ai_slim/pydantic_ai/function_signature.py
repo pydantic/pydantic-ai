@@ -172,7 +172,7 @@ class FunctionParam:
         return f'{self.name}: {type_str}'
 
 
-@dataclass
+@dataclass(kw_only=True)
 class FunctionSignature:
     """Function signature with referenced type definitions.
 
