@@ -143,5 +143,7 @@ def test_ollama_provider_model_profile(mocker: MockerFixture):
     unknown_profile = provider.model_profile('unknown-model')
     assert unknown_profile is not None
     assert unknown_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
-    assert unknown_profile.supports_json_schema_output is True
-    assert unknown_profile.supports_json_object_output is True
+    # Ollama's OpenAI-compatible API doesn't reliably support response_format
+    # for schema enforcement - models must provide their own profile
+    assert unknown_profile.supports_json_schema_output is False
+    assert unknown_profile.supports_json_object_output is False

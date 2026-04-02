@@ -61,13 +61,15 @@ class OllamaProvider(Provider[AsyncOpenAI]):
             if model_name.startswith(prefix):
                 profile = profile_func(model_name)
 
-        # As OllamaProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
-        # we need to maintain that behavior unless json_schema_transformer is set explicitly
+        # Ollama's OpenAI-compatible API does not reliably support the OpenAI
+        # `response_format` parameter for schema enforcement. While some models
+        # may work, there's no documented guarantee. Users should rely on
+        # model-specific profiles (qwen, llama, etc.) which indicate support.
         return OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_chat_thinking_field='reasoning',
-            supports_json_schema_output=True,
-            supports_json_object_output=True,
+            supports_json_schema_output=False,
+            supports_json_object_output=False,
         ).update(profile)
 
     def __init__(
