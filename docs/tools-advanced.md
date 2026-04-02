@@ -440,6 +440,32 @@ If a tool requires sequential/serial execution, you can pass the [`sequential`][
 
 Async functions are run on the event loop, while sync functions are offloaded to threads. To get the best performance, _always_ use an async function _unless_ you're doing blocking I/O (and there's no way to use a non-blocking library instead) or CPU-bound work (like `numpy` or `scikit-learn` operations), so that simple functions are not offloaded to threads unnecessarily.
 
+#### Thread executor for long-running servers
+
+By default, sync functions are offloaded to threads using [`anyio.to_thread.run_sync`][anyio.to_thread.run_sync], which creates ephemeral threads on demand. In long-running servers (e.g. FastAPI), these threads can accumulate under sustained traffic, leading to memory growth.
+
+To control thread lifecycle, provide a bounded [`ThreadPoolExecutor`][concurrent.futures.ThreadPoolExecutor] using the [`ThreadExecutor`][pydantic_ai.capabilities.ThreadExecutor] capability (per-agent) or the [`Agent.using_thread_executor()`][pydantic_ai.agent.AbstractAgent.using_thread_executor] context manager (global):
+
+```python {test="skip"}
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
+
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import ThreadExecutor
+
+# Per-agent: pass as a capability
+executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix='agent-worker')
+agent = Agent('openai:gpt-5.2', capabilities=[ThreadExecutor(executor)])
+
+# Global: wrap your server lifespan
+@asynccontextmanager
+async def lifespan(app):
+    executor = ThreadPoolExecutor(max_workers=16)
+    with Agent.using_thread_executor(executor):
+        yield
+    executor.shutdown(wait=True)
+```
+
 !!! note "Limiting tool executions"
     You can cap tool executions within a run using [`UsageLimits(tool_calls_limit=...)`](agent.md#usage-limits). The counter increments only after a successful tool invocation. Output tools (used for [structured output](output.md)) are not counted in the `tool_calls` metric.
 
