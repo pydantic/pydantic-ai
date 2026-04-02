@@ -2776,6 +2776,21 @@ async def test_google_service_tier_not_in_config_when_unset(allow_model_requests
     assert 'service_tier' not in config_dict
 
 
+async def test_google_vertex_service_tier_gla_value_omitted_from_config(allow_model_requests: None):
+    """Test that GLA-specific service_tier values are not sent in config when using Vertex AI."""
+    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(project='test-project', location='us-central1'))
+    model_settings = GoogleModelSettings(google_service_tier='flex')
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    assert 'service_tier' not in config_dict
+
+
 async def test_google_tool_output(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
 
