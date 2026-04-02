@@ -1,0 +1,23 @@
+pydantic_ai_slim/pydantic_ai/embeddings/instrumented.py
+  ff1162d09a6df8d0 153-162
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "8fb4a0ab9b6f29340ef97f658ce598d9e44e16d4",
+  "prompts": {
+    "ff1162d09a6df8d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0073cbf1-6a1d-4522-994f-405828ee06bb",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Alex Hall",
+      "messages": [],
+      "total_additions": 10,
+      "total_deletions": 9,
+      "accepted_lines": 10,
+      "overriden_lines": 0
+    }
+  }
+}
