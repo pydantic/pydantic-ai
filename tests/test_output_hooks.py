@@ -2665,6 +2665,40 @@ class TestUnionOutputWithHooks:
         result = await agent.run('hello')
         assert result.output == TypeA(a_val=42)
 
+    async def test_union_error_hook_recovery_second_type(self):
+        """Error recovery matching the second union type exercises the isinstance loop."""
+
+        class TypeA(BaseModel):
+            a_val: int
+
+        class TypeB(BaseModel):
+            b_val: str
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='{"bad": "data"}')])
+
+        @dataclass
+        class RecoverUnionCap(AbstractCapability[Any]):
+            async def on_output_validate_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                output_context: OutputContext,
+                output: str | dict[str, Any],
+                error: ValidationError | ModelRetry,
+            ) -> Any:
+                # Recover with TypeB — the second union member — so isinstance(output, TypeA)
+                # fails first, then isinstance(output, TypeB) succeeds
+                return TypeB(b_val='recovered')
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=PromptedOutput([TypeA, TypeB]),
+            capabilities=[RecoverUnionCap()],
+        )
+        result = await agent.run('hello')
+        assert result.output == TypeB(b_val='recovered')
+
 
 class TestTextFunctionOutputCallHook:
     """Tests that TextFunctionOutputProcessor.call() is exercised through execute hooks."""

@@ -1080,7 +1080,7 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
                         return inner, args
                 except TypeError:  # pragma: no cover — generic types (e.g. list[str]) can't be used with isinstance
                     pass
-        return None
+        return None  # pragma: no cover — hook returned a type not in the union
 
     async def call(
         self,
