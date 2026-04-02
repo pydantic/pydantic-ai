@@ -1,0 +1,1014 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1103'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the current exchange rate from USD to EUR?
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: There are additional tools not yet visible to you. When you need a capability not provided by your
+            current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
+            is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
+            retry.
+          name: search_tools
+          parameters_json_schema:
+            properties:
+              keywords:
+                description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                  to appear in tool names or descriptions to narrow down relevant tools.
+                type: string
+            required:
+            - keywords
+            type: object
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '860'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1010
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                keywords: USD to EUR exchange rate current
+              id: t6wdjvz0
+              name: search_tools
+            thoughtSignature: EtsBCtgBAb4+9vt7XUeF62cd2aV8kuMjBG2+mfnNGbqJ6CrMK8BGids6NWIpm1ToR5LJtQMcpMh8u9qecAkRRGWjwaCkeRGq8hAfWptjyLDf8CrcHfqN+gjjyDySuJ+H/JtTpRpZ2/xxWFyBf+XIQjVe+xOQJzWWvMuBe04YWpMXFgIeHmKHcFFSKL4fBC+wDjx6ci7lMq01o7WuPQ4OLk4nJg4ox8w8LP7fF75hsmpVmXgRtbg77MhTAMTJA7BSVBtQ1FBXGf0VGC9FTE+UgMEvcAqZwrziP8BW2dd7
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: E-nLaYKoN72Hz7IPpYipqAQ
+      usageMetadata:
+        candidatesTokenCount: 21
+        promptTokenCount: 189
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 189
+        thoughtsTokenCount: 35
+        totalTokenCount: 245
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2189'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the current exchange rate from USD to EUR?
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              keywords: USD to EUR exchange rate current
+            id: t6wdjvz0
+            name: search_tools
+          thoughtSignature: EtsBCtgBAb4-9vt7XUeF62cd2aV8kuMjBG2-mfnNGbqJ6CrMK8BGids6NWIpm1ToR5LJtQMcpMh8u9qecAkRRGWjwaCkeRGq8hAfWptjyLDf8CrcHfqN-gjjyDySuJ-H_JtTpRpZ2_xxWFyBf-XIQjVe-xOQJzWWvMuBe04YWpMXFgIeHmKHcFFSKL4fBC-wDjx6ci7lMq01o7WuPQ4OLk4nJg4ox8w8LP7fF75hsmpVmXgRtbg77MhTAMTJA7BSVBtQ1FBXGf0VGC9FTE-UgMEvcAqZwrziP8BW2dd7
+        role: model
+      - parts:
+        - functionResponse:
+            id: t6wdjvz0
+            name: search_tools
+            response:
+              return_value:
+              - description: Look up the current exchange rate between two currencies.
+                name: get_exchange_rate
+              - description: Look up stock price by ticker symbol.
+                name: stock_lookup
+              - description: Calculate monthly mortgage payment for a home loan.
+                name: mortgage_calculator
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - description: Look up the current exchange rate between two currencies.
+          name: get_exchange_rate
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              from_currency:
+                type: string
+              to_currency:
+                type: string
+            required:
+            - from_currency
+            - to_currency
+            type: object
+        - description: Look up stock price by ticker symbol.
+          name: stock_lookup
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              symbol:
+                type: string
+            required:
+            - symbol
+            type: object
+        - description: Calculate monthly mortgage payment for a home loan.
+          name: mortgage_calculator
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              principal:
+                type: number
+              rate:
+                type: number
+              years:
+                type: integer
+            required:
+            - principal
+            - rate
+            - years
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '755'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=861
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                from_currency: USD
+                to_currency: EUR
+              id: snhpvmul
+              name: get_exchange_rate
+            thoughtSignature: EooBCocBAb4+9vtUOqZxAGY2F3aokTOnoG5BGVOeII76XhoBWryKU9ii+cAeDyIbGhnLcdbqgyJoPQyXh9DwrzDfufFKLPWVCbbNhOhdCWWhUWrENYWSRozL/U3aaMlaOVVSMlUr9EEfAkolIUlzggYdkapwGbU95ats7VmnrEdJ39rgmqwAH5JqeG/S
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: FOnLaeniN8CDz7IPz-OTsAg
+      usageMetadata:
+        candidatesTokenCount: 28
+        promptTokenCount: 380
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 380
+        thoughtsTokenCount: 23
+        totalTokenCount: 431
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2704'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the current exchange rate from USD to EUR?
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              keywords: USD to EUR exchange rate current
+            id: t6wdjvz0
+            name: search_tools
+          thoughtSignature: EtsBCtgBAb4-9vt7XUeF62cd2aV8kuMjBG2-mfnNGbqJ6CrMK8BGids6NWIpm1ToR5LJtQMcpMh8u9qecAkRRGWjwaCkeRGq8hAfWptjyLDf8CrcHfqN-gjjyDySuJ-H_JtTpRpZ2_xxWFyBf-XIQjVe-xOQJzWWvMuBe04YWpMXFgIeHmKHcFFSKL4fBC-wDjx6ci7lMq01o7WuPQ4OLk4nJg4ox8w8LP7fF75hsmpVmXgRtbg77MhTAMTJA7BSVBtQ1FBXGf0VGC9FTE-UgMEvcAqZwrziP8BW2dd7
+        role: model
+      - parts:
+        - functionResponse:
+            id: t6wdjvz0
+            name: search_tools
+            response:
+              return_value:
+              - description: Look up the current exchange rate between two currencies.
+                name: get_exchange_rate
+              - description: Look up stock price by ticker symbol.
+                name: stock_lookup
+              - description: Calculate monthly mortgage payment for a home loan.
+                name: mortgage_calculator
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              from_currency: USD
+              to_currency: EUR
+            id: snhpvmul
+            name: get_exchange_rate
+          thoughtSignature: EooBCocBAb4-9vtUOqZxAGY2F3aokTOnoG5BGVOeII76XhoBWryKU9ii-cAeDyIbGhnLcdbqgyJoPQyXh9DwrzDfufFKLPWVCbbNhOhdCWWhUWrENYWSRozL_U3aaMlaOVVSMlUr9EEfAkolIUlzggYdkapwGbU95ats7VmnrEdJ39rgmqwAH5JqeG_S
+        role: model
+      - parts:
+        - functionResponse:
+            id: snhpvmul
+            name: get_exchange_rate
+            response:
+              return_value: 1 USD = 0.92 EUR
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - description: Look up the current exchange rate between two currencies.
+          name: get_exchange_rate
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              from_currency:
+                type: string
+              to_currency:
+                type: string
+            required:
+            - from_currency
+            - to_currency
+            type: object
+        - description: Look up stock price by ticker symbol.
+          name: stock_lookup
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              symbol:
+                type: string
+            required:
+            - symbol
+            type: object
+        - description: Calculate monthly mortgage payment for a home loan.
+          name: mortgage_calculator
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              principal:
+                type: number
+              rate:
+                type: number
+              years:
+                type: integer
+            required:
+            - principal
+            - rate
+            - years
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '404'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=881
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: The current exchange rate from USD to EUR is 0.92.
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: FenLabn-PLzqz7IPiumdoAc
+      usageMetadata:
+        candidatesTokenCount: 15
+        promptTokenCount: 457
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 457
+        totalTokenCount: 472
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1094'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the current stock price for AAPL?
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: There are additional tools not yet visible to you. When you need a capability not provided by your
+            current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
+            is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
+            retry.
+          name: search_tools
+          parameters_json_schema:
+            properties:
+              keywords:
+                description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                  to appear in tool names or descriptions to narrow down relevant tools.
+                type: string
+            required:
+            - keywords
+            type: object
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1126'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1239
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                keywords: stock price finance market
+              id: det4ud5j
+              name: search_tools
+            thoughtSignature: EqcDCqQDAb4+9vtgZg4dwQq3i4XAOm1ronGTZloYveO0uwg/mXOr1ze5l+3Qe+Fmpo7lUoV8LxSCcgQ0Z92Op1+75Kp5GPL3d8fYxDllEAYlIJA2VZIlSI1kvzsjqluObSBXlROV540DvHC2Hwz15NtWlkm+bGYublKrKEZXzvi/RlP1ueqOqNTKO9IZ2e5Lgk0sJbjUo3j4fa0GjaThdAr+WnC75opqwutjuGFcvfkiApsdxt1e1Ac8Ur8uauJIHHD59sgPy3EB/2XLs6PjtLcp0XwvbOqGJ8eEK0Eq6HoRoXnhJzxEQIAJNQ6JUzpJexEbKKKCHLLNRwsVpN2+rfyZkfyFN+eibiHRNWbbKbM/B/ZMMcRX2cFLtnr3N/sEJGrE6zt/4JzHzpMC1Cx2SaD7yCHAiv0gGMOwW9X5yuxacb70ywcvg7/mJeN3WVyvHKFbE1I2zZd3rgf4RvUcFyrpfncYAez59jLrvN3xQXI8+/Za5jqEGk/V33dZK9VSmMEDKKTjaNsi+QoA9+IVV9uyCc+RBIrp0KN3to9jYTWHS9ei8MF2Ocko
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: F-nLadykF5Xgz7IP9L660As
+      usageMetadata:
+        candidatesTokenCount: 19
+        promptTokenCount: 188
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 188
+        thoughtsTokenCount: 96
+        totalTokenCount: 303
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2268'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the current stock price for AAPL?
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              keywords: stock price finance market
+            id: det4ud5j
+            name: search_tools
+          thoughtSignature: EqcDCqQDAb4-9vtgZg4dwQq3i4XAOm1ronGTZloYveO0uwg_mXOr1ze5l-3Qe-Fmpo7lUoV8LxSCcgQ0Z92Op1-75Kp5GPL3d8fYxDllEAYlIJA2VZIlSI1kvzsjqluObSBXlROV540DvHC2Hwz15NtWlkm-bGYublKrKEZXzvi_RlP1ueqOqNTKO9IZ2e5Lgk0sJbjUo3j4fa0GjaThdAr-WnC75opqwutjuGFcvfkiApsdxt1e1Ac8Ur8uauJIHHD59sgPy3EB_2XLs6PjtLcp0XwvbOqGJ8eEK0Eq6HoRoXnhJzxEQIAJNQ6JUzpJexEbKKKCHLLNRwsVpN2-rfyZkfyFN-eibiHRNWbbKbM_B_ZMMcRX2cFLtnr3N_sEJGrE6zt_4JzHzpMC1Cx2SaD7yCHAiv0gGMOwW9X5yuxacb70ywcvg7_mJeN3WVyvHKFbE1I2zZd3rgf4RvUcFyrpfncYAez59jLrvN3xQXI8-_Za5jqEGk_V33dZK9VSmMEDKKTjaNsi-QoA9-IVV9uyCc-RBIrp0KN3to9jYTWHS9ei8MF2Ocko
+        role: model
+      - parts:
+        - functionResponse:
+            id: det4ud5j
+            name: search_tools
+            response:
+              return_value:
+              - description: Look up stock price by ticker symbol.
+                name: stock_lookup
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: There are additional tools not yet visible to you. When you need a capability not provided by your
+            current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
+            is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
+            retry.
+          name: search_tools
+          parameters_json_schema:
+            properties:
+              keywords:
+                description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                  to appear in tool names or descriptions to narrow down relevant tools.
+                type: string
+            required:
+            - keywords
+            type: object
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - description: Look up stock price by ticker symbol.
+          name: stock_lookup
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              symbol:
+                type: string
+            required:
+            - symbol
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '790'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=965
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                symbol: AAPL
+              id: 5wn2t1m9
+              name: stock_lookup
+            thoughtSignature: Er0BCroBAb4+9vsP5DASYkSdoCK6Lam5TZPejqoKKHcTH4w1RZ54G5KMVwVoGe+DTFkh+3E8otqmweQmYoNPO3XBdM7GGKhKeJ3wmQO0q0x1FkuS/3K1G7cXlyhzfm938npaw4lnyn40BtSunxBEvd+2o2KaHpzVDY/f/q+BZuBUwIvCP90QbvE61NiAwp8H6dSYCMiRkOw5LWsQ/B2TfMG5VxvwhsVZRGeuMoQYpXY98F7QcYcnhaiV06pYGva4
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: GOnLacT4HdCqqtsPx-6l8Qc
+      usageMetadata:
+        candidatesTokenCount: 16
+        promptTokenCount: 382
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 382
+        thoughtsTokenCount: 33
+        totalTokenCount: 431
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2816'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the current stock price for AAPL?
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              keywords: stock price finance market
+            id: det4ud5j
+            name: search_tools
+          thoughtSignature: EqcDCqQDAb4-9vtgZg4dwQq3i4XAOm1ronGTZloYveO0uwg_mXOr1ze5l-3Qe-Fmpo7lUoV8LxSCcgQ0Z92Op1-75Kp5GPL3d8fYxDllEAYlIJA2VZIlSI1kvzsjqluObSBXlROV540DvHC2Hwz15NtWlkm-bGYublKrKEZXzvi_RlP1ueqOqNTKO9IZ2e5Lgk0sJbjUo3j4fa0GjaThdAr-WnC75opqwutjuGFcvfkiApsdxt1e1Ac8Ur8uauJIHHD59sgPy3EB_2XLs6PjtLcp0XwvbOqGJ8eEK0Eq6HoRoXnhJzxEQIAJNQ6JUzpJexEbKKKCHLLNRwsVpN2-rfyZkfyFN-eibiHRNWbbKbM_B_ZMMcRX2cFLtnr3N_sEJGrE6zt_4JzHzpMC1Cx2SaD7yCHAiv0gGMOwW9X5yuxacb70ywcvg7_mJeN3WVyvHKFbE1I2zZd3rgf4RvUcFyrpfncYAez59jLrvN3xQXI8-_Za5jqEGk_V33dZK9VSmMEDKKTjaNsi-QoA9-IVV9uyCc-RBIrp0KN3to9jYTWHS9ei8MF2Ocko
+        role: model
+      - parts:
+        - functionResponse:
+            id: det4ud5j
+            name: search_tools
+            response:
+              return_value:
+              - description: Look up stock price by ticker symbol.
+                name: stock_lookup
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              symbol: AAPL
+            id: 5wn2t1m9
+            name: stock_lookup
+          thoughtSignature: Er0BCroBAb4-9vsP5DASYkSdoCK6Lam5TZPejqoKKHcTH4w1RZ54G5KMVwVoGe-DTFkh-3E8otqmweQmYoNPO3XBdM7GGKhKeJ3wmQO0q0x1FkuS_3K1G7cXlyhzfm938npaw4lnyn40BtSunxBEvd-2o2KaHpzVDY_f_q-BZuBUwIvCP90QbvE61NiAwp8H6dSYCMiRkOw5LWsQ_B2TfMG5VxvwhsVZRGeuMoQYpXY98F7QcYcnhaiV06pYGva4
+        role: model
+      - parts:
+        - functionResponse:
+            id: 5wn2t1m9
+            name: stock_lookup
+            response:
+              return_value: 'Stock AAPL: $150.00'
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: There are additional tools not yet visible to you. When you need a capability not provided by your
+            current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
+            is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
+            retry.
+          name: search_tools
+          parameters_json_schema:
+            properties:
+              keywords:
+                description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                  to appear in tool names or descriptions to narrow down relevant tools.
+                type: string
+            required:
+            - keywords
+            type: object
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - description: Look up stock price by ticker symbol.
+          name: stock_lookup
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              symbol:
+                type: string
+            required:
+            - symbol
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '398'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=861
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: The current stock price for AAPL is $150.00.
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: GenLaef3Hbznz7IPlb3V6Qg
+      usageMetadata:
+        candidatesTokenCount: 16
+        promptTokenCount: 457
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 457
+        totalTokenCount: 473
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1095'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Translate 'hello, how are you?' to French.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: There are additional tools not yet visible to you. When you need a capability not provided by your
+            current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
+            is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
+            retry.
+          name: search_tools
+          parameters_json_schema:
+            properties:
+              keywords:
+                description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                  to appear in tool names or descriptions to narrow down relevant tools.
+                type: string
+            required:
+            - keywords
+            type: object
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1475'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=2010
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: |-
+              The most common ways to say "Hello, how are you?" in French are:
+
+              *   **Formal/Polite:** *Bonjour, comment allez-vous ?* (Used with strangers, bosses, or elders)
+              *   **Neutral/Common:** *Bonjour, comment ça va ?* (Good for most daily situations)
+              *   **Informal/Casual:** *Salut, ça va ?* (Used with friends and family)
+            thoughtSignature: EqMECqAEAb4+9vsUBi2chP8GvMNW0A+w1GAzoahbM1Fo8/EiGiCBbFnLwat8b2LZhPMx9ffV1Kt+Pm25s/G8UeKqnbdofT3AWar3SK4YpQcm12poeG0gdO1AN/NSkdvlOqIu+UN9Gi/V/qAFoKn/YP1uokWNHsFZAjKzzW1TmbL93MUSoa6CA4/KSnzaDjkyvxdY+HSlSmVoqVHUn7BsVRXVma4xw0ZteK/S96QMpPmngApZ8OeGVqwKjcXs+KWptyftRFzCasSvcdKUzgiU2U6Wewf0Apz3VRqDmVDjbSc3Sfw+qaQmG9Fc8Egf8Hd+4iV7FXmrMJFibV4A3RYgIhT+ciXOrnaCug7dpQ+oqJJ8UwxA0R9UIpeLvA472lSo434hL5FW4nPVEwd9KEC1gZ0V1lXXDeZ3tGljGlnx2yXaIXcNIdw0txQVMnugQ0KzbYzjjXLx7J1fjTWX/oAbjBpcX1nkT8KKMtQ9v9Eofp9qdL08zQ7NCrjxkWtL/EnKnk7FWmzzSHfSG2I8mLvmaq6O926HY7YAL7yfmju50SjgAe7WJWM3mpUi/ZRw9LK/AspRGUHEYzDlLys1jUS24zOcohGQgO0WsEUSbPEBluQ3g3TTMtSaW0D10EfY2mnt+SiRr/KEjfGLtm7iEX3KPOnE2dAoudvOqR/OChytO1xLcXjkxspXkuS4F28TpINe9zVmNNGNHQg5+lERd1hPRg3j1lmjsA==
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: G-nLafi6KobVz7IP4ZTIyQo
+      usageMetadata:
+        candidatesTokenCount: 91
+        promptTokenCount: 189
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 189
+        thoughtsTokenCount: 138
+        totalTokenCount: 418
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1105'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Book a flight from New York to London for next week.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: There are additional tools not yet visible to you. When you need a capability not provided by your
+            current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
+            is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
+            retry.
+          name: search_tools
+          parameters_json_schema:
+            properties:
+              keywords:
+                description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                  to appear in tool names or descriptions to narrow down relevant tools.
+                type: string
+            required:
+            - keywords
+            type: object
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1037'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1416
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                keywords: flight booking search reservation
+              id: 83zl2rap
+              name: search_tools
+            thoughtSignature: Et0CCtoCAb4+9vvwV9swYkXaUnJj5RKqvFxh4AJP17j5f8w8G6f9yi8+7q1W+LBFgMs8embO/VZJVQ2gYz17DCbd5070a4TtZko92UU5nNAjAZjQwmTN5d17ytG0CfPbCV+if1Ki1dP/89uw5cfeElpkHw9kdC5YAoJHRvnpog3o/GY6oYpB0Xg/GsX+DZZNtdLZmCXkDO7Me4DIU+iCW/tiCoRcVJMWTkr3wqTbvNgo1sinAAVuLDL8TN+Prslpf1CbnjKI30B9b4cQ159O1+bBt7zA66IJkGr1DC1p2LzjaNfaEmnaFN2iJIZkb8QhbRchyPMFvXNPDCgUy/ReS3gEtUObvNj44J9TbPoAIlKxarHQK/B8xS8aTJhijNF4pK+eaPdbxHnOfTrqWKdW6RwLaIRrDz/zPK9I5EUvEg2v32k9Wr5Zst7COaFXYu3PyeVfExyR5Ucd7mjnKXWwZw==
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: HenLaerqEYqJz7IPwMHzuAk
+      usageMetadata:
+        candidatesTokenCount: 19
+        promptTokenCount: 190
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 190
+        thoughtsTokenCount: 72
+        totalTokenCount: 281
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1946'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Book a flight from New York to London for next week.
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              keywords: flight booking search reservation
+            id: 83zl2rap
+            name: search_tools
+          thoughtSignature: Et0CCtoCAb4-9vvwV9swYkXaUnJj5RKqvFxh4AJP17j5f8w8G6f9yi8-7q1W-LBFgMs8embO_VZJVQ2gYz17DCbd5070a4TtZko92UU5nNAjAZjQwmTN5d17ytG0CfPbCV-if1Ki1dP_89uw5cfeElpkHw9kdC5YAoJHRvnpog3o_GY6oYpB0Xg_GsX-DZZNtdLZmCXkDO7Me4DIU-iCW_tiCoRcVJMWTkr3wqTbvNgo1sinAAVuLDL8TN-Prslpf1CbnjKI30B9b4cQ159O1-bBt7zA66IJkGr1DC1p2LzjaNfaEmnaFN2iJIZkb8QhbRchyPMFvXNPDCgUy_ReS3gEtUObvNj44J9TbPoAIlKxarHQK_B8xS8aTJhijNF4pK-eaPdbxHnOfTrqWKdW6RwLaIRrDz_zPK9I5EUvEg2v32k9Wr5Zst7COaFXYu3PyeVfExyR5Ucd7mjnKXWwZw==
+        role: model
+      - parts:
+        - functionResponse:
+            id: 83zl2rap
+            name: search_tools
+            response:
+              return_value: No matching tools found. The tools you need may not be available.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: There are additional tools not yet visible to you. When you need a capability not provided by your
+            current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
+            is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
+            retry.
+          name: search_tools
+          parameters_json_schema:
+            properties:
+              keywords:
+                description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                  to appear in tool names or descriptions to narrow down relevant tools.
+                type: string
+            required:
+            - keywords
+            type: object
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1929'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=2500
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: I'm sorry, but I don't have the ability to book flights directly. You'll need to use a travel website or
+              contact an airline to make your reservation for a flight from New York to London next week.
+            thoughtSignature: EuAHCt0HAb4+9vssbopjuZtzEqAPmdyXgoK5Uyp9NYIetv86FE0OSNzxDI/Yk49lfvIE1IP7z+P+cPzlkF5k2sh2uY0Swt5jV7sjnxq5JLY4vW6NjA1o+JetPWgXQH1SuTOXJRHEubj9c0+kmIsVMKvCl/6bjzAS47q+Vim6FWITBDlqjSyJbl+OnHXZOvCtMbP2a+qabkW5Qxsnr6w5/kWuKX9unQA6TfPuUZFsM7vOZMdULz4ZueXHTdVDzzhKu4q9H7NYCH7uMHTm+1lJcdZBcYXsyTEqibp+UThodXjlYC+oPWDLXQ8uj4ecpKDSmfl0kS2aMtZM3TfLyoTs+tvPHTsEd2wahywdjhAgaR7SRNlsmphBDzqsGqD02Q4jt0DVmPENH+MG/z8pHuROCFKRLUS7wTGZTLOFfvaDIrPwxUOrgJh9J+1fGbNeJKr9Wkx7dM5Srtrab2zO/SF0RGkjRBETbyLKeGTXNCVteWIRE5VY5FpVF90Pk8+AZKwNVpzsVBkhvX5Mj9Si9wi//a/RSygZHZtkz6uq5WvVP7W9DZRhiWuctU53fHihwsH9TjEmLMnBP9BAPw4wzPde4ZoK77b4tNnJHbGxeHm9IncnrcNbnSM1Y9KoCrHF+b20N5fbXa7mSKCNe3IZuuxE0J1XYPTeP0ruY98JOjubtvLxVSwA+vgCEX2oTBb+B1Mypacm96LdDMLkMAwP2dSwYoV+p5rrvjtW/CMRBEFupT2rT/fFHLp17XkJ+7GmRWTIE9mZchgcDFzL7SNtjnTyuHVE9ig7d8UDZyM+ABGKox7dYprvjkPlbAecRrhsbtqrE6lXAaQfU1n7d3tTcchBcRFuk+S4Cylxb39wSA4Z0zG5SZSdm8ti/oI4Iu1HeF4OI9I1LDIUE2LaBwXCajIsy2D7E0DmRymOspWGwt62QQXiS4pnGbJu74xh2dshu6CQoAl7kw6UpDSvqasAXfSccAicsCTv7ziqDNCCcQqfhvUDFoTy45I70ckV+yndpz6jhgqU1YtlxUQh5ti25k0ZNGLown4QWqWGnrVIRI+dKZo5c5gujo6bRFFlZumzbLqSAtjKE7jkF9ZB/EJX6xB4bjPyMf9vc05AfUV3uWTx8LXV15hCalqd7sEmdiwVvgnKnyF07kJOhhnEuRnDewLJtPwriqgnYeGoa6FfKWcCU5p1QSy2W4AQAuXDkj22gswTtAyu332hAgUiNT/6Bhra+NOJTmVmasnQSrRgUi1CMgreKvHAeTQSJCq0es+S3AlShHWSez+1/eRjbpuKCr33FykEPTf8vDtu7kJ2WcRouoRbqbA=
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: IOnLac33CoHXz7IP8eWJiQU
+      usageMetadata:
+        candidatesTokenCount: 46
+        promptTokenCount: 310
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 310
+        thoughtsTokenCount: 215
+        totalTokenCount: 571
+    status:
+      code: 200
+      message: OK
+version: 1
