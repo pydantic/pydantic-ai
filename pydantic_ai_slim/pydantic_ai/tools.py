@@ -12,10 +12,10 @@ from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import ParamSpec, Self, TypeVar
 
 from . import _function_schema, _utils
-from ._function_signature import FunctionSignature, function_to_signature, schema_to_signature
 from ._run_context import AgentDepsT, RunContext
 from .builtin_tools import AbstractBuiltinTool
 from .exceptions import ModelRetry
+from .function_signature import FunctionSignature, function_to_signature, schema_to_signature
 from .messages import RetryPromptPart, ToolCallPart, ToolReturn
 
 __all__ = (

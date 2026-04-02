@@ -75,6 +75,8 @@ def _render_docstring(text: str, indent: str = '') -> list[str]:
 
 @dataclass
 class TypeFieldSignature:
+    """A single field in a TypedDict-style type definition."""
+
     name: str
     type: TypeExpr
     required: bool
@@ -93,6 +95,8 @@ class TypeFieldSignature:
 
 @dataclass
 class TypeSignature:
+    """A TypedDict-style class definition with named fields."""
+
     name: str
 
     docstring: str | None = None
@@ -140,6 +144,8 @@ def render_type_expr(expr: TypeExpr) -> str:
 
 @dataclass
 class FunctionParam:
+    """A single parameter in a function signature."""
+
     name: str
     type: TypeExpr
     default: str | None

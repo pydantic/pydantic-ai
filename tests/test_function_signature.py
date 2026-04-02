@@ -11,7 +11,8 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, RootModel
 
-from pydantic_ai._function_signature import (
+from pydantic_ai._run_context import RunContext
+from pydantic_ai.function_signature import (
     FunctionParam,
     FunctionSignature,
     GenericTypeExpr,
@@ -24,7 +25,6 @@ from pydantic_ai._function_signature import (
     render_type_expr,
     schema_to_signature,
 )
-from pydantic_ai._run_context import RunContext
 from pydantic_ai.tools import Tool, ToolDefinition
 
 pytestmark = pytest.mark.anyio
