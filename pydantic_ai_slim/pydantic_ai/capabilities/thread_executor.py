@@ -41,6 +41,10 @@ class ThreadExecutor(AbstractCapability[Any]):
     executor: Executor
     """The executor to use for running sync functions."""
 
+    @classmethod
+    def get_serialization_name(cls) -> str | None:
+        return None
+
     async def wrap_run(
         self,
         ctx: RunContext[AgentDepsT],
