@@ -1356,7 +1356,7 @@ async def process_tool_calls(  # noqa: C901
                 yield _messages.FunctionToolCallEvent(call, args_valid=False)
                 output_parts.append(validated.validation_error.tool_retry)
                 yield _messages.FunctionToolResultEvent(validated.validation_error.tool_retry)
-                ctx.state.retries += 1
+                ctx.state.increment_retries(ctx.deps.max_result_retries)
                 continue
 
             # Validation passed - execute the tool
@@ -1380,7 +1380,7 @@ async def process_tool_calls(  # noqa: C901
                 yield _messages.FunctionToolCallEvent(call, args_valid=True)
                 output_parts.append(e.tool_retry)
                 yield _messages.FunctionToolResultEvent(e.tool_retry)
-                ctx.state.retries += 1
+                ctx.state.increment_retries(ctx.deps.max_result_retries)
                 continue
 
             part = _messages.ToolReturnPart(

@@ -8836,4 +8836,34 @@ def test_output_validator_retry_consistency_across_paths():
     assert max_retries_log == [2, 2, 2]
 
 
+def test_output_validator_exceeds_output_retries():
+    """Output validator that never succeeds should respect output_retries limit.
+
+    When the output_validator always raises ModelRetry, the agent should stop
+    after output_retries attempts and raise UnexpectedModelBehavior.
+    """
+    retries_log: list[int] = []
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        args_json = '{"a": 1, "b": "foo"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=ToolOutput(Foo, max_retries=5),
+        output_retries=2,
+    )
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+        retries_log.append(ctx.retry)
+        raise ModelRetry(f'Retry {ctx.retry}')
+
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries \\(2\\) for output validation'):
+        agent.run_sync('Hello')
+
+    assert retries_log == [0, 1, 2]
+
+
 # endregion
