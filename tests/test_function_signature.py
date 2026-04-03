@@ -533,6 +533,24 @@ def no_annot(*, x: Any) -> Any:
 """)
 
 
+def test_from_function_kwargs_and_varargs():
+    """from_function skips **kwargs and wraps *args as list[T]."""
+
+    def with_kwargs(x: int, **kwargs: str) -> str:
+        return ''  # pragma: no cover
+
+    sig = FunctionSignature.from_function(with_kwargs, name='with_kwargs')
+    assert 'kwargs' not in sig.params
+    assert 'x' in sig.params
+
+    def with_args(*args: int) -> str:
+        return ''  # pragma: no cover
+
+    sig = FunctionSignature.from_function(with_args, name='with_args')
+    assert 'args' in sig.params
+    assert str(sig.params['args'].type) == 'list[int]'
+
+
 class _UserInfo(BaseModel):
     name: str
 

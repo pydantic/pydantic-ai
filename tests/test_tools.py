@@ -4152,6 +4152,15 @@ def test_return_schema_description_injection():
     assert 'Return schema:' in result.description
     assert '"type": "object"' in result.description
 
+    # Also test with no description
+    td_no_desc = ToolDefinition(
+        name='test',
+        return_schema={'type': 'string'},
+    )
+    result_no_desc = _inject_return_schema_in_description(td_no_desc)
+    assert result_no_desc.description is not None
+    assert result_no_desc.description.startswith('Return schema:')
+
 
 def test_return_schema_description_injection_no_schema():
     """_inject_return_schema_in_description is a no-op when return_schema is None."""
@@ -4196,6 +4205,20 @@ def test_maybe_inject_return_schemas():
     profile_native = ModelProfile(supports_tool_return_schema=True)
     result = _maybe_inject_return_schemas(params, profile_native)
     assert result.function_tools[0].return_schema == {'type': 'string'}
+
+
+def test_return_schema_google_native():
+    """Google model passes return_schema as response_json_schema."""
+    pytest.importorskip('google.genai')
+    from pydantic_ai.models.google import _function_declaration_from_tool
+
+    td = ToolDefinition(
+        name='test',
+        description='A test tool',
+        return_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}},
+    )
+    decl = _function_declaration_from_tool(td)
+    assert decl.get('response_json_schema') == {'type': 'object', 'properties': {'x': {'type': 'integer'}}}
 
 
 # endregion
