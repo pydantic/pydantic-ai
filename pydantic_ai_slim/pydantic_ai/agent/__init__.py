@@ -78,6 +78,7 @@ from ..toolsets._dynamic import (
     DynamicToolset,
     ToolsetFunc,
 )
+from ..toolsets._tool_search import ToolSearchToolset
 from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
@@ -1140,6 +1141,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Build initial RunContext for for_run lifecycle hooks
         initial_ctx = RunContext[AgentDepsT](
             deps=deps,
+            agent=self,
             model=model_used,
             usage=usage,
             prompt=user_prompt,
@@ -1225,19 +1227,24 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             cap_instructions=cap_instructions,
         )
 
-        async def get_instructions(run_context: RunContext[AgentDepsT]) -> str | None:
-            parts = [
-                instructions_literal,
-                *[await func.run(run_context) for func in instructions_functions],
-            ]
+        async def get_instructions(
+            run_context: RunContext[AgentDepsT],
+        ) -> list[_messages.InstructionPart] | None:
+            parts: list[_messages.InstructionPart] = []
 
-            parts = [p for p in parts if p]
-            if not parts:
-                return None
-            return '\n\n'.join(parts).strip()
+            if instructions_literal:
+                parts.append(_messages.InstructionPart(content=instructions_literal, dynamic=False))
+
+            for func in instructions_functions:
+                text = await func.run(run_context)
+                if text:
+                    parts.append(_messages.InstructionPart(content=text, dynamic=True))
+
+            return parts or None
 
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,
+            agent=self,
             prompt=user_prompt,
             new_message_index=len(message_history) if message_history else 0,
             resumed_request=None,
@@ -1276,7 +1283,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             'model_name': model_used.model_name if model_used else 'no-model',
             'agent_name': agent_name,
             'gen_ai.agent.name': agent_name,
-            'pydantic_ai.run_id': state.run_id,
+            'gen_ai.agent.call.id': state.run_id,
+            'gen_ai.operation.name': 'invoke_agent',
             'logfire.msg': f'{agent_name} run',
         }
         if self._description is not None:
@@ -1294,7 +1302,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             async with AsyncExitStack() as stack:
                 if run_span.is_recording():
                     ctx = _otel_set_baggage('gen_ai.agent.name', agent_name)
-                    ctx = _otel_set_baggage('pydantic_ai.run_id', state.run_id, context=ctx)
+                    ctx = _otel_set_baggage('gen_ai.agent.call.id', state.run_id, context=ctx)
                     token = _otel_attach(ctx)
                     stack.callback(_otel_detach, token)
                 await stack.enter_async_context(
@@ -1476,6 +1484,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                             state.message_history,
                             graph_deps.new_message_index,
                             run_metadata,
+                            model_request_parameters=state.last_model_request_parameters,
                         )
                     )
             finally:
@@ -1524,6 +1533,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: list[_messages.ModelMessage],
         new_message_index: int,
         metadata: dict[str, Any] | None = None,
+        model_request_parameters: models.ModelRequestParameters | None = None,
     ) -> dict[str, str | int | float | bool]:
         if settings.version == 1:
             attrs = {
@@ -1532,8 +1542,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 )
             }
         else:
-            # Store the last instructions here for convenience
-            last_instructions = InstrumentedModel._get_instructions(message_history)  # pyright: ignore[reportPrivateUsage]
+            last_instructions = InstrumentedModel._get_instructions(message_history, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
             attrs: dict[str, Any] = {
                 'pydantic_ai.all_messages': json.dumps(settings.messages_to_otel_messages(list(message_history))),
                 **settings.system_instructions_attributes(last_instructions),
@@ -1968,6 +1977,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        defer_loading: bool = False,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -1988,6 +1998,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        defer_loading: bool = False,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -2045,6 +2056,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
+            defer_loading: Whether to hide this tool until it's discovered via tool search. Defaults to False.
+                See [Tool Search](../tools-advanced.md#tool-search) for more info.
         """
 
         def tool_decorator(
@@ -2067,6 +2080,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 requires_approval=requires_approval,
                 metadata=metadata,
                 timeout=timeout,
+                defer_loading=defer_loading,
             )
             return func_
 
@@ -2093,6 +2107,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        defer_loading: bool = False,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
     def tool_plain(
@@ -2113,6 +2128,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        defer_loading: bool = False,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
@@ -2171,6 +2187,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
+            defer_loading: Whether to hide this tool until it's discovered via tool search. Defaults to False.
+                See [Tool Search](../tools-advanced.md#tool-search) for more info.
         """
 
         def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
@@ -2191,6 +2209,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 requires_approval=requires_approval,
                 metadata=metadata,
                 timeout=timeout,
+                defer_loading=defer_loading,
             )
             return func_
 
@@ -2363,6 +2382,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             wrapper = run_capability.get_wrapper_toolset(toolset)
             if wrapper is not None:
                 toolset = wrapper
+
+        # Always wraps; short-circuits when no deferred tools.
+        # Wraps outside PreparedToolset and capability wrappers so search_tools is always available.
+        toolset = ToolSearchToolset(wrapped=toolset)
 
         output_toolset = output_toolset if _utils.is_set(output_toolset) else self._output_toolset
         if output_toolset is not None:

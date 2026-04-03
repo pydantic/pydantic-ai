@@ -69,6 +69,7 @@ with try_import() as starlette_import_successful:
         load_provider_metadata,
     )
     from pydantic_ai.ui.vercel_ai.request_types import (
+        DataUIPart,
         DynamicToolApprovalRespondedPart,
         DynamicToolInputAvailablePart,
         DynamicToolInputStreamingPart,
@@ -3433,6 +3434,72 @@ async def test_adapter_load_messages():
     )
 
 
+async def test_adapter_load_messages_with_data_ui_part_in_user_message():
+    data = SubmitMessage(
+        trigger='submit-message',
+        id='bvQXcnrJ4OA2iRKU',
+        messages=[
+            UIMessage(
+                id='foobar',
+                role='system',
+                parts=[
+                    TextUIPart(
+                        text='You are a helpful assistant.',
+                    ),
+                ],
+            ),
+            UIMessage(
+                id='BeuwNtYIjJuniHbR',
+                role='user',
+                parts=[
+                    TextUIPart(
+                        text='Hi',
+                    ),
+                    DataUIPart(
+                        id='custom-data',
+                        type='data-custom',
+                        data={'key': 'value'},
+                    ),
+                ],
+            ),
+            UIMessage(
+                id='bylfKVeyoR901rax',
+                role='assistant',
+                parts=[
+                    TextUIPart(
+                        text='Hello',
+                        state='streaming',
+                    ),
+                ],
+            ),
+        ],
+    )
+
+    messages = VercelAIAdapter.load_messages(data.messages)
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='You are a helpful assistant.',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='Hi',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Hello'),
+                ],
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
 async def test_adapter_dump_messages():
     """Test dumping Pydantic AI messages to Vercel AI format."""
     messages = [
@@ -4498,6 +4565,82 @@ async def test_adapter_dump_messages_id_fallback():
     # Each ID should be unique
     ids = [m.id for m in result1]
     assert len(ids) == len(set(ids))
+
+
+async def test_event_stream_server_message_id():
+    """Test that VercelAIEventStream passes server_message_id to the StartChunk."""
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+        yield PartEndEvent(index=0, part=TextPart(content='Hello'))
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request, server_message_id='server-generated-id-abc123')
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events[0] == snapshot({'type': 'start', 'messageId': 'server-generated-id-abc123'})
+
+
+async def test_adapter_server_message_id():
+    """Test that VercelAIAdapter passes server_message_id through to the StartChunk."""
+
+    agent = Agent(model=TestModel())
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request, server_message_id='adapter-generated-id-xyz789')
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert events[0] == snapshot({'type': 'start', 'messageId': 'adapter-generated-id-xyz789'})
+
+
+async def test_adapter_server_message_id_default_none():
+    """Test that VercelAIAdapter produces a StartChunk without messageId when server_message_id is not specified."""
+
+    agent = Agent(model=TestModel())
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert events[0] == snapshot({'type': 'start'})
 
 
 async def test_adapter_dump_messages_with_invalid_json_args():
