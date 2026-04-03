@@ -75,12 +75,17 @@ with try_import() as imports_successful:
     from ag_ui.core import (
         ActivityMessage,
         AssistantMessage,
+        AudioInputContent,
         BaseEvent,
         BinaryInputContent,
         CustomEvent,
         DeveloperMessage,
+        DocumentInputContent,
         EventType,
         FunctionCall,
+        ImageInputContent,
+        InputContentDataSource,
+        InputContentUrlSource,
         Message,
         ReasoningMessage,
         RunAgentInput,
@@ -91,6 +96,7 @@ with try_import() as imports_successful:
         ToolCall,
         ToolMessage,
         UserMessage,
+        VideoInputContent,
     )
     from ag_ui.encoder import EventEncoder
     from starlette.requests import Request
@@ -3846,6 +3852,156 @@ def test_dump_messages_text_content() -> None:
     assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in result] == snapshot(
         [{'role': 'user', 'content': 'hello'}]
     )
+
+
+# region multimodal and coverage tests
+
+
+@pytest.mark.parametrize(
+    'input_content,expected_type',
+    [
+        pytest.param(
+            ImageInputContent(
+                source=InputContentUrlSource(type='url', value='https://example.com/photo.jpg', mime_type='image/jpeg')
+            ),
+            ImageUrl(url='https://example.com/photo.jpg', media_type='image/jpeg'),
+            id='image-url',
+        ),
+        pytest.param(
+            AudioInputContent(
+                source=InputContentUrlSource(type='url', value='https://example.com/clip.mp3', mime_type='audio/mpeg')
+            ),
+            AudioUrl(url='https://example.com/clip.mp3', media_type='audio/mpeg'),
+            id='audio-url',
+        ),
+        pytest.param(
+            VideoInputContent(
+                source=InputContentUrlSource(type='url', value='https://example.com/vid.mp4', mime_type='video/mp4')
+            ),
+            VideoUrl(url='https://example.com/vid.mp4', media_type='video/mp4'),
+            id='video-url',
+        ),
+        pytest.param(
+            DocumentInputContent(
+                source=InputContentUrlSource(
+                    type='url', value='https://example.com/doc.pdf', mime_type='application/pdf'
+                )
+            ),
+            DocumentUrl(url='https://example.com/doc.pdf', media_type='application/pdf'),
+            id='document-url',
+        ),
+    ],
+)
+def test_load_multimodal_url_sources(
+    input_content: ImageInputContent | AudioInputContent | VideoInputContent | DocumentInputContent,
+    expected_type: ImageUrl | AudioUrl | VideoUrl | DocumentUrl,
+) -> None:
+    """Test that typed multimodal URL input content is converted to the correct Pydantic AI URL type."""
+    messages = AGUIAdapter.load_messages([UserMessage(id='msg-1', content=[input_content])])
+    assert len(messages) == 1
+    request = messages[0]
+    assert isinstance(request, ModelRequest)
+    assert len(request.parts) == 1
+    part = request.parts[0]
+    assert isinstance(part, UserPromptPart)
+    assert isinstance(part.content, list)
+    assert len(part.content) == 1
+    assert part.content[0] == expected_type
+
+
+def test_load_multimodal_data_source() -> None:
+    """Test that multimodal data source input content is converted to BinaryContent."""
+    messages = AGUIAdapter.load_messages(
+        [
+            UserMessage(
+                id='msg-1',
+                content=[
+                    ImageInputContent(
+                        source=InputContentDataSource(type='data', value='aGVsbG8=', mime_type='image/png')
+                    )
+                ],
+            )
+        ]
+    )
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[BinaryContent(data=b'hello', media_type='image/png')], timestamp=IsDatetime()
+                    ),
+                ]
+            )
+        ]
+    )
+
+
+def test_dump_messages_multimodal_url() -> None:
+    """Test that media URLs are dumped as typed multimodal content with ag_ui_version >= 0.1.15."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart(content=[ImageUrl(url='https://example.com/img.png', media_type='image/png')])]
+        ),
+    ]
+    result = AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.15')
+    assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in result] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'source': {
+                            'type': 'url',
+                            'value': 'https://example.com/img.png',
+                            'mime_type': 'image/png',
+                        },
+                        'type': 'image',
+                    }
+                ],
+            }
+        ]
+    )
+
+
+def test_dump_messages_legacy_binary_content() -> None:
+    """Test that media URLs and BinaryContent are dumped as BinaryInputContent with ag_ui_version < 0.1.15."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        ImageUrl(url='https://example.com/img.png', media_type='image/png'),
+                        BinaryContent(data=b'raw data', media_type='image/jpeg'),
+                    ]
+                )
+            ]
+        ),
+    ]
+    result = AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.10')
+    assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in result] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'type': 'binary', 'url': 'https://example.com/img.png', 'mime_type': 'image/png'},
+                    {'type': 'binary', 'data': 'cmF3IGRhdGE=', 'mime_type': 'image/jpeg'},
+                ],
+            }
+        ]
+    )
+
+
+def test_load_messages_unknown_type_warns() -> None:
+    """Test that an unknown AG-UI message type emits a warning and is skipped."""
+
+    class UnknownMessage(BaseModel):
+        id: str
+        role: str = 'unknown'
+
+    with pytest.warns(UserWarning, match='AG-UI message type UnknownMessage is not yet implemented; skipping.'):
+        messages = AGUIAdapter.load_messages([UnknownMessage(id='msg-1')])  # pyright: ignore[reportArgumentType]
+
+    assert messages == []
 
 
 # endregion
