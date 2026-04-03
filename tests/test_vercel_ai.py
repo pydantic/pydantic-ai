@@ -2339,8 +2339,8 @@ async def test_run_stream_tool_retry_exhaustion():
     ]
 
     # Every tool-input-start must have a corresponding tool-output-error — no dangling calls
-    tool_starts = [e for e in events if isinstance(e, dict) and e['type'] == 'tool-input-start']
-    tool_outputs = [e for e in events if isinstance(e, dict) and e['type'] == 'tool-output-error']
+    tool_starts = [e for e in events if is_str_dict(e) and e['type'] == 'tool-input-start']
+    tool_outputs = [e for e in events if is_str_dict(e) and e['type'] == 'tool-output-error']
     started_ids = {e['toolCallId'] for e in tool_starts}
     closed_ids = {e['toolCallId'] for e in tool_outputs}
     assert started_ids == closed_ids, f'Dangling tool calls: {started_ids - closed_ids}'

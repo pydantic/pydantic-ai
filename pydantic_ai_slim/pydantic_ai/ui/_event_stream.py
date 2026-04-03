@@ -83,7 +83,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
     _result: AgentRunResult[OutputDataT] | None = None
     _final_result_event: FinalResultEvent | None = None
-    _pending_tool_calls: dict[str, str] = field(default_factory=dict)
+    _pending_tool_calls: dict[str, str] = field(default_factory=dict[str, str])
     """Function tool calls dispatched but not yet completed. Maps tool_call_id to tool_name."""
 
     def new_message_id(self) -> str:
