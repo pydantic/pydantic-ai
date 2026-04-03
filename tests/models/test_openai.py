@@ -4406,6 +4406,24 @@ async def test_openai_chat_instructions_with_user_role(allow_model_requests: Non
     )
 
 
+async def test_openai_chat_instructions_fallback_with_tool_return(allow_model_requests: None):
+    """When the last ModelRequest has only tool-return parts, instructions from the previous request are used."""
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')], instructions='Be helpful.'),
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call_1')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='my_tool', content='result', tool_call_id='call_1')]),
+    ]
+
+    # No instruction_parts on MRP — model should fall back to message history
+    openai_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    # Instructions from the first request should appear as a system message
+    assert openai_messages[0] == snapshot({'content': 'Be helpful.', 'role': 'system'})
+
+
 def test_openai_chat_audio_default_base64(allow_model_requests: None):
     c = completion_message(ChatCompletionMessage(content='success', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
