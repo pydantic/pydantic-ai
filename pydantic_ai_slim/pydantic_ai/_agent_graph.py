@@ -990,7 +990,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
                 is_empty = not self.model_response.parts
                 is_non_actionable_only = not is_empty and all(
-                    isinstance(p, _messages.ThinkingPart) for p in self.model_response.parts
+                    isinstance(p, _messages.ThinkingPart | _messages.CompactionPart) for p in self.model_response.parts
                 )
 
                 if is_empty or is_non_actionable_only:

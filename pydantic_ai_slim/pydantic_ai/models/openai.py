@@ -3180,6 +3180,15 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
         if not self._should_compact(request_context.messages):
             return request_context
 
+        # Silently skip if the model doesn't support compaction (e.g. used with FunctionModel in tests)
+        from .wrapper import WrapperModel
+
+        model = request_context.model
+        while isinstance(model, WrapperModel):
+            model = model.wrapped
+        if not isinstance(model, OpenAIResponsesModel):
+            return request_context
+
         # Compact all messages except the last (current) request
         compact_ctx = ModelRequestContext(
             model=request_context.model,
