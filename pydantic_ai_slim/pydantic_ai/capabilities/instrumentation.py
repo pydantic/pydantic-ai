@@ -50,6 +50,7 @@ class Instrumentation(AbstractCapability[Any]):
     # Per-run state (set in for_run, not user-provided)
     _agent_name: str = field(default='agent', repr=False, init=False)
     _new_message_index: int = field(default=0, repr=False, init=False)
+    _last_messages: list[ModelMessage] | None = field(default=None, repr=False, init=False)
     _instrumentation_names: InstrumentationNames = field(
         default_factory=lambda: InstrumentationNames.for_version(2), repr=False, init=False
     )
@@ -127,7 +128,8 @@ class Instrumentation(AbstractCapability[Any]):
                         message_history = result.all_messages()
                         metadata = result._state.metadata  # pyright: ignore[reportPrivateUsage]
                     else:
-                        message_history = ctx.messages
+                        # On error, use the last messages seen during model requests.
+                        message_history = self._last_messages or ctx.messages
                         metadata = ctx.metadata
                     span.set_attributes(self._run_span_end_attributes(ctx, message_history, metadata))
 
@@ -219,6 +221,10 @@ class Instrumentation(AbstractCapability[Any]):
         if isinstance(model, InstrumentedModel):
             model = model.wrapped
             request_context = replace(request_context, model=model)
+
+        # Track the latest messages so _run_span_end_attributes has them on error paths
+        # (ctx.messages may be stale because UserPromptNode replaces the list reference).
+        self._last_messages = request_context.messages
 
         prepared_settings, prepared_parameters = model.prepare_request(
             request_context.model_settings,
