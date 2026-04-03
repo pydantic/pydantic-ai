@@ -97,11 +97,11 @@ class PerModelCapability(AbstractCapability[AgentDepsT]):
 
         cap = self.get_capability_for_model(model)
         if cap is not None:
-            return cap
+            return await cap.for_run(ctx)
 
         # No route matched — check fallback
         if isinstance(self.fallback, AbstractCapability):
-            return self.fallback
+            return await self.fallback.for_run(ctx)
 
         if self.fallback == 'ignore':
             return _NoOpCapability()
