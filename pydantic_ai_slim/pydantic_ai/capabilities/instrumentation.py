@@ -94,8 +94,10 @@ class Instrumentation(AbstractCapability[Any]):
             'logfire.msg': f'{agent_name} run',
         }
 
-        if ctx.agent is not None and ctx.agent.description is not None:
-            span_attributes['gen_ai.agent.description'] = ctx.agent.description
+        if ctx.agent is not None:
+            rendered = ctx.agent.render_description(ctx.deps)
+            if rendered is not None:
+                span_attributes['gen_ai.agent.description'] = rendered
 
         with settings.tracer.start_as_current_span(
             names.get_agent_run_span_name(agent_name),

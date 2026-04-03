@@ -112,6 +112,14 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         """A human-readable description of the agent."""
         raise NotImplementedError
 
+    def render_description(self, deps: AgentDepsT = None) -> str | None:
+        """Return the agent description, rendering any TemplateStr with the given deps.
+
+        Subclasses with template descriptions should override this method.
+        The default returns the same as the `description` property.
+        """
+        return self.description
+
     @description.setter
     @abstractmethod
     def description(self, value: TemplateStr[AgentDepsT] | str | None) -> None:

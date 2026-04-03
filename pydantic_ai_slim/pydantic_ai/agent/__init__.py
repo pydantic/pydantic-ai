@@ -880,6 +880,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """Set the description of the agent."""
         self._description = value
 
+    def render_description(self, deps: AgentDepsT = None) -> str | None:
+        """Return the agent description, rendering any TemplateStr with the given deps."""
+        if self._description is None:
+            return None
+        if isinstance(self._description, TemplateStr):
+            return self._description.render(deps)
+        return self._description
+
     @property
     def deps_type(self) -> type:
         """The type of dependencies used by the agent."""
@@ -1157,8 +1165,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             effective_capability = base_capability
 
-        # Prepend Instrumentation capability (outermost) so its spans wrap everything
-        if instrumentation_cap is not None:
+        # Prepend Instrumentation capability (outermost) so its spans wrap everything,
+        # but only if the user hasn't already added one themselves.
+        if instrumentation_cap is not None and not any(
+            isinstance(c, InstrumentationCap) for c in effective_capability.visit()
+        ):
             effective_capability = CombinedCapability([instrumentation_cap, effective_capability])
 
         # Per-run capability: re-extract get_*() if for_run returns a different instance
