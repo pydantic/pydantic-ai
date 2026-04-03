@@ -21,7 +21,6 @@ from .image_generation import ImageGeneration
 from .mcp import MCP
 from .prefix_tools import PrefixTools
 from .prepare_tools import PrepareTools
-from .routed import PerModelCapability
 from .thinking import Thinking
 from .thread_executor import ThreadExecutor
 from .toolset import Toolset
@@ -86,7 +85,6 @@ __all__ = [
     'Toolset',
     'WebFetch',
     'WebSearch',
-    'PerModelCapability',
     'WrapperCapability',
     'CombinedCapability',
     'HookTimeoutError',

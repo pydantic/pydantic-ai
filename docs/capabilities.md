@@ -73,23 +73,6 @@ Provider-specific compaction capabilities manage conversation context size by co
 | OpenAI Responses API | [`OpenAICompaction`][pydantic_ai.models.openai.OpenAICompaction] | [OpenAI compaction](models/openai.md#message-compaction) |
 | Anthropic | [`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction] | [Anthropic compaction](models/anthropic.md#message-compaction) |
 
-You can also use [`PerModelCapability`][pydantic_ai.capabilities.PerModelCapability] to route to the right compaction implementation based on the model:
-
-```python {title="compaction_routed.py" test="skip" lint="skip"}
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import PerModelCapability
-from pydantic_ai.models.openai import OpenAICompaction
-from pydantic_ai.models.anthropic import AnthropicCompaction
-
-agent = Agent(
-    'openai-responses:gpt-4o',
-    capabilities=[PerModelCapability(routes={
-        'openai': OpenAICompaction(message_count_threshold=10),
-        'anthropic': AnthropicCompaction(token_threshold=100_000),
-    })],
-)
-```
-
 ### ThreadExecutor
 
 The [`ThreadExecutor`][pydantic_ai.capabilities.ThreadExecutor] capability provides a custom [`Executor`][concurrent.futures.Executor] for running sync tool functions and other sync callbacks in threads. This is useful in long-running servers (e.g. FastAPI) where the default ephemeral threads from [`anyio.to_thread.run_sync`][anyio.to_thread.run_sync] can accumulate under sustained load:

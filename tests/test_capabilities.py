@@ -21,7 +21,6 @@ from pydantic_ai.capabilities import (
     MCP,
     BuiltinTool,
     ImageGeneration,
-    PerModelCapability,
     PrefixTools,
     Thinking,
     ThreadExecutor,
@@ -8366,111 +8365,6 @@ class TestCompaction:
         agent = Agent(FunctionModel(simple_model_function))
         result = await agent.run('Follow up', message_history=history)
         assert result.output == 'response from model'
-
-
-# endregion
-
-
-# region --- PerModelCapability tests ---
-
-
-class TestPerModelCapability:
-    async def test_per_model_errors_on_unmatched(self):
-        """PerModelCapability raises UserError when no route matches (default)."""
-        agent = Agent(TestModel(), capabilities=[PerModelCapability()])
-        with pytest.raises(UserError, match='does not have a route for'):
-            await agent.run('hello')
-
-    async def test_per_model_errors_on_fallback_model(self):
-        """PerModelCapability raises UserError for FallbackModel."""
-        from pydantic_ai.models.fallback import FallbackModel
-
-        model = FallbackModel(TestModel(), TestModel())
-        agent = Agent(model, capabilities=[PerModelCapability()])
-        with pytest.raises(UserError, match='not compatible with FallbackModel'):
-            await agent.run('hello')
-
-    async def test_per_model_ignore_unmatched(self):
-        """PerModelCapability with fallback='ignore' silently skips unsupported models."""
-        agent = Agent(TestModel(), capabilities=[PerModelCapability(fallback='ignore')])
-        result = await agent.run('hello')
-        assert result.output == snapshot('success (no tool calls)')
-
-    async def test_per_model_unwraps_wrapper_model(self):
-        """PerModelCapability unwraps WrapperModel to find the underlying model."""
-        from pydantic_ai.models.wrapper import WrapperModel
-
-        class CustomWrapper(WrapperModel):
-            pass
-
-        wrapped = CustomWrapper(TestModel())
-        agent = Agent(wrapped, capabilities=[PerModelCapability()])
-        with pytest.raises(UserError, match='does not have a route for'):
-            await agent.run('hello')
-
-    async def test_per_model_routes_by_system_string(self):
-        """PerModelCapability routes by system string to a matching capability."""
-        from pydantic_ai.capabilities.abstract import AbstractCapability
-
-        class TrackingCapability(AbstractCapability[None]):
-            activated = False
-
-            async def before_model_request(
-                self,
-                ctx: RunContext[None],
-                request_context: ModelRequestContext,
-            ) -> ModelRequestContext:
-                TrackingCapability.activated = True
-                return request_context
-
-        cap = PerModelCapability(routes={'test': TrackingCapability()})
-        agent = Agent(TestModel(), capabilities=[cap])
-        await agent.run('hello')
-        assert TrackingCapability.activated
-
-    async def test_per_model_routes_by_model_class(self):
-        """PerModelCapability routes by model class to a matching capability."""
-        from pydantic_ai.capabilities.abstract import AbstractCapability
-
-        class TrackingCapability(AbstractCapability[None]):
-            activated = False
-
-            async def before_model_request(
-                self,
-                ctx: RunContext[None],
-                request_context: ModelRequestContext,
-            ) -> ModelRequestContext:
-                TrackingCapability.activated = True
-                return request_context
-
-        cap = PerModelCapability(routes={TestModel: TrackingCapability()})
-        agent = Agent(TestModel(), capabilities=[cap])
-        await agent.run('hello')
-        assert TrackingCapability.activated
-
-    async def test_per_model_with_fallback_capability(self):
-        """PerModelCapability uses fallback capability when no route matches."""
-        from pydantic_ai.capabilities.abstract import AbstractCapability
-
-        class FallbackCap(AbstractCapability[None]):
-            activated = False
-
-            async def before_model_request(
-                self,
-                ctx: RunContext[None],
-                request_context: ModelRequestContext,
-            ) -> ModelRequestContext:
-                FallbackCap.activated = True
-                return request_context
-
-        cap = PerModelCapability(fallback=FallbackCap())
-        agent = Agent(TestModel(), capabilities=[cap])
-        await agent.run('hello')
-        assert FallbackCap.activated
-
-    def test_per_model_serialization_name_is_none(self):
-        """PerModelCapability itself is not serializable (routes have type keys)."""
-        assert PerModelCapability.get_serialization_name() is None
 
 
 # endregion
