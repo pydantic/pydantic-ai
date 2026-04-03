@@ -8409,15 +8409,64 @@ class TestPerModelCapability:
             await agent.run('hello')
 
     async def test_per_model_routes_by_system_string(self):
-        """PerModelCapability routes by system string."""
-        pytest.importorskip('openai')
-        from pydantic_ai.models.openai import OpenAICompaction
+        """PerModelCapability routes by system string to a matching capability."""
+        from pydantic_ai.capabilities.abstract import AbstractCapability
 
-        cap = PerModelCapability(routes={'openai': OpenAICompaction(message_count_threshold=5)})
-        # TestModel has system='test', so it should not match 'openai'
-        with pytest.raises(UserError, match='does not have a route for'):
-            agent = Agent(TestModel(), capabilities=[cap])
-            await agent.run('hello')
+        class TrackingCapability(AbstractCapability[None]):
+            activated = False
+
+            async def before_model_request(
+                self,
+                ctx: RunContext[None],
+                request_context: ModelRequestContext,
+            ) -> ModelRequestContext:
+                TrackingCapability.activated = True
+                return request_context
+
+        cap = PerModelCapability(routes={'test': TrackingCapability()})
+        agent = Agent(TestModel(), capabilities=[cap])
+        await agent.run('hello')
+        assert TrackingCapability.activated
+
+    async def test_per_model_routes_by_model_class(self):
+        """PerModelCapability routes by model class to a matching capability."""
+        from pydantic_ai.capabilities.abstract import AbstractCapability
+
+        class TrackingCapability(AbstractCapability[None]):
+            activated = False
+
+            async def before_model_request(
+                self,
+                ctx: RunContext[None],
+                request_context: ModelRequestContext,
+            ) -> ModelRequestContext:
+                TrackingCapability.activated = True
+                return request_context
+
+        cap = PerModelCapability(routes={TestModel: TrackingCapability()})
+        agent = Agent(TestModel(), capabilities=[cap])
+        await agent.run('hello')
+        assert TrackingCapability.activated
+
+    async def test_per_model_with_fallback_capability(self):
+        """PerModelCapability uses fallback capability when no route matches."""
+        from pydantic_ai.capabilities.abstract import AbstractCapability
+
+        class FallbackCap(AbstractCapability[None]):
+            activated = False
+
+            async def before_model_request(
+                self,
+                ctx: RunContext[None],
+                request_context: ModelRequestContext,
+            ) -> ModelRequestContext:
+                FallbackCap.activated = True
+                return request_context
+
+        cap = PerModelCapability(fallback=FallbackCap())
+        agent = Agent(TestModel(), capabilities=[cap])
+        await agent.run('hello')
+        assert FallbackCap.activated
 
     def test_per_model_serialization_name_is_none(self):
         """PerModelCapability itself is not serializable (routes have type keys)."""

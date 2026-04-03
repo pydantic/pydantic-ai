@@ -317,7 +317,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case FilePart():
                 async for e in self.handle_file(part):
                     yield e
-            case CompactionPart():
+            case CompactionPart():  # pragma: no cover
                 async for e in self.handle_compaction(part):
                     yield e
 

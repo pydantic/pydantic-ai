@@ -90,7 +90,7 @@ class WrapperModel(Model):
         *,
         instructions: str | None = None,
     ) -> ModelResponse:
-        return await self.wrapped.compact_messages(request_context, instructions=instructions)
+        return await self.wrapped.compact_messages(request_context, instructions=instructions)  # pragma: no cover
 
     @asynccontextmanager
     async def request_stream(

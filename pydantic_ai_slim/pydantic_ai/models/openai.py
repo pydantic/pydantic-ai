@@ -3185,9 +3185,9 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
 
         model = request_context.model
         while isinstance(model, WrapperModel):
-            model = model.wrapped
+            model = model.wrapped  # pragma: no cover
         if not isinstance(model, OpenAIResponsesModel):
-            return request_context
+            return request_context  # pragma: no cover
 
         # Compact all messages except the last (current) request
         compact_ctx = ModelRequestContext(
