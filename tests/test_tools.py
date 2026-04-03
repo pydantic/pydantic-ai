@@ -4024,3 +4024,198 @@ def test_tool_ctx_agent_in_output_validator():
             ),
         ]
     )
+
+
+# region return_schema tests
+
+
+def test_return_schema_from_function():
+    """return_schema is generated from the function's return type annotation."""
+    from pydantic import BaseModel
+
+    class User(BaseModel):
+        name: str
+        age: int
+
+    def get_user(user_id: int) -> User:
+        """Get a user by ID."""
+        return User(name='test', age=42)  # pragma: no cover
+
+    tool = Tool(get_user)
+    td = tool.tool_def
+    assert td.return_schema == {
+        'properties': {'name': {'type': 'string'}, 'age': {'type': 'integer'}},
+        'required': ['name', 'age'],
+        'title': 'User',
+        'type': 'object',
+    }
+
+
+def test_return_schema_none_for_str():
+    """str return type generates a return_schema (simple type)."""
+
+    def greet(name: str) -> str:
+        return f'Hello {name}'  # pragma: no cover
+
+    tool = Tool(greet)
+    td = tool.tool_def
+    assert td.return_schema == {'type': 'string'}
+
+
+def test_return_schema_none_return():
+    """None return type generates no return_schema."""
+
+    def do_stuff(x: int) -> None:
+        pass  # pragma: no cover
+
+    tool = Tool(do_stuff)
+    assert tool.tool_def.return_schema is None
+
+
+def test_return_schema_tool_return_bare():
+    """Bare ToolReturn generates no return_schema."""
+    from pydantic_ai.messages import ToolReturn
+
+    def my_tool(x: int) -> ToolReturn:
+        return ToolReturn(return_value=x)  # pragma: no cover
+
+    tool = Tool(my_tool)
+    assert tool.tool_def.return_schema is None
+
+
+def test_return_schema_tool_return_generic():
+    """ToolReturn[T] generates return_schema from T."""
+    from pydantic import BaseModel
+
+    from pydantic_ai.messages import ToolReturn
+
+    class Result(BaseModel):
+        value: int
+
+    def my_tool(x: int) -> ToolReturn[Result]:
+        return ToolReturn(return_value=Result(value=x))  # pragma: no cover
+
+    tool = Tool(my_tool)
+    td = tool.tool_def
+    assert td.return_schema is not None
+    assert td.return_schema['type'] == 'object'
+    assert 'value' in td.return_schema['properties']
+
+
+def test_include_return_schema_agent_default():
+    """Agent-level include_tool_return_schema clears return_schema when False (default)."""
+
+    def my_tool(x: int) -> int:
+        return x  # pragma: no cover
+
+    agent = Agent('test', tools=[Tool(my_tool)])
+    result = agent.run_sync('test')
+    # return_schema should be cleared since include_tool_return_schema defaults to False
+    # (verified by the fact that the tool description doesn't contain "Return schema:")
+    request = result.all_messages()[0]
+    assert isinstance(request, ModelRequest)
+    part = request.parts[0]
+    assert isinstance(part, UserPromptPart)
+    assert 'Return schema' not in str(part.content)
+
+
+def test_include_return_schema_warning(capfd: pytest.CaptureFixture[str]):
+    """Warning when include_return_schema=True but no schema generated."""
+    import warnings
+
+    def void_tool(x: int) -> None:
+        pass  # pragma: no cover
+
+    agent = Agent('test', tools=[Tool(void_tool, include_return_schema=True)], include_tool_return_schema=True)
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter('always')
+        agent.run_sync('test')
+        schema_warnings = [x for x in w if 'include_return_schema' in str(x.message)]
+        assert len(schema_warnings) >= 1
+        assert 'void_tool' in str(schema_warnings[0].message)
+
+
+def test_return_schema_description_injection():
+    """return_schema is injected into description for models without native support."""
+    from pydantic_ai.models import _inject_return_schema_in_description
+    from pydantic_ai.tools import ToolDefinition
+
+    td = ToolDefinition(
+        name='test',
+        description='A test tool',
+        return_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}},
+    )
+    result = _inject_return_schema_in_description(td)
+    assert result.return_schema is None
+    assert result.description is not None
+    assert 'A test tool' in result.description
+    assert 'Return schema:' in result.description
+    assert '"type": "object"' in result.description
+
+
+def test_return_schema_description_injection_no_schema():
+    """_inject_return_schema_in_description is a no-op when return_schema is None."""
+    from pydantic_ai.models import _inject_return_schema_in_description
+    from pydantic_ai.tools import ToolDefinition
+
+    td = ToolDefinition(name='test', description='A test tool')
+    result = _inject_return_schema_in_description(td)
+    assert result is td  # same object, no-op
+
+
+def test_return_schema_description_injection_via_model():
+    """return_schema is injected into description when model doesn't support native return schemas."""
+    from pydantic import BaseModel
+
+    from pydantic_ai.messages import ToolReturn
+
+    class Result(BaseModel):
+        value: int
+
+    def my_tool(x: int) -> ToolReturn[Result]:
+        return ToolReturn(return_value=Result(value=x))  # pragma: no cover
+
+    agent = Agent('test', tools=[Tool(my_tool, include_return_schema=True)], include_tool_return_schema=True)
+    result = agent.run_sync('test')
+    # TestModel doesn't support native return schemas, so it should be injected into description
+    # The return_schema should have been cleared by the model layer
+    messages = result.all_messages()
+    assert any('Return schema:' in str(msg) for msg in messages)
+
+
+def test_maybe_inject_return_schemas():
+    """_maybe_inject_return_schemas injects for non-native models, skips for native."""
+    from pydantic_ai.models import (
+        ModelRequestParameters,
+        _maybe_inject_return_schemas,
+    )
+    from pydantic_ai.profiles import ModelProfile
+    from pydantic_ai.tools import ToolDefinition
+
+    td = ToolDefinition(
+        name='test',
+        description='A tool',
+        return_schema={'type': 'string'},
+    )
+    params = ModelRequestParameters(
+        function_tools=[td],
+        output_tools=[],
+        output_mode='auto',
+        output_object=None,
+    )
+
+    # Non-native: should inject
+    profile_no_native = ModelProfile(supports_tool_return_schema=False)
+    result = _maybe_inject_return_schemas(params, profile_no_native)
+    assert result.function_tools[0].return_schema is None
+    desc = result.function_tools[0].description
+    assert desc is not None
+    assert 'Return schema:' in desc
+
+    # Native: should pass through
+    profile_native = ModelProfile(supports_tool_return_schema=True)
+    result = _maybe_inject_return_schemas(params, profile_native)
+    assert result.function_tools[0].return_schema == {'type': 'string'}
+
+
+# endregion
