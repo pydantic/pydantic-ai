@@ -295,12 +295,12 @@ class Tool(Generic[ToolAgentDepsT]):
     timeout: float | None
     defer_loading: bool
     function_schema: _function_schema.FunctionSchema
-    _use_schema_signature: bool = field(init=False, repr=False, default=False)
     """
     The base JSON schema for the tool's parameters.
 
     This schema may be modified by the `prepare` function or by the Model class prior to including it in an API request.
     """
+    _use_schema_signature: bool = field(init=False, repr=False, default=False)
 
     def __init__(
         self,
