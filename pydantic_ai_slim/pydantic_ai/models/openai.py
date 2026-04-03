@@ -3189,6 +3189,10 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
         if not isinstance(model, OpenAIResponsesModel):
             return request_context  # pragma: no cover
 
+        # Need at least 2 messages (history + current request) to compact
+        if len(request_context.messages) < 2:
+            return request_context
+
         # Compact all messages except the last (current) request
         compact_ctx = ModelRequestContext(
             model=request_context.model,
