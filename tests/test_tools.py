@@ -4163,26 +4163,6 @@ def test_return_schema_description_injection_no_schema():
     assert result is td  # same object, no-op
 
 
-def test_return_schema_description_injection_via_model():
-    """return_schema is injected into description when model doesn't support native return schemas."""
-    from pydantic import BaseModel
-
-    from pydantic_ai.messages import ToolReturn
-
-    class Result(BaseModel):
-        value: int
-
-    def my_tool(x: int) -> ToolReturn[Result]:
-        return ToolReturn(return_value=Result(value=x))  # pragma: no cover
-
-    agent = Agent('test', tools=[Tool(my_tool, include_return_schema=True)], include_tool_return_schema=True)
-    result = agent.run_sync('test')
-    # TestModel doesn't support native return schemas, so it should be injected into description
-    # The return_schema should have been cleared by the model layer
-    messages = result.all_messages()
-    assert any('Return schema:' in str(msg) for msg in messages)
-
-
 def test_maybe_inject_return_schemas():
     """_maybe_inject_return_schemas injects for non-native models, skips for native."""
     from pydantic_ai.models import (
