@@ -277,7 +277,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case _:
                 pass
 
-    async def handle_part_start(self, event: PartStartEvent) -> AsyncIterator[EventT]:
+    async def handle_part_start(self, event: PartStartEvent) -> AsyncIterator[EventT]:  # noqa: C901
         """Handle a `PartStartEvent`.
 
         This method dispatches to specific `handle_*` methods based on part type:
@@ -317,7 +317,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 async for e in self.handle_file(part):
                     yield e
             case CompactionPart():
-                pass
+                if part.content:
+                    async for e in self.handle_text_start(TextPart(content=part.content)):
+                        yield e
 
     async def handle_part_delta(self, event: PartDeltaEvent) -> AsyncIterator[EventT]:
         """Handle a PartDeltaEvent.

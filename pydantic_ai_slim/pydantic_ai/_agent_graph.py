@@ -975,7 +975,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
                 is_empty = not self.model_response.parts
                 is_non_actionable_only = not is_empty and all(
-                    isinstance(p, _messages.ThinkingPart | _messages.CompactionPart) for p in self.model_response.parts
+                    isinstance(p, _messages.ThinkingPart) for p in self.model_response.parts
                 )
 
                 if is_empty or is_non_actionable_only:
@@ -1030,6 +1030,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     # normal retry prompt below.
 
                 text = ''
+                compaction_text = ''
                 tool_calls: list[_messages.ToolCallPart] = []
                 files: list[_messages.BinaryContent] = []
 
@@ -1050,9 +1051,15 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     elif isinstance(part, _messages.ThinkingPart):
                         pass
                     elif isinstance(part, _messages.CompactionPart):
-                        pass
+                        if part.content:
+                            compaction_text += part.content
                     else:
                         assert_never(part)
+
+                # Use compaction content as text fallback when the response has no other
+                # actionable text (e.g. Anthropic pause_after_compaction=True)
+                if not text and compaction_text:
+                    text = compaction_text
 
                 try:
                     # At the moment, we prioritize at least executing tool calls if they are present.

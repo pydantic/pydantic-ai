@@ -8985,30 +8985,25 @@ async def test_anthropic_compaction_streaming(allow_model_requests: None):
 
 
 async def test_anthropic_compaction_only_response(allow_model_requests: None):
-    """Test that a compaction-only response (pause_after_compaction=True) is handled without unnecessary retries."""
+    """Test that a compaction-only response (pause_after_compaction=True) uses content as text output."""
     from anthropic.types.beta import BetaCompactionBlock
 
     from pydantic_ai.messages import CompactionPart
 
-    # First response: compaction only (simulating pause_after_compaction=True)
-    # Second response: normal text response (after retry with compacted context)
+    # Single response: compaction only (simulating pause_after_compaction=True)
+    # The compaction content is treated as text output, no retry needed
     mock_client = MockAnthropic.create_mock(
-        [
-            completion_message(
-                [BetaCompactionBlock(content='Summary of prior conversation.', type='compaction')],
-                BetaUsage(input_tokens=100, output_tokens=20),
-            ),
-            completion_message(
-                [BetaTextBlock(text='Hello! Based on our conversation...', type='text')],
-                BetaUsage(input_tokens=50, output_tokens=10),
-            ),
-        ]
+        completion_message(
+            [BetaCompactionBlock(content='Summary of prior conversation.', type='compaction')],
+            BetaUsage(input_tokens=100, output_tokens=20),
+        ),
     )
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('Continue our conversation')
-    assert result.output == 'Hello! Based on our conversation...'
+    # CompactionPart content is treated as text output
+    assert result.output == 'Summary of prior conversation.'
 
     # Verify the compaction is preserved in the message history
     all_msgs = result.all_messages()
