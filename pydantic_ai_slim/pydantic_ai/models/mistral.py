@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterable, AsyncIterator, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, cast
@@ -94,6 +94,17 @@ except ImportError as e:  # pragma: lax no cover
         'Please install `mistral` to use the Mistral model, '
         'you can use the `mistral` optional group — `pip install "pydantic-ai-slim[mistral]"`'
     ) from e
+
+
+@contextmanager
+def _map_api_errors(model_name: str) -> Iterator[None]:
+    try:
+        yield
+    except SDKError as e:
+        if (status_code := e.status_code) >= 400:
+            raise ModelHTTPError(status_code=status_code, model_name=model_name, body=e.body) from e
+        raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
+
 
 LatestMistralModelNames = Literal[
     'mistral-large-latest', 'mistral-small-latest', 'codestral-latest', 'mistral-moderation-latest'
@@ -216,9 +227,10 @@ class MistralModel(Model):
             model_settings,
             model_request_parameters,
         )
-        response = await self._stream_completions_create(
-            messages, cast(MistralModelSettings, model_settings or {}), model_request_parameters
-        )
+        with _map_api_errors(self.model_name):
+            response = await self._stream_completions_create(
+                messages, cast(MistralModelSettings, model_settings or {}), model_request_parameters
+            )
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters)
 
@@ -231,7 +243,7 @@ class MistralModel(Model):
         """Make a non-streaming request to the model."""
         # TODO(Marcelo): We need to replace the current MistralAI client to use the beta client.
         # See https://docs.mistral.ai/agents/connectors/websearch/ to support web search.
-        try:
+        with _map_api_errors(self.model_name):
             response = await self.client.chat.complete_async(
                 model=str(self._model_name),
                 messages=await self._map_messages(messages, model_request_parameters),
@@ -247,10 +259,6 @@ class MistralModel(Model):
                 stop=model_settings.get('stop_sequences', None),
                 http_headers={'User-Agent': get_user_agent()},
             )
-        except SDKError as e:
-            if (status_code := e.status_code) >= 400:
-                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
         assert response, 'A unexpected empty response from Mistral.'
         return response
@@ -396,7 +404,8 @@ class MistralModel(Model):
     ) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
-        first_chunk = await peekable_response.peek()
+        with _map_api_errors(self.model_name):
+            first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior(  # pragma: no cover
                 'Streamed response ended without content or tool calls'
@@ -566,12 +575,14 @@ class MistralModel(Model):
                 mistral_messages.append(MistralAssistantMessage(content=content_chunks, tool_calls=tool_calls))
             else:
                 assert_never(message)
-        if instructions := self._get_instructions(messages, model_request_parameters):
+        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
             system_prompt_count = next(
                 (i for i, m in enumerate(mistral_messages) if not isinstance(m, MistralSystemMessage)),
                 len(mistral_messages),
             )
-            mistral_messages.insert(system_prompt_count, MistralSystemMessage(content=instructions))
+            mistral_messages[system_prompt_count:system_prompt_count] = [
+                MistralSystemMessage(content=part.content) for part in instruction_parts
+            ]
 
         # Post-process messages to insert fake assistant message after tool message if followed by user message
         # to work around `Unexpected role 'user' after role 'tool'` error.
@@ -655,54 +666,58 @@ class MistralStreamedResponse(StreamedResponse):
     _delta_content: str = field(default='', init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        if self._provider_timestamp is not None:  # pragma: no branch
-            self.provider_details = {'timestamp': self._provider_timestamp}
-        chunk: MistralCompletionEvent
-        async for chunk in self._response:
-            self._usage += _map_usage(chunk.data)
+        with _map_api_errors(self._model_name):
+            if self._provider_timestamp is not None:  # pragma: no branch
+                self.provider_details = {'timestamp': self._provider_timestamp}
+            chunk: MistralCompletionEvent
+            async for chunk in self._response:
+                self._usage += _map_usage(chunk.data)
 
-            if chunk.data.id:  # pragma: no branch
-                self.provider_response_id = chunk.data.id
+                if chunk.data.id:  # pragma: no branch
+                    self.provider_response_id = chunk.data.id
 
-            try:
-                choice = chunk.data.choices[0]
-            except IndexError:
-                continue
+                try:
+                    choice = chunk.data.choices[0]
+                except IndexError:
+                    continue
 
-            if raw_finish_reason := choice.finish_reason:
-                self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
-                self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+                if raw_finish_reason := choice.finish_reason:
+                    self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
+                    self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
-            # Handle the text part of the response
-            content = choice.delta.content
-            text, thinking = _map_content(content)
-            for thought in thinking:
-                for event in self._parts_manager.handle_thinking_delta(vendor_part_id='thinking', content=thought):
-                    yield event
-            if text:
-                # Attempt to produce an output tool call from the received text
-                output_tools = {c.name: c for c in self.model_request_parameters.output_tools}
-                if output_tools:
-                    self._delta_content += text
-                    # TODO: Port to native "manual JSON" mode
-                    maybe_tool_call_part = self._try_get_output_tool_from_text(self._delta_content, output_tools)
-                    if maybe_tool_call_part:
-                        yield self._parts_manager.handle_tool_call_part(
-                            vendor_part_id='output',
-                            tool_name=maybe_tool_call_part.tool_name,
-                            args=maybe_tool_call_part.args_as_dict(),
-                            tool_call_id=maybe_tool_call_part.tool_call_id,
-                        )
-                else:
-                    for event in self._parts_manager.handle_text_delta(vendor_part_id='content', content=text):
+                # Handle the text part of the response
+                content = choice.delta.content
+                text, thinking = _map_content(content)
+                for thought in thinking:
+                    for event in self._parts_manager.handle_thinking_delta(vendor_part_id='thinking', content=thought):
                         yield event
+                if text:
+                    # Attempt to produce an output tool call from the received text
+                    output_tools = {c.name: c for c in self.model_request_parameters.output_tools}
+                    if output_tools:
+                        self._delta_content += text
+                        # TODO: Port to native "manual JSON" mode
+                        maybe_tool_call_part = self._try_get_output_tool_from_text(self._delta_content, output_tools)
+                        if maybe_tool_call_part:
+                            yield self._parts_manager.handle_tool_call_part(
+                                vendor_part_id='output',
+                                tool_name=maybe_tool_call_part.tool_name,
+                                args=maybe_tool_call_part.args_as_dict(),
+                                tool_call_id=maybe_tool_call_part.tool_call_id,
+                            )
+                    else:
+                        for event in self._parts_manager.handle_text_delta(vendor_part_id='content', content=text):
+                            yield event
 
-            # Handle the explicit tool calls
-            for index, dtc in enumerate(choice.delta.tool_calls or []):
-                # It seems that mistral just sends full tool calls, so we just use them directly, rather than building
-                yield self._parts_manager.handle_tool_call_part(
-                    vendor_part_id=index, tool_name=dtc.function.name, args=dtc.function.arguments, tool_call_id=dtc.id
-                )
+                # Handle the explicit tool calls
+                for index, dtc in enumerate(choice.delta.tool_calls or []):
+                    # It seems that mistral just sends full tool calls, so we just use them directly, rather than building
+                    yield self._parts_manager.handle_tool_call_part(
+                        vendor_part_id=index,
+                        tool_name=dtc.function.name,
+                        args=dtc.function.arguments,
+                        tool_call_id=dtc.id,
+                    )
 
     @property
     def model_name(self) -> MistralModelName:

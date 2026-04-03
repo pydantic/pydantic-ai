@@ -830,8 +830,9 @@ class GoogleModel(Model):
         if not contents or contents[0].get('role') == 'model':  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
             contents.insert(0, {'role': 'user', 'parts': [{'text': ''}]})
 
-        if instructions := self._get_instructions(messages, model_request_parameters):
-            system_parts.append({'text': instructions})
+        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
+            for part in instruction_parts:
+                system_parts.append({'text': part.content})
         system_instruction = ContentDict(role='user', parts=system_parts) if system_parts else None
 
         return system_instruction, contents

@@ -11,7 +11,7 @@ import pytest
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import BinaryContent
+from pydantic_ai.messages import BinaryContent, InstructionPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
@@ -251,10 +251,22 @@ class TestFastMCPToolsetInstructions:
 
         async with toolset:
             assert toolset.instructions == 'Be a helpful assistant.'
-            assert await toolset.get_instructions(run_context) == 'Be a helpful assistant.'
+            assert await toolset.get_instructions(run_context) == InstructionPart(
+                content='Be a helpful assistant.', dynamic=True
+            )
 
         # After exiting, cached instructions are reset.
         assert await toolset.get_instructions(run_context) is None
+
+    async def test_get_instructions_enabled_no_server_instructions(self, run_context: RunContext[None]):
+        """When include_instructions is enabled but server provides no instructions, returns None."""
+        no_instruction_server = FastMCP('no_instructions_server')
+        no_instruction_client = Client(transport=no_instruction_server)
+        toolset = FastMCPToolset(no_instruction_client, include_instructions=True)
+
+        async with toolset:
+            assert toolset.instructions is None
+            assert await toolset.get_instructions(run_context) is None
 
 
 class TestFastMCPToolsetToolDiscovery:

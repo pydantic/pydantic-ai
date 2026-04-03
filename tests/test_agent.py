@@ -2378,6 +2378,25 @@ def test_prompted_output_with_template():
     )
 
 
+def test_prompted_output_with_template_and_instructions():
+    def return_foo(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.instructions is not None
+        assert 'Be helpful' in info.instructions
+        assert 'Gimme some JSON:' in info.instructions
+        text = Foo(bar='baz').model_dump_json()
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    m = FunctionModel(return_foo)
+
+    class Foo(BaseModel):
+        bar: str
+
+    agent = Agent(m, instructions='Be helpful', output_type=PromptedOutput(Foo, template='Gimme some JSON:'))
+
+    result = agent.run_sync('What is the capital of Mexico?')
+    assert result.output == snapshot(Foo(bar='baz'))
+
+
 def test_prompted_output_with_template_false():
     def return_foo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.model_request_parameters.prompted_output_template is False
@@ -2979,7 +2998,7 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
                         dynamic_ref=IsStr(),
                     ),
                     UserPromptPart(
-                        content=['Hello', ImageUrl(url='https://example.com/image.jpg', identifier='39cfc4')],
+                        content=['Hello', ImageUrl(url='https://example.com/image.jpg')],
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
@@ -6072,9 +6091,7 @@ Your task is to greet people.\
         ModelRequest(
             parts=[UserPromptPart(content='Hello again!', timestamp=IsDatetime())],
             timestamp=IsNow(tz=timezone.utc),
-            instructions="""\
-You are a helpful assistant.\
-""",
+            instructions='You are a helpful assistant.',
             run_id=IsStr(),
         )
     )
@@ -7160,8 +7177,8 @@ async def test_thinking_only_response_retry():
                         timestamp=IsDatetime(),
                     ),
                 ],
-                instructions='You are a helpful assistant.',
                 timestamp=IsNow(tz=timezone.utc),
+                instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -7179,8 +7196,8 @@ async def test_thinking_only_response_retry():
                         timestamp=IsDatetime(),
                     )
                 ],
-                instructions='You are a helpful assistant.',
                 timestamp=IsNow(tz=timezone.utc),
+                instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
             ModelResponse(

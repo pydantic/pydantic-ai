@@ -266,7 +266,7 @@ class InstrumentationSettings:
     ):
         if self.version == 1:
             events = self.messages_to_otel_events(input_messages, parameters)
-            for event in self.messages_to_otel_events([response], parameters):
+            for event in self.messages_to_otel_events([response]):
                 events.append(
                     LogRecord(
                         attributes={'event.name': 'gen_ai.choice'},
