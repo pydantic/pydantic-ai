@@ -211,6 +211,55 @@ async def test_bedrock_model_usage_limit_not_exceeded(
     )
 
 
+@pytest.mark.vcr
+async def test_bedrock_model_with_extra_headers(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    model = BedrockConverseModel(
+        'us.amazon.nova-micro-v1:0',
+        provider=bedrock_provider,
+    )
+
+    agent = Agent(model=model)
+
+    result = await agent.run(
+        'Hello!',
+        model_settings=BedrockModelSettings(
+            extra_headers={'X-Test': 'true'}
+        ),
+    )
+
+    assert result.output
+    assert isinstance(result.output, str)
+
+
+@pytest.mark.vcr
+async def test_bedrock_model_stream_with_extra_headers(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    model = BedrockConverseModel(
+        'us.amazon.nova-micro-v1:0',
+        provider=bedrock_provider,
+    )
+
+    agent = Agent(model=model)
+
+    chunks = []
+
+    async for event in agent.run_stream(
+        'Hello!',
+        model_settings=BedrockModelSettings(
+            extra_headers={'X-Test': 'true'}
+        ),
+    ):
+        if hasattr(event, 'content') and event.content:
+            chunks.append(event.content)
+
+    assert chunks
+
+
 @pytest.mark.vcr()
 async def test_bedrock_count_tokens_error(allow_model_requests: None, bedrock_provider: BedrockProvider):
     """Test that errors convert to ModelHTTPError."""

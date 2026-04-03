@@ -476,10 +476,8 @@ class BedrockConverseModel(Model):
                 },
             },
         }
-        try:
+        with _map_api_errors(self.model_name):
             response = await anyio.to_thread.run_sync(functools.partial(self.client.count_tokens, **params))
-        except ClientError as e:
-            self._raise_for_client_error(e)
 
         return usage.RequestUsage(input_tokens=response['inputTokens'])
 
@@ -1279,124 +1277,120 @@ class BedrockStreamedResponse(StreamedResponse):
     _provider_response_id: str | None = None
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
-        with _map_api_errors(self._model_name):
-            if self._provider_response_id is not None:
-                self.provider_response_id = self._provider_response_id
+        chunk: ConverseStreamOutputTypeDef
+        tool_ids: dict[int, str] = {}
+        builtin_tool_returns: dict[int, BuiltinToolReturnPart] = {}
 
-            chunk: ConverseStreamOutputTypeDef
-            tool_ids: dict[int, str] = {}
+        if self._provider_response_id is not None:
+            self.provider_response_id = self._provider_response_id
 
             # Bedrock has deltas for built-in tool returns, which aren't supported by parts manager.
             # We accumulate the deltas here and yield the complete return part once the content block ends
-            builtin_tool_returns: dict[int, BuiltinToolReturnPart] = {}
-
-            async for chunk in _AsyncIteratorWrapper(self._event_stream):
-                match chunk:
-                    case {'messageStart': _}:
-                        continue
-                    case {'messageStop': message_stop}:
-                        raw_finish_reason = message_stop['stopReason']
-                        self.provider_details = {'finish_reason': raw_finish_reason}
-                        self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
-                    case {'metadata': metadata}:
-                        if 'usage' in metadata:  # pragma: no branch
-                            self._usage += self._map_usage(metadata)
-                    case {'contentBlockStart': content_block_start}:
-                        index = content_block_start['contentBlockIndex']
-                        start = content_block_start['start']
-                        if 'toolUse' in start:
-                            tool_use_start = start['toolUse']
-                            tool_id = tool_use_start['toolUseId']
-                            tool_ids[index] = tool_id
-                            tool_name = tool_use_start['name']
-                            if tool_use_start.get('type') == 'server_tool_use':
-                                if tool_name == 'nova_code_interpreter':  # pragma: no branch
-                                    part = BuiltinToolCallPart(
-                                        tool_name=CodeExecutionTool.kind,
-                                        tool_call_id=tool_id,
-                                        provider_name=self.provider_name,
-                                    )
-                                    yield self._parts_manager.handle_part(vendor_part_id=index, part=part)
-                            elif maybe_event := self._parts_manager.handle_tool_call_delta(
-                                vendor_part_id=index,
-                                tool_name=tool_name,
-                                args=None,
-                                tool_call_id=tool_id,
-                            ):  # pragma: no branch
-                                yield maybe_event
-                        elif 'toolResult' in start:  # pragma: no branch
-                            tool_result_start = start['toolResult']
-                            tool_id = tool_result_start['toolUseId']
-
-                            if tool_result_start.get('type') == 'nova_code_interpreter_result':  # pragma: no branch
-                                return_part = BuiltinToolReturnPart(
-                                    provider_name=self.provider_name,
+        async for chunk in _AsyncIteratorWrapper(self._event_stream):
+            match chunk:
+                case {'messageStart': _}:
+                    continue
+                case {'messageStop': message_stop}:
+                    raw_finish_reason = message_stop['stopReason']
+                    self.provider_details = {'finish_reason': raw_finish_reason}
+                    self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+                case {'metadata': metadata}:
+                    if 'usage' in metadata:  # pragma: no branch
+                        self._usage += self._map_usage(metadata)
+                case {'contentBlockStart': content_block_start}:
+                    index = content_block_start['contentBlockIndex']
+                    start = content_block_start['start']
+                    if 'toolUse' in start:
+                        tool_use_start = start['toolUse']
+                        tool_id = tool_use_start['toolUseId']
+                        tool_ids[index] = tool_id
+                        tool_name = tool_use_start['name']
+                        if tool_use_start.get('type') == 'server_tool_use':
+                            if tool_name == 'nova_code_interpreter':  # pragma: no branch
+                                part = BuiltinToolCallPart(
                                     tool_name=CodeExecutionTool.kind,
-                                    content=None,
                                     tool_call_id=tool_id,
-                                    provider_details={'status': tool_result_start['status']}
-                                    if 'status' in tool_result_start
-                                    else {},
-                                )
-                                builtin_tool_returns[index] = return_part
-                                # Don't yield anything yet - we wait for content block end
-                    case {'contentBlockDelta': content_block_delta}:
-                        index = content_block_delta['contentBlockIndex']
-                        delta = content_block_delta['delta']
-                        if 'reasoningContent' in delta:
-                            if redacted_content := delta['reasoningContent'].get('redactedContent'):
-                                for event in self._parts_manager.handle_thinking_delta(
-                                    vendor_part_id=index,
-                                    id='redacted_content',
-                                    signature=redacted_content.decode('utf-8'),
                                     provider_name=self.provider_name,
-                                ):
-                                    yield event
-                            else:
-                                signature = delta['reasoningContent'].get('signature')
-                                for event in self._parts_manager.handle_thinking_delta(
-                                    vendor_part_id=index,
-                                    content=delta['reasoningContent'].get('text'),
-                                    signature=signature,
-                                    provider_name=self.provider_name if signature else None,
-                                ):
-                                    yield event
+                                )
+                                yield self._parts_manager.handle_part(vendor_part_id=index, part=part)
+                        elif maybe_event := self._parts_manager.handle_tool_call_delta(
+                            vendor_part_id=index,
+                            tool_name=tool_name,
+                            args=None,
+                            tool_call_id=tool_id,
+                        ):  # pragma: no branch
+                            yield maybe_event
+                    elif 'toolResult' in start:  # pragma: no branch
+                        tool_result_start = start['toolResult']
+                        tool_id = tool_result_start['toolUseId']
 
-                        if text := delta.get('text'):
-                                    for event in self._parts_manager.handle_text_delta(
-                                        vendor_part_id=index, content=text
-                                    ):
-                                        yield event
+                        if tool_result_start.get('type') == 'nova_code_interpreter_result':  # pragma: no branch
+                            return_part = BuiltinToolReturnPart(
+                                provider_name=self.provider_name,
+                                tool_name=CodeExecutionTool.kind,
+                                content=None,
+                                tool_call_id=tool_id,
+                                provider_details={'status': tool_result_start['status']}
+                                if 'status' in tool_result_start
+                                else {},
+                            )
+                            builtin_tool_returns[index] = return_part
+                            # Don't yield anything yet - we wait for content block end
+                case {'contentBlockDelta': content_block_delta}:
+                    index = content_block_delta['contentBlockIndex']
+                    delta = content_block_delta['delta']
+                    if 'reasoningContent' in delta:
+                        if redacted_content := delta['reasoningContent'].get('redactedContent'):
+                            for event in self._parts_manager.handle_thinking_delta(
+                                vendor_part_id=index,
+                                id='redacted_content',
+                                signature=redacted_content.decode('utf-8'),
+                                provider_name=self.provider_name,
+                            ):
+                                yield event
+                        else:
+                            signature = delta['reasoningContent'].get('signature')
+                            for event in self._parts_manager.handle_thinking_delta(
+                                vendor_part_id=index,
+                                content=delta['reasoningContent'].get('text'),
+                                signature=signature,
+                                provider_name=self.provider_name if signature else None,
+                            ):
+                                yield event
 
-                        if 'toolUse' in delta:
-                                    tool_use = delta['toolUse']
-                                    maybe_event = self._parts_manager.handle_tool_call_delta(
-                                        vendor_part_id=index,
-                                        tool_name=tool_use.get('name'),
-                                        args=tool_use.get('input'),
-                                        tool_call_id=tool_ids[index],
-                                    )
-                                    if maybe_event:  # pragma: no branch
-                                        yield maybe_event
+                    if text := delta.get('text'):
+                        for event in self._parts_manager.handle_text_delta(vendor_part_id=index, content=text):
+                            yield event
 
-                        if (
-                                    'toolResult' in delta
-                                    and (return_part := builtin_tool_returns.get(index))
-                                    and return_part.tool_name == CodeExecutionTool.kind
-                                    and (tr_content := delta['toolResult'])
-                        ):
-                                    return_part.content = tr_content[0].get('json')
+                    if 'toolUse' in delta:
+                        tool_use = delta['toolUse']
+                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                            vendor_part_id=index,
+                            tool_name=tool_use.get('name'),
+                            args=tool_use.get('input'),
+                            tool_call_id=tool_ids[index],
+                        )
+                        if maybe_event:  # pragma: no branch
+                            yield maybe_event
 
-                    case {'contentBlockStop': content_block_stop}:
-                        index = content_block_stop['contentBlockIndex']
-                        if return_part := builtin_tool_returns.get(index):
-                            # Emit the complete built-in tool return only once when the block closes.
-                            yield self._parts_manager.handle_part(vendor_part_id=index, part=return_part)
-                        tool_ids.pop(index, None)
-                        builtin_tool_returns.pop(index, None)
+                    if (
+                        'toolResult' in delta
+                        and (return_part := builtin_tool_returns.get(index))
+                        and return_part.tool_name == CodeExecutionTool.kind
+                        and (tr_content := delta['toolResult'])
+                    ):
+                        return_part.content = tr_content[0].get('json')
 
-                    case _:  # pragma: no cover
-                        pass  # pyright wants match statements to be exhaustive
+                case {'contentBlockStop': content_block_stop}:
+                    index = content_block_stop['contentBlockIndex']
+                    if return_part := builtin_tool_returns.get(index):
+                        # Emit the complete built-in tool return only once when the block closes.
+                        yield self._parts_manager.handle_part(vendor_part_id=index, part=return_part)
+                    tool_ids.pop(index, None)
+                    builtin_tool_returns.pop(index, None)
+
+                case _:  # pragma: no cover
+                    pass  # pyright wants match statements to be exhaustive
 
     @property
     def model_name(self) -> str:
