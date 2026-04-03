@@ -123,7 +123,7 @@ async def google_style_docstring(foo: int, bar: str) -> str:  # pragma: no cover
     return f'{foo} {bar}'
 
 
-def _json_fallback(v: Any) -> Any:
+def _json_fallback(v: Any) -> Any:  # pragma: no cover
     """Fallback for pydantic_core.to_json on types it can't serialize (e.g. FunctionSignature)."""
     return None
 
