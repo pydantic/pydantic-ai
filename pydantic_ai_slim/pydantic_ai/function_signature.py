@@ -483,14 +483,23 @@ def _build_function_params(
     """Build FunctionParam objects from a function's signature and type hints."""
     params: dict[str, FunctionParam] = {}
     for i, (param_name, param) in enumerate(sig.parameters.items()):
-        annotation = type_hints.get(param_name)
+        if i == 0:
+            annotation = type_hints.get(param_name)
+            if annotation is not None and (annotation is RunContext or get_origin(annotation) is RunContext):
+                continue
 
-        if i == 0 and annotation is not None and (annotation is RunContext or get_origin(annotation) is RunContext):
+        # Skip **kwargs — these map to additionalProperties in JSON schema, not named params
+        if param.kind == Parameter.VAR_KEYWORD:
             continue
+
+        annotation = type_hints.get(param_name)
 
         if annotation is not None:
             _collect_referenced_types(annotation, referenced_types, tool_name, param_name)
             type_expr = _annotation_to_type_expr(annotation, referenced_types)
+            # *args should be typed as list[T], matching how _function_schema handles VAR_POSITIONAL
+            if param.kind == Parameter.VAR_POSITIONAL:
+                type_expr = GenericTypeExpr(base='list', args=[type_expr])
         else:
             type_expr = _ANY
 
