@@ -598,11 +598,15 @@ class AnthropicModel(Model):
         output_config = self._build_output_config(model_request_parameters, model_settings)
         betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
         betas.update(builtin_tool_betas)
-        # Add compaction beta if messages contain CompactionParts (for round-tripping)
-        if any(
+        # Add compaction beta and context_management if messages contain CompactionParts (for round-tripping)
+        has_compaction_parts = any(
             isinstance(part, CompactionPart) for msg in messages if isinstance(msg, ModelResponse) for part in msg.parts
-        ):
-            betas.add('compact-2026-01-12')  # pragma: no cover
+        )
+        if has_compaction_parts:
+            betas.add('compact-2026-01-12')
+        context_management = model_settings.get('anthropic_context_management')
+        if has_compaction_parts and context_management is None:
+            context_management = cast(BetaContextManagementConfigParam, {'edits': [{'type': 'compact_20260112'}]})
         with _map_api_errors(self.model_name):
             return await self.client.beta.messages.count_tokens(
                 system=system_prompt or OMIT,
@@ -614,6 +618,7 @@ class AnthropicModel(Model):
                 betas=sorted(betas) or OMIT,
                 output_config=output_config or OMIT,
                 thinking=self._translate_thinking(model_settings, model_request_parameters),
+                context_management=context_management or OMIT,
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
