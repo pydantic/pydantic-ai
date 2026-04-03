@@ -925,11 +925,21 @@ class BedrockConverseModel(Model):
             processed_messages.append(current_message)
             last_message = cast(dict[str, Any], current_message)
 
-        if instructions := self._get_instructions(messages, model_request_parameters):
-            system_prompt.append({'text': instructions})
+        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
+            for part in instruction_parts:
+                system_prompt.append({'text': part.content})
 
         if system_prompt and settings.get('bedrock_cache_instructions') and profile.bedrock_supports_prompt_caching:
-            system_prompt.append({'cachePoint': {'type': 'default'}})
+            if instruction_parts and any(p.dynamic for p in instruction_parts):
+                # Insert cache point after the last static instruction (static parts are sorted first)
+                num_pre_instruction_blocks = len(system_prompt) - len(instruction_parts)
+                num_static = sum(1 for p in instruction_parts if not p.dynamic)
+                cache_idx = num_pre_instruction_blocks + num_static
+                if cache_idx > 0:
+                    system_prompt.insert(cache_idx, {'cachePoint': {'type': 'default'}})
+            else:
+                # All static or no instruction_parts: cache point at end (current behavior)
+                system_prompt.append({'cachePoint': {'type': 'default'}})
 
         if processed_messages and settings.get('bedrock_cache_messages') and profile.bedrock_supports_prompt_caching:
             last_user_content = self._get_last_user_message_content(processed_messages)

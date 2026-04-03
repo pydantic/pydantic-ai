@@ -453,13 +453,13 @@ class GroqModel(Model):
                 groq_messages.append(message_param)
             else:
                 assert_never(message)
-        if instructions := self._get_instructions(messages, model_request_parameters):
+        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
             system_prompt_count = next(
                 (i for i, m in enumerate(groq_messages) if m.get('role') != 'system'), len(groq_messages)
             )
-            groq_messages.insert(
-                system_prompt_count, chat.ChatCompletionSystemMessageParam(role='system', content=instructions)
-            )
+            groq_messages[system_prompt_count:system_prompt_count] = [
+                chat.ChatCompletionSystemMessageParam(role='system', content=part.content) for part in instruction_parts
+            ]
         return groq_messages
 
     @staticmethod

@@ -70,6 +70,7 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
+    InstructionPart,
     UploadedFile,
 )
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, ModelRequestParameters
@@ -5757,17 +5758,23 @@ async def test_google_system_prompts_and_instructions_ordering(google_provider: 
                 SystemPromptPart(content='System prompt 2'),
                 UserPromptPart(content='Hello'),
             ],
-            instructions='Instructions content',
         ),
     ]
+    model_request_parameters = ModelRequestParameters(
+        instruction_parts=[InstructionPart(content='Instructions content')],
+    )
 
-    system_instruction, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    system_instruction, contents = await m._map_messages(messages, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
 
     # Verify system parts are in order: system1, system2, instructions
     assert system_instruction == snapshot(
         {
             'role': 'user',
-            'parts': [{'text': 'System prompt 1'}, {'text': 'System prompt 2'}, {'text': 'Instructions content'}],
+            'parts': [
+                {'text': 'System prompt 1'},
+                {'text': 'System prompt 2'},
+                {'text': 'Instructions content'},
+            ],
         }
     )
     assert contents == snapshot([{'role': 'user', 'parts': [{'text': 'Hello'}]}])

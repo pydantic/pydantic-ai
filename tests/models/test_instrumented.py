@@ -198,6 +198,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
                         'thinking': None,
                     },
                     'logfire.json_schema': {
@@ -440,6 +441,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
                         'thinking': None,
                     },
                     'logfire.json_schema': {
@@ -542,6 +544,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
                         'thinking': None,
                     },
                     'logfire.json_schema': {
@@ -666,6 +669,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire, instr
                             'prompted_output_template': None,
                             'allow_text_output': True,
                             'allow_image_output': False,
+                            'instruction_parts': None,
                             'thinking': None,
                         },
                         'gen_ai.request.temperature': 1,
@@ -802,6 +806,7 @@ Fix the errors and try again.\
                             'prompted_output_template': None,
                             'allow_text_output': True,
                             'allow_image_output': False,
+                            'instruction_parts': None,
                             'thinking': None,
                         },
                         'gen_ai.request.temperature': 1,
@@ -1785,6 +1790,7 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
                         'thinking': None,
                     },
                     'logfire.span_type': 'span',
