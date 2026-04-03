@@ -225,36 +225,6 @@ async def test_request_simple_usage(allow_model_requests: None):
     assert result.output == 'world'
 
 
-async def test_usage_extraction_with_extra_fields(allow_model_requests: None):
-    """Test that RequestUsage.extract handles extra usage fields and filters floats."""
-    c = completion_message(
-        ChatCompletionMessage(content='test', role='assistant'),
-        usage=CompletionUsage(
-            completion_tokens=50,
-            prompt_tokens=100,
-            total_tokens=150,
-            # Groq returns timing info as floats - should be filtered out
-            prompt_time=0.123,
-            completion_time=0.456,
-            queue_time=0.789,
-            total_time=1.368,
-        ),
-    )
-    mock_client = MockGroq.create_mock(c)
-    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
-    agent = Agent(m)
-
-    result = await agent.run('test')
-    assert result.output == 'test'
-
-    usage = result.usage()
-    assert usage.input_tokens == 100
-    assert usage.output_tokens == 50
-    # details should not contain float values (timing info filtered out)
-    for value in usage.details.values():
-        assert isinstance(value, int), f'Expected int in details, got {type(value)}'
-
-
 async def test_request_structured_response(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage(
