@@ -758,6 +758,34 @@ When multiple capabilities are passed to an agent, they are composed into a sing
 
 This means the first capability in the list has the first and last say on the operation — it sees the original input in its `wrap_*` before handler, and it sees the final output after handler returns.
 
+### Per-model routing
+
+[`PerModelCapability`][pydantic_ai.capabilities.PerModelCapability] delegates to different capability implementations based on the model being used. This is useful when a capability needs provider-specific logic:
+
+```python {title="per_model_routing.py" test="skip" lint="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import PerModelCapability
+
+cap = PerModelCapability(
+    routes={
+        'openai': my_openai_capability,
+        'anthropic': my_anthropic_capability,
+    },
+    fallback='ignore',  # silently skip unsupported models
+)
+agent = Agent('openai:gpt-4o', capabilities=[cap])
+```
+
+Routes can map by **system string** (e.g. `'openai'`, `'anthropic'`) or by **model class** (e.g. `OpenAIModel`). Wrapper models are automatically unwrapped to find the underlying provider model.
+
+The `fallback` parameter controls what happens when no route matches:
+
+- `None` (default) — raise a `UserError`
+- `'ignore'` — silently return a no-op capability
+- A capability instance — use it as the fallback
+
+You can also subclass `PerModelCapability` and override [`get_capability_for_model`][pydantic_ai.capabilities.PerModelCapability.get_capability_for_model] for custom routing logic.
+
 ## Examples
 
 ### Guardrail (PII redaction)
