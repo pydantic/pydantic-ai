@@ -402,6 +402,9 @@ class Tool(Generic[ToolAgentDepsT]):
             require_parameter_descriptions=require_parameter_descriptions,
         )
         self.takes_ctx = self.function_schema.takes_ctx
+        # Eagerly compute return_schema (a cached_property) so it's ready before
+        # Temporal workflow sandboxing, where TypeAdapter().json_schema() would be too slow.
+        self.function_schema.return_schema
         self.max_retries = max_retries
         self.description = description or self.function_schema.description
         self.prepare = prepare
