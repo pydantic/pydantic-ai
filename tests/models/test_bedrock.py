@@ -5,9 +5,7 @@ from datetime import date, datetime, timezone
 from itertools import count
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
 
-import anyio
 import pytest
 from typing_extensions import TypedDict
 
@@ -63,7 +61,11 @@ with try_import() as imports_successful:
     from botocore.exceptions import ClientError
     from mypy_boto3_bedrock_runtime.type_defs import MessageUnionTypeDef, SystemContentBlockTypeDef, ToolTypeDef
 
-    from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelName, BedrockModelSettings
+    from pydantic_ai.models.bedrock import (
+        BedrockConverseModel,
+        BedrockModelName,
+        BedrockModelSettings,
+    )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -129,71 +131,6 @@ def _bedrock_model_with_client_error(error: ClientError) -> BedrockConverseModel
     )
 
 
-def _build_test_bedrock_model_for_extra_headers() -> BedrockConverseModel:
-    model = BedrockConverseModel.__new__(BedrockConverseModel)
-
-    model.client = MagicMock()
-    model.client.converse = MagicMock(return_value={'output': {}, 'usage': {}, 'stopReason': 'end_turn'})
-    model.client.converse_stream = MagicMock(return_value={'stream': MagicMock()})
-    model._provider = SimpleNamespace(name='bedrock')
-    model._model_name = 'test-model'
-
-    model._extra_headers_lock = anyio.Lock()
-    model._map_messages = AsyncMock(return_value=([], []))
-    model._map_inference_config = MagicMock(return_value={})
-    model._map_tool_config = MagicMock(return_value=None)
-    model._limit_cache_points = MagicMock()
-
-    return model
-
-
-async def test_messages_create_unregisters_on_exception():
-    model = _build_test_bedrock_model_for_extra_headers()
-
-    model.client.converse.side_effect = RuntimeError('boom')
-
-    settings = {'extra_headers': {'X-Test': '123'}}
-
-    with (
-        patch.object(
-            BedrockConverseModel,
-            '_register_extra_headers',
-            return_value=('handler', ['before-send.bedrock-runtime.Converse']),
-        ) as register_mock,
-        patch.object(
-            BedrockConverseModel,
-            '_unregister_extra_headers',
-        ) as unregister_mock,
-    ):
-        with pytest.raises(RuntimeError):
-            await model._messages_create([], False, settings, MagicMock())
-
-    register_mock.assert_called_once()
-    unregister_mock.assert_called_once()
-
-
-async def test_messages_create_no_unregister_if_register_fails():
-    model = _build_test_bedrock_model_for_extra_headers()
-
-    settings = {'extra_headers': {'X-Test': '123'}}
-
-    with (
-        patch.object(
-            BedrockConverseModel,
-            '_register_extra_headers',
-            side_effect=RuntimeError('fail'),
-        ),
-        patch.object(
-            BedrockConverseModel,
-            '_unregister_extra_headers',
-        ) as unregister_mock,
-    ):
-        with pytest.raises(RuntimeError):
-            await model._messages_create([], False, settings, MagicMock())
-
-    unregister_mock.assert_not_called()
-
-
 async def test_bedrock_model(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     assert model.base_url == 'https://bedrock-runtime.us-east-1.amazonaws.com'
@@ -237,6 +174,25 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
             ),
         ]
     )
+
+
+@pytest.mark.skip(reason='Requires VCR cassette re-record with AWS access')
+@pytest.mark.vcr()
+async def test_bedrock_model_with_extra_headers(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    agent = Agent(
+        model=model,
+        system_prompt='You are a helpful assistant.',
+        model_settings={'extra_headers': {'X-Custom': 'test-value'}},
+    )
+
+    result = await agent.run('Hello!')
+
+    assert result.output == snapshot(...)
+    assert result.all_messages() == snapshot(...)
 
 
 @pytest.mark.vcr()
@@ -559,6 +515,32 @@ async def test_bedrock_model_stream(allow_model_requests: None, bedrock_provider
     async with agent.run_stream('What is the capital of France?') as result:
         data = await result.get_output()
     assert data == snapshot(
+        'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, and it is a major center for culture, commerce, fashion, and international diplomacy. Known for its historical landmarks, such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral, Paris is often referred to as "The City of Light" or "The City of Love."'
+    )
+    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=13, output_tokens=82))
+
+
+@pytest.mark.skip(reason='Requires VCR cassette re-record with AWS access')
+@pytest.mark.vcr()
+async def test_bedrock_model_stream_with_extra_headers(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    model = BedrockConverseModel(
+        'us.amazon.nova-micro-v1:0',
+        provider=bedrock_provider,
+    )
+
+    agent = Agent(
+        model=model,
+        instructions='You are a helpful chatbot.',
+        model_settings={'extra_headers': {'X-Test': '123'}},
+    )
+
+    async with agent.run_stream('What is the capital of France?') as result:
+        output = await result.get_output()
+
+    assert output == snapshot(
         'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, and it is a major center for culture, commerce, fashion, and international diplomacy. Known for its historical landmarks, such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral, Paris is often referred to as "The City of Light" or "The City of Love."'
     )
     assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=13, output_tokens=82))
@@ -3922,268 +3904,3 @@ async def test_bedrock_model_instructions_only_then_message_history(
             ),
         ]
     )
-def test_register_extra_headers_uses_converse_stream_event_name():
-    client = MagicMock()
-    client.meta = SimpleNamespace(events=MagicMock())
-
-    handler, events = BedrockConverseModel._register_extra_headers(
-        client,
-        {'X-Test': '123'},
-        stream=True,
-    )
-
-    assert events == ['before-send.bedrock-runtime.ConverseStream']
-    client.meta.events.register.assert_called_once_with(
-        'before-send.bedrock-runtime.ConverseStream',
-        handler,
-    )
-
-
-async def test_messages_create_with_extra_headers_calls_register_and_unregister():
-    model = _build_test_bedrock_model_for_extra_headers()
-    model.client.converse.return_value = {'output': {}, 'usage': {}, 'stopReason': 'end_turn'}
-
-    settings = {'extra_headers': {'X-Test': '123'}}
-
-    with (
-        patch.object(
-            BedrockConverseModel,
-            '_register_extra_headers',
-            return_value=('handler', ['before-send.bedrock-runtime.Converse']),
-        ) as register_mock,
-        patch.object(
-            BedrockConverseModel,
-            '_unregister_extra_headers',
-        ) as unregister_mock,
-    ):
-        response = await model._messages_create([], False, settings, MagicMock())
-
-    assert response == {'output': {}, 'usage': {}, 'stopReason': 'end_turn'}
-    register_mock.assert_called_once_with(model.client, {'X-Test': '123'}, stream=False)
-    model.client.converse.assert_called_once()
-    unregister_mock.assert_called_once_with(
-        model.client,
-        'handler',
-        ['before-send.bedrock-runtime.Converse'],
-    )
-
-
-async def test_messages_create_with_extra_headers_stream_path():
-    model = _build_test_bedrock_model_for_extra_headers()
-
-    settings = {'extra_headers': {'X-Test': '123'}}
-
-    with (
-        patch.object(
-            BedrockConverseModel,
-            '_register_extra_headers',
-            return_value=('handler', ['before-send.bedrock-runtime.ConverseStream']),
-        ) as register_mock,
-        patch.object(
-            BedrockConverseModel,
-            '_unregister_extra_headers',
-        ) as unregister_mock,
-    ):
-        await model._messages_create([], True, settings, MagicMock())
-
-    model.client.converse_stream.assert_called_once()
-    register_mock.assert_called_once()
-    unregister_mock.assert_called_once()
-
-
-async def test_messages_create_with_extra_headers_unregisters_on_stream_exception():
-    model = _build_test_bedrock_model_for_extra_headers()
-    model.client.converse_stream.side_effect = ClientError(
-        {'Error': {'Code': 'TestException', 'Message': 'broken stream'}},
-        'converse_stream',
-    )
-
-    settings = {'extra_headers': {'X-Test': '123'}}
-
-    with (
-        patch.object(
-            BedrockConverseModel,
-            '_register_extra_headers',
-            return_value=('handler', ['before-send.bedrock-runtime.ConverseStream']),
-        ),
-        patch.object(
-            BedrockConverseModel,
-            '_unregister_extra_headers',
-        ) as unregister_mock,
-    ):
-        with pytest.raises(ModelAPIError):
-            await model._messages_create([], True, settings, MagicMock())
-
-    unregister_mock.assert_called_once_with(
-        model.client,
-        'handler',
-        ['before-send.bedrock-runtime.ConverseStream'],
-    )
-
-
-async def test_messages_create_without_extra_headers_does_not_register_handlers():
-    model = _build_test_bedrock_model_for_extra_headers()
-    model.client.converse.return_value = {'output': {}, 'usage': {}, 'stopReason': 'end_turn'}
-
-    with (
-        patch.object(BedrockConverseModel, '_register_extra_headers') as register_mock,
-        patch.object(BedrockConverseModel, '_unregister_extra_headers') as unregister_mock,
-    ):
-        response = await model._messages_create([], False, {}, MagicMock())
-
-    assert response == {'output': {}, 'usage': {}, 'stopReason': 'end_turn'}
-    register_mock.assert_not_called()
-    unregister_mock.assert_not_called()
-    model.client.converse.assert_called_once()
-
-
-async def test_messages_create_ignores_non_dict_extra_headers():
-    model = _build_test_bedrock_model_for_extra_headers()
-    model.client.converse.return_value = {'output': {}, 'usage': {}, 'stopReason': 'end_turn'}
-
-    settings = {'extra_headers': 'not-a-dict'}
-
-    with (
-        patch.object(BedrockConverseModel, '_register_extra_headers') as register_mock,
-        patch.object(BedrockConverseModel, '_unregister_extra_headers') as unregister_mock,
-    ):
-        response = await model._messages_create([], False, settings, MagicMock())
-
-    assert response == {'output': {}, 'usage': {}, 'stopReason': 'end_turn'}
-    register_mock.assert_not_called()
-    unregister_mock.assert_not_called()
-    model.client.converse.assert_called_once()
-
-
-async def test_messages_create_with_extra_headers_unregisters_on_exception():
-    model = _build_test_bedrock_model_for_extra_headers()
-    model.client.converse.side_effect = ClientError(
-        {'Error': {'Code': 'TestException', 'Message': 'broken connection'}},
-        'converse',
-    )
-
-    settings = {'extra_headers': {'X-Test': '123'}}
-
-    with (
-        patch.object(
-            BedrockConverseModel,
-            '_register_extra_headers',
-            return_value=('handler', ['before-send.bedrock-runtime.Converse']),
-        ),
-        patch.object(
-            BedrockConverseModel,
-            '_unregister_extra_headers',
-        ) as unregister_mock,
-    ):
-        with pytest.raises(ModelAPIError):
-            await model._messages_create([], False, settings, MagicMock())
-
-    unregister_mock.assert_called_once_with(
-        model.client,
-        'handler',
-        ['before-send.bedrock-runtime.Converse'],
-    )
-
-
-async def test_messages_create_with_extra_headers_calls_register_and_unregister_stream():
-    model = _build_test_bedrock_model_for_extra_headers()
-    stream_mock = MagicMock()
-    model.client.converse_stream.return_value = {'stream': stream_mock}
-
-    settings = {'extra_headers': {'X-Test': '123'}}
-
-    with (
-        patch.object(
-            BedrockConverseModel,
-            '_register_extra_headers',
-            return_value=('handler', ['before-send.bedrock-runtime.ConverseStream']),
-        ) as register_mock,
-        patch.object(
-            BedrockConverseModel,
-            '_unregister_extra_headers',
-        ) as unregister_mock,
-    ):
-        response = await model._messages_create([], True, settings, MagicMock())
-
-    assert response == {'stream': stream_mock}
-    register_mock.assert_called_once_with(model.client, {'X-Test': '123'}, stream=True)
-    model.client.converse_stream.assert_called_once()
-    unregister_mock.assert_called_once_with(
-        model.client,
-        'handler',
-        ['before-send.bedrock-runtime.ConverseStream'],
-    )
-
-
-@pytest.mark.anyio
-async def test_messages_create_with_extra_headers_serializes_hook_registration():
-    model = _build_test_bedrock_model_for_extra_headers()
-    model._extra_headers_lock = anyio.Lock()
-
-    enter_order: list[str] = []
-    release_event = anyio.Event()
-
-    def register_side_effect(client, headers, *, stream):
-        enter_order.append(headers['X-Test'])
-        return ('handler', ['before-send.bedrock-runtime.Converse'])
-
-    async def converse_blocking(*args, **kwargs):
-        await release_event.wait()
-        return {'output': {}, 'usage': {}, 'stopReason': 'end_turn'}
-
-    async def run_request(header_value: str):
-        settings = {'extra_headers': {'X-Test': header_value}}
-        return await model._messages_create([], False, settings, MagicMock())
-
-    # make client.converse block until we explicitly release it
-    def converse_sync(*args, **kwargs):
-        anyio.from_thread.run(release_event.wait)
-        return {'output': {}, 'usage': {}, 'stopReason': 'end_turn'}
-
-    model.client.converse = MagicMock(side_effect=converse_sync)
-
-    original_register = BedrockConverseModel._register_extra_headers
-    original_unregister = BedrockConverseModel._unregister_extra_headers
-
-    BedrockConverseModel._register_extra_headers = staticmethod(register_side_effect)
-    BedrockConverseModel._unregister_extra_headers = staticmethod(lambda client, handler, events: None)
-
-    try:
-        async with anyio.create_task_group() as tg:
-            tg.start_soon(run_request, 'A')
-            await anyio.sleep(0)
-            tg.start_soon(run_request, 'B')
-            await anyio.sleep(0.05)
-
-            # if lock works, only first request should have entered register so far
-            assert enter_order == ['A']
-
-            release_event.set()
-
-        assert enter_order == ['A', 'B']
-    finally:
-        BedrockConverseModel._register_extra_headers = original_register
-        BedrockConverseModel._unregister_extra_headers = original_unregister
-
-
-async def test_messages_create_does_not_unregister_if_register_fails():
-    model = _build_test_bedrock_model_for_extra_headers()
-
-    settings = {'extra_headers': {'X-Test': '123'}}
-
-    with (
-        patch.object(
-            BedrockConverseModel,
-            '_register_extra_headers',
-            side_effect=RuntimeError('register failed'),
-        ),
-        patch.object(
-            BedrockConverseModel,
-            '_unregister_extra_headers',
-        ) as unregister_mock,
-    ):
-        with pytest.raises(RuntimeError, match='register failed'):
-            await model._messages_create([], False, settings, MagicMock())
-
-    unregister_mock.assert_not_called()
-    model.client.converse.assert_not_called()

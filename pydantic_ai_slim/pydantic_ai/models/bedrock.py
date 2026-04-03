@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import functools
 import typing
-from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -539,16 +539,17 @@ class BedrockConverseModel(Model):
                             ),
                         )
                 elif (tool_result := item.get('toolResult')) and tool_result.get(
-                            'type') == 'nova_code_interpreter_result':# pragma: no branch
-                        items.append(
-                            BuiltinToolReturnPart(
-                                provider_name=self.system,
-                                tool_name=CodeExecutionTool.kind,
-                                content=tool_result['content'][0].get('json') if tool_result['content'] else None,
-                                tool_call_id=tool_result.get('toolUseId'),
-                                provider_details={'status': tool_result['status']} if 'status' in tool_result else {},
-                            )
+                    'type'
+                ) == 'nova_code_interpreter_result':  # pragma: no branch
+                    items.append(
+                        BuiltinToolReturnPart(
+                            provider_name=self.system,
+                            tool_name=CodeExecutionTool.kind,
+                            content=tool_result['content'][0].get('json') if tool_result['content'] else None,
+                            tool_call_id=tool_result.get('toolUseId'),
+                            provider_details={'status': tool_result['status']} if 'status' in tool_result else {},
                         )
+                    )
 
         input_tokens = response['usage']['inputTokens']
         output_tokens = response['usage']['outputTokens']
@@ -623,57 +624,6 @@ class BedrockConverseModel(Model):
     ) -> ConverseStreamResponseTypeDef:
         pass
 
-    async def _call_bedrock_unlocked(
-        self,
-        *,
-        params: ConverseRequestTypeDef,
-        stream: bool,
-    ) -> ConverseResponseTypeDef | ConverseStreamResponseTypeDef:
-        try:
-            if stream:
-                return await anyio.to_thread.run_sync(functools.partial(self.client.converse_stream, **params))
-            return await anyio.to_thread.run_sync(functools.partial(self.client.converse, **params))
-        except ClientError as e:
-            status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
-            if isinstance(status_code, int):
-                raise ModelHTTPError(
-                    status_code=status_code,
-                    model_name=self.model_name,
-                    body=e.response,
-                ) from e
-            raise ModelAPIError(
-                model_name=self.model_name,
-                message=str(e),
-            ) from e
-
-    async def _call_bedrock(
-            self,
-            *,
-            params: ConverseRequestTypeDef,
-            stream: bool,
-    ) -> ConverseResponseTypeDef | ConverseStreamResponseTypeDef:
-        async with self._extra_headers_lock:
-            return await self._call_bedrock_unlocked(params=params, stream=stream)
-
-    async def _call_with_extra_headers(
-        self,
-        *,
-        params: ConverseRequestTypeDef,
-        extra_headers: dict[str, str],
-        stream: bool,
-    ) -> ConverseResponseTypeDef | ConverseStreamResponseTypeDef:
-        async with self._extra_headers_lock:
-            handler, events = self._register_extra_headers(
-                self.client,
-                extra_headers,
-                stream=stream,
-            )
-
-            try:
-                return await self._call_bedrock_unlocked(params=params, stream=stream)
-            finally:
-                self._unregister_extra_headers(self.client, handler, events)
-
     @overload
     async def _messages_create(
         self,
@@ -732,26 +682,67 @@ class BedrockConverseModel(Model):
         extra_headers = None
         if model_settings:
             extra_headers = model_settings.get('extra_headers')
-
         if extra_headers and isinstance(extra_headers, dict):
             return await self._call_with_extra_headers(
                 params=params,
                 extra_headers=extra_headers,
                 stream=stream,
             )
-
-        if extra_headers and isinstance(extra_headers, dict):
-            return await self._call_with_extra_headers(
-                params=params,
-                extra_headers=extra_headers,
-                stream=stream,
-            )
-
         return await self._call_bedrock(
             params=params,
             stream=stream,
         )
 
+    async def _call_bedrock_unlocked(
+        self,
+        *,
+        params: ConverseRequestTypeDef,
+        stream: bool,
+    ) -> ConverseResponseTypeDef | ConverseStreamResponseTypeDef:
+        try:
+            if stream:
+                return await anyio.to_thread.run_sync(functools.partial(self.client.converse_stream, **params))
+            return await anyio.to_thread.run_sync(functools.partial(self.client.converse, **params))
+        except ClientError as e:
+            status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
+            if isinstance(status_code, int):
+                raise ModelHTTPError(
+                    status_code=status_code,
+                    model_name=self.model_name,
+                    body=e.response,
+                ) from e
+            raise ModelAPIError(
+                model_name=self.model_name,
+                message=str(e),
+            ) from e
+
+    async def _call_bedrock(
+        self,
+        *,
+        params: ConverseRequestTypeDef,
+        stream: bool,
+    ) -> ConverseResponseTypeDef | ConverseStreamResponseTypeDef:
+        async with self._extra_headers_lock:
+            return await self._call_bedrock_unlocked(params=params, stream=stream)
+
+    async def _call_with_extra_headers(
+        self,
+        *,
+        params: ConverseRequestTypeDef,
+        extra_headers: dict[str, str],
+        stream: bool,
+    ) -> ConverseResponseTypeDef | ConverseStreamResponseTypeDef:
+        async with self._extra_headers_lock:
+            handler, events = self._register_extra_headers(
+                self.client,
+                extra_headers,
+                stream=stream,
+            )
+
+            try:
+                return await self._call_bedrock_unlocked(params=params, stream=stream)
+            finally:
+                self._unregister_extra_headers(self.client, handler, events)
 
     @staticmethod
     def _register_extra_headers(
@@ -971,27 +962,33 @@ class BedrockConverseModel(Model):
                             start_tag, end_tag = self.profile.thinking_tags
                             content.append({'text': f'{start_tag}\n{item.content}\n{end_tag}'})
                     elif isinstance(item, BuiltinToolCallPart):
+                        # Only handle Bedrock CodeExecutionTool calls here.
                         if item.provider_name == self.system and item.tool_name == CodeExecutionTool.kind:
-                                server_tool_use_block_param: ToolUseBlockOutputTypeDef = {
-                                    'toolUseId': _utils.guard_tool_call_id(t=item),
-                                    'name': 'nova_code_interpreter',
-                                    'input': item.args_as_dict(),
-                                    'type': 'server_tool_use',
-                                }
-                                content.append({'toolUse': server_tool_use_block_param})
+                            server_tool_use_block_param: ToolUseBlockOutputTypeDef = {
+                                'toolUseId': _utils.guard_tool_call_id(t=item),
+                                'name': 'nova_code_interpreter',
+                                'input': item.args_as_dict(),
+                                'type': 'server_tool_use',
+                            }
+                            content.append({'toolUse': server_tool_use_block_param})
+
                     elif isinstance(item, BuiltinToolReturnPart):
+                        # Only handle Bedrock CodeExecutionTool returns here.
                         if item.provider_name == self.system and item.tool_name == CodeExecutionTool.kind:
-                                result_content: list[ToolResultContentBlockOutputTypeDef] = [
-                                    {'json': cast(dict[str, Any], item.content)}
-                                ]
-                                tool_result: ToolResultBlockOutputTypeDef = {
-                                    'toolUseId': _utils.guard_tool_call_id(t=item),
-                                    'content': result_content,
-                                    'type': 'nova_code_interpreter_result',
-                                }
-                                if item.provider_details and 'status' in item.provider_details:
-                                    tool_result['status'] = item.provider_details['status']
-                                content.append({'toolResult': tool_result})
+                            result_content: list[ToolResultContentBlockOutputTypeDef] = [
+                                {'json': cast(dict[str, Any], item.content)}
+                            ]
+
+                            tool_result: ToolResultBlockOutputTypeDef = {
+                                'toolUseId': _utils.guard_tool_call_id(t=item),
+                                'content': result_content,
+                                'type': 'nova_code_interpreter_result',
+                            }
+
+                            if item.provider_details and 'status' in item.provider_details:
+                                tool_result['status'] = item.provider_details['status']
+
+                            content.append({'toolResult': tool_result})
                     else:
                         assert isinstance(item, ToolCallPart)
                         content.append(self._map_tool_call(item))
