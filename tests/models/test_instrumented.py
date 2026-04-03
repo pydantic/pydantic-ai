@@ -2005,9 +2005,9 @@ def test_cache_point_in_user_prompt():
     )
 
 
-def test_build_tool_definitions():
-    """Test _build_tool_definitions with various tool configurations."""
-    from pydantic_ai.models.instrumented import _build_tool_definitions  # pyright: ignore[reportPrivateUsage]
+def testbuild_tool_definitions():
+    """Test build_tool_definitions with various tool configurations."""
+    from pydantic_ai.models.instrumented import build_tool_definitions
     from pydantic_ai.tools import ToolDefinition
 
     tool_without_params = ToolDefinition(
@@ -2039,7 +2039,7 @@ def test_build_tool_definitions():
         allow_image_output=False,
     )
 
-    result = _build_tool_definitions(params)
+    result = build_tool_definitions(params)
 
     assert result == [
         {'type': 'function', 'name': 'no_params_tool', 'description': 'A tool without parameters'},

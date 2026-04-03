@@ -18,6 +18,7 @@ from .combined import CombinedCapability
 from .history_processor import HistoryProcessor
 from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
+from .instrumentation import Instrumentation
 from .mcp import MCP
 from .prefix_tools import PrefixTools
 from .prepare_tools import PrepareTools
@@ -60,6 +61,7 @@ __all__ = [
     'BuiltinOrLocalTool',
     'CAPABILITY_TYPES',
     'ImageGeneration',
+    'Instrumentation',
     'HistoryProcessor',
     'MCP',
     'PrefixTools',

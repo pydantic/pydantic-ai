@@ -361,7 +361,7 @@ GEN_AI_REQUEST_MODEL_ATTRIBUTE = 'gen_ai.request.model'
 GEN_AI_PROVIDER_NAME_ATTRIBUTE = 'gen_ai.provider.name'
 
 
-def _build_tool_definitions(model_request_parameters: ModelRequestParameters) -> list[dict[str, Any]]:
+def build_tool_definitions(model_request_parameters: ModelRequestParameters) -> list[dict[str, Any]]:
     """Build OTel-compliant tool definitions from model request parameters.
 
     Extracts tool metadata from function_tools and output_tools into a list of
@@ -465,7 +465,7 @@ class InstrumentedModel(WrapperModel):
             ),
         }
 
-        tool_definitions = _build_tool_definitions(model_request_parameters)
+        tool_definitions = build_tool_definitions(model_request_parameters)
         if tool_definitions:
             attributes['gen_ai.tool.definitions'] = json.dumps(tool_definitions)
 
