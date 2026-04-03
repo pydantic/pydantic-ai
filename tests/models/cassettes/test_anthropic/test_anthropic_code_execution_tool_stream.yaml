@@ -30,7 +30,7 @@ interactions:
         type: auto
       tools:
       - name: code_execution
-        type: code_execution_20250522
+        type: code_execution_20260120
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     body:
