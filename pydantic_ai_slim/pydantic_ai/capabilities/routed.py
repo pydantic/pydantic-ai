@@ -113,7 +113,7 @@ class PerModelCapability(AbstractCapability[AgentDepsT]):
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
-        return None  # pragma: no cover
+        return None
 
 
 @dataclass
