@@ -2370,6 +2370,59 @@ async def test_run_stream_tool_retry_exhaustion():
     )
 
 
+async def test_run_stream_output_tool_error():
+    """When an output tool fails, the pending tool call (tracked via FinalResultEvent) should be closed."""
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {
+            0: DeltaToolCall(
+                name='final_result',
+                json_args='{"value": "bad"}',
+                tool_call_id='out_1',
+            )
+        }
+
+    def bad_output(value: str) -> str:
+        raise ValueError('Output validation failed')
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=bad_output, retries=0)
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    # The output tool call must be closed with tool-output-error before the stream error
+    event_types = [e if isinstance(e, str) else e['type'] for e in events]
+    assert event_types == snapshot(
+        [
+            'start',
+            'start-step',
+            'tool-input-start',
+            'tool-input-delta',
+            'tool-input-available',
+            'tool-output-error',
+            'error',
+            'finish-step',
+            'finish',
+            '[DONE]',
+        ]
+    )
+
+
 async def test_run_stream_on_complete_error():
     agent = Agent(model=TestModel())
 

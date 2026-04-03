@@ -566,6 +566,46 @@ async def test_run_stream_request_error():
     )
 
 
+async def test_run_stream_output_tool_error():
+    """Output tool errors should close the pending tool call via _final_result_event drain."""
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {
+            0: DeltaToolCall(
+                name='final_result',
+                json_args='{"value": "bad"}',
+                tool_call_id='out_1',
+            )
+        }
+
+    def bad_output(value: str) -> str:
+        raise ValueError('Output validation failed')
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=bad_output, retries=0)
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    adapter = DummyUIAdapter(agent, request)
+    events = [event async for event in adapter.run_stream()]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            '<tool-call name=\'final_result\'>{"value": "bad"}',
+            "<final-result tool_name='final_result' />",
+            "</tool-call name='final_result'>",
+            '</response>',
+            '<request>',
+            "<function-tool-result name='final_result'>Output validation failed</function-tool-result>",
+            "<error type='ValueError'>Output validation failed</error>",
+            '</request>',
+            '</stream>',
+        ]
+    )
+
+
 async def test_run_stream_on_complete_error():
     agent = Agent(model=TestModel())
 
