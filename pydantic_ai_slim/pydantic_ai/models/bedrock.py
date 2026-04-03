@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 from urllib.parse import parse_qs, urlparse
 
 import anyio.to_thread
+
 try:
     from botocore.exceptions import ClientError
 except ImportError:

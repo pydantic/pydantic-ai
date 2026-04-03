@@ -361,8 +361,8 @@ async def test_async_iterator_wrapper_runtime_error_non_stop_iteration():
             return self
 
         def __next__(self):
-            err = RuntimeError("boom")
-            err.__cause__ = ValueError("not stop iteration")
+            err = RuntimeError('boom')
+            err.__cause__ = ValueError('not stop iteration')
             raise err
 
     wrapper = _AsyncIteratorWrapper(BadIterator())
