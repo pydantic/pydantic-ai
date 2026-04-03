@@ -791,51 +791,48 @@ class OpenAIChatModel(Model):
 
         _drop_unsupported_params(profile, model_settings)
 
-        try:
-            extra_headers = model_settings.get('extra_headers', {})
-            extra_headers.setdefault('User-Agent', get_user_agent())
+        with _map_api_errors(self.model_name):
+            try:
+                extra_headers = model_settings.get('extra_headers', {})
+                extra_headers.setdefault('User-Agent', get_user_agent())
 
-            # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
-            prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
-            return await self.client.chat.completions.create(
-                model=self.model_name,
-                messages=openai_messages,
-                parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT) if tools else OMIT,
-                tools=tools or OMIT,
-                tool_choice=tool_choice or OMIT,
-                stream=stream,
-                stream_options=self._get_stream_options(model_settings) if stream else OMIT,
-                stop=model_settings.get('stop_sequences', OMIT),
-                max_completion_tokens=model_settings.get('max_tokens', OMIT),
-                timeout=model_settings.get('timeout', NOT_GIVEN),
-                response_format=response_format or OMIT,
-                seed=model_settings.get('seed', OMIT),
-                reasoning_effort=self._translate_thinking(model_settings, model_request_parameters),
-                user=model_settings.get('openai_user', OMIT),
-                web_search_options=web_search_options or OMIT,
-                service_tier=model_settings.get('openai_service_tier', OMIT),
-                prediction=model_settings.get('openai_prediction', OMIT),
-                temperature=model_settings.get('temperature', OMIT),
-                top_p=model_settings.get('top_p', OMIT),
-                presence_penalty=model_settings.get('presence_penalty', OMIT),
-                frequency_penalty=model_settings.get('frequency_penalty', OMIT),
-                logit_bias=model_settings.get('logit_bias', OMIT),
-                logprobs=model_settings.get('openai_logprobs', OMIT),
-                top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
-                store=model_settings.get('openai_store', OMIT),
-                prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
-                prompt_cache_retention=prompt_cache_retention,
-                extra_headers=extra_headers,
-                extra_body=model_settings.get('extra_body'),
-            )
-        except APIStatusError as e:
-            if model_response := _check_azure_content_filter(e, self.system, self.model_name):
-                return model_response
-            if (status_code := e.status_code) >= 400:
-                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise ModelAPIError(model_name=self.model_name, message=e.message) from e  # pragma: lax no cover
-        except APIConnectionError as e:
-            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
+                # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
+                prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
+                return await self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=openai_messages,
+                    parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT) if tools else OMIT,
+                    tools=tools or OMIT,
+                    tool_choice=tool_choice or OMIT,
+                    stream=stream,
+                    stream_options=self._get_stream_options(model_settings) if stream else OMIT,
+                    stop=model_settings.get('stop_sequences', OMIT),
+                    max_completion_tokens=model_settings.get('max_tokens', OMIT),
+                    timeout=model_settings.get('timeout', NOT_GIVEN),
+                    response_format=response_format or OMIT,
+                    seed=model_settings.get('seed', OMIT),
+                    reasoning_effort=self._translate_thinking(model_settings, model_request_parameters),
+                    user=model_settings.get('openai_user', OMIT),
+                    web_search_options=web_search_options or OMIT,
+                    service_tier=model_settings.get('openai_service_tier', OMIT),
+                    prediction=model_settings.get('openai_prediction', OMIT),
+                    temperature=model_settings.get('temperature', OMIT),
+                    top_p=model_settings.get('top_p', OMIT),
+                    presence_penalty=model_settings.get('presence_penalty', OMIT),
+                    frequency_penalty=model_settings.get('frequency_penalty', OMIT),
+                    logit_bias=model_settings.get('logit_bias', OMIT),
+                    logprobs=model_settings.get('openai_logprobs', OMIT),
+                    top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
+                    store=model_settings.get('openai_store', OMIT),
+                    prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
+                    prompt_cache_retention=prompt_cache_retention,
+                    extra_headers=extra_headers,
+                    extra_body=model_settings.get('extra_body'),
+                )
+            except APIStatusError as e:
+                if model_response := _check_azure_content_filter(e, self.system, self.model_name):
+                    return model_response
+                raise
 
     def _validate_completion(self, response: chat.ChatCompletion) -> _ChatCompletion:
         """Hook that validates chat completions before processing.
@@ -1737,7 +1734,7 @@ class OpenAIResponsesModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncStream[responses.ResponseStreamEvent]: ...
 
-    async def _responses_create(  # noqa: C901
+    async def _responses_create(
         self,
         messages: list[ModelRequest | ModelResponse],
         stream: bool,
@@ -1818,46 +1815,42 @@ class OpenAIResponsesModel(Model):
                 )
             )
 
-        try:
-            extra_headers = model_settings.get('extra_headers', {})
-            extra_headers.setdefault('User-Agent', get_user_agent())
-            # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
-            prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
-            return await self.client.responses.create(
-                input=openai_messages,
-                model=self.model_name,
-                instructions=instructions,
-                parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT) if tools else OMIT,
-                tools=tools or OMIT,
-                tool_choice=tool_choice or OMIT,
-                max_output_tokens=model_settings.get('max_tokens', OMIT),
-                stream=stream,
-                temperature=model_settings.get('temperature', OMIT),
-                top_p=model_settings.get('top_p', OMIT),
-                truncation=model_settings.get('openai_truncation', OMIT),
-                timeout=model_settings.get('timeout', NOT_GIVEN),
-                service_tier=model_settings.get('openai_service_tier', OMIT),
-                previous_response_id=previous_response_id or OMIT,
-                top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
-                store=model_settings.get('openai_store', OMIT),
-                reasoning=reasoning,
-                user=model_settings.get('openai_user', OMIT),
-                text=text or OMIT,
-                include=include or OMIT,
-                prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
-                prompt_cache_retention=prompt_cache_retention,
-                extra_headers=extra_headers,
-                extra_body=model_settings.get('extra_body'),
-            )
-        except APIStatusError as e:
-            if model_response := _check_azure_content_filter(e, self.system, self.model_name):
-                return model_response
-
-            if (status_code := e.status_code) >= 400:
-                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise ModelAPIError(model_name=self.model_name, message=e.message) from e  # pragma: lax no cover
-        except APIConnectionError as e:
-            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
+        with _map_api_errors(self.model_name):
+            try:
+                extra_headers = model_settings.get('extra_headers', {})
+                extra_headers.setdefault('User-Agent', get_user_agent())
+                # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
+                prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
+                return await self.client.responses.create(
+                    input=openai_messages,
+                    model=self.model_name,
+                    instructions=instructions,
+                    parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT) if tools else OMIT,
+                    tools=tools or OMIT,
+                    tool_choice=tool_choice or OMIT,
+                    max_output_tokens=model_settings.get('max_tokens', OMIT),
+                    stream=stream,
+                    temperature=model_settings.get('temperature', OMIT),
+                    top_p=model_settings.get('top_p', OMIT),
+                    truncation=model_settings.get('openai_truncation', OMIT),
+                    timeout=model_settings.get('timeout', NOT_GIVEN),
+                    service_tier=model_settings.get('openai_service_tier', OMIT),
+                    previous_response_id=previous_response_id or OMIT,
+                    top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
+                    store=model_settings.get('openai_store', OMIT),
+                    reasoning=reasoning,
+                    user=model_settings.get('openai_user', OMIT),
+                    text=text or OMIT,
+                    include=include or OMIT,
+                    prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
+                    prompt_cache_retention=prompt_cache_retention,
+                    extra_headers=extra_headers,
+                    extra_body=model_settings.get('extra_body'),
+                )
+            except APIStatusError as e:
+                if model_response := _check_azure_content_filter(e, self.system, self.model_name):
+                    return model_response
+                raise
 
     def _translate_thinking(
         self,
