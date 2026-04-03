@@ -91,6 +91,8 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     _: KW_ONLY
     sdk_version: Literal[5, 6] = 5
     """Vercel AI SDK version to target. Setting to 6 enables tool approval streaming."""
+    server_message_id: str | None = None
+    """Optional server-generated message ID to include in the `StartChunk`."""
 
     _step_started: bool = False
     _finish_reason: FinishReason = None
@@ -103,7 +105,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         return f'data: {event.encode(self.sdk_version)}\n\n'
 
     async def before_stream(self) -> AsyncIterator[BaseChunk]:
-        yield StartChunk()
+        yield StartChunk(message_id=self.server_message_id)
 
     async def before_response(self) -> AsyncIterator[BaseChunk]:
         if self._step_started:
