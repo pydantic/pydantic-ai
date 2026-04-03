@@ -4221,4 +4221,17 @@ def test_return_schema_google_native():
     assert decl.get('response_json_schema') == {'type': 'object', 'properties': {'x': {'type': 'integer'}}}
 
 
+def test_include_return_schema_on_toolset_tool():
+    """include_return_schema passed explicitly on FunctionToolset.tool overrides the toolset default."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain(include_return_schema=True)
+    def get_value(x: int) -> int:
+        return x  # pragma: no cover
+
+    tools = list(toolset.tools.values())
+    assert len(tools) == 1
+    assert tools[0].include_return_schema is True
+
+
 # endregion
