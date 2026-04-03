@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import warnings
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, cast
 
@@ -92,16 +93,8 @@ class Instrumentation(AbstractCapability[Any]):
             'logfire.msg': f'{agent_name} run',
         }
 
-        # Render agent description if present
-        if ctx.agent is not None:
-            description = ctx.agent._description  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
-            if description is not None:
-                from pydantic_ai._template import TemplateStr
-
-                if isinstance(description, TemplateStr):
-                    span_attributes['gen_ai.agent.description'] = description.render(ctx.deps)  # pyright: ignore[reportUnknownMemberType]
-                else:
-                    span_attributes['gen_ai.agent.description'] = description
+        if ctx.agent is not None and ctx.agent.description is not None:
+            span_attributes['gen_ai.agent.description'] = ctx.agent.description
 
         with settings.tracer.start_as_current_span(
             names.get_agent_run_span_name(agent_name),
@@ -128,15 +121,21 @@ class Instrumentation(AbstractCapability[Any]):
             finally:
                 _otel_detach(token)
                 if span.is_recording():
-                    # Get current messages from the result (which holds the up-to-date state).
-                    # ctx.messages may be stale because UserPromptNode replaces the list reference.
-                    message_history = result.all_messages() if result is not None else ctx.messages
-                    span.set_attributes(self._run_span_end_attributes(ctx, message_history))
+                    # Get current messages and metadata from the result (which holds the up-to-date state).
+                    # ctx.messages/ctx.metadata may be stale because the run state is mutated during execution.
+                    if result is not None:
+                        message_history = result.all_messages()
+                        metadata = result._state.metadata  # pyright: ignore[reportPrivateUsage]
+                    else:
+                        message_history = ctx.messages
+                        metadata = ctx.metadata
+                    span.set_attributes(self._run_span_end_attributes(ctx, message_history, metadata))
 
     def _run_span_end_attributes(
         self,
         ctx: RunContext[Any],
         message_history: list[ModelMessage],
+        metadata: dict[str, Any] | None,
     ) -> dict[str, str | int | float | bool]:
         """Compute the end-of-run span attributes."""
         from pydantic_ai.messages import ModelRequest
@@ -167,8 +166,8 @@ class Instrumentation(AbstractCapability[Any]):
             ):
                 attrs['pydantic_ai.variable_instructions'] = True
 
-        if ctx.metadata is not None:
-            attrs['metadata'] = json.dumps(InstrumentedModel.serialize_any(ctx.metadata))
+        if metadata is not None:
+            attrs['metadata'] = json.dumps(InstrumentedModel.serialize_any(metadata))
 
         usage_attrs = (
             {
@@ -250,8 +249,6 @@ class Instrumentation(AbstractCapability[Any]):
                 if isinstance(value := prepared_settings.get(key), float | int):
                     attributes[f'gen_ai.request.{key}'] = value
 
-        from collections.abc import Callable
-
         record_metrics: Callable[[], None] | None = None
         try:
             with settings.tracer.start_as_current_span(span_name, attributes=attributes, kind=SpanKind.CLIENT) as span:
@@ -327,25 +324,21 @@ class Instrumentation(AbstractCapability[Any]):
         args: ValidatedToolArgs,
         handler: WrapToolExecuteHandler,
     ) -> Any:
+        # Skip output tools — they have their own span in execute_output_function,
+        # and will get proper hooks via wrap_execute_output when output hooks land.
+        if tool_def.kind == 'output':
+            return await handler(args)
+
         settings = self.settings
         names = self._instrumentation_names
         include_content = settings.include_content
-        is_output_tool = tool_def.kind == 'output'
-
-        # Use the appropriate span name for output vs function tools
-        if is_output_tool:
-            span_name = names.get_output_tool_span_name(call.tool_name)
-            logfire_msg = f'running output function: {call.tool_name}'
-        else:
-            span_name = names.get_tool_span_name(call.tool_name)
-            logfire_msg = f'running tool: {call.tool_name}'
 
         span_attributes: dict[str, Any] = {
             'gen_ai.tool.name': call.tool_name,
             'gen_ai.tool.call.id': call.tool_call_id,
             **({names.tool_arguments_attr: call.args_as_json_str()} if include_content else {}),
             **get_agent_run_baggage_attributes(),
-            'logfire.msg': logfire_msg,
+            'logfire.msg': f'running tool: {call.tool_name}',
             'logfire.json_schema': json.dumps(
                 {
                     'type': 'object',
@@ -366,7 +359,7 @@ class Instrumentation(AbstractCapability[Any]):
         }
 
         with settings.tracer.start_as_current_span(
-            span_name,
+            names.get_tool_span_name(call.tool_name),
             attributes=span_attributes,
             record_exception=False,
             set_status_on_exception=False,

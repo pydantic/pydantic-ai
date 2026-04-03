@@ -1988,7 +1988,7 @@ def test_cache_point_in_user_prompt():
     )
 
 
-def testbuild_tool_definitions():
+def test_build_tool_definitions():
     """Test build_tool_definitions with various tool configurations."""
     from pydantic_ai.models.instrumented import build_tool_definitions
     from pydantic_ai.tools import ToolDefinition

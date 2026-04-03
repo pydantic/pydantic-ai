@@ -705,14 +705,7 @@ def test_instructions_with_structured_output(
                         'id': 0,
                         'name': 'agent run',
                         'message': 'my_agent run',
-                        'children': [
-                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
-                            {
-                                'id': 2,
-                                'name': 'running output function',
-                                'message': 'running output function: final_result',
-                            },
-                        ],
+                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
                     }
                 ]
             )
@@ -723,14 +716,7 @@ def test_instructions_with_structured_output(
                         'id': 0,
                         'name': 'invoke_agent my_agent',
                         'message': 'my_agent run',
-                        'children': [
-                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
-                            {
-                                'id': 2,
-                                'name': 'execute_tool final_result',
-                                'message': 'running output function: final_result',
-                            },
-                        ],
+                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
                     }
                 ]
             )
@@ -931,14 +917,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                     'id': 0,
                     'name': 'agent run',
                     'message': 'my_agent run',
-                    'children': [
-                        {'id': 1, 'name': 'chat test', 'message': 'chat test'},
-                        {
-                            'id': 2,
-                            'name': 'running output function',
-                            'message': 'running output function: final_result',
-                        },
-                    ],
+                    'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
                 }
             ]
         )
@@ -949,14 +928,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                     'id': 0,
                     'name': 'invoke_agent my_agent',
                     'message': 'my_agent run',
-                    'children': [
-                        {'id': 1, 'name': 'chat test', 'message': 'chat test'},
-                        {
-                            'id': 2,
-                            'name': 'execute_tool final_result',
-                            'message': 'running output function: final_result',
-                        },
-                    ],
+                    'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
                 }
             ]
         )
@@ -1267,13 +1239,13 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                     'gen_ai.operation.name': 'invoke_agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
+                    'final_result': 'success (no tool calls)',
                     'gen_ai.usage.input_tokens': 51,
                     'gen_ai.usage.output_tokens': 4,
                     'pydantic_ai.all_messages': [
                         {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]},
                         {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'success (no tool calls)'}]},
                     ],
-                    'final_result': 'success (no tool calls)',
                     'logfire.json_schema': {
                         'type': 'object',
                         'properties': {
@@ -1491,7 +1463,7 @@ def test_logfire_output_function_v2_v3(
     summary = get_logfire_summary()
 
     if instrument is True or isinstance(instrument, InstrumentationSettings) and instrument.version == 2:
-        output_function_attributes_list = [
+        [output_function_attributes] = [
             attributes
             for attributes in summary.attributes.values()
             if attributes.get('gen_ai.tool.name') == 'final_result'
@@ -1508,71 +1480,39 @@ def test_logfire_output_function_v2_v3(
                             'id': 2,
                             'name': 'running output function',
                             'message': 'running output function: final_result',
-                            'children': [
-                                {
-                                    'id': 3,
-                                    'name': 'running output function',
-                                    'message': 'running output function: final_result',
-                                },
-                            ],
                         },
                     ],
                 }
             ]
         )
-        assert output_function_attributes_list == snapshot(
-            [
-                {
-                    'gen_ai.tool.name': 'final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'tool_arguments': '{"city": "Mexico City"}',
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: final_result',
-                    'logfire.json_schema': IsJson(
-                        snapshot(
-                            {
-                                'type': 'object',
-                                'properties': {
-                                    'tool_arguments': {'type': 'object'},
-                                    'tool_response': {'type': 'object'},
-                                    'gen_ai.tool.name': {},
-                                    'gen_ai.tool.call.id': {},
-                                },
-                            }
-                        )
-                    ),
-                    'logfire.span_type': 'span',
-                    'tool_response': '{"temperature":28.7,"description":"sunny"}',
-                },
-                {
-                    'gen_ai.tool.name': 'final_result',
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'tool_arguments': '{"city":"Mexico City"}',
-                    'logfire.json_schema': IsJson(
-                        snapshot(
-                            {
-                                'type': 'object',
-                                'properties': {
-                                    'tool_arguments': {'type': 'object'},
-                                    'tool_response': {'type': 'object'},
-                                    'gen_ai.tool.name': {},
-                                    'gen_ai.tool.call.id': {},
-                                },
-                            }
-                        )
-                    ),
-                    'logfire.span_type': 'span',
-                    'tool_response': '{"temperature": 28.7, "description": "sunny"}',
-                },
-            ]
+        assert output_function_attributes == snapshot(
+            {
+                'gen_ai.tool.name': 'final_result',
+                'logfire.msg': 'running output function: final_result',
+                'gen_ai.tool.call.id': IsStr(),
+                'tool_arguments': '{"city":"Mexico City"}',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'tool_arguments': {'type': 'object'},
+                                'tool_response': {'type': 'object'},
+                                'gen_ai.tool.name': {},
+                                'gen_ai.tool.call.id': {},
+                            },
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
+                'tool_response': '{"temperature": 28.7, "description": "sunny"}',
+            }
         )
 
     elif isinstance(instrument, InstrumentationSettings) and instrument.version == 3:
-        output_function_attributes_list = [
+        [output_function_attributes] = [
             attributes
             for attributes in summary.attributes.values()
             if attributes.get('gen_ai.tool.name') == 'final_result'
@@ -1589,67 +1529,35 @@ def test_logfire_output_function_v2_v3(
                             'id': 2,
                             'name': 'execute_tool final_result',
                             'message': 'running output function: final_result',
-                            'children': [
-                                {
-                                    'id': 3,
-                                    'name': 'execute_tool final_result',
-                                    'message': 'running output function: final_result',
-                                },
-                            ],
                         },
                     ],
                 }
             ]
         )
-        assert output_function_attributes_list == snapshot(
-            [
-                {
-                    'gen_ai.tool.name': 'final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'gen_ai.tool.call.arguments': '{"city": "Mexico City"}',
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: final_result',
-                    'logfire.json_schema': IsJson(
-                        snapshot(
-                            {
-                                'type': 'object',
-                                'properties': {
-                                    'gen_ai.tool.call.arguments': {'type': 'object'},
-                                    'gen_ai.tool.call.result': {'type': 'object'},
-                                    'gen_ai.tool.name': {},
-                                    'gen_ai.tool.call.id': {},
-                                },
-                            }
-                        )
-                    ),
-                    'logfire.span_type': 'span',
-                    'gen_ai.tool.call.result': '{"temperature":28.7,"description":"sunny"}',
-                },
-                {
-                    'gen_ai.tool.name': 'final_result',
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'gen_ai.tool.call.arguments': '{"city":"Mexico City"}',
-                    'logfire.json_schema': IsJson(
-                        snapshot(
-                            {
-                                'type': 'object',
-                                'properties': {
-                                    'gen_ai.tool.call.arguments': {'type': 'object'},
-                                    'gen_ai.tool.call.result': {'type': 'object'},
-                                    'gen_ai.tool.name': {},
-                                    'gen_ai.tool.call.id': {},
-                                },
-                            }
-                        )
-                    ),
-                    'logfire.span_type': 'span',
-                    'gen_ai.tool.call.result': '{"temperature": 28.7, "description": "sunny"}',
-                },
-            ]
+        assert output_function_attributes == snapshot(
+            {
+                'gen_ai.tool.name': 'final_result',
+                'logfire.msg': 'running output function: final_result',
+                'gen_ai.tool.call.id': IsStr(),
+                'gen_ai.tool.call.arguments': '{"city":"Mexico City"}',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'gen_ai.tool.call.arguments': {'type': 'object'},
+                                'gen_ai.tool.call.result': {'type': 'object'},
+                                'gen_ai.tool.name': {},
+                                'gen_ai.tool.call.id': {},
+                            },
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.tool.call.result': '{"temperature": 28.7, "description": "sunny"}',
+            }
         )
     else:
         assert summary.traces == snapshot([])
@@ -1676,83 +1584,47 @@ def test_output_type_function_logfire_attributes(
     summary = get_logfire_summary()
 
     # Find the output function span attributes
-    output_function_attributes = [
+    [output_function_attributes] = [
         attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'final_result'
     ]
 
     if include_content:
         assert output_function_attributes == snapshot(
-            [
-                {
-                    'gen_ai.tool.name': 'final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'tool_arguments': '{"city": "Mexico City"}',
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: final_result',
-                    'logfire.json_schema': IsJson(
-                        snapshot(
-                            {
-                                'type': 'object',
-                                'properties': {
-                                    'tool_arguments': {'type': 'object'},
-                                    'tool_response': {'type': 'object'},
-                                    'gen_ai.tool.name': {},
-                                    'gen_ai.tool.call.id': {},
-                                },
-                            }
-                        )
-                    ),
-                    'logfire.span_type': 'span',
-                    'tool_response': '{"temperature":28.7,"description":"sunny"}',
-                },
-                {
-                    'gen_ai.tool.name': 'final_result',
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'tool_arguments': '{"city":"Mexico City"}',
-                    'logfire.json_schema': IsJson(
-                        snapshot(
-                            {
-                                'type': 'object',
-                                'properties': {
-                                    'tool_arguments': {'type': 'object'},
-                                    'tool_response': {'type': 'object'},
-                                    'gen_ai.tool.name': {},
-                                    'gen_ai.tool.call.id': {},
-                                },
-                            }
-                        )
-                    ),
-                    'logfire.span_type': 'span',
-                    'tool_response': '{"temperature": 28.7, "description": "sunny"}',
-                },
-            ]
+            {
+                'gen_ai.tool.name': 'final_result',
+                'gen_ai.tool.call.id': IsStr(),
+                'tool_arguments': '{"city":"Mexico City"}',
+                'logfire.msg': 'running output function: final_result',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'tool_arguments': {'type': 'object'},
+                                'tool_response': {'type': 'object'},
+                                'gen_ai.tool.name': {},
+                                'gen_ai.tool.call.id': {},
+                            },
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
+                'tool_response': '{"temperature": 28.7, "description": "sunny"}',
+            }
         )
     else:
         assert output_function_attributes == snapshot(
-            [
-                {
-                    'gen_ai.tool.name': 'final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: final_result',
-                    'logfire.json_schema': '{"type": "object", "properties": {"gen_ai.tool.name": {}, "gen_ai.tool.call.id": {}}}',
-                    'logfire.span_type': 'span',
-                },
-                {
-                    'gen_ai.tool.name': 'final_result',
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'logfire.json_schema': '{"type": "object", "properties": {"gen_ai.tool.name": {}, "gen_ai.tool.call.id": {}}}',
-                    'logfire.span_type': 'span',
-                },
-            ]
+            {
+                'gen_ai.tool.name': 'final_result',
+                'gen_ai.tool.call.id': IsStr(),
+                'logfire.msg': 'running output function: final_result',
+                'logfire.json_schema': '{"type": "object", "properties": {"gen_ai.tool.name": {}, "gen_ai.tool.call.id": {}}}',
+                'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
+            }
         )
 
 
@@ -1780,83 +1652,47 @@ def test_output_type_function_with_run_context_logfire_attributes(
     summary = get_logfire_summary()
 
     # Find the output function span attributes
-    output_function_attributes = [
+    [output_function_attributes] = [
         attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'final_result'
     ]
 
     if include_content:
         assert output_function_attributes == snapshot(
-            [
-                {
-                    'gen_ai.tool.name': 'final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'tool_arguments': '{"city": "Mexico City"}',
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: final_result',
-                    'logfire.json_schema': IsJson(
-                        snapshot(
-                            {
-                                'type': 'object',
-                                'properties': {
-                                    'tool_arguments': {'type': 'object'},
-                                    'tool_response': {'type': 'object'},
-                                    'gen_ai.tool.name': {},
-                                    'gen_ai.tool.call.id': {},
-                                },
-                            }
-                        )
-                    ),
-                    'logfire.span_type': 'span',
-                    'tool_response': '{"temperature":28.7,"description":"sunny"}',
-                },
-                {
-                    'gen_ai.tool.name': 'final_result',
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'tool_arguments': '{"city":"Mexico City"}',
-                    'logfire.json_schema': IsJson(
-                        snapshot(
-                            {
-                                'type': 'object',
-                                'properties': {
-                                    'tool_arguments': {'type': 'object'},
-                                    'tool_response': {'type': 'object'},
-                                    'gen_ai.tool.name': {},
-                                    'gen_ai.tool.call.id': {},
-                                },
-                            }
-                        )
-                    ),
-                    'logfire.span_type': 'span',
-                    'tool_response': '{"temperature": 28.7, "description": "sunny"}',
-                },
-            ]
+            {
+                'gen_ai.tool.name': 'final_result',
+                'gen_ai.tool.call.id': IsStr(),
+                'tool_arguments': '{"city":"Mexico City"}',
+                'logfire.msg': 'running output function: final_result',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'tool_arguments': {'type': 'object'},
+                                'tool_response': {'type': 'object'},
+                                'gen_ai.tool.name': {},
+                                'gen_ai.tool.call.id': {},
+                            },
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
+                'tool_response': '{"temperature": 28.7, "description": "sunny"}',
+            }
         )
     else:
         assert output_function_attributes == snapshot(
-            [
-                {
-                    'gen_ai.tool.name': 'final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: final_result',
-                    'logfire.json_schema': '{"type": "object", "properties": {"gen_ai.tool.name": {}, "gen_ai.tool.call.id": {}}}',
-                    'logfire.span_type': 'span',
-                },
-                {
-                    'gen_ai.tool.name': 'final_result',
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'logfire.json_schema': '{"type": "object", "properties": {"gen_ai.tool.name": {}, "gen_ai.tool.call.id": {}}}',
-                    'logfire.span_type': 'span',
-                },
-            ]
+            {
+                'gen_ai.tool.name': 'final_result',
+                'gen_ai.tool.call.id': IsStr(),
+                'logfire.msg': 'running output function: final_result',
+                'logfire.json_schema': '{"type": "object", "properties": {"gen_ai.tool.name": {}, "gen_ai.tool.call.id": {}}}',
+                'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
+            }
         )
 
 
@@ -1900,32 +1736,6 @@ def test_output_type_function_with_retry_logfire_attributes(
             [
                 {
                     'gen_ai.tool.name': 'final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'tool_arguments': '{"city": "New York City"}',
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: final_result',
-                    'logfire.json_schema': IsJson(
-                        snapshot(
-                            {
-                                'type': 'object',
-                                'properties': {
-                                    'tool_arguments': {'type': 'object'},
-                                    'tool_response': {'type': 'object'},
-                                    'gen_ai.tool.name': {},
-                                    'gen_ai.tool.call.id': {},
-                                },
-                            }
-                        )
-                    ),
-                    'logfire.span_type': 'span',
-                    'tool_response': 'City not found, I only know Mexico City\n\nFix the errors and try again.',
-                    'logfire.level_num': 17,
-                },
-                {
-                    'gen_ai.tool.name': 'final_result',
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
                     'logfire.msg': 'running output function: final_result',
                     'gen_ai.tool.call.id': IsStr(),
                     'tool_arguments': '{"city":"New York City"}',
@@ -1943,35 +1753,12 @@ def test_output_type_function_with_retry_logfire_attributes(
                         )
                     ),
                     'logfire.span_type': 'span',
+                    'gen_ai.agent.name': 'my_agent',
+                    'gen_ai.agent.call.id': IsStr(),
                     'logfire.level_num': 17,
                 },
                 {
                     'gen_ai.tool.name': 'final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'tool_arguments': '{"city": "Mexico City"}',
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: final_result',
-                    'logfire.json_schema': IsJson(
-                        snapshot(
-                            {
-                                'type': 'object',
-                                'properties': {
-                                    'tool_arguments': {'type': 'object'},
-                                    'tool_response': {'type': 'object'},
-                                    'gen_ai.tool.name': {},
-                                    'gen_ai.tool.call.id': {},
-                                },
-                            }
-                        )
-                    ),
-                    'logfire.span_type': 'span',
-                    'tool_response': '{"temperature":28.7,"description":"sunny"}',
-                },
-                {
-                    'gen_ai.tool.name': 'final_result',
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
                     'logfire.msg': 'running output function: final_result',
                     'gen_ai.tool.call.id': IsStr(),
                     'tool_arguments': '{"city":"Mexico City"}',
@@ -1989,6 +1776,8 @@ def test_output_type_function_with_retry_logfire_attributes(
                         )
                     ),
                     'logfire.span_type': 'span',
+                    'gen_ai.agent.name': 'my_agent',
+                    'gen_ai.agent.call.id': IsStr(),
                     'tool_response': '{"temperature": 28.7, "description": "sunny"}',
                 },
             ]
@@ -1998,49 +1787,26 @@ def test_output_type_function_with_retry_logfire_attributes(
             [
                 {
                     'gen_ai.tool.name': 'final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
                     'logfire.msg': 'running output function: final_result',
+                    'gen_ai.tool.call.id': IsStr(),
                     'logfire.json_schema': IsJson(
                         snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
                     ),
                     'logfire.span_type': 'span',
+                    'gen_ai.agent.name': 'my_agent',
+                    'gen_ai.agent.call.id': IsStr(),
                     'logfire.level_num': 17,
                 },
                 {
                     'gen_ai.tool.name': 'final_result',
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
                     'logfire.msg': 'running output function: final_result',
                     'gen_ai.tool.call.id': IsStr(),
                     'logfire.json_schema': IsJson(
                         snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
                     ),
                     'logfire.span_type': 'span',
-                    'logfire.level_num': 17,
-                },
-                {
-                    'gen_ai.tool.name': 'final_result',
-                    'gen_ai.tool.call.id': IsStr(),
                     'gen_ai.agent.name': 'my_agent',
                     'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: final_result',
-                    'logfire.json_schema': IsJson(
-                        snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
-                    ),
-                    'logfire.span_type': 'span',
-                },
-                {
-                    'gen_ai.tool.name': 'final_result',
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'logfire.json_schema': IsJson(
-                        snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
-                    ),
-                    'logfire.span_type': 'span',
                 },
             ]
         )
@@ -2068,87 +1834,49 @@ def test_output_type_function_with_custom_tool_name_logfire_attributes(
     summary = get_logfire_summary()
 
     # Find the output function span attributes with custom tool name
-    output_function_attributes = [
+    [output_function_attributes] = [
         attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'get_weather'
     ]
 
     if include_content:
         assert output_function_attributes == snapshot(
-            [
-                {
-                    'gen_ai.tool.name': 'get_weather',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'tool_arguments': '{"city": "Mexico City"}',
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: get_weather',
-                    'logfire.json_schema': IsJson(
-                        snapshot(
-                            {
-                                'type': 'object',
-                                'properties': {
-                                    'tool_arguments': {'type': 'object'},
-                                    'tool_response': {'type': 'object'},
-                                    'gen_ai.tool.name': {},
-                                    'gen_ai.tool.call.id': {},
-                                },
-                            }
-                        )
-                    ),
-                    'logfire.span_type': 'span',
-                    'tool_response': '{"temperature":28.7,"description":"sunny"}',
-                },
-                {
-                    'gen_ai.tool.name': 'get_weather',
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: get_weather',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'tool_arguments': '{"city":"Mexico City"}',
-                    'logfire.json_schema': IsJson(
-                        snapshot(
-                            {
-                                'type': 'object',
-                                'properties': {
-                                    'tool_arguments': {'type': 'object'},
-                                    'tool_response': {'type': 'object'},
-                                    'gen_ai.tool.name': {},
-                                    'gen_ai.tool.call.id': {},
-                                },
-                            }
-                        )
-                    ),
-                    'logfire.span_type': 'span',
-                    'tool_response': '{"temperature": 28.7, "description": "sunny"}',
-                },
-            ]
+            {
+                'gen_ai.tool.name': 'get_weather',
+                'gen_ai.tool.call.id': IsStr(),
+                'tool_arguments': '{"city":"Mexico City"}',
+                'logfire.msg': 'running output function: get_weather',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'tool_arguments': {'type': 'object'},
+                                'tool_response': {'type': 'object'},
+                                'gen_ai.tool.name': {},
+                                'gen_ai.tool.call.id': {},
+                            },
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
+                'tool_response': '{"temperature": 28.7, "description": "sunny"}',
+            }
         )
     else:
         assert output_function_attributes == snapshot(
-            [
-                {
-                    'gen_ai.tool.name': 'get_weather',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: get_weather',
-                    'logfire.json_schema': IsJson(
-                        snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
-                    ),
-                    'logfire.span_type': 'span',
-                },
-                {
-                    'gen_ai.tool.name': 'get_weather',
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: get_weather',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'logfire.json_schema': IsJson(
-                        snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
-                    ),
-                    'logfire.span_type': 'span',
-                },
-            ]
+            {
+                'gen_ai.tool.name': 'get_weather',
+                'gen_ai.tool.call.id': IsStr(),
+                'logfire.msg': 'running output function: get_weather',
+                'logfire.json_schema': IsJson(
+                    snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
+                ),
+                'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
+            }
         )
 
 
@@ -2181,83 +1909,49 @@ def test_output_type_bound_instance_method_logfire_attributes(
     summary = get_logfire_summary()
 
     # Find the output function span attributes
-    output_function_attributes = [
+    [output_function_attributes] = [
         attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'final_result'
     ]
 
     if include_content:
         assert output_function_attributes == snapshot(
-            [
-                {
-                    'gen_ai.tool.name': 'final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'tool_arguments': '{"city": "Mexico City"}',
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: final_result',
-                    'logfire.json_schema': IsJson(
-                        snapshot(
-                            {
-                                'type': 'object',
-                                'properties': {
-                                    'tool_arguments': {'type': 'object'},
-                                    'tool_response': {'type': 'object'},
-                                    'gen_ai.tool.name': {},
-                                    'gen_ai.tool.call.id': {},
-                                },
-                            }
-                        )
-                    ),
-                    'logfire.span_type': 'span',
-                    'tool_response': '{"temperature":28.7,"description":"sunny"}',
-                },
-                {
-                    'gen_ai.tool.name': 'final_result',
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'tool_arguments': '{"city":"Mexico City"}',
-                    'logfire.json_schema': IsJson(
-                        snapshot(
-                            {
-                                'type': 'object',
-                                'properties': {
-                                    'tool_arguments': {'type': 'object'},
-                                    'tool_response': {'type': 'object'},
-                                    'gen_ai.tool.name': {},
-                                    'gen_ai.tool.call.id': {},
-                                },
-                            }
-                        )
-                    ),
-                    'logfire.span_type': 'span',
-                    'tool_response': '{"temperature": 28.7, "description": "sunny"}',
-                },
-            ]
+            {
+                'gen_ai.tool.name': 'final_result',
+                'gen_ai.tool.call.id': IsStr(),
+                'tool_arguments': '{"city":"Mexico City"}',
+                'logfire.msg': 'running output function: final_result',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'tool_arguments': {'type': 'object'},
+                                'tool_response': {'type': 'object'},
+                                'gen_ai.tool.name': {},
+                                'gen_ai.tool.call.id': {},
+                            },
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
+                'tool_response': '{"temperature": 28.7, "description": "sunny"}',
+            }
         )
     else:
         assert output_function_attributes == snapshot(
-            [
-                {
-                    'gen_ai.tool.name': 'final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: final_result',
-                    'logfire.json_schema': '{"type": "object", "properties": {"gen_ai.tool.name": {}, "gen_ai.tool.call.id": {}}}',
-                    'logfire.span_type': 'span',
-                },
-                {
-                    'gen_ai.tool.name': 'final_result',
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'logfire.json_schema': '{"type": "object", "properties": {"gen_ai.tool.name": {}, "gen_ai.tool.call.id": {}}}',
-                    'logfire.span_type': 'span',
-                },
-            ]
+            {
+                'gen_ai.tool.name': 'final_result',
+                'gen_ai.tool.call.id': IsStr(),
+                'logfire.msg': 'running output function: final_result',
+                'logfire.json_schema': IsJson(
+                    snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
+                ),
+                'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
+            }
         )
 
 
@@ -2291,83 +1985,49 @@ def test_output_type_bound_instance_method_with_run_context_logfire_attributes(
     summary = get_logfire_summary()
 
     # Find the output function span attributes
-    output_function_attributes = [
+    [output_function_attributes] = [
         attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'final_result'
     ]
 
     if include_content:
         assert output_function_attributes == snapshot(
-            [
-                {
-                    'gen_ai.tool.name': 'final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'tool_arguments': '{"city": "Mexico City"}',
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: final_result',
-                    'logfire.json_schema': IsJson(
-                        snapshot(
-                            {
-                                'type': 'object',
-                                'properties': {
-                                    'tool_arguments': {'type': 'object'},
-                                    'tool_response': {'type': 'object'},
-                                    'gen_ai.tool.name': {},
-                                    'gen_ai.tool.call.id': {},
-                                },
-                            }
-                        )
-                    ),
-                    'logfire.span_type': 'span',
-                    'tool_response': '{"temperature":28.7,"description":"sunny"}',
-                },
-                {
-                    'gen_ai.tool.name': 'final_result',
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'tool_arguments': '{"city":"Mexico City"}',
-                    'logfire.json_schema': IsJson(
-                        snapshot(
-                            {
-                                'type': 'object',
-                                'properties': {
-                                    'tool_arguments': {'type': 'object'},
-                                    'tool_response': {'type': 'object'},
-                                    'gen_ai.tool.name': {},
-                                    'gen_ai.tool.call.id': {},
-                                },
-                            }
-                        )
-                    ),
-                    'logfire.span_type': 'span',
-                    'tool_response': '{"temperature": 28.7, "description": "sunny"}',
-                },
-            ]
+            {
+                'gen_ai.tool.name': 'final_result',
+                'gen_ai.tool.call.id': IsStr(),
+                'tool_arguments': '{"city":"Mexico City"}',
+                'logfire.msg': 'running output function: final_result',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'tool_arguments': {'type': 'object'},
+                                'tool_response': {'type': 'object'},
+                                'gen_ai.tool.name': {},
+                                'gen_ai.tool.call.id': {},
+                            },
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
+                'tool_response': '{"temperature": 28.7, "description": "sunny"}',
+            }
         )
     else:
         assert output_function_attributes == snapshot(
-            [
-                {
-                    'gen_ai.tool.name': 'final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: final_result',
-                    'logfire.json_schema': '{"type": "object", "properties": {"gen_ai.tool.name": {}, "gen_ai.tool.call.id": {}}}',
-                    'logfire.span_type': 'span',
-                },
-                {
-                    'gen_ai.tool.name': 'final_result',
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'logfire.json_schema': '{"type": "object", "properties": {"gen_ai.tool.name": {}, "gen_ai.tool.call.id": {}}}',
-                    'logfire.span_type': 'span',
-                },
-            ]
+            {
+                'gen_ai.tool.name': 'final_result',
+                'gen_ai.tool.call.id': IsStr(),
+                'logfire.msg': 'running output function: final_result',
+                'logfire.json_schema': IsJson(
+                    snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
+                ),
+                'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
+            }
         )
 
 
@@ -2396,83 +2056,49 @@ def test_output_type_async_function_logfire_attributes(
     summary = get_logfire_summary()
 
     # Find the output function span attributes
-    output_function_attributes = [
+    [output_function_attributes] = [
         attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'final_result'
     ]
 
     if include_content:
         assert output_function_attributes == snapshot(
-            [
-                {
-                    'gen_ai.tool.name': 'final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'tool_arguments': '{"city": "Mexico City"}',
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: final_result',
-                    'logfire.json_schema': IsJson(
-                        snapshot(
-                            {
-                                'type': 'object',
-                                'properties': {
-                                    'tool_arguments': {'type': 'object'},
-                                    'tool_response': {'type': 'object'},
-                                    'gen_ai.tool.name': {},
-                                    'gen_ai.tool.call.id': {},
-                                },
-                            }
-                        )
-                    ),
-                    'logfire.span_type': 'span',
-                    'tool_response': '{"temperature":28.7,"description":"sunny"}',
-                },
-                {
-                    'gen_ai.tool.name': 'final_result',
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'tool_arguments': '{"city":"Mexico City"}',
-                    'logfire.json_schema': IsJson(
-                        snapshot(
-                            {
-                                'type': 'object',
-                                'properties': {
-                                    'tool_arguments': {'type': 'object'},
-                                    'tool_response': {'type': 'object'},
-                                    'gen_ai.tool.name': {},
-                                    'gen_ai.tool.call.id': {},
-                                },
-                            }
-                        )
-                    ),
-                    'logfire.span_type': 'span',
-                    'tool_response': '{"temperature": 28.7, "description": "sunny"}',
-                },
-            ]
+            {
+                'gen_ai.tool.name': 'final_result',
+                'gen_ai.tool.call.id': IsStr(),
+                'tool_arguments': '{"city":"Mexico City"}',
+                'logfire.msg': 'running output function: final_result',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'tool_arguments': {'type': 'object'},
+                                'tool_response': {'type': 'object'},
+                                'gen_ai.tool.name': {},
+                                'gen_ai.tool.call.id': {},
+                            },
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
+                'tool_response': '{"temperature": 28.7, "description": "sunny"}',
+            }
         )
     else:
         assert output_function_attributes == snapshot(
-            [
-                {
-                    'gen_ai.tool.name': 'final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: final_result',
-                    'logfire.json_schema': '{"type": "object", "properties": {"gen_ai.tool.name": {}, "gen_ai.tool.call.id": {}}}',
-                    'logfire.span_type': 'span',
-                },
-                {
-                    'gen_ai.tool.name': 'final_result',
-                    'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'logfire.json_schema': '{"type": "object", "properties": {"gen_ai.tool.name": {}, "gen_ai.tool.call.id": {}}}',
-                    'logfire.span_type': 'span',
-                },
-            ]
+            {
+                'gen_ai.tool.name': 'final_result',
+                'gen_ai.tool.call.id': IsStr(),
+                'logfire.msg': 'running output function: final_result',
+                'logfire.json_schema': IsJson(
+                    snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
+                ),
+                'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
+            }
         )
 
 
@@ -2580,7 +2206,7 @@ def test_prompted_output_function_logfire_attributes(
     summary = get_logfire_summary()
 
     # Find the output function span attributes
-    output_function_attributes = [
+    [output_function_attributes] = [
         attributes
         for attributes in summary.attributes.values()
         if attributes.get('logfire.msg', '').startswith('running output function: upcase_text')
@@ -2588,42 +2214,38 @@ def test_prompted_output_function_logfire_attributes(
 
     if include_content:
         assert output_function_attributes == snapshot(
-            [
-                {
-                    'gen_ai.tool.name': 'upcase_text',
-                    'gen_ai.agent.name': 'agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: upcase_text',
-                    'tool_arguments': '{"text":"hello world"}',
-                    'logfire.json_schema': IsJson(
-                        snapshot(
-                            {
-                                'type': 'object',
-                                'properties': {
-                                    'tool_arguments': {'type': 'object'},
-                                    'tool_response': {'type': 'object'},
-                                    'gen_ai.tool.name': {},
-                                },
-                            }
-                        )
-                    ),
-                    'logfire.span_type': 'span',
-                    'tool_response': 'HELLO WORLD',
-                },
-            ]
+            {
+                'gen_ai.tool.name': 'upcase_text',
+                'tool_arguments': '{"text":"hello world"}',
+                'logfire.msg': 'running output function: upcase_text',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'tool_arguments': {'type': 'object'},
+                                'tool_response': {'type': 'object'},
+                                'gen_ai.tool.name': {},
+                            },
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'agent',
+                'gen_ai.agent.call.id': IsStr(),
+                'tool_response': 'HELLO WORLD',
+            }
         )
     else:
         assert output_function_attributes == snapshot(
-            [
-                {
-                    'gen_ai.tool.name': 'upcase_text',
-                    'gen_ai.agent.name': 'agent',
-                    'gen_ai.agent.call.id': IsStr(),
-                    'logfire.msg': 'running output function: upcase_text',
-                    'logfire.json_schema': IsJson(snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}}})),
-                    'logfire.span_type': 'span',
-                },
-            ]
+            {
+                'gen_ai.tool.name': 'upcase_text',
+                'logfire.msg': 'running output function: upcase_text',
+                'logfire.json_schema': IsJson(snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}}})),
+                'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'agent',
+                'gen_ai.agent.call.id': IsStr(),
+            }
         )
 
 
@@ -2865,14 +2487,7 @@ def test_static_function_instructions_in_agent_run_span(
                         'id': 0,
                         'name': 'agent run',
                         'message': 'my_agent run',
-                        'children': [
-                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
-                            {
-                                'id': 2,
-                                'name': 'running output function',
-                                'message': 'running output function: final_result',
-                            },
-                        ],
+                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
                     }
                 ]
             )
@@ -2883,14 +2498,7 @@ def test_static_function_instructions_in_agent_run_span(
                         'id': 0,
                         'name': 'invoke_agent my_agent',
                         'message': 'my_agent run',
-                        'children': [
-                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
-                            {
-                                'id': 2,
-                                'name': 'execute_tool final_result',
-                                'message': 'running output function: final_result',
-                            },
-                        ],
+                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
                     }
                 ]
             )
@@ -3131,11 +2739,6 @@ def test_dynamic_function_instructions_in_agent_run_span(
                             {'id': 1, 'name': 'chat test', 'message': 'chat test'},
                             {'id': 2, 'name': 'running tool', 'message': 'running tool: my_tool'},
                             {'id': 3, 'name': 'chat test', 'message': 'chat test'},
-                            {
-                                'id': 4,
-                                'name': 'running output function',
-                                'message': 'running output function: final_result',
-                            },
                         ],
                     }
                 ]
@@ -3151,11 +2754,6 @@ def test_dynamic_function_instructions_in_agent_run_span(
                             {'id': 1, 'name': 'chat test', 'message': 'chat test'},
                             {'id': 2, 'name': 'execute_tool my_tool', 'message': 'running tool: my_tool'},
                             {'id': 3, 'name': 'chat test', 'message': 'chat test'},
-                            {
-                                'id': 4,
-                                'name': 'execute_tool final_result',
-                                'message': 'running output function: final_result',
-                            },
                         ],
                     }
                 ]
@@ -3430,14 +3028,7 @@ def test_function_instructions_with_history_in_agent_run_span(
                         'id': 0,
                         'name': 'agent run',
                         'message': 'my_agent run',
-                        'children': [
-                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
-                            {
-                                'id': 2,
-                                'name': 'running output function',
-                                'message': 'running output function: final_result',
-                            },
-                        ],
+                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
                     }
                 ]
             )
@@ -3448,14 +3039,7 @@ def test_function_instructions_with_history_in_agent_run_span(
                         'id': 0,
                         'name': 'invoke_agent my_agent',
                         'message': 'my_agent run',
-                        'children': [
-                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
-                            {
-                                'id': 2,
-                                'name': 'execute_tool final_result',
-                                'message': 'running output function: final_result',
-                            },
-                        ],
+                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
                     }
                 ]
             )
