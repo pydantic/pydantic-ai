@@ -11,7 +11,7 @@ from ..messages import ModelMessage, ModelResponse, ModelResponseStreamEvent
 from ..profiles import ModelProfile
 from ..settings import ModelSettings
 from ..usage import RequestUsage
-from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
+from . import KnownModelName, Model, ModelRequestContext, ModelRequestParameters, StreamedResponse, infer_model
 
 
 class CompletedStreamedResponse(StreamedResponse):
@@ -83,6 +83,14 @@ class WrapperModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> RequestUsage:
         return await self.wrapped.count_tokens(messages, model_settings, model_request_parameters)
+
+    async def compact_messages(
+        self,
+        request_context: ModelRequestContext,
+        *,
+        instructions: str | None = None,
+    ) -> ModelResponse:
+        return await self.wrapped.compact_messages(request_context, instructions=instructions)
 
     @asynccontextmanager
     async def request_stream(

@@ -8813,11 +8813,15 @@ Fix the errors and try again.\
 
 async def test_anthropic_compaction_capability_settings(allow_model_requests: None, anthropic_api_key: str):
     """Test that AnthropicCompaction capability correctly configures model settings."""
+    from unittest.mock import Mock
+
     from pydantic_ai.models.anthropic import AnthropicCompaction
 
     cap = AnthropicCompaction(token_threshold=100_000, instructions='Keep it short.')
 
-    settings = cap.get_model_settings()
+    settings_resolver = cap.get_model_settings()
+    assert callable(settings_resolver)
+    settings = settings_resolver(Mock(model_settings=None))
     assert settings is not None
     assert settings.get('anthropic_context_management') == {
         'edits': [
@@ -8832,14 +8836,45 @@ async def test_anthropic_compaction_capability_settings(allow_model_requests: No
 
 async def test_anthropic_compaction_capability_settings_with_pause(allow_model_requests: None, anthropic_api_key: str):
     """Test that AnthropicCompaction correctly includes pause_after_compaction."""
+    from unittest.mock import Mock
+
     from pydantic_ai.models.anthropic import AnthropicCompaction
 
     cap = AnthropicCompaction(pause_after_compaction=True)
-    settings = cap.get_model_settings()
+    settings_resolver = cap.get_model_settings()
+    assert callable(settings_resolver)
+    settings = settings_resolver(Mock(model_settings=None))
     assert settings is not None
     anthropic_settings = cast(AnthropicModelSettings, settings)
     edit = anthropic_settings['anthropic_context_management']['edits'][0]  # type: ignore[reportUnknownMemberType]
     assert edit['pause_after_compaction'] is True
+
+
+async def test_anthropic_compaction_capability_preserves_existing_edits(
+    allow_model_requests: None, anthropic_api_key: str
+):
+    """Test that AnthropicCompaction appends its edit to existing user-configured edits."""
+    from unittest.mock import Mock
+
+    from pydantic_ai.models.anthropic import AnthropicCompaction
+
+    cap = AnthropicCompaction(token_threshold=100_000)
+    settings_resolver = cap.get_model_settings()
+    assert callable(settings_resolver)
+
+    # Simulate existing user-configured edits in model_settings
+    existing_settings = {
+        'anthropic_context_management': {
+            'edits': [{'type': 'some_other_edit', 'custom': True}],
+        }
+    }
+    settings = settings_resolver(Mock(model_settings=existing_settings))
+    assert settings is not None
+    cm = cast(dict[str, Any], settings.get('anthropic_context_management'))
+    edits = cast(list[dict[str, Any]], cm['edits'])
+    assert len(edits) == 2
+    assert edits[0] == {'type': 'some_other_edit', 'custom': True}
+    assert edits[1] == {'type': 'compact_20260112', 'trigger': {'type': 'input_tokens', 'value': 100_000}}
 
 
 async def test_anthropic_compaction_round_trip(allow_model_requests: None, anthropic_api_key: str):

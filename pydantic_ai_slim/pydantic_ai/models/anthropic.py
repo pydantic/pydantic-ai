@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import io
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -1376,7 +1376,7 @@ class AnthropicCompaction(AbstractCapability[AgentDepsT]):
         self.instructions = instructions
         self.pause_after_compaction = pause_after_compaction
 
-    def get_model_settings(self) -> ModelSettings | None:
+    def get_model_settings(self) -> Callable[[RunContext[AgentDepsT]], ModelSettings]:
         edit: dict[str, Any] = {
             'type': 'compact_20260112',
             'trigger': {'type': 'input_tokens', 'value': self.token_threshold},
@@ -1386,7 +1386,17 @@ class AnthropicCompaction(AbstractCapability[AgentDepsT]):
         if self.instructions is not None:
             edit['instructions'] = self.instructions
 
-        return cast(ModelSettings, {'anthropic_context_management': {'edits': [edit]}})
+        def resolve(ctx: RunContext[AgentDepsT]) -> ModelSettings:
+            # Append our edit to any existing edits the user may have configured,
+            # rather than replacing their anthropic_context_management entirely.
+            existing_edits: list[dict[str, Any]] = []
+            if ctx.model_settings:
+                existing_cm = cast(dict[str, Any], ctx.model_settings).get('anthropic_context_management')
+                if isinstance(existing_cm, dict):
+                    existing_edits = cast(list[dict[str, Any]], existing_cm.get('edits', []))  # pyright: ignore[reportUnknownMemberType]
+            return cast(ModelSettings, {'anthropic_context_management': {'edits': [*existing_edits, edit]}})
+
+        return resolve
 
     @classmethod
     def get_serialization_name(cls) -> str | None:

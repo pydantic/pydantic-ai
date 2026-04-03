@@ -1879,12 +1879,8 @@ class ModelResponse:
                     {'kind': kind, **({'text': part.content} if settings.include_content else {})}
                 )
             elif isinstance(part, CompactionPart):
-                body.setdefault('content', []).append(
-                    {
-                        'kind': 'compaction',
-                        **({'text': part.content} if part.content and settings.include_content else {}),
-                    }
-                )
+                # Compaction parts don't map to standard OTel GenAI convention types
+                pass
             elif isinstance(part, FilePart):
                 body.setdefault('content', []).append(
                     {

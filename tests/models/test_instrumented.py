@@ -1084,6 +1084,7 @@ def test_messages_to_otel_events_instructions_multiple_messages():
 
 
 def test_messages_to_otel_events_compaction_part():
+    """CompactionPart is not a standard OTel GenAI convention type and is skipped in OTel events."""
     from pydantic_ai.messages import CompactionPart
 
     messages: list[ModelMessage] = [
@@ -1092,14 +1093,12 @@ def test_messages_to_otel_events_compaction_part():
         ),
     ]
     settings = InstrumentationSettings()
+    # CompactionPart is skipped; only the TextPart appears
     assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
         [
             {
                 'role': 'assistant',
-                'content': [
-                    {'kind': 'compaction', 'text': 'Summary of conversation.'},
-                    {'kind': 'text', 'text': 'response'},
-                ],
+                'content': 'response',
                 'gen_ai.message.index': 0,
                 'event.name': 'gen_ai.assistant.message',
             }

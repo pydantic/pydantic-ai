@@ -21,8 +21,8 @@ from pydantic_ai.capabilities import (
     MCP,
     BuiltinTool,
     ImageGeneration,
+    PerModelCapability,
     PrefixTools,
-    ProviderCompaction,
     Thinking,
     ThreadExecutor,
     Toolset,
@@ -77,7 +77,6 @@ def test_capability_types() -> None:
     assert CAPABILITY_TYPES == snapshot(
         {
             'BuiltinTool': BuiltinTool,
-            'ProviderCompaction': ProviderCompaction,
             'ImageGeneration': ImageGeneration,
             'MCP': MCP,
             'PrefixTools': PrefixTools,
@@ -1237,13 +1236,6 @@ Supported by:
                     'title': 'spec_MCP',
                     'type': 'object',
                 },
-                'spec_ProviderCompaction': {
-                    'additionalProperties': False,
-                    'properties': {'ProviderCompaction': {'$ref': '#/$defs/spec_params_ProviderCompaction'}},
-                    'required': ['ProviderCompaction'],
-                    'title': 'spec_ProviderCompaction',
-                    'type': 'object',
-                },
                 'spec_PrefixTools': {
                     'additionalProperties': False,
                     'properties': {'PrefixTools': {'$ref': '#/$defs/spec_params_PrefixTools'}},
@@ -1328,21 +1320,6 @@ Supported by:
                     'title': 'spec_params_ImageGeneration',
                     'type': 'object',
                 },
-                'spec_params_ProviderCompaction': {
-                    'additionalProperties': False,
-                    'properties': {
-                        'instructions': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Instructions'},
-                        'token_threshold': {'title': 'Token Threshold', 'type': 'integer'},
-                        'pause_after_compaction': {'title': 'Pause After Compaction', 'type': 'boolean'},
-                        'message_count_threshold': {
-                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
-                            'title': 'Message Count Threshold',
-                        },
-                        'trigger': {'title': 'Trigger', 'type': 'null'},
-                    },
-                    'title': 'spec_params_ProviderCompaction',
-                    'type': 'object',
-                },
                 'spec_params_MCP': {
                     'additionalProperties': False,
                     'properties': {
@@ -1379,8 +1356,6 @@ Supported by:
                             'anyOf': [
                                 {'const': 'BuiltinTool', 'type': 'string'},
                                 {'$ref': '#/$defs/short_spec_BuiltinTool'},
-                                {'const': 'ProviderCompaction', 'type': 'string'},
-                                {'$ref': '#/$defs/spec_ProviderCompaction'},
                                 {'const': 'ImageGeneration', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_ImageGeneration'},
                                 {'$ref': '#/$defs/short_spec_MCP'},
@@ -1519,8 +1494,6 @@ Supported by:
                         'anyOf': [
                             {'const': 'BuiltinTool', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_BuiltinTool'},
-                            {'const': 'ProviderCompaction', 'type': 'string'},
-                            {'$ref': '#/$defs/spec_ProviderCompaction'},
                             {'const': 'ImageGeneration', 'type': 'string'},
                             {'$ref': '#/$defs/spec_ImageGeneration'},
                             {'$ref': '#/$defs/short_spec_MCP'},
@@ -8290,21 +8263,6 @@ class TestCtxAgentInCapability:
 
 
 class TestCompaction:
-    async def test_compaction_routing_unsupported_model(self):
-        """ProviderCompaction raises UserError for unsupported models."""
-        agent = Agent(TestModel(), capabilities=[ProviderCompaction(message_count_threshold=2)])
-        with pytest.raises(UserError, match='Compaction is not supported for'):
-            await agent.run('hello')
-
-    async def test_compaction_routing_fallback_model(self):
-        """ProviderCompaction raises UserError for FallbackModel."""
-        from pydantic_ai.models.fallback import FallbackModel
-
-        model = FallbackModel(TestModel(), TestModel())
-        agent = Agent(model, capabilities=[ProviderCompaction(message_count_threshold=2)])
-        with pytest.raises(UserError, match='not compatible with FallbackModel'):
-            await agent.run('hello')
-
     def test_compaction_part_serialization(self):
         """CompactionPart round-trips through Pydantic serialization."""
         from pydantic_ai.messages import CompactionPart, ModelMessagesTypeAdapter, ModelResponse
@@ -8391,10 +8349,6 @@ class TestCompaction:
 
         assert AnthropicCompaction.get_serialization_name() == 'AnthropicCompaction'
 
-    def test_provider_compaction_serialization_name(self):
-        """ProviderCompaction has the correct serialization name."""
-        assert ProviderCompaction.get_serialization_name() == 'ProviderCompaction'
-
     async def test_compaction_part_in_function_model_history(self):
         """FunctionModel handles message history containing CompactionPart."""
         from pydantic_ai.messages import CompactionPart
@@ -8413,45 +8367,61 @@ class TestCompaction:
         result = await agent.run('Follow up', message_history=history)
         assert result.output == 'response from model'
 
-    async def test_routed_capability_unwraps_wrapper_model(self):
-        """RoutedCapability unwraps WrapperModel to find the underlying model."""
+
+# endregion
+
+
+# region --- PerModelCapability tests ---
+
+
+class TestPerModelCapability:
+    async def test_per_model_errors_on_unmatched(self):
+        """PerModelCapability raises UserError when no route matches (default)."""
+        agent = Agent(TestModel(), capabilities=[PerModelCapability()])
+        with pytest.raises(UserError, match='does not have a route for'):
+            await agent.run('hello')
+
+    async def test_per_model_errors_on_fallback_model(self):
+        """PerModelCapability raises UserError for FallbackModel."""
+        from pydantic_ai.models.fallback import FallbackModel
+
+        model = FallbackModel(TestModel(), TestModel())
+        agent = Agent(model, capabilities=[PerModelCapability()])
+        with pytest.raises(UserError, match='not compatible with FallbackModel'):
+            await agent.run('hello')
+
+    async def test_per_model_ignore_unmatched(self):
+        """PerModelCapability with fallback='ignore' silently skips unsupported models."""
+        agent = Agent(TestModel(), capabilities=[PerModelCapability(fallback='ignore')])
+        result = await agent.run('hello')
+        assert result.output == snapshot('success (no tool calls)')
+
+    async def test_per_model_unwraps_wrapper_model(self):
+        """PerModelCapability unwraps WrapperModel to find the underlying model."""
         from pydantic_ai.models.wrapper import WrapperModel
 
         class CustomWrapper(WrapperModel):
             pass
 
-        # Wrapping a TestModel — ProviderCompaction should unwrap and then fail
-        # because TestModel is not a supported provider
         wrapped = CustomWrapper(TestModel())
-        agent = Agent(wrapped, capabilities=[ProviderCompaction(message_count_threshold=2)])
-        with pytest.raises(UserError, match='Compaction is not supported for'):
+        agent = Agent(wrapped, capabilities=[PerModelCapability()])
+        with pytest.raises(UserError, match='does not have a route for'):
             await agent.run('hello')
 
-    async def test_provider_compaction_routes_to_openai(self):
-        """ProviderCompaction routes to OpenAICompaction for OpenAI models."""
+    async def test_per_model_routes_by_system_string(self):
+        """PerModelCapability routes by system string."""
         pytest.importorskip('openai')
-        from pydantic_ai.models.openai import OpenAICompaction, OpenAIResponsesModel
-        from pydantic_ai.providers.openai import OpenAIProvider
+        from pydantic_ai.models.openai import OpenAICompaction
 
-        cap = ProviderCompaction(message_count_threshold=5, instructions='Be brief')
-        model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
-        inner = cap.get_capability_for_model(model)
-        assert isinstance(inner, OpenAICompaction)
-        assert inner.message_count_threshold == 5
-        assert inner.instructions == 'Be brief'
+        cap = PerModelCapability(routes={'openai': OpenAICompaction(message_count_threshold=5)})
+        # TestModel has system='test', so it should not match 'openai'
+        with pytest.raises(UserError, match='does not have a route for'):
+            agent = Agent(TestModel(), capabilities=[cap])
+            await agent.run('hello')
 
-    async def test_provider_compaction_routes_to_anthropic(self):
-        """ProviderCompaction routes to AnthropicCompaction for Anthropic models."""
-        pytest.importorskip('anthropic')
-        from pydantic_ai.models.anthropic import AnthropicCompaction, AnthropicModel
-        from pydantic_ai.providers.anthropic import AnthropicProvider
-
-        cap = ProviderCompaction(token_threshold=80_000, instructions='Summarize')
-        model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='test'))
-        inner = cap.get_capability_for_model(model)
-        assert isinstance(inner, AnthropicCompaction)
-        assert inner.token_threshold == 80_000
-        assert inner.instructions == 'Summarize'
+    def test_per_model_serialization_name_is_none(self):
+        """PerModelCapability itself is not serializable (routes have type keys)."""
+        assert PerModelCapability.get_serialization_name() is None
 
 
 # endregion

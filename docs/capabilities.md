@@ -67,25 +67,29 @@ See [Thinking](thinking.md) for provider-specific details and the [unified think
 
 ### Compaction
 
-The [`ProviderCompaction`][pydantic_ai.capabilities.ProviderCompaction] capability manages conversation context size by compacting older messages into summaries. It automatically routes to the right provider implementation:
+Provider-specific compaction capabilities manage conversation context size by compacting older messages into summaries:
 
-- **OpenAI**: Calls the `responses.compact` endpoint when a message count threshold is exceeded.
-- **Anthropic**: Configures automatic `context_management` so compaction triggers server-side.
+| Provider | Capability | Details |
+|----------|-----------|---------|
+| OpenAI Responses API | [`OpenAICompaction`][pydantic_ai.models.openai.OpenAICompaction] | [OpenAI compaction](models/openai.md#message-compaction) |
+| Anthropic | [`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction] | [Anthropic compaction](models/anthropic.md#message-compaction) |
 
-```python {title="compaction_capability.py" test="skip"}
+You can also use [`PerModelCapability`][pydantic_ai.capabilities.PerModelCapability] to route to the right compaction implementation based on the model:
+
+```python {title="compaction_routed.py" test="skip" lint="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import ProviderCompaction
+from pydantic_ai.capabilities import PerModelCapability
+from pydantic_ai.models.openai import OpenAICompaction
+from pydantic_ai.models.anthropic import AnthropicCompaction
 
 agent = Agent(
     'openai-responses:gpt-4o',
-    capabilities=[ProviderCompaction(message_count_threshold=10)],
+    capabilities=[PerModelCapability(routes={
+        'openai': OpenAICompaction(message_count_threshold=10),
+        'anthropic': AnthropicCompaction(token_threshold=100_000),
+    })],
 )
 ```
-
-Provider-specific capabilities ([`OpenAICompaction`][pydantic_ai.models.openai.OpenAICompaction], [`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction]) are also available for direct use. See [OpenAI compaction](models/openai.md#message-compaction) and [Anthropic compaction](models/anthropic.md#message-compaction) for provider-specific details.
-
-!!! note
-    `ProviderCompaction` is not compatible with [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] because compaction data is provider-specific and cannot be used across providers.
 
 ### ThreadExecutor
 

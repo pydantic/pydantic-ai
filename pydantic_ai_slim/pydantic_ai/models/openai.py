@@ -3136,26 +3136,17 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        from .wrapper import WrapperModel
-
-        # Unwrap wrapper models (e.g. InstrumentedModel) to find the underlying provider model
-        model = request_context.model
-        while isinstance(model, WrapperModel):
-            model = model.wrapped  # pragma: no cover
-        if not isinstance(model, OpenAIResponsesModel):
-            return request_context
-
         if not self._should_compact(request_context.messages):
             return request_context
 
         # Compact all messages except the last (current) request
         compact_ctx = ModelRequestContext(
-            model=model,
+            model=request_context.model,
             messages=request_context.messages[:-1],
             model_settings=request_context.model_settings,
             model_request_parameters=request_context.model_request_parameters,
         )
-        compacted_response = await model.compact_messages(compact_ctx, instructions=self.instructions)
+        compacted_response = await request_context.model.compact_messages(compact_ctx, instructions=self.instructions)
 
         # Replace message history with compaction + last request
         request_context.messages = [compacted_response, request_context.messages[-1]]

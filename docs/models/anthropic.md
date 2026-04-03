@@ -351,25 +351,13 @@ Anthropic supports [automatic context compaction](https://docs.anthropic.com/en/
 
 The easiest way to enable compaction is with the [`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction] capability:
 
-```python {title="anthropic_compaction.py" test="skip"}
+```python {title="anthropic_compaction.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicCompaction
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
     capabilities=[AnthropicCompaction(token_threshold=100_000)],
-)
-```
-
-You can also use the provider-agnostic [`ProviderCompaction`][pydantic_ai.capabilities.ProviderCompaction] capability:
-
-```python {title="anthropic_compaction_unified.py" test="skip"}
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import ProviderCompaction
-
-agent = Agent(
-    'anthropic:claude-sonnet-4-6',
-    capabilities=[ProviderCompaction(token_threshold=100_000)],
 )
 ```
 

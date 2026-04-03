@@ -1,15 +1,16 @@
-"""Routed capability base class for model-specific capability routing.
+"""Per-model capability routing.
 
-Provides [`RoutedCapability`][pydantic_ai.capabilities.RoutedCapability], a base class
-for capabilities that delegate to different implementations based on the model being used.
+Provides [`PerModelCapability`][pydantic_ai.capabilities.PerModelCapability], a capability
+that delegates to different implementations based on the model being used.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Literal
 
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from .abstract import AbstractCapability
@@ -28,46 +29,103 @@ def _unwrap_model(model: Model) -> Model:
 
 
 @dataclass
-class RoutedCapability(AbstractCapability[AgentDepsT]):
-    """Base class for capabilities that route to model-specific implementations.
+class PerModelCapability(AbstractCapability[AgentDepsT]):
+    """A capability that delegates to different implementations based on the model.
 
-    Subclasses override [`get_capability_for_model`][pydantic_ai.capabilities.RoutedCapability.get_capability_for_model]
-    to return a provider-specific capability based on the model. At runtime, ``for_run``
-    unwraps any wrapper models, rejects ``FallbackModel``, and delegates to the subclass.
+    Can be used directly with a `routes` mapping, or subclassed with
+    [`get_capability_for_model`][pydantic_ai.capabilities.PerModelCapability.get_capability_for_model]
+    for dynamic routing.
 
-    Example::
+    At runtime, `for_run` unwraps any wrapper models, rejects `FallbackModel`,
+    and delegates to the matched capability.
 
-        class MyCapability(RoutedCapability):
-            def get_capability_for_model(self, model):
-                if isinstance(model, SomeModel):
-                    return SomeModelCapability(...)
-                raise UserError(f'MyCapability not supported for {model.model_name}')
+    Example using `routes` directly:
+
+    ```python
+    from pydantic_ai.capabilities import PerModelCapability
+
+    cap = PerModelCapability(routes={
+        'openai': OpenAICompaction(message_count_threshold=10),
+        'anthropic': AnthropicCompaction(token_threshold=100_000),
+    })
+    ```
+
+    Example subclassing:
+
+    ```python
+    class MyCapability(PerModelCapability):
+        def get_capability_for_model(self, model):
+            if isinstance(model, SomeModel):
+                return SomeModelCapability(...)
+            raise UserError(f'MyCapability not supported for {model.model_name}')
+    ```
     """
 
-    def get_capability_for_model(self, model: Model) -> AbstractCapability[AgentDepsT]:
+    routes: dict[type[Model] | str, AbstractCapability[AgentDepsT]] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
+    """Mapping of model class or system string (e.g. `'openai'`, `'anthropic'`) to capability instance."""
+
+    fallback: AbstractCapability[AgentDepsT] | Literal['ignore'] | None = None
+    """What to do when the model doesn't match any route.
+
+    - `None`: Raise `UserError` (default, safest).
+    - `'ignore'`: Silently return a no-op capability.
+    - A capability instance: Use it as the fallback.
+    """
+
+    def get_capability_for_model(self, model: Model) -> AbstractCapability[AgentDepsT] | None:
         """Return the provider-specific capability for the given (unwrapped) model.
 
-        Override this to define the routing logic.
-        Raise [`UserError`][pydantic_ai.exceptions.UserError] for unsupported models.
+        Override this to define custom routing logic.
+        The default implementation looks up `routes` by model class and system string.
+
+        Returns:
+            A capability instance, or `None` to indicate the model is unmatched
+            (which will fall through to `fallback` handling).
         """
-        raise NotImplementedError
+        # Match by model class
+        for key, cap in self.routes.items():
+            if isinstance(key, type) and isinstance(model, key):
+                return cap
+
+        # Match by system string
+        if model.system in self.routes:
+            key_str = model.system
+            return self.routes[key_str]
+
+        return None
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         model = _unwrap_model(ctx.model)
 
-        try:
-            from pydantic_ai.models.fallback import FallbackModel
+        if isinstance(model, FallbackModel):
+            raise UserError(
+                f'{type(self).__name__} is not compatible with FallbackModel '
+                f'because it produces provider-specific data that cannot be used across providers'
+            )
 
-            if isinstance(model, FallbackModel):
-                raise UserError(
-                    f'{type(self).__name__} is not compatible with FallbackModel '
-                    f'because it produces provider-specific data that cannot be used across providers'
-                )
-        except ImportError:
-            pass
+        cap = self.get_capability_for_model(model)
+        if cap is not None:
+            return cap
 
-        return self.get_capability_for_model(model)
+        # No route matched — check fallback
+        if isinstance(self.fallback, AbstractCapability):
+            return self.fallback
+
+        if self.fallback == 'ignore':
+            return _NoOpCapability()
+
+        raise UserError(
+            f'{type(self).__name__} does not have a route for {model.model_name} '
+            f'(system={model.system!r}). Add a route, set fallback, or use fallback="ignore".'
+        )
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
-        return None  # pragma: no cover — Subclasses should override if they want serialization support
+        return None  # pragma: no cover
+
+
+@dataclass
+class _NoOpCapability(AbstractCapability[AgentDepsT]):
+    """Internal no-op capability returned when fallback='ignore'."""
+
+    pass
