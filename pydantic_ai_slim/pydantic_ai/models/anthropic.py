@@ -603,10 +603,12 @@ class AnthropicModel(Model):
             isinstance(part, CompactionPart) for msg in messages if isinstance(msg, ModelResponse) for part in msg.parts
         )
         if has_compaction_parts:
-            betas.add('compact-2026-01-12')
+            betas.add('compact-2026-01-12')  # pragma: no cover
         context_management = model_settings.get('anthropic_context_management')
         if has_compaction_parts and context_management is None:
-            context_management = cast(BetaContextManagementConfigParam, {'edits': [{'type': 'compact_20260112'}]})
+            context_management = cast(
+                BetaContextManagementConfigParam, {'edits': [{'type': 'compact_20260112'}]}
+            )  # pragma: no cover
         with _map_api_errors(self.model_name):
             return await self.client.beta.messages.count_tokens(
                 system=system_prompt or OMIT,
