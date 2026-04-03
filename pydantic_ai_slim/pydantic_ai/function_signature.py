@@ -24,6 +24,7 @@ import re
 import types
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from functools import partial
 from inspect import Parameter, Signature as InspectSignature, signature
 from typing import Any, Literal, TypeAlias, Union, cast, get_args, get_origin
 
@@ -252,11 +253,14 @@ class FunctionSignature:
         Uses `inspect.signature()` and `get_type_hints()` for rich type information
         (e.g. TypedDict fields, union types, BaseModel references).
         """
-        name = name or func.__name__
+        # Unwrap functools.partial to get the original function's type hints
+        original_func = func.func if isinstance(func, partial) else func
+        func = cast(Callable[..., Any], func)
+        name = name or original_func.__name__
         sig = signature(func)
 
         try:
-            type_hints = get_type_hints(func)
+            type_hints = get_type_hints(original_func)
         except (NameError, TypeError, AttributeError):
             type_hints = {}
 
@@ -694,12 +698,11 @@ def _type_to_expr(
     # Object type
     if schema_type == 'object':
         if 'properties' in schema:
-            # Generate TypeSignature with path-based unique name
+            # Generate TypeSignature with path-based unique name, using the
+            # recursion-guarded builder to handle self-referencing schemas
             td_name = _path_to_typename(tool_name, path)
             if td_name not in referenced_types:
-                referenced_types[td_name] = _build_type_signature(
-                    td_name, schema, defs, referenced_types, tool_name, path
-                )
+                _build_and_register_type(td_name, schema, defs, referenced_types, tool_name, path)
             return referenced_types[td_name]
         if 'additionalProperties' in schema:
             additional = schema['additionalProperties']
