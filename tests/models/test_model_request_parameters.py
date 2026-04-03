@@ -73,6 +73,14 @@ def test_model_request_parameters_are_serializable():
                     'timeout': None,
                     'defer_loading': False,
                     'prefer_builtin': None,
+                    'function_signature': {
+                        'name': 'test',
+                        'params': {},
+                        'return_type': {'name': 'Any'},
+                        'description': None,
+                        'referenced_types': [],
+                        'is_async': False,
+                    },
                 }
             ],
             'builtin_tools': [
@@ -140,6 +148,14 @@ def test_model_request_parameters_are_serializable():
                     'timeout': None,
                     'defer_loading': False,
                     'prefer_builtin': None,
+                    'function_signature': {
+                        'name': 'final_result',
+                        'params': {},
+                        'return_type': {'name': 'Any'},
+                        'description': None,
+                        'referenced_types': [],
+                        'is_async': False,
+                    },
                 }
             ],
             'prompted_output_template': None,
