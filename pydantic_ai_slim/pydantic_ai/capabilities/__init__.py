@@ -47,6 +47,21 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
 }
 """Registry of all capability types that have a serialization name, mapping name to class."""
 
+# Include provider-specific compaction capabilities if their SDKs are available
+try:
+    from pydantic_ai.models.openai import OpenAICompaction
+
+    CAPABILITY_TYPES['OpenAICompaction'] = OpenAICompaction
+except ImportError:
+    pass
+
+try:
+    from pydantic_ai.models.anthropic import AnthropicCompaction
+
+    CAPABILITY_TYPES['AnthropicCompaction'] = AnthropicCompaction
+except ImportError:
+    pass
+
 __all__ = [
     'AbstractCapability',
     'AgentNode',
