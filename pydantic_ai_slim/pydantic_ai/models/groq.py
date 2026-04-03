@@ -721,7 +721,6 @@ def _map_usage(
         if isinstance(v, int)
     }
 
-    # genai-prices to extract token usage
     return usage.RequestUsage.extract(
         dict(model=model, usage=usage_data),
         provider=provider,
