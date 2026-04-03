@@ -11,7 +11,7 @@ from datetime import datetime
 from mimetypes import MimeTypes
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, TypeGuard, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, TypeAlias, TypeGuard, cast, overload
 from urllib.parse import urlparse
 
 import pydantic
@@ -20,7 +20,7 @@ from genai_prices import calc_price, types as genai_types
 from opentelemetry._logs import LogRecord
 from opentelemetry.util.types import AnyValue
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from typing_extensions import TypeAliasType, deprecated
+from typing_extensions import TypeAliasType, TypeVar, deprecated
 
 from . import _otel_messages, _utils
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
@@ -841,9 +841,23 @@ def is_multi_modal_content(obj: Any) -> TypeGuard[MultiModalContent]:
 UserContent: TypeAlias = str | TextContent | MultiModalContent | CachePoint
 
 
+ToolReturnValueT = TypeVar('ToolReturnValueT', default=Any)
+"""Type variable for the return value type in `ToolReturn[T]`.
+
+When `ToolReturn` is used without a type parameter (bare `ToolReturn`), this defaults to `Any`,
+meaning no return schema is generated. When specified (e.g. `ToolReturn[User]`), the return
+schema is generated from the inner type.
+"""
+
+
 @dataclass(repr=False)
-class ToolReturn:
-    """A structured tool return that separates the tool result from additional content sent to the model."""
+class ToolReturn(Generic[ToolReturnValueT]):
+    """A structured tool return that separates the tool result from additional content sent to the model.
+
+    Can be parameterized with a type to enable return schema generation:
+    - `ToolReturn[User]` — generates a return schema for `User`
+    - `ToolReturn` (bare) — no return schema generated
+    """
 
     return_value: ToolReturnContent
     """The return value to be used in the tool response."""

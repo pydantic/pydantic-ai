@@ -1686,7 +1686,7 @@ async def _call_tool(
         return e.tool_retry, None
 
     if isinstance(tool_result, _messages.ToolReturn):
-        tool_return = tool_result
+        tool_return = tool_result  # pyright: ignore[reportUnknownVariableType]
     elif isinstance(tool_result, list) and any(isinstance(i, _messages.ToolReturn) for i in tool_result):  # pyright: ignore[reportUnknownVariableType]
         raise exceptions.UserError(
             f'The return value of tool {call.tool_name!r} contains invalid nested `ToolReturn` objects. '
