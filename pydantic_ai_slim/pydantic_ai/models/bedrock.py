@@ -399,9 +399,12 @@ class BedrockConverseModel(Model):
             provider = infer_provider('gateway/bedrock' if provider == 'gateway' else provider)
         self._provider = provider
         self.client = cast('BedrockRuntimeClient', provider.client)
-        if not hasattr(self.client, '_pydantic_ai_extra_headers_lock'):
-            self.client._pydantic_ai_extra_headers_lock = anyio.Lock()
-        self._extra_headers_lock = self.client._pydantic_ai_extra_headers_lock
+        lock = getattr(self.client, '_pydantic_ai_extra_headers_lock', None)
+        if lock is None:
+            lock = anyio.Lock()
+            setattr(self.client, '_pydantic_ai_extra_headers_lock', lock)
+
+        self._extra_headers_lock = lock
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
 
@@ -1359,13 +1362,13 @@ class BedrockStreamedResponse(StreamedResponse):
                                 ):
                                     yield event
 
-                                if text := delta.get('text'):
+                        if text := delta.get('text'):
                                     for event in self._parts_manager.handle_text_delta(
                                         vendor_part_id=index, content=text
                                     ):
                                         yield event
 
-                                if 'toolUse' in delta:
+                        if 'toolUse' in delta:
                                     tool_use = delta['toolUse']
                                     maybe_event = self._parts_manager.handle_tool_call_delta(
                                         vendor_part_id=index,
@@ -1376,12 +1379,12 @@ class BedrockStreamedResponse(StreamedResponse):
                                     if maybe_event:  # pragma: no branch
                                         yield maybe_event
 
-                                if (
+                        if (
                                     'toolResult' in delta
                                     and (return_part := builtin_tool_returns.get(index))
                                     and return_part.tool_name == CodeExecutionTool.kind
                                     and (tr_content := delta['toolResult'])
-                                ):
+                        ):
                                     return_part.content = tr_content[0].get('json')
 
                     case {'contentBlockStop': content_block_stop}:
