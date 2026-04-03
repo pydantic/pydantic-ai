@@ -185,6 +185,9 @@ class FunctionParam:
         return f'{self.name}: {type_str}'
 
 
+_UNSET = object()  # sentinel for render() description default
+
+
 @dataclass(kw_only=True)
 class FunctionSignature:
     """Function signature with referenced type definitions.
@@ -215,13 +218,25 @@ class FunctionSignature:
         """Render with `...` body."""
         return self.render('...')
 
-    def render(self, body: str, *, is_async: bool | None = None) -> str:
+    def render(
+        self,
+        body: str,
+        *,
+        name: str | None = None,
+        description: str | None = _UNSET,  # type: ignore[assignment]
+        is_async: bool | None = None,
+    ) -> str:
         """Render the signature with a specific body.
 
         Args:
             body: The function body (e.g. `'...'` or `'return await tool()'`).
+            name: Override the function name. If `None`, uses `self.name`.
+            description: Override the description. Pass `None` explicitly to suppress.
+                If not provided, uses `self.description`.
             is_async: Override async rendering. If `None`, uses `self.is_async`.
         """
+        render_name = name if name is not None else self.name
+        render_description = self.description if description is _UNSET else description
         async_flag = is_async if is_async is not None else self.is_async
         prefix = 'async def' if async_flag else 'def'
         params_str = ', '.join(str(p) for p in self.params.values())
@@ -229,12 +244,12 @@ class FunctionSignature:
         return_str = str(self.return_type)
         if params_str:
             # Force keyword-only params so LLMs always use named arguments
-            parts = [f'{prefix} {self.name}(*, {params_str}) -> {return_str}:']
+            parts = [f'{prefix} {render_name}(*, {params_str}) -> {return_str}:']
         else:
-            parts = [f'{prefix} {self.name}() -> {return_str}:']
+            parts = [f'{prefix} {render_name}() -> {return_str}:']
 
-        if self.description:
-            parts.extend(_render_description(self.description, indent='    '))
+        if render_description:
+            parts.extend(_render_description(render_description, indent='    '))
 
         parts.append(f'    {body}')
 
@@ -369,7 +384,7 @@ class FunctionSignature:
         return result
 
 
-# Shared singleton for 'Any' type expression
+# Shared singletons
 _ANY = SimpleTypeExpr('Any')
 _NONE = SimpleTypeExpr('None')
 

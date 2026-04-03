@@ -497,7 +497,7 @@ def test_tool_from_schema_function_signature_uses_schema():
         },
     )
     assert str(tool.tool_def.function_signature) == snapshot('''\
-def search(*, query: str, limit: int | None = None) -> Any:
+async def search() -> Any:
     """Search documents"""
     ...\
 ''')
