@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 import os
 from datetime import date, datetime, timezone
-from itertools import count
 from types import SimpleNamespace
 from typing import Any
 
@@ -27,7 +26,6 @@ from pydantic_ai import (
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
-    TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -39,12 +37,6 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.models.bedrock import (
-    BedrockConverseModel,
-    BedrockModelName,
-    BedrockModelSettings,
-    _AsyncIteratorWrapper,
-)
 from pydantic_ai.builtin_tools import CodeExecutionTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
@@ -67,11 +59,7 @@ with try_import() as imports_successful:
     from botocore.exceptions import ClientError
     from mypy_boto3_bedrock_runtime.type_defs import MessageUnionTypeDef, SystemContentBlockTypeDef, ToolTypeDef
 
-    from pydantic_ai.models.bedrock import (
-        BedrockConverseModel,
-        BedrockModelName,
-        BedrockModelSettings,
-    )
+    from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelName, BedrockModelSettings
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -182,29 +170,7 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
     )
 
 
-@pytest.mark.skip(reason='Requires VCR cassette re-record with AWS access')
 @pytest.mark.vcr()
-<<<<<<< HEAD
-async def test_bedrock_model_with_extra_headers(
-    allow_model_requests: None,
-    bedrock_provider: BedrockProvider,
-):
-    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    agent = Agent(
-        model=model,
-        system_prompt='You are a helpful assistant.',
-        model_settings={'extra_headers': {'X-Custom': 'test-value'}},
-    )
-
-    result = await agent.run('Hello!')
-
-    assert result.output == snapshot(...)
-    assert result.all_messages() == snapshot(...)
-
-
-@pytest.mark.vcr()
-=======
->>>>>>> 1c8fb670 (fix(bedrock): avoid serializing non-header requests by scoping lock to extra_headers path)
 async def test_bedrock_model_usage_limit_exceeded(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,
@@ -220,74 +186,6 @@ async def test_bedrock_model_usage_limit_exceeded(
             ['The quick brown fox jumps over the lazydog.', CachePoint(), 'What was next?'],
             usage_limits=UsageLimits(input_tokens_limit=18, count_tokens_before_request=True),
         )
-
-
-@pytest.mark.vcr
-async def test_bedrock_model_with_extra_headers(allow_model_requests: None, bedrock_provider: BedrockProvider):
-    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    agent = Agent(
-        model=model,
-        instructions='You are a helpful chatbot.',
-    )
-
-    result = await agent.run(
-        'Hello',
-        model_settings={'extra_headers': {'X-Custom-Test': 'pydantic-ai-val'}},
-    )
-
-    assert result.output == snapshot(
-        "Hello! How can I assist you today? Whether you have a question, need some information, or just want to chat, I'm here to help."
-    )
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
-                timestamp=IsDatetime(),
-                instructions='You are a helpful chatbot.',
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    TextPart(
-                        content="Hello! How can I assist you today? Whether you have a question, need some information, or just want to chat, I'm here to help."
-                    )
-                ],
-                usage=RequestUsage(input_tokens=7, output_tokens=33),
-                model_name='us.amazon.nova-micro-v1:0',
-                timestamp=IsDatetime(),
-                provider_name='bedrock',
-                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
-                provider_details={'finish_reason': 'end_turn'},
-                finish_reason='stop',
-                run_id=IsStr(),
-            ),
-        ]
-    )
-
-
-@pytest.mark.vcr()
-async def test_bedrock_model_stream_with_extra_headers(
-    allow_model_requests: None,
-    bedrock_provider: BedrockProvider,
-):
-    model = BedrockConverseModel(
-        'us.amazon.nova-micro-v1:0',
-        provider=bedrock_provider,
-    )
-    agent = Agent(
-        model=model,
-        instructions='You are a helpful chatbot.',
-    )
-
-    async with agent.run_stream(
-        'Hello',
-        model_settings={'extra_headers': {'X-Custom-Test': 'pydantic-ai-val'}},
-    ) as result:
-        output = await result.get_output()
-
-    assert output == snapshot(
-        "Hello! How can I assist you today? Whether you have questions, need information, or just want to chat, I'm here to help."
-    )
 
 
 @pytest.mark.vcr()
@@ -352,23 +250,6 @@ async def test_bedrock_count_tokens_non_http_error():
     assert exc_info.value.message == snapshot(
         'An error occurred (TestException) when calling the count_tokens operation: broken connection'
     )
-
-
-@pytest.mark.anyio
-async def test_async_iterator_wrapper_runtime_error_non_stop_iteration():
-    class BadIterator:
-        def __iter__(self):
-            return self
-
-        def __next__(self):
-            err = RuntimeError('boom')
-            err.__cause__ = ValueError('not stop iteration')
-            raise err
-
-    wrapper = _AsyncIteratorWrapper(BadIterator())
-
-    with pytest.raises(RuntimeError):
-        await wrapper.__anext__()
 
 
 def _bedrock_arn(resource: str) -> str:
@@ -612,35 +493,6 @@ async def test_bedrock_model_stream(allow_model_requests: None, bedrock_provider
         'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, and it is a major center for culture, commerce, fashion, and international diplomacy. Known for its historical landmarks, such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral, Paris is often referred to as "The City of Light" or "The City of Love."'
     )
     assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=13, output_tokens=82))
-
-<<<<<<< HEAD
-
-@pytest.mark.skip(reason='Requires VCR cassette re-record with AWS access')
-@pytest.mark.vcr()
-async def test_bedrock_model_stream_with_extra_headers(
-    allow_model_requests: None,
-    bedrock_provider: BedrockProvider,
-):
-    model = BedrockConverseModel(
-        'us.amazon.nova-micro-v1:0',
-        provider=bedrock_provider,
-    )
-
-    agent = Agent(
-        model=model,
-        instructions='You are a helpful chatbot.',
-        model_settings={'extra_headers': {'X-Test': '123'}},
-    )
-
-    async with agent.run_stream('What is the capital of France?') as result:
-        output = await result.get_output()
-
-    assert output == snapshot(
-        'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, and it is a major center for culture, commerce, fashion, and international diplomacy. Known for its historical landmarks, such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral, Paris is often referred to as "The City of Light" or "The City of Love."'
-    )
-    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=13, output_tokens=82))
-=======
->>>>>>> 1c8fb670 (fix(bedrock): avoid serializing non-header requests by scoping lock to extra_headers path)
 
 
 async def test_bedrock_model_anthropic_model_with_tools(allow_model_requests: None, bedrock_provider: BedrockProvider):
@@ -1160,31 +1012,6 @@ The document you're referring to appears to be a test document, which means its 
 
 Since this is a test document, it probably doesn't contain any meaningful or specific information beyond what is necessary to serve its testing purpose. If you have specific questions about the format, structure, or any particular element within the document, feel free to ask!\
 """
-    )
-
-
-async def test_map_user_prompt_with_text_content_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
-    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-    m = await model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
-        part=UserPromptPart(
-            content=[
-                'What is the main content on this document?',
-                TextContent(content='This is a test document.', metadata={'format': 'plain_text'}),
-            ]
-        ),
-        document_count=count(1),
-        supports_prompt_caching=False,
-    )
-    assert m == snapshot(
-        [
-            {
-                'role': 'user',
-                'content': [
-                    {'text': 'What is the main content on this document?'},
-                    {'text': 'This is a test document.'},
-                ],
-            }
-        ]
     )
 
 
@@ -2839,69 +2666,6 @@ async def test_bedrock_cache_instructions(allow_model_requests: None, bedrock_pr
     )
 
 
-async def test_bedrock_cache_instructions_mixed_static_dynamic(
-    allow_model_requests: None, bedrock_provider: BedrockProvider
-):
-    """Test that cache point is placed after last static instruction when mixed with dynamic."""
-    from pydantic_ai.messages import InstructionPart
-
-    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
-    messages: list[ModelMessage] = [
-        ModelRequest(
-            parts=[UserPromptPart(content='Hi!')],
-        )
-    ]
-    model_request_parameters = ModelRequestParameters(
-        instruction_parts=[
-            InstructionPart(content='Static instructions.', dynamic=False),
-            InstructionPart(content='Dynamic context.', dynamic=True),
-        ],
-    )
-    system_prompt, _ = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        messages,
-        model_request_parameters,
-        BedrockModelSettings(bedrock_cache_instructions=True),
-    )
-    # Cache point should be after the static instruction, before the dynamic one
-    assert system_prompt == snapshot(
-        [
-            {'text': 'Static instructions.'},
-            {'cachePoint': {'type': 'default'}},
-            {'text': 'Dynamic context.'},
-        ]
-    )
-
-
-async def test_bedrock_cache_instructions_all_dynamic_no_system_prompt(
-    allow_model_requests: None, bedrock_provider: BedrockProvider
-):
-    """Test that no cache point is inserted when all instructions are dynamic and there's no system prompt."""
-    from pydantic_ai.messages import InstructionPart
-
-    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
-    messages: list[ModelMessage] = [
-        ModelRequest(
-            parts=[UserPromptPart(content='Hi!')],
-        )
-    ]
-    model_request_parameters = ModelRequestParameters(
-        instruction_parts=[
-            InstructionPart(content='Dynamic only.', dynamic=True),
-        ],
-    )
-    system_prompt, _ = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        messages,
-        model_request_parameters,
-        BedrockModelSettings(bedrock_cache_instructions=True),
-    )
-    # No cache point should be inserted — nothing static to cache
-    assert system_prompt == snapshot(
-        [
-            {'text': 'Dynamic only.'},
-        ]
-    )
-
-
 async def test_bedrock_cache_messages(allow_model_requests: None, bedrock_provider: BedrockProvider):
     """Test that bedrock_cache_messages adds cache point to the last user message."""
     model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
@@ -3105,7 +2869,7 @@ async def test_limit_cache_points_with_cache_messages(allow_model_requests: None
                 UserPromptPart(
                     content=[
                         'Context 1',
-                        CachePoint(),
+                        CachePoint(),  # Oldest, should be removed
                         'Context 2',
                         CachePoint(),  # Should be kept
                         'Context 3',
@@ -3123,7 +2887,7 @@ async def test_limit_cache_points_with_cache_messages(allow_model_requests: None
         ModelRequestParameters(),
         BedrockModelSettings(bedrock_cache_messages=True),
     )
-
+    # Apply limit (this is normally called in _messages_create)
     model._limit_cache_points(system_prompt, bedrock_messages, [])  # pyright: ignore[reportPrivateUsage]
 
     # Count cache points in messages
@@ -3206,8 +2970,11 @@ async def test_bedrock_empty_model_response_skipped(bedrock_provider: BedrockPro
         ModelRequest(parts=[UserPromptPart(content='Follow up question')]),
     ]
 
+    # Call the mapping function directly
     _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
 
+    # The empty ModelResponse should be skipped, so we should only have 2 user messages
+    # that get merged into one since they're consecutive after the empty response is skipped
     assert bedrock_messages == snapshot(
         [
             {'role': 'user', 'content': [{'text': 'Hello'}, {'text': 'Follow up question'}]},

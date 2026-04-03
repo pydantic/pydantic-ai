@@ -92,6 +92,8 @@ if TYPE_CHECKING:
         ToolTypeDef,
         ToolUseBlockOutputTypeDef,
     )
+else:
+    BedrockRuntimeClient = Any  # type: ignore[assignment]
 
 
 @contextmanager
@@ -471,12 +473,12 @@ class BedrockConverseModel(Model):
                 },
             },
         }
-        with _map_api_errors(self.model_name):
-            response = await anyio.to_thread.run_sync(
-                functools.partial(self.client.count_tokens, **params)
-            )
+        try:
+            response = await anyio.to_thread.run_sync(functools.partial(self.client.count_tokens, **params))
         except ClientError as e:
-        self._raise_for_client_error(e)
+            self._raise_for_client_error(e)
+
+        return usage.RequestUsage(input_tokens=response['inputTokens'])
 
     @asynccontextmanager
     async def request_stream(
@@ -1350,16 +1352,17 @@ class BedrockStreamedResponse(StreamedResponse):
                             else:
                                 signature = delta['reasoningContent'].get('signature')
                                 for event in self._parts_manager.handle_thinking_delta(
-                                        vendor_part_id=index,
-                                        content=delta['reasoningContent'].get('text'),
-                                        signature=signature,
-                                        provider_name=self.provider_name if signature else None,
+                                    vendor_part_id=index,
+                                    content=delta['reasoningContent'].get('text'),
+                                    signature=signature,
+                                    provider_name=self.provider_name if signature else None,
                                 ):
                                     yield event
 
                                 if text := delta.get('text'):
-                                    for event in self._parts_manager.handle_text_delta(vendor_part_id=index,
-                                                                                       content=text):
+                                    for event in self._parts_manager.handle_text_delta(
+                                        vendor_part_id=index, content=text
+                                    ):
                                         yield event
 
                                 if 'toolUse' in delta:
@@ -1374,10 +1377,10 @@ class BedrockStreamedResponse(StreamedResponse):
                                         yield maybe_event
 
                                 if (
-                                        'toolResult' in delta
-                                        and (return_part := builtin_tool_returns.get(index))
-                                        and return_part.tool_name == CodeExecutionTool.kind
-                                        and (tr_content := delta['toolResult'])
+                                    'toolResult' in delta
+                                    and (return_part := builtin_tool_returns.get(index))
+                                    and return_part.tool_name == CodeExecutionTool.kind
+                                    and (tr_content := delta['toolResult'])
                                 ):
                                     return_part.content = tr_content[0].get('json')
 
