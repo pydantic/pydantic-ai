@@ -3190,7 +3190,7 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
             return request_context  # pragma: no cover
 
         # Need at least 2 messages (history + current request) to compact
-        if len(request_context.messages) < 2:
+        if len(request_context.messages) < 2:  # pragma: no cover
             return request_context
 
         # Compact all messages except the last (current) request
