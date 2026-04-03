@@ -900,9 +900,7 @@ agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 [`pydantic-ai-strale`](https://pypi.org/project/pydantic-ai-strale/) provides access to Strale's 250+ quality-scored capabilities for AI agents — company verification, IBAN/VAT validation, sanctions screening, and more across 27 countries. Every capability is independently tested with a published Strale Quality Score (SQS).
 
 You will need to install the `pydantic-ai-strale` package and set your Strale API key in the `STRALE_API_KEY` environment variable.
-```bash
-pip install pydantic-ai-strale
-```
+
 ```python {test="skip" lint="skip"}
 import os
 from pydantic_ai import Agent
