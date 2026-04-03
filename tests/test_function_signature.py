@@ -1354,3 +1354,7 @@ def test_render_empty_type_signature():
     """Empty TypeSignature without description renders with pass."""
     ts = TypeSignature(name='Empty')
     assert ts.render_definition() == 'class Empty(TypedDict):\n    pass'
+
+    # Empty with description renders docstring but no pass
+    ts_with_desc = TypeSignature(name='Marker', description='A marker type')
+    assert ts_with_desc.render_definition() == 'class Marker(TypedDict):\n    """A marker type"""'
