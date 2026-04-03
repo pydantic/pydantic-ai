@@ -1424,7 +1424,7 @@ class AnthropicCompaction(AbstractCapability[AgentDepsT]):
             existing_edits: list[dict[str, Any]] = []
             if ctx.model_settings:
                 existing_cm = cast(dict[str, Any], ctx.model_settings).get('anthropic_context_management')
-                if isinstance(existing_cm, dict):
+                if isinstance(existing_cm, dict):  # pragma: no branch
                     existing_edits = cast(list[dict[str, Any]], existing_cm.get('edits', []))  # pyright: ignore[reportUnknownMemberType]
             return cast(ModelSettings, {'anthropic_context_management': {'edits': [*existing_edits, edit]}})
 

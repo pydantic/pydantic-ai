@@ -1066,7 +1066,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     elif isinstance(part, _messages.ThinkingPart):
                         pass
                     elif isinstance(part, _messages.CompactionPart):
-                        if part.content:
+                        if part.content:  # pragma: no branch
                             compaction_text += part.content
                     else:
                         assert_never(part)
