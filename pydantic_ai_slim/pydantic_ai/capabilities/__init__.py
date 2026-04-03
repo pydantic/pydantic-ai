@@ -51,14 +51,14 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
 try:
     from pydantic_ai.models.openai import OpenAICompaction
 
-    CAPABILITY_TYPES['OpenAICompaction'] = OpenAICompaction
+    CAPABILITY_TYPES['OpenAICompaction'] = OpenAICompaction  # pragma: no cover
 except ImportError:
     pass
 
 try:
     from pydantic_ai.models.anthropic import AnthropicCompaction
 
-    CAPABILITY_TYPES['AnthropicCompaction'] = AnthropicCompaction
+    CAPABILITY_TYPES['AnthropicCompaction'] = AnthropicCompaction  # pragma: no cover
 except ImportError:
     pass
 
