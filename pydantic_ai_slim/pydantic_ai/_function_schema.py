@@ -7,7 +7,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from functools import partial
+from functools import cached_property, partial
 from inspect import Parameter, signature
 from typing import TYPE_CHECKING, Any, Concatenate, Literal, cast, get_origin
 
@@ -53,12 +53,13 @@ class FunctionSchema:
     single_arg_name: str | None = None
     positional_fields: list[str] = field(default_factory=list[str])
     var_positional_field: str | None = None
-    function_signature: FunctionSignature = field(init=False)
 
-    def __post_init__(self) -> None:
+    @cached_property
+    def function_signature(self) -> FunctionSignature:
+        """Build a FunctionSignature from this schema's function, lazily on first access."""
         from .function_signature import FunctionSignature as FS
 
-        self.function_signature = FS.from_function(self.function, name=self.name, description=self.description)
+        return FS.from_function(self.function, name=self.name, description=self.description)
 
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
         args, kwargs = self._call_args(args_dict, ctx)
