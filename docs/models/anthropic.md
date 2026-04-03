@@ -153,7 +153,7 @@ Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-wit
 
 ### Automatic Caching
 
-The simplest way to enable prompt caching is with [`AnthropicModelSettings.anthropic_cache`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache]. This passes a top-level `cache_control` parameter to the API, and Anthropic's server automatically applies a cache breakpoint to the last cacheable block in each request:
+The simplest way to enable prompt caching is with [`AnthropicModelSettings.anthropic_cache`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache]. This uses Anthropic's [automatic caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#automatic-caching), passing a top-level `cache_control` parameter so the server automatically applies a cache breakpoint to the last cacheable block in each request:
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -178,8 +178,8 @@ print(f'Cache read: {result2.usage().cache_read_tokens}')
 
 This is ideal for multi-turn conversations where the cache breakpoint should move forward as the conversation grows. You can also specify a custom TTL with `anthropic_cache='1h'`.
 
-!!! note
-    Automatic caching uses 1 of Anthropic's 4 available cache point slots. When combined with explicit breakpoints, the budget for explicit cache points is reduced from 4 to 3.
+!!! note "Bedrock and Vertex"
+    Bedrock and Vertex [do not yet support automatic caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#automatic-caching). On these platforms, `anthropic_cache` falls back to per-block caching on the last user message, providing the same benefit for multi-turn conversations.
 
 ### Explicit Cache Breakpoints
 
@@ -188,9 +188,6 @@ In addition to automatic caching, Pydantic AI provides several ways to place cac
 1. **Cache User Messages with [`CachePoint`][pydantic_ai.messages.CachePoint]**: Insert a `CachePoint` marker in your user messages to cache everything before it
 2. **Cache System Instructions**: Set [`AnthropicModelSettings.anthropic_cache_instructions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_instructions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly
 3. **Cache Tool Definitions**: Set [`AnthropicModelSettings.anthropic_cache_tool_definitions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_tool_definitions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly
-
-!!! note "Third-party platforms (Bedrock, Vertex, Foundry)"
-    Bedrock, Vertex, and Foundry do not yet support Anthropic's top-level automatic caching ([details](https://github.com/anthropics/anthropic-sdk-python/issues/939)). When using `AsyncAnthropicBedrock`, `AsyncAnthropicVertex`, or `AsyncAnthropicFoundry`, `anthropic_cache` falls back to per-block caching on the last user message, providing the same caching benefit for multi-turn conversations. If the last content block already has `cache_control` from an explicit `CachePoint`, it is preserved. All other per-block cache settings (`CachePoint`, `anthropic_cache_instructions`, `anthropic_cache_tool_definitions`) work as expected.
 
 #### Example: Comprehensive Caching Strategy
 
@@ -311,7 +308,7 @@ Cache points can come from several sources:
 3. **Tool Definitions**: Via `anthropic_cache_tool_definitions` setting (adds cache point to last tool definition)
 4. **Messages**: Via `CachePoint` markers (adds cache points to message content)
 
-Each setting uses **at most 1 cache point**, but you can combine them. When `anthropic_cache` is enabled, the budget for explicit cache points is reduced from 4 to 3.
+Each setting uses **at most 1 cache point**, but you can combine them. If the total exceeds 4, Pydantic AI automatically trims excess cache points from older messages.
 
 #### Example: Combining Automatic and Explicit Caching
 
@@ -388,8 +385,8 @@ print(f'Cache read tokens: {usage.cache_read_tokens}')
 
 **Key Points**:
 - System and tool cache points are **always preserved**
-- When `anthropic_cache` is enabled, the budget for explicit cache points is reduced from 4 to 3
-- Additional `CachePoint` markers in messages are removed from oldest to newest when the limit is exceeded
+- `anthropic_cache` counts as 1 cache point, just like `anthropic_cache_instructions` and `anthropic_cache_tool_definitions`
+- Excess `CachePoint` markers in messages are removed from oldest to newest when the limit is exceeded
 - This ensures critical caching (instructions/tools) is maintained while still benefiting from message-level caching
 
 ## Message Compaction

@@ -489,21 +489,21 @@ def test_build_cache_control_includes_ttl():
     assert cache_control_1h == {'type': 'ephemeral', 'ttl': '1h'}
 
 
-async def test_automatic_cache_control_none_on_third_party_clients(allow_model_requests: None):
-    """Test that the top-level cache_control parameter is None for third-party clients.
+async def test_automatic_cache_control_none_on_unsupported_clients(allow_model_requests: None):
+    """Test that the top-level cache_control parameter is None for Bedrock and Vertex.
 
-    Bedrock, Vertex, and Foundry do not support the top-level cache_control parameter
+    Bedrock and Vertex do not support the top-level cache_control parameter
     (automatic caching). Per-block fallback is handled by _apply_per_block_caching_fallback.
+    Foundry supports automatic caching.
     See https://github.com/anthropics/anthropic-sdk-python/issues/939
     """
     from unittest.mock import MagicMock
 
-    from anthropic import AsyncAnthropicBedrock, AsyncAnthropicFoundry, AsyncAnthropicVertex
+    from anthropic import AsyncAnthropicBedrock, AsyncAnthropicVertex
 
     for client_cls, base_url in [
         (AsyncAnthropicBedrock, 'https://bedrock.amazonaws.com'),
         (AsyncAnthropicVertex, 'https://us-central1-aiplatform.googleapis.com'),
-        (AsyncAnthropicFoundry, 'https://models.inference.ai.azure.com'),
     ]:
         mock_client = MagicMock(spec=client_cls)
         mock_client.base_url = base_url
@@ -514,16 +514,15 @@ async def test_automatic_cache_control_none_on_third_party_clients(allow_model_r
 
 
 @pytest.mark.parametrize('cache_value', [True, '1h'])
-def test_anthropic_cache_per_block_fallback_on_third_party_clients(cache_value: bool | Literal['1h']):
-    """Test that anthropic_cache falls back to per-block caching on third-party clients."""
+def test_anthropic_cache_per_block_fallback_on_unsupported_clients(cache_value: bool | Literal['1h']):
+    """Test that anthropic_cache falls back to per-block caching on Bedrock and Vertex."""
     from unittest.mock import MagicMock
 
-    from anthropic import AsyncAnthropicBedrock, AsyncAnthropicFoundry, AsyncAnthropicVertex
+    from anthropic import AsyncAnthropicBedrock, AsyncAnthropicVertex
 
     for client_cls, base_url in [
         (AsyncAnthropicBedrock, 'https://bedrock.amazonaws.com'),
         (AsyncAnthropicVertex, 'https://us-central1-aiplatform.googleapis.com'),
-        (AsyncAnthropicFoundry, 'https://models.inference.ai.azure.com'),
     ]:
         mock_client = MagicMock(spec=client_cls)
         mock_client.base_url = base_url
@@ -543,16 +542,15 @@ def test_anthropic_cache_per_block_fallback_on_third_party_clients(cache_value: 
 
 
 @pytest.mark.parametrize('cache_value', [True, '1h'])
-def test_deprecated_cache_messages_per_block_fallback_on_third_party_clients(cache_value: bool | Literal['1h']):
-    """Test that deprecated anthropic_cache_messages also triggers per-block fallback on third-party clients."""
+def test_deprecated_cache_messages_per_block_fallback_on_unsupported_clients(cache_value: bool | Literal['1h']):
+    """Test that deprecated anthropic_cache_messages also triggers per-block fallback on Bedrock and Vertex."""
     from unittest.mock import MagicMock
 
-    from anthropic import AsyncAnthropicBedrock, AsyncAnthropicFoundry, AsyncAnthropicVertex
+    from anthropic import AsyncAnthropicBedrock, AsyncAnthropicVertex
 
     for client_cls, base_url in [
         (AsyncAnthropicBedrock, 'https://bedrock.amazonaws.com'),
         (AsyncAnthropicVertex, 'https://us-central1-aiplatform.googleapis.com'),
-        (AsyncAnthropicFoundry, 'https://models.inference.ai.azure.com'),
     ]:
         mock_client = MagicMock(spec=client_cls)
         mock_client.base_url = base_url
@@ -9085,15 +9083,14 @@ async def test_anthropic_cache_count_tokens(allow_model_requests: None, anthropi
 
 @pytest.mark.vcr()
 async def test_anthropic_cache_bedrock_real_api(allow_model_requests: None):
-    """Test that anthropic_cache falls back to per-block caching on Bedrock and TTL is accepted.
+    """Test that anthropic_cache falls back to per-block caching on Bedrock with multi-turn conversations.
 
     On Bedrock, the top-level cache_control (automatic caching) is not supported.
     Instead, anthropic_cache triggers per-block cache_control on the last user message
     via _apply_per_block_caching_fallback, including the TTL parameter.
 
-    Verifies that cache_write_tokens > 0 (caching activates) and the API accepts
-    cache_control with TTL without error. The cassette confirms the request contains
-    ``cache_control: {type: ephemeral, ttl: '5m'}`` on the user content block.
+    Verifies multi-turn caching works: result2 passes message_history from result1,
+    and the API accepts cache_control with TTL without error.
     """
     from anthropic import AsyncAnthropicBedrock
 
@@ -9124,28 +9121,29 @@ async def test_anthropic_cache_bedrock_real_api(allow_model_requests: None):
         RunUsage(
             input_tokens=9514,
             cache_read_tokens=9511,
-            output_tokens=1871,
+            output_tokens=1944,
             details={
                 'cache_creation_input_tokens': 0,
                 'cache_read_input_tokens': 9511,
                 'input_tokens': 3,
-                'output_tokens': 1871,
+                'output_tokens': 1944,
             },
             requests=1,
         )
     )
 
-    result2 = await agent.run(long_prompt)
+    result2 = await agent.run('Can you summarize that in one sentence?', message_history=result1.all_messages())
     assert result2.usage() == snapshot(
         RunUsage(
-            input_tokens=9514,
+            input_tokens=11470,
+            cache_write_tokens=1956,
             cache_read_tokens=9511,
-            output_tokens=2851,
+            output_tokens=44,
             details={
-                'cache_creation_input_tokens': 0,
+                'cache_creation_input_tokens': 1956,
                 'cache_read_input_tokens': 9511,
                 'input_tokens': 3,
-                'output_tokens': 2851,
+                'output_tokens': 44,
             },
             requests=1,
         )
