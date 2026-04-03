@@ -54,6 +54,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     require_parameter_descriptions: bool
     schema_generator: type[GenerateJsonSchema]
     _defer_loading: bool
+    include_return_schema: bool | None
 
     def __init__(
         self,
@@ -69,6 +70,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         defer_loading: bool = False,
+        include_return_schema: bool | None = None,
         id: str | None = None,
         instructions: str | SystemPromptFunc[AgentDepsT] | Sequence[str | SystemPromptFunc[AgentDepsT]] | None = None,
     ):
@@ -100,6 +102,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             defer_loading: Whether to hide tools from the model until discovered via tool search. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
                 Applies to all tools, unless overridden when adding a tool.
+            include_return_schema: Whether to include return schemas in tool definitions sent to the model.
+                If `None`, the agent-level default is used.
+                Applies to all tools, unless overridden when adding a tool.
             id: An optional unique ID for the toolset. A toolset needs to have an ID in order to be used in a durable execution environment like Temporal,
                 in which case the ID will be used to identify the toolset's activities within the workflow.
             instructions: Instructions for this toolset that are automatically included in the model request.
@@ -116,6 +121,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         self.requires_approval = requires_approval
         self.metadata = metadata
         self._defer_loading = defer_loading
+        self.include_return_schema = include_return_schema
 
         self._instructions: list[str | SystemPromptRunner[AgentDepsT]] = []
         if instructions is not None:
@@ -160,6 +166,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool | None = None,
+        include_return_schema: bool | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -181,6 +188,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool | None = None,
+        include_return_schema: bool | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -248,6 +256,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             defer_loading: Whether to hide this tool until it's discovered via tool search.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
                 If `None`, the default value is determined by the toolset.
+            include_return_schema: Whether to include the return schema in the tool definition sent to the model.
+                If `None`, the default value is determined by the toolset.
         """
 
         def tool_decorator(
@@ -276,6 +286,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 metadata=metadata,
                 timeout=timeout,
                 defer_loading=defer_loading,
+                include_return_schema=include_return_schema,
             )
             if not tool.function_schema.takes_ctx:
                 warnings.warn(
@@ -310,6 +321,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool | None = None,
+        include_return_schema: bool | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
     def tool_plain(
@@ -331,6 +343,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool | None = None,
+        include_return_schema: bool | None = None,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
@@ -399,6 +412,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             defer_loading: Whether to hide this tool until it's discovered via tool search.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
                 If `None`, the default value is determined by the toolset.
+            include_return_schema: Whether to include the return schema in the tool definition sent to the model.
+                If `None`, the default value is determined by the toolset.
         """
 
         def tool_decorator(
@@ -422,6 +437,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 metadata=metadata,
                 timeout=timeout,
                 defer_loading=defer_loading,
+                include_return_schema=include_return_schema,
             )
             return func_
 
@@ -476,6 +492,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         defer_loading: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        include_return_schema: bool | None = None,
     ) -> Tool[AgentDepsT]:
         """Add a function as a tool to the toolset.
 
@@ -521,6 +538,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
+            include_return_schema: Whether to include the return schema in the tool definition sent to the model.
+                If `None`, the default value is determined by the toolset.
         """
         if docstring_format is None:
             docstring_format = self.docstring_format
@@ -536,6 +555,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             requires_approval = self.requires_approval
         if defer_loading is None:
             defer_loading = self._defer_loading
+        if include_return_schema is None:
+            include_return_schema = self.include_return_schema
 
         tool = Tool[AgentDepsT](
             func,
@@ -554,6 +575,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             metadata=metadata,
             timeout=timeout,
             defer_loading=defer_loading,
+            include_return_schema=include_return_schema,
         )
         self.add_tool(tool)
         return tool

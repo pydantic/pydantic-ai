@@ -293,6 +293,7 @@ class Tool(Generic[ToolAgentDepsT]):
     metadata: dict[str, Any] | None
     timeout: float | None
     defer_loading: bool
+    include_return_schema: bool | None
     function_schema: _function_schema.FunctionSchema
     """
     The base JSON schema for the tool's parameters.
@@ -319,6 +320,7 @@ class Tool(Generic[ToolAgentDepsT]):
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
+        include_return_schema: bool | None = None,
         function_schema: _function_schema.FunctionSchema | None = None,
     ):
         """Create a new tool instance.
@@ -385,6 +387,8 @@ class Tool(Generic[ToolAgentDepsT]):
                 Defaults to None (no timeout).
             defer_loading: Whether to hide this tool until it's discovered via tool search. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
+            include_return_schema: Whether to include the return schema in the tool definition sent to the model.
+                If `None`, the agent-level `include_tool_return_schema` default is used.
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
         """
         self.function = function
@@ -410,6 +414,7 @@ class Tool(Generic[ToolAgentDepsT]):
         self.metadata = metadata
         self.timeout = timeout
         self.defer_loading = defer_loading
+        self.include_return_schema = include_return_schema
 
     @classmethod
     def from_schema(
@@ -479,7 +484,8 @@ class Tool(Generic[ToolAgentDepsT]):
             timeout=self.timeout,
             defer_loading=self.defer_loading,
             kind='unapproved' if self.requires_approval else 'function',
-            function_signature=self.function_schema.function_signature,
+            return_schema=self.function_schema.return_schema,
+            include_return_schema=self.include_return_schema,
         )
 
     async def prepare_tool_def(self, ctx: RunContext[ToolAgentDepsT]) -> ToolDefinition | None:
@@ -589,10 +595,25 @@ class ToolDefinition:
     removed and this function tool stays.
     """
 
+    return_schema: ObjectJsonSchema | None = None
+    """The JSON schema for the tool's return value.
+
+    For models that natively support return schemas (e.g. Google Gemini), this is passed as a
+    structured field in the API request. For other models, it is injected into the tool's
+    description as JSON text. Only included when `include_return_schema` resolves to `True`.
+    """
+
+    include_return_schema: bool | None = None
+    """Whether to include the return schema in the tool definition sent to the model.
+
+    When `True`, the `return_schema` will be preserved and sent to the model.
+    When `False`, the `return_schema` will be cleared before sending.
+    When `None` (default), the agent-level `include_tool_return_schema` default is used.
+    """
+
     function_signature: FunctionSignature = field(default=None, repr=False, compare=False)  # type: ignore[assignment]
     """The function signature representation for this tool.
 
-    Pre-computed by `Tool` from the original Python function for richer type information.
     If not provided, computed from the JSON schema in `__post_init__`.
 
     Note: after `dataclasses.replace()`, the stored signature may have a stale name/description.
@@ -605,9 +626,7 @@ class ToolDefinition:
                 name=self.name,
                 parameters_schema=self.parameters_json_schema,
                 description=self.description,
-                # output_schema is set by MCP tools in their metadata dict.
-                # TODO: replace with a dedicated field on ToolDefinition, see https://github.com/pydantic/pydantic-ai/pull/3865
-                return_schema=(self.metadata or {}).get('output_schema'),
+                return_schema=self.return_schema,
             )
 
     @property

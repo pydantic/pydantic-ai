@@ -519,6 +519,16 @@ def test_logfire(
                                 'timeout': None,
                                 'defer_loading': False,
                                 'prefer_builtin': None,
+                                'return_schema': None,
+                                'include_return_schema': None,
+                                'function_signature': {
+                                    'name': 'my_ret',
+                                    'params': {'x': {'name': 'x', 'type': {'name': 'int'}, 'default': None}},
+                                    'return_type': {'name': 'str'},
+                                    'description': None,
+                                    'referenced_types': [],
+                                    'is_async': False,
+                                },
                             }
                         ],
                         'builtin_tools': [],
@@ -1016,6 +1026,18 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                                 'timeout': None,
                                 'defer_loading': False,
                                 'prefer_builtin': None,
+                                'return_schema': None,
+                                'include_return_schema': None,
+                                'function_signature': {
+                                    'name': 'final_result',
+                                    'params': {
+                                        'content': {'name': 'content', 'type': {'name': 'str'}, 'default': None}
+                                    },
+                                    'return_type': {'name': 'Any'},
+                                    'description': 'The final response which ends this conversation',
+                                    'referenced_types': [],
+                                    'is_async': False,
+                                },
                             }
                         ],
                         'prompted_output_template': None,

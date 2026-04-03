@@ -1425,6 +1425,8 @@ def _function_declaration_from_tool(tool: ToolDefinition) -> FunctionDeclaration
         description=tool.description or '',
         parameters_json_schema=json_schema,
     )
+    if tool.return_schema is not None:
+        f['response_json_schema'] = tool.return_schema
     return f
 
 

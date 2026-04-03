@@ -437,18 +437,21 @@ def test_tool_def_function_signature_from_schema():
     assert 'y' in sig.params
 
 
-def test_function_schema_has_function_based_signature():
-    """FunctionSchema.function_signature uses inspect for richer type info."""
+def test_tool_def_has_schema_based_signature():
+    """Tool.tool_def.function_signature is computed from schema + return_schema."""
 
     def my_tool(x: int, y: str = 'hello') -> bool:
         """A test tool."""
         return True  # pragma: no cover
 
     tool = Tool(my_tool)
-    sig = tool.function_schema.function_signature
-    fresh_sig = FunctionSignature.from_function(my_tool, name='my_tool', description=tool.description)
-
-    assert str(sig) == str(fresh_sig)
+    sig = tool.tool_def.function_signature
+    assert sig.name == 'my_tool'
+    assert sig.description == 'A test tool.'
+    assert 'x' in sig.params
+    assert 'y' in sig.params
+    assert str(sig.params['x'].type) == 'int'
+    assert str(sig.params['y'].type) == 'str'
 
 
 def test_tool_definition_function_signature_computed_from_schema():
@@ -497,7 +500,7 @@ def test_tool_from_schema_function_signature_uses_schema():
         },
     )
     assert str(tool.tool_def.function_signature) == snapshot('''\
-async def search() -> Any:
+def search(*, query: str, limit: int | None = None) -> Any:
     """Search documents"""
     ...\
 ''')

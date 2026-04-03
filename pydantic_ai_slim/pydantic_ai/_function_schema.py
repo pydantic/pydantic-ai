@@ -9,11 +9,12 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import cached_property, partial
 from inspect import Parameter, signature
-from typing import TYPE_CHECKING, Any, Concatenate, Literal, cast, get_origin
+from typing import TYPE_CHECKING, Any, Concatenate, Literal, cast, get_args, get_origin
 
-from pydantic import ConfigDict
+from pydantic import ConfigDict, TypeAdapter
 from pydantic._internal import _decorators, _generate_schema
 from pydantic._internal._config import ConfigWrapper
+from pydantic.errors import PydanticSchemaGenerationError, PydanticUserError
 from pydantic.fields import FieldInfo
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic.plugin._schema_validator import create_schema_validator
@@ -29,9 +30,9 @@ from ._utils import (
     run_in_executor,
     takes_run_context,
 )
+from .messages import ToolReturn
 
 if TYPE_CHECKING:
-    from .function_signature import FunctionSignature
     from .tools import DocstringFormat, ObjectJsonSchema
 
 
@@ -53,13 +54,23 @@ class FunctionSchema:
     single_arg_name: str | None = None
     positional_fields: list[str] = field(default_factory=list[str])
     var_positional_field: str | None = None
+    schema_generator: type[GenerateJsonSchema] = GenerateJsonSchema
 
     @cached_property
-    def function_signature(self) -> FunctionSignature:
-        """Build a FunctionSignature from this schema's function, lazily on first access."""
-        from .function_signature import FunctionSignature as FS
+    def return_schema(self) -> ObjectJsonSchema | None:
+        """Generate a JSON schema for the function's return type, lazily on first access."""
+        original_func = self.function.func if isinstance(self.function, partial) else self.function  # pyright: ignore[reportUnknownMemberType]
+        type_hints = get_type_hints(original_func, include_extras=True)
+        return_annotation = type_hints.get('return')
 
-        return FS.from_function(self.function, name=self.name, description=self.description)
+        schema_type = _extract_return_schema_type(return_annotation)
+        if schema_type is None:
+            return None
+
+        try:
+            return TypeAdapter(schema_type).json_schema(schema_generator=self.schema_generator, mode='serialization')
+        except (PydanticSchemaGenerationError, PydanticUserError):
+            return None
 
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
         args, kwargs = self._call_args(args_dict, ctx)
@@ -238,6 +249,7 @@ def function_schema(  # noqa: C901
         takes_ctx=bool(takes_ctx),
         is_async=is_async_callable(function),
         function=function,
+        schema_generator=schema_generator,
     )
 
 
@@ -291,6 +303,23 @@ def _build_schema(
         extras_schema=var_kwargs_schema,
     )
     return td_schema, None
+
+
+def _extract_return_schema_type(return_annotation: Any) -> Any:
+    """Extract the type to generate a return schema for, or None if no schema should be generated.
+
+    Handles bare types, `ToolReturn[T]`, bare `ToolReturn` (no schema), and `None`/`type(None)`.
+    """
+    if return_annotation is None or return_annotation is type(None):
+        return None
+    if return_annotation is ToolReturn:
+        # Bare ToolReturn without type parameter — no schema to generate
+        return None
+    if get_origin(return_annotation) is ToolReturn:
+        type_args = get_args(return_annotation)
+        inner_type = type_args[0] if type_args else Any
+        return None if inner_type is Any else inner_type
+    return return_annotation
 
 
 def _is_call_ctx(annotation: Any) -> bool:

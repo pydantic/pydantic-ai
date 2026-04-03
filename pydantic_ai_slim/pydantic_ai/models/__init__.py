@@ -744,6 +744,7 @@ class Model(ABC):
         model_settings = merge_model_settings(self.settings, model_settings)
 
         params = self.customize_request_parameters(model_request_parameters)
+        params = _maybe_inject_return_schemas(params, self.profile)
 
         # Resolve unified thinking setting and strip from model_settings
         if model_settings and 'thinking' in model_settings:
@@ -1480,6 +1481,35 @@ def _customize_output_object(transformer: type[JsonSchemaTransformer], output_ob
         json_schema=json_schema,
         strict=schema_transformer.is_strict_compatible if output_object.strict is None else output_object.strict,
     )
+
+
+def _maybe_inject_return_schemas(params: ModelRequestParameters, profile: ModelProfile) -> ModelRequestParameters:
+    """For models without native return schema support, inject schemas into tool descriptions."""
+    if not profile.supports_tool_return_schema and any(t.return_schema is not None for t in params.function_tools):
+        return replace(
+            params,
+            function_tools=[_inject_return_schema_in_description(t) for t in params.function_tools],
+        )
+    return params
+
+
+def _inject_return_schema_in_description(tool_def: ToolDefinition) -> ToolDefinition:
+    """Inject the return schema as JSON text into the tool description.
+
+    This is a fallback for models that don't natively support tool return schemas.
+    """
+    if tool_def.return_schema is None:
+        return tool_def
+
+    import json
+
+    parts: list[str] = []
+    if tool_def.description:
+        parts.append(tool_def.description)
+    parts.append('Return schema:')
+    parts.append(json.dumps(tool_def.return_schema, indent=2))
+    description = '\n\n'.join(parts)
+    return replace(tool_def, description=description, return_schema=None)
 
 
 def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestParameters) -> FinalResultEvent | None:
