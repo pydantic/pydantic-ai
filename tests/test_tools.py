@@ -4106,7 +4106,7 @@ def test_include_return_schema_agent_default():
     """Agent-level include_tool_return_schema clears return_schema when False (default)."""
 
     def my_tool(x: int) -> int:
-        return x  # pragma: no cover
+        return x
 
     agent = Agent('test', tools=[Tool(my_tool)])
     result = agent.run_sync('test')
@@ -4124,7 +4124,7 @@ def test_include_return_schema_warning(capfd: pytest.CaptureFixture[str]):
     import warnings
 
     def void_tool(x: int) -> None:
-        pass  # pragma: no cover
+        pass
 
     agent = Agent('test', tools=[Tool(void_tool, include_return_schema=True)], include_tool_return_schema=True)
     with warnings.catch_warnings(record=True) as w:
