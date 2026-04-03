@@ -39,26 +39,18 @@ class PerModelCapability(AbstractCapability[AgentDepsT]):
     At runtime, `for_run` unwraps any wrapper models, rejects `FallbackModel`,
     and delegates to the matched capability.
 
-    Example using `routes` directly:
+    Example using `routes` directly::
 
-    ```python
-    from pydantic_ai.capabilities import PerModelCapability
+        cap = PerModelCapability(routes={
+            'openai': my_openai_capability,
+            'anthropic': my_anthropic_capability,
+        })
 
-    cap = PerModelCapability(routes={
-        'openai': OpenAICompaction(message_count_threshold=10),
-        'anthropic': AnthropicCompaction(token_threshold=100_000),
-    })
-    ```
+    Example subclassing::
 
-    Example subclassing:
-
-    ```python
-    class MyCapability(PerModelCapability):
-        def get_capability_for_model(self, model):
-            if isinstance(model, SomeModel):
-                return SomeModelCapability(...)
-            raise UserError(f'MyCapability not supported for {model.model_name}')
-    ```
+        class MyCapability(PerModelCapability):
+            def get_capability_for_model(self, model):
+                ...  # return provider-specific capability based on model
     """
 
     routes: dict[type[Model] | str, AbstractCapability[AgentDepsT]] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
