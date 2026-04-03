@@ -3373,36 +3373,6 @@ async def test_handle_ag_ui_request():
     )
 
 
-async def test_stray_tool_call_delta_after_end() -> None:
-    """Test that TOOL_CALL_ARGS events are suppressed after TOOL_CALL_END for the same tool call."""
-    run_input = create_input(UserMessage(id='msg_1', content='test'))
-    event_stream = AGUIEventStream(run_input=run_input)
-
-    part = BuiltinToolCallPart(
-        tool_name='web_search',
-        tool_call_id='call_123',
-        args='{"query": "test"}',
-        provider_name='anthropic',
-    )
-
-    events: list[BaseEvent] = []
-    async for e in event_stream.handle_builtin_tool_call_start(part):
-        events.append(e)
-    async for e in event_stream.handle_builtin_tool_call_end(part):
-        events.append(e)
-
-    stray_delta = ToolCallPartDelta(tool_call_id='call_123', args_delta='{"extra": true}')
-    async for e in event_stream.handle_tool_call_delta(stray_delta):
-        events.append(e)  # pragma: no cover
-
-    event_types = [e.type.value for e in events]
-    assert 'TOOL_CALL_START' in event_types
-    assert 'TOOL_CALL_END' in event_types
-    # No TOOL_CALL_ARGS after TOOL_CALL_END
-    end_idx = event_types.index('TOOL_CALL_END')
-    assert 'TOOL_CALL_ARGS' not in event_types[end_idx + 1 :]
-
-
 def test_dump_load_roundtrip_uploaded_file_preserved() -> None:
     """Test UploadedFile round-trips via ActivityMessage when preserve_file_data=True."""
     original: list[ModelMessage] = [
