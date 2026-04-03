@@ -11,6 +11,7 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
@@ -2304,9 +2305,66 @@ async def test_run_stream_request_error():
                 'toolName': 'tool',
                 'input': {'query': 'a'},
             },
+            {'type': 'tool-output-error', 'toolCallId': 'pyd_ai_tool_call_id__tool', 'errorText': 'Unknown tool'},
             {'type': 'error', 'errorText': 'Unknown tool'},
             {'type': 'finish-step'},
             {'type': 'finish', 'finishReason': 'error'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_run_stream_tool_retry_exhaustion():
+    """When a tool exhausts its retries, the last tool call should get a tool-output-error chunk."""
+    agent = Agent(model=TestModel(), retries=1)
+
+    @agent.tool_plain(retries=1)
+    async def flaky_tool(query: str) -> str:
+        raise ModelRetry('Service unavailable')
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    # Every tool-input-start must have a corresponding tool-output-error — no dangling calls
+    tool_starts = [e for e in events if isinstance(e, dict) and e['type'] == 'tool-input-start']
+    tool_outputs = [e for e in events if isinstance(e, dict) and e['type'] == 'tool-output-error']
+    started_ids = {e['toolCallId'] for e in tool_starts}
+    closed_ids = {e['toolCallId'] for e in tool_outputs}
+    assert started_ids == closed_ids, f'Dangling tool calls: {started_ids - closed_ids}'
+
+    # Verify the event type sequence: each attempt gets start→delta→available→error,
+    # and the final exhaustion gets an additional stream-level error
+    event_types = [e if isinstance(e, str) else e['type'] for e in events]
+    assert event_types == snapshot(
+        [
+            'start',
+            'start-step',
+            'tool-input-start',
+            'tool-input-delta',
+            'tool-input-available',
+            'tool-output-error',
+            'finish-step',
+            'start-step',
+            'tool-input-start',
+            'tool-input-delta',
+            'tool-input-available',
+            'tool-output-error',
+            'error',
+            'finish-step',
+            'finish',
             '[DONE]',
         ]
     )

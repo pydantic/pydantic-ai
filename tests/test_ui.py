@@ -558,6 +558,7 @@ async def test_run_stream_request_error():
             '</response>',
             '<request>',
             "<function-tool-call name='tool'>{'query': 'a'}</function-tool-call>",
+            "<function-tool-result name='tool'>Unknown tool</function-tool-result>",
             "<error type='ValueError'>Unknown tool</error>",
             '</request>',
             '</stream>',
