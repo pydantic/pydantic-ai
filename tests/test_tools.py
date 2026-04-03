@@ -51,8 +51,10 @@ def test_tool_no_ctx():
             return 'Hello'
 
     assert str(exc_info.value) == snapshot(
-        'Error generating schema for test_tool_no_ctx.<locals>.invalid_tool:\n'
-        '  First parameter of tools that take context must be annotated with RunContext[...]'
+        """\
+Error generating schema for test_tool_no_ctx.<locals>.invalid_tool:
+  First parameter of tools that take context must be annotated with RunContext[...]\
+"""
     )
 
 
@@ -66,8 +68,10 @@ def test_tool_plain_with_ctx():
             return 'Hello'
 
     assert str(exc_info.value) == snapshot(
-        'Error generating schema for test_tool_plain_with_ctx.<locals>.invalid_tool:\n'
-        '  RunContext annotations can only be used with tools that take context'
+        """\
+Error generating schema for test_tool_plain_with_ctx.<locals>.invalid_tool:
+  RunContext annotations can only be used with tools that take context\
+"""
     )
 
 
@@ -101,9 +105,11 @@ def test_tool_ctx_second():
             return 'Hello'
 
     assert str(exc_info.value) == snapshot(
-        'Error generating schema for test_tool_ctx_second.<locals>.invalid_tool:\n'
-        '  First parameter of tools that take context must be annotated with RunContext[...]\n'
-        '  RunContext annotations can only be used as the first argument'
+        """\
+Error generating schema for test_tool_ctx_second.<locals>.invalid_tool:
+  First parameter of tools that take context must be annotated with RunContext[...]
+  RunContext annotations can only be used as the first argument\
+"""
     )
 
 
@@ -151,6 +157,7 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'defer_loading': False,
             'prefer_builtin': None,
         }
     )
@@ -187,6 +194,7 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'defer_loading': False,
             'prefer_builtin': None,
         }
     )
@@ -231,6 +239,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'defer_loading': False,
             'prefer_builtin': None,
         }
     )
@@ -275,6 +284,7 @@ def test_google_style_with_returns():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'defer_loading': False,
             'prefer_builtin': None,
         }
     )
@@ -317,6 +327,7 @@ def test_sphinx_style_with_returns():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'defer_loading': False,
             'prefer_builtin': None,
         }
     )
@@ -365,6 +376,7 @@ def test_numpy_style_with_returns():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'defer_loading': False,
             'prefer_builtin': None,
         }
     )
@@ -401,6 +413,7 @@ def test_only_returns_type():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'defer_loading': False,
             'prefer_builtin': None,
         }
     )
@@ -428,6 +441,7 @@ def test_docstring_unknown():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'defer_loading': False,
             'prefer_builtin': None,
         }
     )
@@ -473,6 +487,7 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'defer_loading': False,
             'prefer_builtin': None,
         }
     )
@@ -511,6 +526,7 @@ def test_takes_just_model():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'defer_loading': False,
             'prefer_builtin': None,
         }
     )
@@ -558,6 +574,7 @@ def test_takes_model_and_int():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'defer_loading': False,
             'prefer_builtin': None,
         }
     )
@@ -943,6 +960,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'defer_loading': False,
             'prefer_builtin': None,
         }
     )
@@ -1017,6 +1035,7 @@ def test_json_schema_required_parameters():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
+                'defer_loading': False,
                 'prefer_builtin': None,
             },
             {
@@ -1034,6 +1053,7 @@ def test_json_schema_required_parameters():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
+                'defer_loading': False,
                 'prefer_builtin': None,
             },
         ]
@@ -1124,6 +1144,7 @@ def test_schema_generator():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
+                'defer_loading': False,
                 'prefer_builtin': None,
             },
             {
@@ -1140,6 +1161,7 @@ def test_schema_generator():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
+                'defer_loading': False,
                 'prefer_builtin': None,
             },
         ]
@@ -1179,6 +1201,7 @@ def test_tool_parameters_with_attribute_docstrings():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'defer_loading': False,
             'prefer_builtin': None,
         }
     )

@@ -517,6 +517,7 @@ def test_logfire(
                                 'kind': 'function',
                                 'metadata': None,
                                 'timeout': None,
+                                'defer_loading': False,
                                 'prefer_builtin': None,
                             }
                         ],
@@ -527,6 +528,7 @@ def test_logfire(
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
                         'thinking': None,
                     }
                 )
@@ -1041,12 +1043,16 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                                 'kind': 'output',
                                 'metadata': None,
                                 'timeout': None,
+                                'defer_loading': False,
                                 'prefer_builtin': None,
                             }
                         ],
                         'prompted_output_template': None,
                         'allow_text_output': False,
                         'allow_image_output': False,
+                        'instruction_parts': [
+                            {'content': 'Here are some instructions', 'dynamic': False, 'part_kind': 'instruction'}
+                        ],
                         'thinking': None,
                     }
                 )
@@ -1210,6 +1216,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
                         'thinking': None,
                     },
                     'logfire.span_type': 'span',
