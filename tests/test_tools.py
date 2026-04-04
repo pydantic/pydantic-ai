@@ -4108,11 +4108,19 @@ def test_include_return_schema_agent_default():
 
 
 def test_include_return_schema_warning():
-    """ToolDefinition without return_schema but with include_return_schema=True triggers warning."""
-    # Simulating MCP tool without outputSchema
-    td = ToolDefinition(name='mcp_tool', include_return_schema=True)
-    assert td.return_schema is None
-    assert td.include_return_schema is True
+    """Agent warns when include_return_schema=True but no return_schema on tool (e.g. MCP tool)."""
+
+    def my_tool(x: int) -> int:
+        return x  # pragma: no cover
+
+    tool = Tool(my_tool, include_return_schema=True)
+    # Simulate MCP tool without outputSchema by clearing return_schema
+    tool.function_schema.return_schema = None  # type: ignore[assignment]
+
+    agent = Agent('test', tools=[tool], include_tool_return_schema=True)
+
+    with pytest.warns(UserWarning, match='include_return_schema'):
+        agent.run_sync('test')
 
 
 def test_return_schema_description_injection():
