@@ -264,7 +264,7 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
             if span is None:
                 if self.auto_instrument:
                     entered_span = stack.enter_context(logfire_span('run graph {graph.name}', graph=self))
-            else:
+            else:  # pragma: lax no cover
                 entered_span = stack.enter_context(span)
             traceparent = None if entered_span is None else get_traceparent(entered_span)
             async with GraphRun[StateT, DepsT, OutputT](

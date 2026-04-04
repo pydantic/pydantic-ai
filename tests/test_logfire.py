@@ -3709,3 +3709,32 @@ def test_instrumentation_capability_explicit(
             }
         ]
     )
+
+
+def test_instrumentation_capability_template_description(
+    capfire: CaptureLogfire,
+) -> None:
+    """Test that TemplateStr descriptions are rendered in agent run spans."""
+    from dataclasses import dataclass
+
+    from pydantic_ai._template import TemplateStr
+    from pydantic_ai.capabilities.instrumentation import Instrumentation
+
+    @dataclass
+    class MyDeps:
+        name: str
+
+    instrumentation = Instrumentation(settings=InstrumentationSettings())
+    agent = Agent(
+        model=TestModel(),
+        capabilities=[instrumentation],
+        description=TemplateStr('Agent for {{name}}'),
+        deps_type=MyDeps,
+    )
+
+    result = agent.run_sync('Hello', deps=MyDeps(name='testing'))
+    assert result.output == snapshot('success (no tool calls)')
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    agent_span = spans[-1]  # outermost span is the agent run
+    assert agent_span['attributes']['gen_ai.agent.description'] == snapshot('Agent for testing')

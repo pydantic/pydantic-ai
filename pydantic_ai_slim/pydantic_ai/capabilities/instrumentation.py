@@ -94,7 +94,7 @@ class Instrumentation(AbstractCapability[Any]):
             'logfire.msg': f'{agent_name} run',
         }
 
-        if ctx.agent is not None:
+        if ctx.agent is not None:  # pragma: no branch
             rendered = ctx.agent.render_description(ctx.deps)
             if rendered is not None:
                 span_attributes['gen_ai.agent.description'] = rendered
