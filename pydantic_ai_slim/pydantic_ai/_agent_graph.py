@@ -81,6 +81,10 @@ class GraphAgentState:
     metadata: dict[str, Any] | None = None
     last_max_tokens: int | None = None
     """Last-resolved `max_tokens` from model settings, used only in error messages."""
+    pending_messages: deque[_messages.PendingMessage] = dataclasses.field(
+        default_factory=deque[_messages.PendingMessage]
+    )
+    """Queue of messages waiting to be injected into the conversation."""
 
     def check_incomplete_tool_call(self) -> None:
         """Raise `IncompleteToolCall` if the last model response was truncated mid-tool-call."""
@@ -1227,6 +1231,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         run_step=ctx.state.run_step,
         run_id=ctx.state.run_id,
         metadata=ctx.state.metadata,
+        pending_messages=ctx.state.pending_messages,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     run_context = replace(run_context, validation_context=validation_context)

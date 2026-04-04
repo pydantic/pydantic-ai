@@ -516,6 +516,7 @@ def test_logfire(
                                 'metadata': None,
                                 'timeout': None,
                                 'prefer_builtin': None,
+                                'background': False,
                             }
                         ],
                         'builtin_tools': [],
@@ -1008,6 +1009,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                                 'metadata': None,
                                 'timeout': None,
                                 'prefer_builtin': None,
+                                'background': False,
                             }
                         ],
                         'prompted_output_template': None,

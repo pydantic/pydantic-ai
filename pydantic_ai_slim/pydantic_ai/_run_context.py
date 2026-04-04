@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import dataclasses
+from collections import deque
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -13,6 +14,7 @@ from typing_extensions import TypeVar
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 
 from . import _utils, messages as _messages
+from .messages import PendingMessage, PendingMessagePriority
 
 if TYPE_CHECKING:
     from .models import Model
@@ -88,11 +90,34 @@ class RunContext(Generic[RunContextAgentDepsT]):
     `after_model_request`). Currently `None` in tool hooks, output validators,
     and during agent construction.
     """
+    pending_messages: deque[PendingMessage] = field(default_factory=deque[PendingMessage])
+    """Queue of messages waiting to be injected into the conversation.
+
+    Messages are drained automatically: `'steering'` messages before the next model
+    request, `'follow_up'` messages when the agent would otherwise end.
+
+    Use [`enqueue_message`][pydantic_ai.tools.RunContext.enqueue_message] to add messages.
+    """
 
     @property
     def last_attempt(self) -> bool:
         """Whether this is the last attempt at running this tool before an error is raised."""
         return self.retry == self.max_retries
+
+    def enqueue_message(
+        self,
+        *parts: _messages.ModelRequestPart,
+        priority: PendingMessagePriority = 'steering',
+    ) -> None:
+        """Enqueue message parts to be injected into the conversation.
+
+        Args:
+            *parts: One or more message parts (e.g. `SystemPromptPart`, `UserPromptPart`).
+            priority: When to inject:
+                `'steering'` (default) — before the next model request.
+                `'follow_up'` — when the agent would otherwise end.
+        """
+        self.pending_messages.append(PendingMessage(parts=parts, priority=priority))
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

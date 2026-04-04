@@ -1,5 +1,7 @@
 from typing import Any
 
+from ._background_tools import BackgroundToolCapability
+from ._pending_messages import PendingMessageDrainCapability
 from .abstract import (
     AbstractCapability,
     AgentNode,
@@ -47,6 +49,8 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
 
 __all__ = [
     'AbstractCapability',
+    'BackgroundToolCapability',
+    'PendingMessageDrainCapability',
     'AgentNode',
     'NodeResult',
     'RawToolArgs',

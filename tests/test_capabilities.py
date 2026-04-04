@@ -44,6 +44,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -7144,3 +7145,299 @@ class TestModelRetryFromHooks:
                 ),
             ]
         )
+
+
+# ===== Pending Message Queue Tests =====
+
+
+async def test_enqueue_steering_message_from_tool():
+    """Steering messages enqueued from a tool are injected before the next model request."""
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='inject_msg', args='{}')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        else:
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[None]) -> str:
+        ctx.enqueue_message(SystemPromptPart('Injected steering message'))
+        return 'ok'
+
+    result = await agent.run('Hello')
+    assert result.output == 'done'
+
+    # Verify the steering message appears before the second model request
+    messages = result.all_messages()
+    # Find a ModelRequest that contains a SystemPromptPart with our injected content
+    found = False
+    for msg in messages:
+        if isinstance(msg, ModelRequest):
+            for part in msg.parts:
+                if isinstance(part, SystemPromptPart) and 'Injected steering message' in part.content:
+                    found = True
+                    break
+    assert found, 'Steering message was not found in message history'
+
+
+async def test_enqueue_follow_up_message_prevents_end():
+    """Follow-up messages prevent the agent from ending and are drained into a new ModelRequest."""
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='inject_follow_up', args='{}')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        elif call_count == 2:
+            # Agent produces final result, but follow-up is pending
+            return ModelResponse(
+                parts=[TextPart(content='premature end')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        else:
+            # After follow-up is drained, agent produces real final result
+            return ModelResponse(
+                parts=[TextPart(content='final answer after follow-up')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def inject_follow_up(ctx: RunContext[None]) -> str:
+        ctx.enqueue_message(UserPromptPart('Follow-up context'), priority='follow_up')
+        return 'ok'
+
+    result = await agent.run('Hello')
+    assert result.output == 'final answer after follow-up'
+    assert call_count == 3
+
+
+async def test_enqueue_message_from_agent_run():
+    """Messages can be enqueued from external code via AgentRun.enqueue_message."""
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        return ModelResponse(
+            parts=[TextPart(content=f'response {call_count}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    async with agent.iter('Hello') as agent_run:
+        # Enqueue a follow-up message from external code before iteration
+        agent_run.enqueue_message(UserPromptPart('External follow-up'), priority='follow_up')
+        # Use next() to drive iteration so after_node_run fires
+        node = agent_run.next_node
+        while not isinstance(node, End):
+            node = await agent_run.next(node)
+
+    assert agent_run.result is not None
+    assert call_count == 2  # First response triggers End, follow-up prevents it, second response is final
+
+
+# ===== Background Tools Tests =====
+
+
+async def test_background_tool_basic():
+    """Background tools run asynchronously and deliver results as follow-up messages."""
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # Call the background tool
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='slow_research', args='{"query": "test"}')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        elif call_count == 2:
+            # Agent continues after getting ack — model produces a "waiting" response
+            return ModelResponse(
+                parts=[TextPart(content='waiting for background task')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        else:
+            # After background result is delivered as follow-up
+            # Check if the background result is in the messages
+            for msg in messages:
+                if isinstance(msg, ModelRequest):
+                    for part in msg.parts:
+                        if isinstance(part, SystemPromptPart) and 'completed' in part.content:
+                            return ModelResponse(
+                                parts=[TextPart(content='got the background result')],
+                                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                            )
+            return ModelResponse(
+                parts=[TextPart(content='no background result yet')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool(background=True)
+    async def slow_research(ctx: RunContext[None], query: str) -> str:
+        await asyncio.sleep(0.01)  # Simulate slow work
+        return f'Research result for {query}'
+
+    result = await agent.run('Do some research')
+    assert result.output == 'got the background result'
+
+
+async def test_background_tool_error_handling():
+    """Background tools that fail deliver error messages as follow-ups."""
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='failing_tool', args='{}')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        elif call_count == 2:
+            return ModelResponse(
+                parts=[TextPart(content='waiting')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        else:
+            for msg in messages:
+                if isinstance(msg, ModelRequest):
+                    for part in msg.parts:
+                        if isinstance(part, SystemPromptPart) and 'failed' in part.content:
+                            return ModelResponse(
+                                parts=[TextPart(content='handled the failure')],
+                                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                            )
+            return ModelResponse(
+                parts=[TextPart(content='no error message')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool_plain(background=True)
+    async def failing_tool() -> str:
+        await asyncio.sleep(0.01)
+        raise RuntimeError('Tool execution failed')
+
+    result = await agent.run('Do something')
+    assert result.output == 'handled the failure'
+
+
+async def test_background_tool_ack_message():
+    """Background tools return an immediate acknowledgment to the agent."""
+    call_count = 0
+    ack_content: str | None = None
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count, ack_content
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='bg_tool', args='{}')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        else:
+            # Check the tool return for the ack
+            for msg in messages:
+                if isinstance(msg, ModelRequest):
+                    for part in msg.parts:
+                        if isinstance(part, ToolReturnPart) and 'running in background' in str(part.content):
+                            ack_content = str(part.content)
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool_plain(background=True)
+    async def bg_tool() -> str:
+        await asyncio.sleep(0.5)  # Long-running, won't complete before agent finishes
+        return 'result'
+
+    result = await agent.run('Test')
+    assert result.output == 'done'
+    assert ack_content is not None
+    assert 'running in background' in ack_content
+
+
+async def test_non_background_tool_unaffected():
+    """Non-background tools are executed normally, not spawned as background tasks."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        for msg in messages:
+            if isinstance(msg, ModelRequest):
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart) and part.content == 'sync result':
+                        return ModelResponse(
+                            parts=[TextPart(content='got sync result')],
+                            usage=RequestUsage(input_tokens=10, output_tokens=5),
+                        )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='normal_tool', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool_plain
+    def normal_tool() -> str:
+        return 'sync result'
+
+    result = await agent.run('Test')
+    assert result.output == 'got sync result'
+
+
+async def test_pending_messages_accessible_on_run_context():
+    """RunContext.pending_messages is accessible and initially empty."""
+    queue_observed = False
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='check_queue', args='{}')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[TextPart(content='done')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def check_queue(ctx: RunContext[None]) -> str:
+        nonlocal queue_observed
+        assert len(ctx.pending_messages) == 0
+        ctx.enqueue_message(SystemPromptPart('test'), priority='steering')
+        assert len(ctx.pending_messages) == 1
+        queue_observed = True
+        return 'done'
+
+    await agent.run('Test')
+    assert queue_observed

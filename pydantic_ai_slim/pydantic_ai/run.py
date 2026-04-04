@@ -22,6 +22,8 @@ from .output import OutputDataT
 from .tools import AgentDepsT
 
 if TYPE_CHECKING:
+    from collections import deque
+
     from ._run_context import RunContext
     from .result import FinalResult
 
@@ -261,6 +263,12 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         except Exception as e:
             result = await cap.on_node_run_error(run_context, node=node, error=e)
         result = await cap.after_node_run(run_context, node=node, result=result)
+
+        # If after_node_run redirected End to a new node (e.g. pending message drain),
+        # clear the graph run's end state so the run loop continues.
+        if not isinstance(result, End) and self._graph_run.output is not None:
+            self._graph_run._next = [self._node_to_task(result)]  # pyright: ignore[reportPrivateUsage,reportAttributeAccessIssue]
+
         return result
 
     async def _run_node_with_hooks(
@@ -369,6 +377,30 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     def run_id(self) -> str:
         """The unique identifier for the agent run."""
         return self._graph_run.state.run_id
+
+    @property
+    def pending_messages(self) -> deque[_messages.PendingMessage]:
+        """Queue of messages waiting to be injected into the conversation.
+
+        Messages are drained automatically: `'steering'` messages before the next model
+        request, `'follow_up'` messages when the agent would otherwise end.
+        """
+        return self._graph_run.state.pending_messages
+
+    def enqueue_message(
+        self,
+        *parts: _messages.ModelRequestPart,
+        priority: _messages.PendingMessagePriority = 'steering',
+    ) -> None:
+        """Enqueue message parts to be injected into the conversation.
+
+        Args:
+            *parts: One or more message parts (e.g. `SystemPromptPart`, `UserPromptPart`).
+            priority: When to inject:
+                `'steering'` (default) — before the next model request.
+                `'follow_up'` — when the agent would otherwise end.
+        """
+        self._graph_run.state.pending_messages.append(_messages.PendingMessage(parts=parts, priority=priority))
 
     def __repr__(self) -> str:  # pragma: no cover
         result = self._graph_run.output
