@@ -38,6 +38,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -49,7 +50,7 @@ from ..messages import (
 from ..profiles import ModelProfileSpec
 from ..profiles.google import GoogleModelProfile
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ThinkingEffort
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -522,6 +523,45 @@ class GoogleModel(Model):
                 ) from e
             raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
 
+    def _translate_thinking(
+        self,
+        model_settings: GoogleModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ThinkingConfigDict | None:
+        """Get thinking config, falling back to unified thinking when provider-specific setting is not set."""
+        if config := model_settings.get('google_thinking_config'):
+            return config
+        thinking = model_request_parameters.thinking
+        if thinking is None:
+            return None
+        profile = GoogleModelProfile.from_profile(self.profile)
+        if thinking is False:
+            if profile.google_supports_thinking_level:
+                return ThinkingConfigDict(thinking_level=cast(Any, 'MINIMAL'))
+            return ThinkingConfigDict(thinking_budget=0)
+        if profile.google_supports_thinking_level:
+            if thinking is True:
+                return ThinkingConfigDict(include_thoughts=True)
+            level_map: dict[ThinkingEffort, str] = {
+                'minimal': 'MINIMAL',
+                'low': 'LOW',
+                'medium': 'MEDIUM',
+                'high': 'HIGH',
+                'xhigh': 'HIGH',  # no higher level available
+            }
+            return ThinkingConfigDict(include_thoughts=True, thinking_level=cast(Any, level_map[thinking]))
+        else:
+            if thinking is True:
+                return ThinkingConfigDict(include_thoughts=True)
+            budget_map: dict[ThinkingEffort, int] = {
+                'minimal': 128,  # minimum for Gemini 2.5 Pro
+                'low': 2048,
+                'medium': 8192,
+                'high': 24576,
+                'xhigh': 24576,  # max for Flash; Pro goes to 32768 but we use a safe common max
+            }
+            return ThinkingConfigDict(include_thoughts=True, thinking_budget=budget_map[thinking])
+
     async def _build_content_and_config(
         self,
         messages: list[ModelMessage],
@@ -576,7 +616,7 @@ class GoogleModel(Model):
             frequency_penalty=model_settings.get('frequency_penalty'),
             seed=model_settings.get('seed'),
             safety_settings=model_settings.get('google_safety_settings'),
-            thinking_config=model_settings.get('google_thinking_config'),
+            thinking_config=self._translate_thinking(model_settings, model_request_parameters),
             labels=model_settings.get('google_labels'),
             media_resolution=model_settings.get('google_video_resolution'),
             cached_content=model_settings.get('google_cached_content'),
@@ -870,8 +910,9 @@ class GoogleModel(Model):
         else:
             content: list[PartDict] = []
             for item in part.content:
-                if isinstance(item, str):
-                    content.append({'text': item})
+                if isinstance(item, str | TextContent):
+                    text = item if isinstance(item, str) else item.content
+                    content.append({'text': text})
                 elif isinstance(item, (BinaryContent, FileUrl, UploadedFile)):
                     file_part = await self._map_file_to_part(item)
                     content.append(file_part)

@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
-from typing import Any, Generic, Literal, TypeVar, get_args, overload
+from typing import Any, Generic, Literal, TypeVar, cast, get_args, overload
 
 import httpx
 from typing_extensions import TypeAliasType, TypedDict
@@ -48,7 +48,7 @@ from ..messages import (
 from ..output import OutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
 from ..providers import Provider, infer_provider, infer_provider_class
-from ..settings import ModelSettings, merge_model_settings
+from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 
@@ -338,6 +338,10 @@ KnownModelName = TypeAliasType(
         'gateway/openai:gpt-5.2-pro',
         'gateway/openai:gpt-5.2',
         'gateway/openai:gpt-5.3-chat-latest',
+        'gateway/openai:gpt-5.4-mini-2026-03-17',
+        'gateway/openai:gpt-5.4-mini',
+        'gateway/openai:gpt-5.4-nano-2026-03-17',
+        'gateway/openai:gpt-5.4-nano',
         'gateway/openai:gpt-5.4',
         'gateway/openai:gpt-5',
         'gateway/openai:o1-2024-12-17',
@@ -548,6 +552,10 @@ KnownModelName = TypeAliasType(
         'openai:gpt-5.2-pro',
         'openai:gpt-5.2',
         'openai:gpt-5.3-chat-latest',
+        'openai:gpt-5.4-mini-2026-03-17',
+        'openai:gpt-5.4-mini',
+        'openai:gpt-5.4-nano-2026-03-17',
+        'openai:gpt-5.4-nano',
         'openai:gpt-5.4',
         'openai:gpt-5',
         'openai:o1-2024-12-17',
@@ -630,6 +638,14 @@ class ModelRequestParameters:
     allow_text_output: bool = True
     allow_image_output: bool = False
 
+    thinking: ThinkingLevel | None = None
+    """Resolved thinking/reasoning configuration for this request.
+
+    `None` means the model should use its default behavior. Set by the base
+    `Model.prepare_request()` from the unified `thinking` field in `ModelSettings`,
+    after checking that the model's profile supports thinking.
+    """
+
     @cached_property
     def tool_defs(self) -> dict[str, ToolDefinition]:
         return {tool_def.name: tool_def for tool_def in [*self.function_tools, *self.output_tools]}
@@ -643,7 +659,7 @@ class ModelRequestParameters:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass
+@dataclass(kw_only=True)
 class ModelRequestContext:
     """Context for model request hooks.
 
@@ -651,6 +667,7 @@ class ModelRequestContext:
     future-proof: new fields can be added without breaking existing implementations.
     """
 
+    model: Model
     messages: list[ModelMessage]
     model_settings: ModelSettings | None
     model_request_parameters: ModelRequestParameters
@@ -757,6 +774,15 @@ class Model(ABC):
         model_settings = merge_model_settings(self.settings, model_settings)
 
         params = self.customize_request_parameters(model_request_parameters)
+
+        # Resolve unified thinking setting and strip from model_settings
+        if model_settings and 'thinking' in model_settings:
+            thinking_value = model_settings['thinking']
+            if self.profile.supports_thinking or self.profile.thinking_always_enabled:
+                if not (thinking_value is False and self.profile.thinking_always_enabled):
+                    params = replace(params, thinking=thinking_value)
+            stripped = {k: v for k, v in model_settings.items() if k != 'thinking'}
+            model_settings = cast(ModelSettings, stripped) if stripped else None
 
         if builtin_tools := params.builtin_tools:
             # Deduplicate builtin tools

@@ -34,6 +34,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -58,7 +59,7 @@ from . import (
 )
 
 try:
-    from groq import NOT_GIVEN, APIConnectionError, APIError, APIStatusError, AsyncGroq, AsyncStream
+    from groq import NOT_GIVEN, APIConnectionError, APIError, APIStatusError, AsyncGroq, AsyncStream, NotGiven
     from groq.types import chat
     from groq.types.chat.chat_completion_content_part_image_param import ImageURL
     from groq.types.chat.chat_completion_message import ExecutedTool
@@ -242,6 +243,22 @@ class GroqModel(Model):
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters)
 
+    def _translate_thinking(
+        self,
+        model_settings: GroqModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> Literal['hidden', 'raw', 'parsed'] | NotGiven:
+        """Get reasoning format, falling back to unified thinking when provider-specific setting is not set."""
+        if fmt := model_settings.get('groq_reasoning_format'):
+            return fmt
+        thinking = model_request_parameters.thinking
+        if thinking is False:
+            # Groq has no true disable; 'hidden' suppresses reasoning output
+            return 'hidden'
+        if thinking is not None:
+            return 'parsed'
+        return NOT_GIVEN
+
     @overload
     async def _completions_create(
         self,
@@ -311,7 +328,7 @@ class GroqModel(Model):
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 seed=model_settings.get('seed', NOT_GIVEN),
                 presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
-                reasoning_format=model_settings.get('groq_reasoning_format', NOT_GIVEN),
+                reasoning_format=self._translate_thinking(model_settings, model_request_parameters),
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 extra_headers=extra_headers,
@@ -509,8 +526,9 @@ class GroqModel(Model):
         else:
             content = []
             for item in part.content:
-                if isinstance(item, str):
-                    content.append(chat.ChatCompletionContentPartTextParam(text=item, type='text'))
+                if isinstance(item, str | TextContent):
+                    text = item if isinstance(item, str) else item.content
+                    content.append(chat.ChatCompletionContentPartTextParam(text=text, type='text'))
                 elif isinstance(item, ImageUrl):
                     image_url_str = item.url
                     if item.force_download:

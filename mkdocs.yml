@@ -14,6 +14,7 @@ nav:
   - install.md
   - help.md
   - troubleshooting.md
+  - Coding Agent Skills: coding-agent-skills.md
   - Pydantic AI Gateway: gateway.md
 
   - Documentation:
@@ -22,6 +23,9 @@ nav:
           - dependencies.md
           - tools.md
           - output.md
+          - capabilities.md
+          - Hooks: hooks.md
+          - Agent Specs: agent-spec.md
           - message-history.md
           - capabilities.md
           - direct.md
@@ -56,6 +60,7 @@ nav:
           - mcp/client.md
           - mcp/fastmcp-client.md
           - mcp/server.md
+      - Extensibility: extensibility.md
       - Multi-Agent Patterns: multi-agent-applications.md
       - Web Chat UI: web.md
       - Embeddings: embeddings.md
@@ -73,6 +78,7 @@ nav:
           - Custom Evaluators: evals/evaluators/custom.md
           - Report Evaluators: evals/evaluators/report-evaluators.md
           - Span-Based: evals/evaluators/span-based.md
+      - Online Evaluation: evals/online-evaluation.md
       - How-To Guides:
           - Logfire Integration: evals/how-to/logfire-integration.md
           - Dataset Management: evals/how-to/dataset-management.md
@@ -81,6 +87,7 @@ nav:
           - Multi-Run Evaluation: evals/how-to/multi-run.md
           - Retry Strategies: evals/how-to/retry-strategies.md
           - Metrics & Attributes: evals/how-to/metrics-attributes.md
+          - Case Lifecycle Hooks: evals/how-to/lifecycle.md
       - Examples:
           - Simple Validation: evals/examples/simple-validation.md
 
@@ -137,6 +144,7 @@ nav:
           - api/ag_ui.md
           - api/agent.md
           - api/builtin_tools.md
+          - api/capabilities.md
           - api/common_tools.md
           - api/concurrency.md
           - api/direct.md
@@ -182,6 +190,8 @@ nav:
       - pydantic_evals:
           - api/pydantic_evals/dataset.md
           - api/pydantic_evals/evaluators.md
+          - api/pydantic_evals/lifecycle.md
+          - api/pydantic_evals/online.md
           - api/pydantic_evals/reporting.md
           - api/pydantic_evals/otel.md
           - api/pydantic_evals/generation.md
@@ -368,10 +378,13 @@ plugins:
           - install.md
           - help.md
           - troubleshooting.md
+          - coding-agent-skills.md
         Concepts documentation:
           - a2a.md
           - agent.md
+          - agent-spec.md
           - builtin-tools.md
+          - capabilities.md
           - dependencies.md
           - deferred-tools.md
           - direct.md
@@ -383,6 +396,8 @@ plugins:
           - output.md
           - retries.md
           - message-history.md
+          - extensibility.md
+          - hooks.md
           - multi-agent-applications.md
           - thinking.md
           - third-party-tools.md

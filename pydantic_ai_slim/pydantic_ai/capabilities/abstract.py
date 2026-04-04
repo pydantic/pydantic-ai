@@ -16,6 +16,7 @@ from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
     from pydantic_ai.agent.abstract import AgentModelSettings
+    from pydantic_ai.capabilities.prefix_tools import PrefixTools
     from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
@@ -59,12 +60,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     A capability is a reusable, composable unit of agent behavior that can provide
     instructions, model settings, tools, and request/response hooks.
 
-    Lifecycle: capabilities are passed to an [`Agent`][pydantic_ai.Agent] at construction time, where their
-    `get_*` methods are called to collect static configuration (instructions, model
-    settings, toolsets, builtin tools). Then, on each model request during a run, the
-    [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] and
-    [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request] hooks
-    are called to allow dynamic adjustments.
+    Lifecycle: capabilities are passed to an [`Agent`][pydantic_ai.Agent] at construction time, where
+    most `get_*` methods are called to collect static configuration (instructions, model
+    settings, toolsets, builtin tools). The exception is
+    [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset],
+    which is called per-run during toolset assembly. Then, on each model request during a
+    run, the [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request]
+    and [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request]
+    hooks are called to allow dynamic adjustments.
 
     See the [capabilities documentation](capabilities.md) for built-in capabilities.
 
@@ -107,19 +110,20 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         """Return instructions to include in the system prompt, or None.
 
-        The returned value can be a static string, a [`TemplateStr`][pydantic_ai.TemplateStr],
-        or a callable that receives [`RunContext`][pydantic_ai.tools.RunContext] and returns
-        instructions dynamically.
+        This method is called once at agent construction time. To get dynamic
+        per-request behavior, return a callable that receives
+        [`RunContext`][pydantic_ai.tools.RunContext] or a
+        [`TemplateStr`][pydantic_ai.TemplateStr] — not a dynamic string.
         """
         return None
 
     def get_model_settings(self) -> AgentModelSettings[AgentDepsT] | None:
         """Return model settings to merge into the agent's defaults, or None.
 
-        Return a static `ModelSettings` dict when the settings are known at agent
-        construction time and don't change between requests. Return a callable
-        that receives [`RunContext`][pydantic_ai.tools.RunContext] when settings
-        need to vary per step (e.g. based on `ctx.run_step` or `ctx.deps`).
+        This method is called once at agent construction time. Return a static
+        `ModelSettings` dict when the settings don't change between requests.
+        Return a callable that receives [`RunContext`][pydantic_ai.tools.RunContext]
+        when settings need to vary per step (e.g. based on `ctx.run_step` or `ctx.deps`).
 
         When the callable is invoked, `ctx.model_settings` contains the merged
         result of all layers resolved before this capability (model defaults and
@@ -193,20 +197,17 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
-        """Wraps the entire agent run. ``handler()`` executes the run.
+        """Wraps the entire agent run. `handler()` executes the run.
 
-        Works with both :meth:`agent.run() <pydantic_ai.Agent.run>` and
-        :meth:`agent.iter() <pydantic_ai.Agent.iter>`.
-
-        If ``handler()`` raises and this method catches the exception and
+        If `handler()` raises and this method catches the exception and
         returns a result instead, the error is suppressed and the recovery
         result is used.
 
-        If this method does not call ``handler()`` (short-circuit), the run
+        If this method does not call `handler()` (short-circuit), the run
         is skipped and the returned result is used directly.
 
         Note: if the caller cancels the run (e.g. by breaking out of an
-        ``iter()`` loop), this method receives an :class:`asyncio.CancelledError`.
+        `iter()` loop), this method receives an :class:`asyncio.CancelledError`.
         Implementations that hold resources should handle cleanup accordingly.
         """
         return await handler()
@@ -221,15 +222,15 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         This is the error counterpart to
         [`after_run`][pydantic_ai.capabilities.AbstractCapability.after_run]:
-        while ``after_run`` is called on success, ``on_run_error`` is called on
+        while `after_run` is called on success, `on_run_error` is called on
         failure (after [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run]
         has had its chance to recover).
 
-        **Raise** the original ``error`` (or a different exception) to propagate it.
+        **Raise** the original `error` (or a different exception) to propagate it.
         **Return** an [`AgentRunResult`][pydantic_ai.run.AgentRunResult] to suppress
         the error and recover the run.
 
-        Not called for ``GeneratorExit`` or ``KeyboardInterrupt``.
+        Not called for `GeneratorExit` or `KeyboardInterrupt`.
         """
         raise error
 
@@ -251,7 +252,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         node: AgentNode[AgentDepsT],
         result: NodeResult[AgentDepsT],
     ) -> NodeResult[AgentDepsT]:
-        """Called after each graph node succeeds. Can modify the result (next node or ``End``)."""
+        """Called after each graph node succeeds. Can modify the result (next node or `End`)."""
         return result
 
     async def wrap_node_run(
@@ -271,11 +272,18 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         the returned next node, call `handler` multiple times (retry), or
         return a different node to redirect graph progression.
 
-        Note: this hook fires when using [`agent.run()`][pydantic_ai.Agent.run] and when
-        manually driving an [`agent.iter()`][pydantic_ai.Agent.iter] run with
+        Note: this hook fires when using [`agent.run()`][pydantic_ai.Agent.run],
+        [`agent.run_stream()`][pydantic_ai.Agent.run_stream], and when manually driving
+        an [`agent.iter()`][pydantic_ai.Agent.iter] run with
         [`next()`][pydantic_ai.result.AgentRun.next], but it does **not** fire when
         iterating over the run with bare `async for` (which yields stream events, not
         node results).
+
+        When using `agent.run()` with `event_stream_handler`, the handler wraps both
+        streaming and graph advancement (i.e. the model call happens inside the wrapper).
+        When using `agent.run_stream()`, the handler wraps only graph advancement — streaming
+        happens before the wrapper because `run_stream()` must yield the stream to the caller
+        while the stream context is still open, which cannot happen from inside a callback.
         """
         return await handler(node)
 
@@ -291,8 +299,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         This is the error counterpart to
         [`after_node_run`][pydantic_ai.capabilities.AbstractCapability.after_node_run].
 
-        **Raise** the original ``error`` (or a different exception) to propagate it.
-        **Return** a next node or ``End`` to recover and continue the graph.
+        **Raise** the original `error` (or a different exception) to propagate it.
+        **Return** a next node or `End` to recover and continue the graph.
 
         Useful for recovering from
         [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior]
@@ -329,7 +337,12 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         request_context: ModelRequestContext,
         response: ModelResponse,
     ) -> ModelResponse:
-        """Called after each model response. Can modify the response before further processing."""
+        """Called after each model response. Can modify the response before further processing.
+
+        Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject the response and
+        ask the model to try again. The original response is still appended to message history
+        so the model can see what it said. Retries count against `max_result_retries`.
+        """
         return response
 
     async def wrap_model_request(
@@ -339,7 +352,12 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         request_context: ModelRequestContext,
         handler: WrapModelRequestHandler,
     ) -> ModelResponse:
-        """Wraps the model request. handler() calls the model."""
+        """Wraps the model request. handler() calls the model.
+
+        Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to skip `on_model_request_error`
+        and directly retry the model request with a retry prompt. If the handler was called,
+        the model response is preserved in history for context (same as `after_model_request`).
+        """
         return await handler(request_context)
 
     async def on_model_request_error(
@@ -354,11 +372,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         This is the error counterpart to
         [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request].
 
-        **Raise** the original ``error`` (or a different exception) to propagate it.
+        **Raise** the original `error` (or a different exception) to propagate it.
         **Return** a [`ModelResponse`][pydantic_ai.messages.ModelResponse] to suppress
         the error and use the response as if the model call succeeded.
+        **Raise** [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to retry the model request
+        with a retry prompt instead of recovering or propagating.
 
-        Not called for [`SkipModelRequest`][pydantic_ai.exceptions.SkipModelRequest].
+        Not called for [`SkipModelRequest`][pydantic_ai.exceptions.SkipModelRequest]
+        or [`ModelRetry`][pydantic_ai.exceptions.ModelRetry].
         """
         raise error
 
@@ -369,9 +390,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
+        tool_def: ToolDefinition,
         args: RawToolArgs,
     ) -> RawToolArgs:
-        """Modify raw args before validation."""
+        """Modify raw args before validation.
+
+        Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to skip validation and
+        ask the model to redo the tool call.
+        """
         return args
 
     async def after_tool_validate(
@@ -379,9 +405,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
+        tool_def: ToolDefinition,
         args: ValidatedToolArgs,
     ) -> ValidatedToolArgs:
-        """Modify validated args. Called only on successful validation."""
+        """Modify validated args. Called only on successful validation.
+
+        Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject the validated args
+        and ask the model to redo the tool call.
+        """
         return args
 
     async def wrap_tool_validate(
@@ -389,6 +420,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
+        tool_def: ToolDefinition,
         args: RawToolArgs,
         handler: WrapToolValidateHandler,
     ) -> ValidatedToolArgs:
@@ -400,6 +432,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
+        tool_def: ToolDefinition,
         args: RawToolArgs,
         error: ValidationError | ModelRetry,
     ) -> ValidatedToolArgs:
@@ -410,7 +443,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         Fires for [`ValidationError`][pydantic.ValidationError] (schema mismatch) and
         [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] (custom validator rejection).
 
-        **Raise** the original ``error`` (or a different exception) to propagate it.
+        **Raise** the original `error` (or a different exception) to propagate it.
         **Return** validated args to suppress the error and continue as if validation passed.
 
         Not called for [`SkipToolValidation`][pydantic_ai.exceptions.SkipToolValidation].
@@ -424,9 +457,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
+        tool_def: ToolDefinition,
         args: ValidatedToolArgs,
     ) -> ValidatedToolArgs:
-        """Modify validated args before execution."""
+        """Modify validated args before execution.
+
+        Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to skip execution and
+        ask the model to redo the tool call.
+        """
         return args
 
     async def after_tool_execute(
@@ -434,10 +472,15 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
+        tool_def: ToolDefinition,
         args: ValidatedToolArgs,
         result: Any,
     ) -> Any:
-        """Modify result after execution."""
+        """Modify result after execution.
+
+        Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject the tool result
+        and ask the model to redo the tool call.
+        """
         return result
 
     async def wrap_tool_execute(
@@ -445,6 +488,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
+        tool_def: ToolDefinition,
         args: ValidatedToolArgs,
         handler: WrapToolExecuteHandler,
     ) -> Any:
@@ -456,6 +500,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
+        tool_def: ToolDefinition,
         args: ValidatedToolArgs,
         error: Exception,
     ) -> Any:
@@ -464,8 +509,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         This is the error counterpart to
         [`after_tool_execute`][pydantic_ai.capabilities.AbstractCapability.after_tool_execute].
 
-        **Raise** the original ``error`` (or a different exception) to propagate it.
+        **Raise** the original `error` (or a different exception) to propagate it.
         **Return** any value to suppress the error and use it as the tool result.
+        **Raise** [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to
+        redo the tool call instead of recovering or propagating.
 
         Not called for control flow exceptions
         ([`SkipToolExecution`][pydantic_ai.exceptions.SkipToolExecution],
@@ -477,3 +524,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         to intercept retries.
         """
         raise error
+
+    # --- Convenience methods ---
+
+    def prefix_tools(self, prefix: str) -> PrefixTools[AgentDepsT]:
+        """Returns a new capability that wraps this one and prefixes its tool names.
+
+        Only this capability's tools are prefixed; other agent tools are unaffected.
+        """
+        from .prefix_tools import PrefixTools
+
+        return PrefixTools(wrapped=self, prefix=prefix)

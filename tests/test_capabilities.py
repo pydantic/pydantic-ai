@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterable, AsyncIterator
+import contextvars
+from collections.abc import AsyncIterable, AsyncIterator, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -9,7 +10,7 @@ from typing import Any
 import pytest
 
 from pydantic_ai._run_context import RunContext
-from pydantic_ai._spec import NamedSpec
+from pydantic_ai._spec import CapabilitySpec, NamedSpec
 from pydantic_ai.agent import Agent
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.builtin_tools import CodeExecutionTool, ImageGenerationTool, MCPServerTool, WebFetchTool, WebSearchTool
@@ -18,27 +19,37 @@ from pydantic_ai.capabilities import (
     MCP,
     BuiltinTool,
     ImageGeneration,
-    Instructions,
-    ModelSettings,
+    PrefixTools,
+    Thinking,
     Toolset,
     WebFetch,
     WebSearch,
+    WrapperCapability,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
-from pydantic_ai.capabilities.builtin_or_local import BuiltinTool as BuiltinToolCap
+from pydantic_ai.capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
 from pydantic_ai.capabilities.combined import CombinedCapability
-from pydantic_ai.exceptions import SkipModelRequest, SkipToolExecution, SkipToolValidation, UserError
+from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
+from pydantic_ai.exceptions import (
+    ModelRetry,
+    SkipModelRequest,
+    SkipToolExecution,
+    SkipToolValidation,
+    UnexpectedModelBehavior,
+    UserError,
+)
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
@@ -48,6 +59,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.toolsets._dynamic import ToolsetFunc
 from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsStr
@@ -62,9 +74,9 @@ def test_capability_types() -> None:
         {
             'BuiltinTool': BuiltinTool,
             'ImageGeneration': ImageGeneration,
-            'Instructions': Instructions,
             'MCP': MCP,
-            'ModelSettings': ModelSettings,
+            'PrefixTools': PrefixTools,
+            'Thinking': Thinking,
             'WebFetch': WebFetch,
             'WebSearch': WebSearch,
         }
@@ -76,10 +88,10 @@ def test_agent_from_spec_basic():
     agent = Agent.from_spec(
         {
             'model': 'test',
+            'instructions': 'You are a helpful agent.',
+            'model_settings': {'max_tokens': 4096},
             'capabilities': [
-                {'Instructions': 'You are a helpful agent.'},
                 'WebSearch',
-                {'ModelSettings': {'max_tokens': 4096}},
             ],
         }
     )
@@ -90,6 +102,45 @@ def test_agent_from_spec_no_capabilities():
     """Test Agent.from_spec with no capabilities."""
     agent = Agent.from_spec({'model': 'test'})
     assert agent.model is not None
+
+
+def test_agent_from_spec_image_generation():
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [{'ImageGeneration': {'local': False}}],
+        }
+    )
+    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
+    cap = next(c for c in children if isinstance(c, ImageGeneration))
+    assert cap.local is False
+
+
+def test_agent_from_spec_web_fetch():
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [{'WebFetch': {'allowed_domains': ['example.com'], 'max_uses': 5}}],
+        }
+    )
+    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
+    cap = next(c for c in children if isinstance(c, WebFetch))
+    assert cap.allowed_domains == ['example.com']
+    assert cap.max_uses == 5
+
+
+def test_agent_from_spec_mcp():
+    pytest.importorskip('mcp', reason='mcp package not installed')
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [{'MCP': {'url': 'https://mcp.example.com/sse', 'allowed_tools': ['search']}}],
+        }
+    )
+    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
+    cap = next(c for c in children if isinstance(c, MCP))
+    assert cap.url == 'https://mcp.example.com/sse'
+    assert cap.allowed_tools == ['search']
 
 
 def test_agent_from_spec_unknown_capability():
@@ -105,12 +156,12 @@ def test_agent_from_spec_unknown_capability():
 
 def test_agent_from_spec_bad_args():
     """Test Agent.from_spec with bad arguments for a capability."""
-    with pytest.raises(ValueError, match="Failed to instantiate capability 'Instructions'"):
+    with pytest.raises(ValueError, match="Failed to instantiate capability 'WebSearch'"):
         Agent.from_spec(
             {
                 'model': 'test',
                 'capabilities': [
-                    {'Instructions': {'nonexistent_param': 'value'}},
+                    {'WebSearch': {'nonexistent_param': 'value'}},
                 ],
             }
         )
@@ -119,6 +170,16 @@ def test_agent_from_spec_bad_args():
 @dataclass
 class CustomCapability(AbstractCapability[None]):
     greeting: str = 'hello'
+
+
+@dataclass
+class CapabilityWithCallbackParam(AbstractCapability[None]):
+    """Custom capability with a mix of serializable and non-serializable params."""
+
+    max_retries: int = 3
+    on_error: Callable[..., Any] = lambda: None  # purely Callable, filtered from schema
+    verbose: Callable[..., Any] | bool = False  # Callable | bool, only bool survives in schema
+    hooks: Callable[..., Any] | Callable[..., None] = lambda: None  # union of all non-serializable, entirely filtered
 
 
 def test_agent_from_spec_custom_capability():
@@ -139,9 +200,9 @@ def test_agent_from_spec_with_agent_spec_object():
     """Test Agent.from_spec with an AgentSpec instance."""
     spec = AgentSpec(
         model='test',
+        instructions='You are helpful.',
         capabilities=[
-            NamedSpec(name='Instructions', arguments=('You are helpful.',)),
-            NamedSpec(name='WebSearch', arguments=None),
+            CapabilitySpec(name='WebSearch', arguments=None),
         ],
     )
     agent = Agent.from_spec(spec)
@@ -344,51 +405,573 @@ def test_agent_from_spec_capabilities_merged():
     agent = Agent.from_spec(
         {
             'model': 'test',
-            'capabilities': [{'Instructions': 'From spec.'}],
+            'capabilities': ['WebSearch'],
         },
         capabilities=[ExtraCap()],
     )
-    # Should have both the Instructions capability from spec and ExtraCap from arg
+    # Should have both the WebSearch capability from spec and ExtraCap from arg
     children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
-    assert any(isinstance(c, Instructions) for c in children)
+    assert any(isinstance(c, WebSearch) for c in children)
     assert any(isinstance(c, ExtraCap) for c in children)
 
 
 def test_model_json_schema_with_capabilities():
+    pytest.importorskip('mcp', reason='schema varies without mcp package')
     schema = AgentSpec.model_json_schema_with_capabilities()
+    assert schema == snapshot(
+        {
+            '$defs': {
+                'CodeExecutionTool': {
+                    'properties': {'kind': {'default': 'code_execution', 'title': 'Kind', 'type': 'string'}},
+                    'title': 'CodeExecutionTool',
+                    'type': 'object',
+                },
+                'FileSearchTool': {
+                    'properties': {
+                        'kind': {'default': 'file_search', 'title': 'Kind', 'type': 'string'},
+                        'file_store_ids': {'items': {'type': 'string'}, 'title': 'File Store Ids', 'type': 'array'},
+                    },
+                    'required': ['file_store_ids'],
+                    'title': 'FileSearchTool',
+                    'type': 'object',
+                },
+                'ImageGenerationTool': {
+                    'properties': {
+                        'kind': {'default': 'image_generation', 'title': 'Kind', 'type': 'string'},
+                        'background': {
+                            'default': 'auto',
+                            'enum': ['transparent', 'opaque', 'auto'],
+                            'title': 'Background',
+                            'type': 'string',
+                        },
+                        'input_fidelity': {
+                            'anyOf': [{'enum': ['high', 'low'], 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Input Fidelity',
+                        },
+                        'moderation': {
+                            'default': 'auto',
+                            'enum': ['auto', 'low'],
+                            'title': 'Moderation',
+                            'type': 'string',
+                        },
+                        'output_compression': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Output Compression',
+                        },
+                        'output_format': {
+                            'anyOf': [{'enum': ['png', 'webp', 'jpeg'], 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Output Format',
+                        },
+                        'partial_images': {'default': 0, 'title': 'Partial Images', 'type': 'integer'},
+                        'quality': {
+                            'default': 'auto',
+                            'enum': ['low', 'medium', 'high', 'auto'],
+                            'title': 'Quality',
+                            'type': 'string',
+                        },
+                        'size': {
+                            'anyOf': [
+                                {
+                                    'enum': ['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'],
+                                    'type': 'string',
+                                },
+                                {'type': 'null'},
+                            ],
+                            'default': None,
+                            'title': 'Size',
+                        },
+                        'aspect_ratio': {
+                            'anyOf': [
+                                {
+                                    'enum': ['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '2:3', '5:4', '4:5'],
+                                    'type': 'string',
+                                },
+                                {'type': 'null'},
+                            ],
+                            'default': None,
+                            'title': 'Aspect Ratio',
+                        },
+                    },
+                    'title': 'ImageGenerationTool',
+                    'type': 'object',
+                },
+                'MCPServerTool': {
+                    'properties': {
+                        'kind': {'default': 'mcp_server', 'title': 'Kind', 'type': 'string'},
+                        'id': {'title': 'Id', 'type': 'string'},
+                        'url': {'title': 'Url', 'type': 'string'},
+                        'authorization_token': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Authorization Token',
+                        },
+                        'description': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Description',
+                        },
+                        'allowed_tools': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Allowed Tools',
+                        },
+                        'headers': {
+                            'anyOf': [{'additionalProperties': {'type': 'string'}, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Headers',
+                        },
+                    },
+                    'required': ['id', 'url'],
+                    'title': 'MCPServerTool',
+                    'type': 'object',
+                },
+                'MemoryTool': {
+                    'properties': {'kind': {'default': 'memory', 'title': 'Kind', 'type': 'string'}},
+                    'title': 'MemoryTool',
+                    'type': 'object',
+                },
+                'ModelSettings': {
+                    'description': """\
+Settings to configure an LLM.
 
-    assert schema['type'] == 'object'
-    assert 'model' in schema['properties']
-    assert 'capabilities' in schema['properties']
-    assert '$schema' in schema['properties']
+Here we include only settings which apply to multiple models / model providers,
+though not all of these settings are supported by all models.\
+""",
+                    'properties': {
+                        'max_tokens': {'title': 'Max Tokens', 'type': 'integer'},
+                        'temperature': {'title': 'Temperature', 'type': 'number'},
+                        'top_p': {'title': 'Top P', 'type': 'number'},
+                        'timeout': {'title': 'Timeout', 'type': 'number'},
+                        'parallel_tool_calls': {'title': 'Parallel Tool Calls', 'type': 'boolean'},
+                        'seed': {'title': 'Seed', 'type': 'integer'},
+                        'presence_penalty': {'title': 'Presence Penalty', 'type': 'number'},
+                        'frequency_penalty': {'title': 'Frequency Penalty', 'type': 'number'},
+                        'logit_bias': {
+                            'additionalProperties': {'type': 'integer'},
+                            'title': 'Logit Bias',
+                            'type': 'object',
+                        },
+                        'stop_sequences': {'items': {'type': 'string'}, 'title': 'Stop Sequences', 'type': 'array'},
+                        'extra_headers': {
+                            'additionalProperties': {'type': 'string'},
+                            'title': 'Extra Headers',
+                            'type': 'object',
+                        },
+                        'thinking': {
+                            'anyOf': [
+                                {'type': 'boolean'},
+                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh'], 'type': 'string'},
+                            ],
+                            'title': 'Thinking',
+                        },
+                        'extra_body': {'title': 'Extra Body'},
+                    },
+                    'title': 'ModelSettings',
+                    'type': 'object',
+                },
+                'UrlContextTool': {
+                    'deprecated': True,
+                    'properties': {
+                        'kind': {'default': 'url_context', 'title': 'Kind', 'type': 'string'},
+                        'max_uses': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Max Uses',
+                        },
+                        'allowed_domains': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Allowed Domains',
+                        },
+                        'blocked_domains': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Blocked Domains',
+                        },
+                        'enable_citations': {'default': False, 'title': 'Enable Citations', 'type': 'boolean'},
+                        'max_content_tokens': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Max Content Tokens',
+                        },
+                    },
+                    'title': 'UrlContextTool',
+                    'type': 'object',
+                },
+                'WebFetchTool': {
+                    'properties': {
+                        'kind': {'default': 'web_fetch', 'title': 'Kind', 'type': 'string'},
+                        'max_uses': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Max Uses',
+                        },
+                        'allowed_domains': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Allowed Domains',
+                        },
+                        'blocked_domains': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Blocked Domains',
+                        },
+                        'enable_citations': {'default': False, 'title': 'Enable Citations', 'type': 'boolean'},
+                        'max_content_tokens': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Max Content Tokens',
+                        },
+                    },
+                    'title': 'WebFetchTool',
+                    'type': 'object',
+                },
+                'WebSearchTool': {
+                    'properties': {
+                        'kind': {'default': 'web_search', 'title': 'Kind', 'type': 'string'},
+                        'search_context_size': {
+                            'default': 'medium',
+                            'enum': ['low', 'medium', 'high'],
+                            'title': 'Search Context Size',
+                            'type': 'string',
+                        },
+                        'user_location': {
+                            'anyOf': [{'$ref': '#/$defs/WebSearchUserLocation'}, {'type': 'null'}],
+                            'default': None,
+                        },
+                        'blocked_domains': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Blocked Domains',
+                        },
+                        'allowed_domains': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Allowed Domains',
+                        },
+                        'max_uses': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Max Uses',
+                        },
+                    },
+                    'title': 'WebSearchTool',
+                    'type': 'object',
+                },
+                'WebSearchUserLocation': {
+                    'additionalProperties': False,
+                    'description': """\
+Allows you to localize search results based on a user's location.
 
-    # Capabilities should be a list with anyOf containing default types
-    cap_schema = schema['properties']['capabilities']
-    assert cap_schema['type'] == 'array'
-    any_of = cap_schema['items']['anyOf']
+Supported by:
 
-    # Collect all capability names referenced in the schema (both const literals and object keys)
-    capability_names: set[str] = set()
-    for entry in any_of:
-        if 'const' in entry:
-            capability_names.add(entry['const'])
-        elif '$ref' in entry:  # pragma: no branch
-            # Extract the name from refs like '#/$defs/spec_Instructions'
-            ref = entry['$ref']
-            ref_name = ref.rsplit('/', 1)[-1]
-            for prefix in ('spec_', 'short_spec_'):
-                if ref_name.startswith(prefix):
-                    capability_names.add(ref_name[len(prefix) :])
-
-    assert capability_names == {
-        'BuiltinTool',
-        'ImageGeneration',
-        'Instructions',
-        'MCP',
-        'ModelSettings',
-        'WebFetch',
-        'WebSearch',
-    }
+* Anthropic
+* OpenAI Responses\
+""",
+                    'properties': {
+                        'city': {'title': 'City', 'type': 'string'},
+                        'country': {'title': 'Country', 'type': 'string'},
+                        'region': {'title': 'Region', 'type': 'string'},
+                        'timezone': {'title': 'Timezone', 'type': 'string'},
+                    },
+                    'title': 'WebSearchUserLocation',
+                    'type': 'object',
+                },
+                'short_spec_BuiltinTool': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'BuiltinTool': {
+                            'anyOf': [
+                                {
+                                    'oneOf': [
+                                        {'$ref': '#/$defs/WebSearchTool'},
+                                        {'$ref': '#/$defs/CodeExecutionTool'},
+                                        {'$ref': '#/$defs/WebFetchTool'},
+                                        {'$ref': '#/$defs/UrlContextTool'},
+                                        {'$ref': '#/$defs/ImageGenerationTool'},
+                                        {'$ref': '#/$defs/MemoryTool'},
+                                        {'$ref': '#/$defs/MCPServerTool'},
+                                        {'$ref': '#/$defs/FileSearchTool'},
+                                    ]
+                                },
+                                {'type': 'null'},
+                            ],
+                            'title': 'Builtintool',
+                        }
+                    },
+                    'title': 'short_spec_BuiltinTool',
+                    'type': 'object',
+                },
+                'short_spec_MCP': {
+                    'additionalProperties': False,
+                    'properties': {'MCP': {'title': 'Mcp', 'type': 'string'}},
+                    'required': ['MCP'],
+                    'title': 'short_spec_MCP',
+                    'type': 'object',
+                },
+                'short_spec_Thinking': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'Thinking': {
+                            'anyOf': [
+                                {'type': 'boolean'},
+                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh'], 'type': 'string'},
+                            ],
+                            'title': 'Thinking',
+                        }
+                    },
+                    'title': 'short_spec_Thinking',
+                    'type': 'object',
+                },
+                'spec_ImageGeneration': {
+                    'additionalProperties': False,
+                    'properties': {'ImageGeneration': {'$ref': '#/$defs/spec_params_ImageGeneration'}},
+                    'required': ['ImageGeneration'],
+                    'title': 'spec_ImageGeneration',
+                    'type': 'object',
+                },
+                'spec_MCP': {
+                    'additionalProperties': False,
+                    'properties': {'MCP': {'$ref': '#/$defs/spec_params_MCP'}},
+                    'required': ['MCP'],
+                    'title': 'spec_MCP',
+                    'type': 'object',
+                },
+                'spec_PrefixTools': {
+                    'additionalProperties': False,
+                    'properties': {'PrefixTools': {'$ref': '#/$defs/spec_params_PrefixTools'}},
+                    'required': ['PrefixTools'],
+                    'title': 'spec_PrefixTools',
+                    'type': 'object',
+                },
+                'spec_WebFetch': {
+                    'additionalProperties': False,
+                    'properties': {'WebFetch': {'$ref': '#/$defs/spec_params_WebFetch'}},
+                    'required': ['WebFetch'],
+                    'title': 'spec_WebFetch',
+                    'type': 'object',
+                },
+                'spec_WebSearch': {
+                    'additionalProperties': False,
+                    'properties': {'WebSearch': {'$ref': '#/$defs/spec_params_WebSearch'}},
+                    'required': ['WebSearch'],
+                    'title': 'spec_WebSearch',
+                    'type': 'object',
+                },
+                'spec_params_ImageGeneration': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'builtin': {
+                            'anyOf': [
+                                {'$ref': '#/$defs/ImageGenerationTool'},
+                                {'type': 'boolean'},
+                            ],
+                            'title': 'Builtin',
+                        },
+                        'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                    },
+                    'title': 'spec_params_ImageGeneration',
+                    'type': 'object',
+                },
+                'spec_params_MCP': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'url': {'title': 'Url', 'type': 'string'},
+                        'builtin': {
+                            'anyOf': [{'$ref': '#/$defs/MCPServerTool'}, {'type': 'boolean'}],
+                            'title': 'Builtin',
+                        },
+                        'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'authorization_token': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'title': 'Authorization Token',
+                        },
+                        'headers': {
+                            'anyOf': [{'additionalProperties': {'type': 'string'}, 'type': 'object'}, {'type': 'null'}],
+                            'title': 'Headers',
+                        },
+                        'allowed_tools': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'title': 'Allowed Tools',
+                        },
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                    },
+                    'required': ['url'],
+                    'title': 'spec_params_MCP',
+                    'type': 'object',
+                },
+                'spec_params_PrefixTools': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'prefix': {'title': 'Prefix', 'type': 'string'},
+                        'capability': {
+                            'anyOf': [
+                                {'const': 'BuiltinTool', 'type': 'string'},
+                                {'$ref': '#/$defs/short_spec_BuiltinTool'},
+                                {'const': 'ImageGeneration', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_ImageGeneration'},
+                                {'$ref': '#/$defs/short_spec_MCP'},
+                                {'$ref': '#/$defs/spec_MCP'},
+                                {'$ref': '#/$defs/spec_PrefixTools'},
+                                {'const': 'Thinking', 'type': 'string'},
+                                {'$ref': '#/$defs/short_spec_Thinking'},
+                                {'const': 'WebFetch', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_WebFetch'},
+                                {'const': 'WebSearch', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_WebSearch'},
+                            ]
+                        },
+                    },
+                    'required': ['prefix', 'capability'],
+                    'title': 'spec_params_PrefixTools',
+                    'type': 'object',
+                },
+                'spec_params_WebFetch': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'builtin': {
+                            'anyOf': [
+                                {'$ref': '#/$defs/WebFetchTool'},
+                                {'type': 'boolean'},
+                            ],
+                            'title': 'Builtin',
+                        },
+                        'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'allowed_domains': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'title': 'Allowed Domains',
+                        },
+                        'blocked_domains': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'title': 'Blocked Domains',
+                        },
+                        'max_uses': {'anyOf': [{'type': 'integer'}, {'type': 'null'}], 'title': 'Max Uses'},
+                        'enable_citations': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'Enable Citations',
+                        },
+                        'max_content_tokens': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'title': 'Max Content Tokens',
+                        },
+                    },
+                    'title': 'spec_params_WebFetch',
+                    'type': 'object',
+                },
+                'spec_params_WebSearch': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'builtin': {
+                            'anyOf': [
+                                {'$ref': '#/$defs/WebSearchTool'},
+                                {'type': 'boolean'},
+                            ],
+                            'title': 'Builtin',
+                        },
+                        'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'search_context_size': {
+                            'anyOf': [{'enum': ['low', 'medium', 'high'], 'type': 'string'}, {'type': 'null'}],
+                            'title': 'Search Context Size',
+                        },
+                        'user_location': {'anyOf': [{'$ref': '#/$defs/WebSearchUserLocation'}, {'type': 'null'}]},
+                        'blocked_domains': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'title': 'Blocked Domains',
+                        },
+                        'allowed_domains': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'title': 'Allowed Domains',
+                        },
+                        'max_uses': {'anyOf': [{'type': 'integer'}, {'type': 'null'}], 'title': 'Max Uses'},
+                    },
+                    'title': 'spec_params_WebSearch',
+                    'type': 'object',
+                },
+            },
+            'additionalProperties': False,
+            'properties': {
+                'model': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Model'},
+                'name': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Name'},
+                'description': {
+                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Description',
+                },
+                'instructions': {
+                    'anyOf': [{'type': 'string'}, {'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Instructions',
+                },
+                'deps_schema': {
+                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Deps Schema',
+                },
+                'output_schema': {
+                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Output Schema',
+                },
+                'model_settings': {'anyOf': [{'$ref': '#/$defs/ModelSettings'}, {'type': 'null'}], 'default': None},
+                'retries': {'default': 1, 'title': 'Retries', 'type': 'integer'},
+                'output_retries': {
+                    'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Output Retries',
+                },
+                'end_strategy': {
+                    'default': 'early',
+                    'enum': ['early', 'exhaustive'],
+                    'title': 'End Strategy',
+                    'type': 'string',
+                },
+                'tool_timeout': {
+                    'anyOf': [{'type': 'number'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Tool Timeout',
+                },
+                'instrument': {
+                    'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Instrument',
+                },
+                'metadata': {
+                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Metadata',
+                },
+                'capabilities': {
+                    'default': [],
+                    'items': {
+                        'anyOf': [
+                            {'const': 'BuiltinTool', 'type': 'string'},
+                            {'$ref': '#/$defs/short_spec_BuiltinTool'},
+                            {'const': 'ImageGeneration', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_ImageGeneration'},
+                            {'$ref': '#/$defs/short_spec_MCP'},
+                            {'$ref': '#/$defs/spec_MCP'},
+                            {'$ref': '#/$defs/spec_PrefixTools'},
+                            {'const': 'Thinking', 'type': 'string'},
+                            {'$ref': '#/$defs/short_spec_Thinking'},
+                            {'const': 'WebFetch', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_WebFetch'},
+                            {'const': 'WebSearch', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_WebSearch'},
+                        ]
+                    },
+                    'title': 'Capabilities',
+                    'type': 'array',
+                },
+                '$schema': {'type': 'string'},
+            },
+            'title': 'AgentSpec',
+            'type': 'object',
+        }
+    )
 
 
 def test_model_json_schema_with_custom_capabilities():
@@ -412,6 +995,34 @@ def test_model_json_schema_with_custom_capabilities():
     assert 'CustomCapability' in capability_names
     # Default capabilities should still be present
     assert 'WebSearch' in capability_names
+
+
+def test_model_json_schema_filters_non_serializable_params():
+    """Custom capabilities with non-serializable __init__ params get filtered in schema."""
+    schema = AgentSpec.model_json_schema_with_capabilities(
+        custom_capability_types=[CapabilityWithCallbackParam],
+    )
+    any_of = schema['properties']['capabilities']['items']['anyOf']
+
+    # String form: all remaining params are optional
+    has_string_form = any(e.get('const') == 'CapabilityWithCallbackParam' for e in any_of)
+    assert has_string_form
+
+    # Long form: max_retries and verbose survive; on_error (purely Callable) is filtered out
+    spec_ref = next(
+        (e for e in any_of if '$ref' in e and 'spec_CapabilityWithCallbackParam' in e['$ref']),
+        None,
+    )
+    assert spec_ref is not None
+    params_def = schema['$defs']['spec_params_CapabilityWithCallbackParam']
+    assert 'max_retries' in params_def['properties']
+    assert 'verbose' in params_def['properties']
+    # on_error should not appear — purely Callable, entirely filtered out
+    assert 'on_error' not in params_def['properties']
+    # hooks should not appear — union of only non-serializable types, entirely filtered out
+    assert 'hooks' not in params_def['properties']
+    # verbose should be boolean only (Callable member was stripped from the union)
+    assert params_def['properties']['verbose'] == {'title': 'Verbose', 'type': 'boolean'}
 
 
 def test_agent_spec_schema_field_parity():
@@ -681,8 +1292,8 @@ async def test_capability_returning_toolset_func_combined():
     """Test that a ToolsetFunc capability works alongside other capabilities via CombinedCapability."""
     agent = Agent(
         TestModel(),
+        instructions='You are a helpful greeter.',
         capabilities=[
-            Instructions('You are a helpful greeter.'),
             ToolsetFuncCapability(),
         ],
     )
@@ -700,50 +1311,6 @@ async def test_capability_returning_toolset_func_combined():
     assert tool_returns[0].content.startswith('Hello, ')
 
 
-def test_model_settings_from_spec_positional():
-    """ModelSettings.from_spec with a single positional dict arg."""
-    cap = ModelSettings.from_spec({'max_tokens': 4096, 'temperature': 0.5})
-    assert cap.settings == {'max_tokens': 4096, 'temperature': 0.5}
-
-
-def test_model_settings_from_spec_kwargs():
-    """ModelSettings.from_spec with keyword arguments."""
-    cap = ModelSettings.from_spec(max_tokens=100)
-    assert cap.settings == {'max_tokens': 100}
-
-
-def test_model_settings_callable_get_model_settings():
-    """Callable ModelSettings returns the callable from get_model_settings for resolution in the chain."""
-
-    def dynamic_settings(ctx: RunContext[None]) -> _ModelSettings:
-        return _ModelSettings(temperature=0.9)  # pragma: no cover
-
-    cap = ModelSettings(settings=dynamic_settings)
-
-    # get_model_settings returns the callable directly — resolution happens in the agent's settings chain
-    result = cap.get_model_settings()
-    assert callable(result)
-    assert result is dynamic_settings
-
-
-async def test_model_settings_static_before_model_request():
-    """Static ModelSettings passes through before_model_request without modification."""
-    cap = ModelSettings(settings=_ModelSettings(max_tokens=200))
-
-    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[])
-    input_settings = _ModelSettings(temperature=0.5)
-    result = await cap.before_model_request(
-        ctx,
-        ModelRequestContext(
-            messages=[],
-            model_settings=input_settings,
-            model_request_parameters=ModelRequestParameters(),
-        ),
-    )
-    # Static settings are handled by get_model_settings, not before_model_request
-    assert result.model_settings is input_settings
-
-
 def test_abstract_capability_get_model_settings_default():
     """AbstractCapability.get_model_settings() returns None by default."""
 
@@ -757,10 +1324,21 @@ def test_abstract_capability_get_model_settings_default():
 
 def test_combined_capability_get_model_settings_merge():
     """CombinedCapability.get_model_settings() merges settings from all sub-capabilities."""
+
+    @dataclass
+    class MaxTokensCap(AbstractCapability[None]):
+        def get_model_settings(self) -> _ModelSettings | None:
+            return _ModelSettings(max_tokens=100)
+
+    @dataclass
+    class TemperatureCap(AbstractCapability[None]):
+        def get_model_settings(self) -> _ModelSettings | None:
+            return _ModelSettings(temperature=0.5)
+
     caps = CombinedCapability(
         capabilities=[
-            ModelSettings(settings=_ModelSettings(max_tokens=100)),
-            ModelSettings(settings=_ModelSettings(temperature=0.5)),
+            MaxTokensCap(),
+            TemperatureCap(),
         ]
     )
     merged = caps.get_model_settings()
@@ -772,7 +1350,12 @@ def test_combined_capability_get_model_settings_merge():
 
 def test_combined_capability_get_model_settings_none():
     """CombinedCapability.get_model_settings() returns None when no capabilities provide settings."""
-    caps = CombinedCapability(capabilities=[Instructions('hello')])
+
+    @dataclass
+    class PlainCap(AbstractCapability[None]):
+        pass
+
+    caps = CombinedCapability(capabilities=[PlainCap()])
     assert caps.get_model_settings() is None
 
 
@@ -854,15 +1437,25 @@ def _build_run_context(deps: Any = None) -> RunContext[Any]:
 
 async def test_capability_for_run_default_returns_self():
     """Default for_run returns self."""
-    cap = Instructions(instructions='hello')
+
+    @dataclass
+    class SimpleCap(AbstractCapability[None]):
+        pass
+
+    cap = SimpleCap()
     ctx = _build_run_context()
     assert await cap.for_run(ctx) is cap
 
 
 async def test_combined_capability_for_run_propagates():
     """CombinedCapability propagates for_run to children."""
-    cap1 = Instructions(instructions='a')
-    cap2 = Instructions(instructions='b')
+
+    @dataclass
+    class SimpleCap(AbstractCapability[None]):
+        label: str = ''
+
+    cap1 = SimpleCap(label='a')
+    cap2 = SimpleCap(label='b')
     combined = CombinedCapability([cap1, cap2])
     ctx = _build_run_context()
 
@@ -881,7 +1474,11 @@ async def test_combined_capability_for_run_returns_new_when_child_changes():
         async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
             return PerRunCap(run_id=self.run_id + 1)
 
-    static_cap = Instructions(instructions='static')
+    @dataclass
+    class StaticCap(AbstractCapability[None]):
+        pass
+
+    static_cap = StaticCap()
     per_run_cap = PerRunCap()
     combined = CombinedCapability([static_cap, per_run_cap])
     ctx = _build_run_context()
@@ -995,6 +1592,24 @@ async def test_concurrent_runs_capability_isolation():
 # --- Hooks test helpers ---
 
 
+@dataclass
+class _ReplacingCapability(AbstractCapability[Any]):
+    """Capability that replaces ModelRequestNode with a fresh copy in before_node_run.
+
+    Used to test that streaming + node replacement doesn't cause double model execution.
+    """
+
+    replaced: bool = field(default=False, init=False)
+
+    async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
+        from pydantic_ai._agent_graph import ModelRequestNode
+
+        if isinstance(node, ModelRequestNode) and not self.replaced:
+            self.replaced = True
+            return ModelRequestNode(request=node.request)  # pyright: ignore[reportUnknownVariableType]
+        return node  # pyright: ignore[reportUnknownVariableType]
+
+
 def make_text_response(text: str = 'hello') -> ModelResponse:
     return ModelResponse(parts=[TextPart(content=text)])
 
@@ -1094,19 +1709,25 @@ class LoggingCapability(AbstractCapability[Any]):
         return response
 
     async def before_tool_validate(
-        self, ctx: RunContext[Any], *, call: ToolCallPart, args: str | dict[str, Any]
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: str | dict[str, Any]
     ) -> str | dict[str, Any]:
         self.log.append(f'before_tool_validate:{call.tool_name}')
         return args
 
     async def after_tool_validate(
-        self, ctx: RunContext[Any], *, call: ToolCallPart, args: dict[str, Any]
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
     ) -> dict[str, Any]:
         self.log.append(f'after_tool_validate:{call.tool_name}')
         return args
 
     async def wrap_tool_validate(
-        self, ctx: RunContext[Any], *, call: ToolCallPart, args: str | dict[str, Any], handler: Any
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: str | dict[str, Any],
+        handler: Any,
     ) -> dict[str, Any]:
         self.log.append(f'wrap_tool_validate:{call.tool_name}:before')
         result = await handler(args)
@@ -1114,19 +1735,19 @@ class LoggingCapability(AbstractCapability[Any]):
         return result
 
     async def before_tool_execute(
-        self, ctx: RunContext[Any], *, call: ToolCallPart, args: dict[str, Any]
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
     ) -> dict[str, Any]:
         self.log.append(f'before_tool_execute:{call.tool_name}')
         return args
 
     async def after_tool_execute(
-        self, ctx: RunContext[Any], *, call: ToolCallPart, args: dict[str, Any], result: Any
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any], result: Any
     ) -> Any:
         self.log.append(f'after_tool_execute:{call.tool_name}')
         return result
 
     async def wrap_tool_execute(
-        self, ctx: RunContext[Any], *, call: ToolCallPart, args: dict[str, Any], handler: Any
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any], handler: Any
     ) -> Any:
         self.log.append(f'wrap_tool_execute:{call.tool_name}:before')
         result = await handler(args)
@@ -1156,13 +1777,19 @@ class LoggingCapability(AbstractCapability[Any]):
         raise error
 
     async def on_tool_validate_error(
-        self, ctx: RunContext[Any], *, call: ToolCallPart, args: Any, error: Any
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Any
     ) -> dict[str, Any]:
         self.log.append(f'on_tool_validate_error:{call.tool_name}')
         raise error
 
     async def on_tool_execute_error(
-        self, ctx: RunContext[Any], *, call: ToolCallPart, args: dict[str, Any], error: Exception
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        error: Exception,
     ) -> Any:
         self.log.append(f'on_tool_execute_error:{call.tool_name}')
         raise error
@@ -1343,6 +1970,151 @@ class TestModelRequestHooks:
         result = await agent.run('hello')
         assert result.output == 'skipped model'
 
+    async def test_before_model_request_swaps_model(self):
+        call_log: list[str] = []
+
+        def swap_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            call_log.append('swap_model')
+            return make_text_response('from swap model')
+
+        swap_target = FunctionModel(swap_model_fn)
+
+        @dataclass
+        class SwapModelCap(AbstractCapability[Any]):
+            async def before_model_request(
+                self, ctx: RunContext[Any], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                request_context.model = swap_target
+                return request_context
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[SwapModelCap()])
+        result = await agent.run('hello')
+        assert result.output == 'from swap model'
+        assert call_log == ['swap_model']
+
+    async def test_wrap_model_request_swaps_model(self):
+        call_log: list[str] = []
+
+        def swap_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            call_log.append('swap_model')
+            return make_text_response('from swap model')
+
+        swap_target = FunctionModel(swap_model_fn)
+
+        @dataclass
+        class SwapInWrapCap(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any
+            ) -> ModelResponse:
+                request_context.model = swap_target
+                return await handler(request_context)
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[SwapInWrapCap()])
+        result = await agent.run('hello')
+        assert result.output == 'from swap model'
+        assert call_log == ['swap_model']
+
+    async def test_before_model_request_swaps_model_streaming(self):
+        call_log: list[str] = []
+
+        async def swap_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            call_log.append('swap_stream')
+            yield 'from swap stream'
+
+        swap_target = FunctionModel(stream_function=swap_stream_fn)
+
+        @dataclass
+        class SwapModelCap(AbstractCapability[Any]):
+            async def before_model_request(
+                self, ctx: RunContext[Any], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                request_context.model = swap_target
+                return request_context
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[SwapModelCap()],
+        )
+        async with agent.run_stream('hello') as stream:
+            output = await stream.get_output()
+        assert output == 'from swap stream'
+        assert call_log == ['swap_stream']
+
+    async def test_run_context_model_unchanged_after_swap(self):
+        observed_models: list[Any] = []
+
+        def swap_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('from swap model')
+
+        original_model = FunctionModel(simple_model_function)
+        swap_target = FunctionModel(swap_model_fn)
+
+        @dataclass
+        class SwapAndObserveCap(AbstractCapability[Any]):
+            async def before_model_request(
+                self, ctx: RunContext[Any], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                observed_models.append(ctx.model)
+                request_context.model = swap_target
+                return request_context
+
+        agent = Agent(original_model, capabilities=[SwapAndObserveCap()])
+        result = await agent.run('hello')
+        assert result.output == 'from swap model'
+        assert observed_models[0] is original_model
+
+    async def test_hooks_before_model_request_swaps_model(self):
+        call_log: list[str] = []
+        hooks = Hooks()
+
+        def swap_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            call_log.append('swap_model')
+            return make_text_response('from swap model')
+
+        swap_target = FunctionModel(swap_model_fn)
+
+        @hooks.on.before_model_request
+        async def _(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            request_context.model = swap_target
+            return request_context
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        result = await agent.run('hello')
+        assert result.output == 'from swap model'
+        assert call_log == ['swap_model']
+
+    async def test_after_model_request_sees_wrap_swap(self):
+        """after_model_request sees the model swapped during wrap_model_request."""
+        after_models: list[Any] = []
+
+        def swap_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('from swap model')
+
+        swap_target = FunctionModel(swap_model_fn)
+
+        @dataclass
+        class SwapInWrapAndObserveCap(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any
+            ) -> ModelResponse:
+                request_context.model = swap_target
+                return await handler(request_context)
+
+            async def after_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                response: ModelResponse,
+            ) -> ModelResponse:
+                after_models.append(request_context.model)
+                return response
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[SwapInWrapAndObserveCap()])
+        result = await agent.run('hello')
+        assert result.output == 'from swap model'
+        assert after_models[0] is swap_target
+
 
 class TestToolValidateHooks:
     async def test_tool_validate_hooks_fire(self):
@@ -1363,7 +2135,7 @@ class TestToolValidateHooks:
         @dataclass
         class ModifyArgsCap(AbstractCapability[Any]):
             async def before_tool_validate(
-                self, ctx: RunContext[Any], *, call: ToolCallPart, args: str | dict[str, Any]
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: str | dict[str, Any]
             ) -> str | dict[str, Any]:
                 # Inject an argument
                 if isinstance(args, dict):
@@ -1387,7 +2159,7 @@ class TestToolValidateHooks:
         @dataclass
         class SkipValidateCap(AbstractCapability[Any]):
             async def before_tool_validate(
-                self, ctx: RunContext[Any], *, call: ToolCallPart, args: str | dict[str, Any]
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: str | dict[str, Any]
             ) -> str | dict[str, Any]:
                 raise SkipToolValidation({'name': 'skip-validated'})
 
@@ -1403,6 +2175,31 @@ class TestToolValidateHooks:
 
         await agent.run('greet someone')
         assert received_name == 'skip-validated'
+
+    async def test_tool_def_matches_called_tool(self):
+        """Verify tool_def is the correct ToolDefinition for the tool being called."""
+        received_tool_defs: list[ToolDefinition] = []
+
+        @dataclass
+        class CaptureCap(AbstractCapability[Any]):
+            async def before_tool_validate(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: str | dict[str, Any]
+            ) -> str | dict[str, Any]:
+                received_tool_defs.append(tool_def)
+                return args
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[CaptureCap()])
+
+        @agent.tool_plain(description='Say hello')
+        def my_tool() -> str:
+            return 'tool result'
+
+        await agent.run('call the tool')
+        assert len(received_tool_defs) == 1
+        td = received_tool_defs[0]
+        assert td.name == 'my_tool'
+        assert td.description == 'Say hello'
+        assert td.kind == 'function'
 
 
 class TestToolExecuteHooks:
@@ -1424,7 +2221,13 @@ class TestToolExecuteHooks:
         @dataclass
         class ModifyResultCap(AbstractCapability[Any]):
             async def after_tool_execute(
-                self, ctx: RunContext[Any], *, call: ToolCallPart, args: dict[str, Any], result: Any
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                result: Any,
             ) -> Any:
                 return f'modified: {result}'
 
@@ -1452,7 +2255,7 @@ class TestToolExecuteHooks:
         @dataclass
         class SkipExecCap(AbstractCapability[Any]):
             async def before_tool_execute(
-                self, ctx: RunContext[Any], *, call: ToolCallPart, args: dict[str, Any]
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
             ) -> dict[str, Any]:
                 raise SkipToolExecution('denied')
 
@@ -1487,7 +2290,13 @@ class TestToolExecuteHooks:
             caught_error: str | None = None
 
             async def wrap_tool_execute(
-                self, ctx: RunContext[Any], *, call: ToolCallPart, args: dict[str, Any], handler: Any
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                handler: Any,
             ) -> Any:
                 try:
                     return await handler(args)
@@ -1732,6 +2541,24 @@ class TestStreamingHooks:
         async with agent.run_stream('hello') as stream:
             output = await stream.get_output()
         assert output == 'skipped in stream'
+
+    async def test_skip_model_request_from_wrap_model_request(self):
+        """SkipModelRequest raised inside wrap_model_request is handled in non-streaming."""
+
+        @dataclass
+        class WrapSkipCap(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: Any,
+            ) -> ModelResponse:
+                raise SkipModelRequest(ModelResponse(parts=[TextPart(content='wrap-skipped')]))
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[WrapSkipCap()])
+        result = await agent.run('hello')
+        assert result.output == 'wrap-skipped'
 
     async def test_skip_model_request_from_wrap_model_request_streaming(self):
         """SkipModelRequest raised inside wrap_model_request during streaming is handled."""
@@ -2242,7 +3069,7 @@ class TestWrapNodeRunHook:
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
             async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
-                return await handler(node)
+                return await handler(node)  # pragma: no cover — bare async for doesn't call this
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[NodeObserverCap()])
 
@@ -2492,58 +3319,37 @@ class TestMCPCapability:
 
     def test_mcp_url_required(self):
         """MCP without url raises TypeError."""
-        with pytest.raises(TypeError, match="missing 1 required keyword-only argument: 'url'"):
+        with pytest.raises(TypeError, match="missing 1 required positional argument: 'url'"):
             MCP()  # type: ignore[call-arg]
 
 
 class TestNamedSpecDictRoundTrip:
-    """Test that NamedSpec correctly round-trips a dict-as-first-arg without misinterpreting it as kwargs."""
+    """Test that NamedSpec correctly round-trips various argument forms."""
 
-    def test_model_settings_dict_round_trip(self):
-        """ModelSettings with a dict positional arg survives serialize -> deserialize."""
-        spec = NamedSpec(name='ModelSettings', arguments=({'max_tokens': 4096, 'temperature': 0.5},))
-
-        # Serialize with short form
+    def test_dict_positional_arg_uses_long_form(self):
+        """A dict positional arg falls back to long form to avoid kwargs misinterpretation on round-trip."""
+        spec = NamedSpec(name='CustomCap', arguments=({'key': 'value', 'other': 42},))
         serialized = spec.model_dump(context={'use_short_form': True})
-
-        # The short form would be ambiguous (dict with string keys), so it should use the long form
-        assert serialized['name'] == 'ModelSettings'
-        # arguments is a tuple with one dict element
+        # Dict with string keys would be ambiguous in short form, so long form is used
+        assert serialized['name'] == 'CustomCap'
         assert len(serialized['arguments']) == 1
-        assert serialized['arguments'][0] == {'max_tokens': 4096, 'temperature': 0.5}
-
-        # Deserialize and verify the round-trip
+        assert serialized['arguments'][0] == {'key': 'value', 'other': 42}
+        # Round-trip preserves the dict as a positional arg
         deserialized = NamedSpec.model_validate(serialized)
-        assert deserialized.name == 'ModelSettings'
-        assert deserialized.arguments == ({'max_tokens': 4096, 'temperature': 0.5},)
-        assert deserialized.args == ({'max_tokens': 4096, 'temperature': 0.5},)
+        assert deserialized.args == ({'key': 'value', 'other': 42},)
         assert deserialized.kwargs == {}
 
     def test_non_dict_positional_arg_uses_short_form(self):
         """A non-dict positional arg still uses the compact short form."""
-        spec = NamedSpec(name='Instructions', arguments=('Be helpful.',))
+        spec = NamedSpec(name='WebSearch', arguments=(True,))
         serialized = spec.model_dump(context={'use_short_form': True})
-        assert serialized == {'Instructions': 'Be helpful.'}
+        assert serialized == {'WebSearch': True}
 
-    def test_kwargs_still_use_short_form(self):
-        """Kwargs (dict arguments) still use the short form correctly."""
-        spec = NamedSpec(name='ModelSettings', arguments={'max_tokens': 4096})
+    def test_kwargs_use_short_form(self):
+        """Kwargs (dict arguments) use the short form correctly."""
+        spec = NamedSpec(name='WebSearch', arguments={'local': True})
         serialized = spec.model_dump(context={'use_short_form': True})
-        assert serialized == {'ModelSettings': {'max_tokens': 4096}}
-
-    def test_agent_from_spec_model_settings_round_trip(self):
-        """Agent.from_spec with ModelSettings dict works correctly both ways."""
-
-        # Construct via the dict short form (kwargs interpretation)
-        agent = Agent.from_spec(
-            {
-                'model': 'test',
-                'capabilities': [
-                    {'ModelSettings': {'max_tokens': 4096, 'temperature': 0.5}},
-                ],
-            }
-        )
-        assert agent.model is not None
+        assert serialized == {'WebSearch': {'local': True}}
 
 
 class TestPrepareToolsCapability:
@@ -2690,8 +3496,8 @@ class TestOverrideWithSpec:
             ]
         )
 
-    async def test_override_with_spec_capabilities(self):
-        """Override with spec capabilities replaces agent's existing capabilities."""
+    async def test_override_with_spec_instructions(self):
+        """Override with spec instructions replaces agent's existing instructions."""
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             instructions = next(
@@ -2699,23 +3505,23 @@ class TestOverrideWithSpec:
             )
             return make_text_response(f'instructions: {instructions}')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[Instructions('agent-cap')])
+        agent = Agent(FunctionModel(model_fn), instructions='agent-instructions')
 
-        with agent.override(spec={'capabilities': [{'Instructions': 'from-spec-cap'}]}):
+        with agent.override(spec={'instructions': 'from-spec-instructions'}):
             result = await agent.run('hello')
-            # Override replaces: only spec capability instructions, not agent's
-            assert 'from-spec-cap' in result.output
-            assert 'agent-cap' not in result.output
+            # Override replaces: only spec instructions, not agent's
+            assert 'from-spec-instructions' in result.output
+            assert 'agent-instructions' not in result.output
             assert result.all_messages() == snapshot(
                 [
                     ModelRequest(
                         parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                         timestamp=IsDatetime(),
-                        instructions='from-spec-cap',
+                        instructions='from-spec-instructions',
                         run_id=IsStr(),
                     ),
                     ModelResponse(
-                        parts=[TextPart(content='instructions: from-spec-cap')],
+                        parts=[TextPart(content='instructions: from-spec-instructions')],
                         usage=RequestUsage(input_tokens=51, output_tokens=2),
                         model_name='function:model_fn:',
                         timestamp=IsDatetime(),
@@ -2723,6 +3529,18 @@ class TestOverrideWithSpec:
                     ),
                 ]
             )
+
+    async def test_override_with_spec_capabilities(self):
+        """Override with spec providing capabilities uses them for the run."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('ok')
+
+        agent = Agent(FunctionModel(model_fn))
+
+        with agent.override(spec={'capabilities': [{'WebSearch': {'local': False}}]}):
+            result = await agent.run('hello')
+            assert result.output == 'ok'
 
 
 class TestRunWithSpec:
@@ -2858,7 +3676,25 @@ also from spec\
         )
 
     async def test_run_with_spec_capabilities(self):
-        """Run with spec capabilities merges with agent's root capability."""
+        """Run with spec capabilities merges them with agent's root capability."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions = next(
+                (m.instructions for m in messages if isinstance(m, ModelRequest) and m.instructions), None
+            )
+            return make_text_response(f'instructions: {instructions}')
+
+        agent = Agent(FunctionModel(model_fn), instructions='agent-level')
+
+        result = await agent.run(
+            'hello',
+            spec={'capabilities': [{'WebSearch': {'local': False}}]},
+        )
+        # Agent-level instructions should be present; spec capabilities are merged additively
+        assert 'agent-level' in result.output
+
+    async def test_run_with_spec_instructions(self):
+        """Run with spec instructions adds to agent's instructions."""
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             instructions = next(
@@ -2871,14 +3707,12 @@ also from spec\
         result = await agent.run(
             'hello',
             spec={
-                'capabilities': [
-                    {'Instructions': 'extra from spec cap'},
-                ],
+                'instructions': 'from-spec',
             },
         )
         # Both should be present (additive)
         assert 'agent-level' in result.output
-        assert 'extra from spec cap' in result.output
+        assert 'from-spec' in result.output
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
@@ -2886,7 +3720,7 @@ also from spec\
                     timestamp=IsDatetime(),
                     instructions="""\
 agent-level
-extra from spec cap\
+from-spec\
 """,
                     run_id=IsStr(),
                 ),
@@ -2895,11 +3729,11 @@ extra from spec cap\
                         TextPart(
                             content="""\
 instructions: agent-level
-extra from spec cap\
+from-spec\
 """
                         )
                     ],
-                    usage=RequestUsage(input_tokens=51, output_tokens=6),
+                    usage=RequestUsage(input_tokens=51, output_tokens=3),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -3225,7 +4059,7 @@ class TestGetWrapperToolsetHook:
 def test_from_spec_no_model_raises():
     """from_spec() without model raises UserError."""
     with pytest.raises(UserError, match='`model` must be provided'):
-        Agent.from_spec({'capabilities': [{'Instructions': 'hello'}]})
+        Agent.from_spec({'instructions': 'hello'})
 
 
 # --- run() with spec: additional merge scenarios ---
@@ -3451,7 +4285,7 @@ def test_builtin_or_local_base_no_default_builtin():
 
 def test_builtin_tool_from_spec_no_args():
     """BuiltinTool.from_spec() with no arguments raises TypeError."""
-    from pydantic_ai.capabilities.builtin_or_local import BuiltinTool as BuiltinToolCapDirect
+    from pydantic_ai.capabilities.builtin_tool import BuiltinTool as BuiltinToolCapDirect
 
     with pytest.raises(TypeError, match='requires either a `tool` argument'):
         BuiltinToolCapDirect.from_spec()
@@ -3589,7 +4423,9 @@ class TestRunErrorHooks:
                     self.log.append('wrap_run:caught')
                     return AgentRunResult(output='wrap_recovered')
 
-            async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            async def on_run_error(  # pragma: no cover — verifying this is NOT called
+                self, ctx: RunContext[Any], *, error: BaseException
+            ) -> AgentRunResult[Any]:
                 self.log.append('on_run_error')
                 raise error
 
@@ -3621,7 +4457,7 @@ class TestRunErrorHooks:
         agent = Agent(FunctionModel(failing_model), capabilities=[cap])
         async with agent.iter('hello') as agent_run:
             node = agent_run.next_node
-            while not isinstance(node, End):
+            while not isinstance(node, End):  # pragma: no branch
                 node = await agent_run.next(node)
         assert cap.called
         assert agent_run.result is not None
@@ -3707,6 +4543,43 @@ class TestModelRequestErrorHooks:
         await agent.run('hello')
         assert 'on_model_request_error' not in cap.log
 
+    async def test_default_on_model_request_error_reraises(self):
+        """Default on_model_request_error re-raises, exercised with a minimal capability."""
+
+        @dataclass
+        class MinimalCap(AbstractCapability[Any]):
+            def get_instructions(self):
+                return 'Be helpful.'
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[MinimalCap()])
+        with pytest.raises(RuntimeError, match='model exploded'):
+            await agent.run('hello')
+
+    async def test_default_on_model_request_error_reraises_streaming(self):
+        """Default on_model_request_error re-raises in streaming path (wrap_task error after stream consumed)."""
+
+        @dataclass
+        class PostProcessFailCap(AbstractCapability[Any]):
+            """wrap_model_request that fails AFTER handler returns (post-processing error)."""
+
+            def get_instructions(self):
+                return 'Be helpful.'
+
+            async def wrap_model_request(self, ctx: RunContext[Any], *, request_context: Any, handler: Any) -> Any:
+                await handler(request_context)
+                raise RuntimeError('post-processing exploded')
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[PostProcessFailCap()],
+        )
+        with pytest.raises(RuntimeError, match='post-processing exploded'):
+            async with agent.run_stream('hello') as stream:
+                await stream.get_output()
+
 
 # --- Tool validate error hook tests ---
 
@@ -3759,7 +4632,7 @@ class TestToolValidateErrorHooks:
         @dataclass
         class RecoverValidateCap(AbstractCapability[Any]):
             async def on_tool_validate_error(
-                self, ctx: RunContext[Any], *, call: ToolCallPart, args: Any, error: Any
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Any
             ) -> dict[str, Any]:
                 return {'name': 'recovered-name'}
 
@@ -3788,6 +4661,43 @@ class TestToolValidateErrorHooks:
         result = await agent.run('greet someone')
         assert received_name == 'recovered-name'
         assert 'hello recovered-name' in result.output
+
+    async def test_default_on_tool_validate_error_reraises(self):
+        """The default on_tool_validate_error re-raises, exercised with a minimal capability."""
+
+        @dataclass
+        class MinimalCap(AbstractCapability[Any]):
+            def get_instructions(self):
+                return 'Be helpful.'
+
+        call_count = 0
+
+        def bad_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return make_text_response(f'got: {part.content}')
+            if info.function_tools:
+                tool = info.function_tools[0]
+                if call_count <= 1:
+                    return ModelResponse(
+                        parts=[ToolCallPart(tool_name=tool.name, args='{"wrong": 1}', tool_call_id='call-1')]
+                    )
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=tool.name, args='{"name": "correct"}', tool_call_id='call-2')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        agent = Agent(FunctionModel(bad_args_model), capabilities=[MinimalCap()])
+
+        @agent.tool_plain
+        def greet(name: str) -> str:
+            return f'hello {name}'
+
+        result = await agent.run('greet someone')
+        assert 'hello correct' in result.output
 
 
 # --- Tool execute error hook tests ---
@@ -3821,7 +4731,13 @@ class TestToolExecuteErrorHooks:
         @dataclass
         class RecoverExecCap(AbstractCapability[Any]):
             async def on_tool_execute_error(
-                self, ctx: RunContext[Any], *, call: ToolCallPart, args: dict[str, Any], error: Exception
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                error: Exception,
             ) -> Any:
                 return 'fallback result'
 
@@ -3844,3 +4760,2387 @@ class TestToolExecuteErrorHooks:
 
         result = await agent.run('call tool')
         assert 'fallback result' in result.output
+
+
+# --- Hooks capability tests ---
+
+
+class TestHooksCapability:
+    """Tests for the Hooks decorator-based capability."""
+
+    async def test_decorator_registration(self):
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.on.before_model_request
+        async def log_request(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            call_log.append('before_model_request')
+            return request_context
+
+        @hooks.on.after_model_request
+        async def log_response(
+            ctx: RunContext[Any], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            call_log.append('after_model_request')
+            return response
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert call_log == ['before_model_request', 'after_model_request']
+
+    async def test_constructor_form(self):
+        call_log: list[str] = []
+
+        async def log_request(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            call_log.append('before_model_request')
+            return request_context
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[Hooks(before_model_request=log_request)])
+        await agent.run('hello')
+        assert call_log == ['before_model_request']
+
+    async def test_multiple_hooks_same_event(self):
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.on.before_model_request
+        async def first(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            call_log.append('first')
+            return request_context
+
+        @hooks.on.before_model_request
+        async def second(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            call_log.append('second')
+            return request_context
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert call_log == ['first', 'second']
+
+    async def test_tool_names_filtering(self):
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.on.before_tool_execute(tools=['target_tool'])
+        async def filtered(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+        ) -> dict[str, Any]:
+            call_log.append(f'filtered:{call.tool_name}')
+            return args
+
+        @hooks.on.after_tool_execute
+        async def unfiltered(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any], result: Any
+        ) -> Any:
+            call_log.append(f'unfiltered:{call.tool_name}')
+            return result
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def target_tool() -> str:
+            return 'result'
+
+        await agent.run('call tool')
+        assert 'filtered:target_tool' in call_log
+        assert 'unfiltered:target_tool' in call_log
+
+    async def test_wrap_model_request(self):
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.on.model_request
+        async def wrap(ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any) -> ModelResponse:
+            call_log.append('wrap_start')
+            result = await handler(request_context)
+            call_log.append('wrap_end')
+            return result
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert call_log == ['wrap_start', 'wrap_end']
+
+    async def test_wrap_run(self):
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.on.run
+        async def wrap(ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+            call_log.append('wrap_run_start')
+            result = await handler()
+            call_log.append('wrap_run_end')
+            return result
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert call_log == ['wrap_run_start', 'wrap_run_end']
+
+    async def test_on_error_recovery(self):
+        hooks = Hooks()
+
+        @hooks.on.model_request_error
+        async def recover(
+            ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='recovered')])
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[hooks])
+        result = await agent.run('hello')
+        assert result.output == 'recovered'
+
+    async def test_sync_function_auto_wrapping(self):
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.on.before_model_request
+        def sync_hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            call_log.append('sync_hook')
+            return request_context
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert call_log == ['sync_hook']
+
+    async def test_timeout(self):
+        hooks = Hooks()
+
+        @hooks.on.before_model_request(timeout=0.01)
+        async def slow_hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            await asyncio.sleep(10)
+            return request_context  # pragma: no cover
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        with pytest.raises(HookTimeoutError) as exc_info:
+            await agent.run('hello')
+        assert exc_info.value.hook_name == 'before_model_request'
+        assert exc_info.value.func_name == 'slow_hook'
+        assert exc_info.value.timeout == 0.01
+
+    async def test_has_wrap_node_run(self):
+        hooks = Hooks()
+        assert hooks.has_wrap_node_run is False
+
+        nodes_seen: list[str] = []
+
+        @hooks.on.node_run
+        async def wrap(ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+            nodes_seen.append(type(node).__name__)
+            return await handler(node)
+
+        assert hooks.has_wrap_node_run is True
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert len(nodes_seen) > 0
+
+    async def test_composition_with_other_capabilities(self):
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.on.before_model_request
+        async def hooks_before(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            call_log.append('hooks_before')
+            return request_context
+
+        cap = LoggingCapability()
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks, cap])
+        await agent.run('hello')
+        assert 'hooks_before' in call_log
+        assert 'before_model_request' in cap.log
+
+    async def test_before_run(self):
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.on.before_run
+        async def on_start(ctx: RunContext[Any]) -> None:
+            call_log.append('before_run')
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert call_log == ['before_run']
+
+    async def test_after_run(self):
+        hooks = Hooks()
+        outputs: list[str] = []
+
+        @hooks.on.after_run
+        async def on_end(ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+            outputs.append(result.output)
+            return result
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        result = await agent.run('hello')
+        assert outputs == [result.output]
+
+    async def test_repr(self):
+        hooks = Hooks()
+        assert repr(hooks) == 'Hooks({})'
+
+        @hooks.on.before_model_request
+        async def hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            return request_context
+
+        assert repr(hooks) == "Hooks({'before_model_request': 1})"
+
+        # Verify the registered hook actually works
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+
+    async def test_on_model_request_error_reraise(self):
+        """Error hooks that re-raise propagate the error to the caller."""
+
+        hooks = Hooks()
+
+        @hooks.on.model_request_error
+        async def log_and_reraise(
+            ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            raise error
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[hooks])
+        with pytest.raises(RuntimeError, match='model exploded'):
+            await agent.run('hello')
+
+    async def test_on_run_error_reraise(self):
+        """on_run_error hooks that re-raise propagate the error."""
+
+        hooks = Hooks()
+
+        @hooks.on.run_error
+        async def log_and_reraise(ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            raise error
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[hooks])
+        with pytest.raises(RuntimeError, match='model exploded'):
+            await agent.run('hello')
+
+    async def test_on_run_error_recovery(self):
+        hooks = Hooks()
+
+        @hooks.on.run_error
+        async def recover(ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            return AgentRunResult(output='recovered from run error')
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[hooks])
+        result = await agent.run('hello')
+        assert result.output == 'recovered from run error'
+
+    async def test_on_run_error_chaining(self):
+        hooks = Hooks()
+
+        @hooks.on.run_error
+        async def first_handler(ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            raise ValueError('transformed by first')
+
+        @hooks.on.run_error
+        async def second_handler(ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            return AgentRunResult(output=f'caught: {error}')
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('original error')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[hooks])
+        result = await agent.run('hello')
+        assert 'transformed by first' in result.output
+
+    async def test_error_hook_chaining(self):
+        hooks = Hooks()
+
+        @hooks.on.model_request_error
+        async def first(
+            ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            raise ValueError('transformed')
+
+        @hooks.on.model_request_error
+        async def second(
+            ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content=f'recovered: {error}')])
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('original')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[hooks])
+        result = await agent.run('hello')
+        assert 'transformed' in result.output
+
+    async def test_wrap_run_event_stream(self):
+        hooks = Hooks()
+        events_seen: list[str] = []
+
+        @hooks.on.run_event_stream
+        async def observe_stream(
+            ctx: RunContext[Any], *, stream: AsyncIterable[AgentStreamEvent]
+        ) -> AsyncIterable[AgentStreamEvent]:
+            async for event in stream:
+                events_seen.append(type(event).__name__)
+                yield event
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[hooks],
+        )
+        async with agent.run_stream('hello') as stream:
+            await stream.get_output()
+        assert len(events_seen) > 0
+
+    async def test_hooks_with_streaming_run(self):
+        """Hooks capability used during a streaming run exercises the default wrap_run_event_stream path."""
+
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.on.before_model_request
+        async def log_request(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            call_log.append('before_model_request')
+            return request_context
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[hooks],
+        )
+        async with agent.run_stream('hello') as stream:
+            await stream.get_output()
+        assert 'before_model_request' in call_log
+
+    async def test_node_run_hooks(self):
+        """Exercise before_node_run, after_node_run, and node_run (wrap) via .on namespace."""
+        hooks = Hooks()
+        nodes_seen: list[str] = []
+
+        @hooks.on.before_node_run
+        async def before(ctx: RunContext[Any], *, node: Any) -> Any:
+            nodes_seen.append(f'before:{type(node).__name__}')
+            return node
+
+        @hooks.on.after_node_run
+        async def after(ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+            nodes_seen.append(f'after:{type(node).__name__}')
+            return result
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert any('before:' in n for n in nodes_seen)
+        assert any('after:' in n for n in nodes_seen)
+
+    async def test_node_run_error_hook(self):
+        """on.node_run_error fires when a node fails."""
+        hooks = Hooks()
+        error_log: list[str] = []
+
+        @hooks.on.node_run_error
+        async def handle(ctx: RunContext[Any], *, node: Any, error: Exception) -> Any:
+            error_log.append(f'error:{type(error).__name__}')
+            raise error
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('node exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[hooks])
+        with pytest.raises(RuntimeError, match='node exploded'):
+            await agent.run('hello')
+        assert any('error:RuntimeError' in e for e in error_log)
+
+    async def test_on_event_hook(self):
+        """on.event fires for each stream event and can modify events."""
+        hooks = Hooks()
+        events_seen: list[str] = []
+
+        @hooks.on.event
+        async def observe(ctx: RunContext[Any], event: AgentStreamEvent) -> AgentStreamEvent:
+            events_seen.append(type(event).__name__)
+            return event
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[hooks],
+        )
+        async with agent.run_stream('hello') as stream:
+            await stream.get_output()
+        assert len(events_seen) > 0
+
+    async def test_on_event_with_run_event_stream(self):
+        """on.event and on.run_event_stream can be used together."""
+        hooks = Hooks()
+        event_log: list[str] = []
+        stream_log: list[str] = []
+
+        @hooks.on.event
+        async def per_event(ctx: RunContext[Any], event: AgentStreamEvent) -> AgentStreamEvent:
+            event_log.append(type(event).__name__)
+            return event
+
+        @hooks.on.run_event_stream
+        async def wrap_stream(
+            ctx: RunContext[Any], *, stream: AsyncIterable[AgentStreamEvent]
+        ) -> AsyncIterable[AgentStreamEvent]:
+            stream_log.append('started')
+            async for event in stream:
+                yield event
+            stream_log.append('finished')
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[hooks],
+        )
+        async with agent.run_stream('hello') as stream:
+            await stream.get_output()
+        assert len(event_log) > 0
+        assert stream_log == ['started', 'finished']
+
+    async def test_prepare_tools_hook(self):
+        """on.prepare_tools filters tool definitions."""
+        hooks = Hooks()
+
+        @hooks.on.prepare_tools
+        async def hide_tools(ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+            return [td for td in tool_defs if not td.name.startswith('hidden_')]
+
+        tool_called = False
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def visible_tool() -> str:
+            nonlocal tool_called
+            tool_called = True
+            return 'visible'
+
+        @agent.tool_plain
+        def hidden_tool() -> str:
+            return 'hidden'  # pragma: no cover
+
+        await agent.run('call tool')
+        assert tool_called
+
+    async def test_tool_validate_hooks(self):
+        """Exercise before/after/wrap tool_validate and on_tool_validate_error."""
+        hooks = Hooks()
+        validate_log: list[str] = []
+
+        @hooks.on.before_tool_validate
+        async def before_validate(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any
+        ) -> Any:
+            validate_log.append('before_validate')
+            return args
+
+        @hooks.on.after_tool_validate
+        async def after_validate(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+        ) -> dict[str, Any]:
+            validate_log.append('after_validate')
+            return args
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'result'
+
+        await agent.run('call tool')
+        assert 'before_validate' in validate_log
+        assert 'after_validate' in validate_log
+
+    async def test_wrap_tool_validate_hook(self):
+        """Exercise on.tool_validate (wrap) via decorator."""
+        hooks = Hooks()
+        wrap_log: list[str] = []
+
+        @hooks.on.tool_validate
+        async def wrap_validate(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, handler: Any
+        ) -> dict[str, Any]:
+            wrap_log.append('wrap_start')
+            result = await handler(args)
+            wrap_log.append('wrap_end')
+            return result
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'result'
+
+        await agent.run('call tool')
+        assert wrap_log == ['wrap_start', 'wrap_end']
+
+    async def test_tool_validate_error_hook(self):
+        """on.tool_validate_error can recover from validation failures."""
+        hooks = Hooks()
+
+        @hooks.on.tool_validate_error
+        async def recover_validate(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Any
+        ) -> dict[str, Any]:
+            return {'name': 'recovered'}
+
+        def bad_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return make_text_response(f'got: {part.content}')
+            if info.function_tools:
+                tool = info.function_tools[0]
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=tool.name, args='{"wrong": 1}', tool_call_id='call-1')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        agent = Agent(FunctionModel(bad_args_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def greet(name: str) -> str:
+            return f'hello {name}'
+
+        result = await agent.run('greet someone')
+        assert 'hello recovered' in result.output
+
+    async def test_wrap_tool_execute_hook(self):
+        """Exercise on.tool_execute (wrap) via decorator."""
+        hooks = Hooks()
+        wrap_log: list[str] = []
+
+        @hooks.on.tool_execute
+        async def wrap_exec(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any], handler: Any
+        ) -> Any:
+            wrap_log.append('exec_start')
+            result = await handler(args)
+            wrap_log.append('exec_end')
+            return result
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'result'
+
+        await agent.run('call tool')
+        assert wrap_log == ['exec_start', 'exec_end']
+
+    async def test_tool_execute_error_hook(self):
+        """on.tool_execute_error can recover from tool execution failures."""
+        hooks = Hooks()
+
+        @hooks.on.tool_execute_error
+        async def recover_exec(
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: dict[str, Any],
+            error: Exception,
+        ) -> Any:
+            return 'fallback result'
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return make_text_response(f'got: {part.content}')
+            if info.function_tools:
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[hooks])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            raise ValueError('tool failed')
+
+        result = await agent.run('call tool')
+        assert 'fallback result' in result.output
+
+    async def test_tool_validate_error_reraise(self):
+        """on.tool_validate_error that re-raises propagates the error."""
+        hooks = Hooks()
+
+        @hooks.on.tool_validate_error
+        async def reraise(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Any
+        ) -> dict[str, Any]:
+            raise error
+
+        call_count = 0
+
+        def bad_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return make_text_response(f'got: {part.content}')
+            if info.function_tools:
+                tool = info.function_tools[0]
+                if call_count <= 1:
+                    return ModelResponse(
+                        parts=[ToolCallPart(tool_name=tool.name, args='{"wrong": 1}', tool_call_id='call-1')]
+                    )
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=tool.name, args='{"name": "ok"}', tool_call_id='call-2')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        agent = Agent(FunctionModel(bad_args_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def greet(name: str) -> str:
+            return f'hello {name}'
+
+        await agent.run('greet someone')
+
+    async def test_tool_execute_error_reraise(self):
+        """on.tool_execute_error that re-raises propagates the error."""
+        hooks = Hooks()
+
+        @hooks.on.tool_execute_error
+        async def reraise(
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: dict[str, Any],
+            error: Exception,
+        ) -> Any:
+            raise error
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[hooks])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            raise ValueError('tool failed')
+
+        with pytest.raises(ValueError, match='tool failed'):
+            await agent.run('call tool')
+
+    async def test_get_serialization_name(self):
+        assert Hooks.get_serialization_name() is None
+
+    async def test_default_on_tool_execute_error_reraises(self):
+        """The default on_tool_execute_error just re-raises, exercised with a minimal capability."""
+
+        @dataclass
+        class MinimalCap(AbstractCapability[Any]):
+            """Capability that doesn't override error hooks."""
+
+            def get_instructions(self):
+                return 'Be helpful.'
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[MinimalCap()])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            raise ValueError('tool failed')
+
+        with pytest.raises(ValueError, match='tool failed'):
+            await agent.run('call the tool')
+
+
+# --- Context var propagation tests ---
+
+_test_cv: contextvars.ContextVar[str] = contextvars.ContextVar('_test_cv')
+
+
+class TestContextVarPropagation:
+    """Context vars set in wrap_run propagate to all hooks in the outer task."""
+
+    async def test_wrap_run_contextvar_visible_in_node_hooks(self):
+        """A capability that sets a contextvar in wrap_run should have it
+        visible in another capability's node-level hooks via agent.run()."""
+
+        @dataclass
+        class Setter(AbstractCapability):
+            async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+                token = _test_cv.set('from-wrap-run')
+                try:
+                    return await handler()
+                finally:
+                    _test_cv.reset(token)
+
+        @dataclass
+        class Reader(AbstractCapability):
+            seen: list[tuple[str, str | None]] = field(default_factory=lambda: [])
+
+            async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
+                self.seen.append(('before_node_run', _test_cv.get(None)))
+                return node
+
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                self.seen.append(('wrap_node_run', _test_cv.get(None)))
+                return await handler(node)
+
+            async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+                self.seen.append(('after_node_run', _test_cv.get(None)))
+                return result
+
+            async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+                self.seen.append(('after_run', _test_cv.get(None)))
+                return result
+
+        reader = Reader()
+        agent = Agent(TestModel(), capabilities=[Setter(), reader])
+        await agent.run('hello')
+
+        for hook_name, value in reader.seen:
+            assert value == 'from-wrap-run', f'{hook_name} did not see contextvar'
+
+    async def test_wrap_run_contextvar_visible_via_iter_next(self):
+        """Context vars set in wrap_run are visible when using agent.iter() + next()."""
+
+        @dataclass
+        class Setter(AbstractCapability):
+            async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+                token = _test_cv.set('from-iter')
+                try:
+                    return await handler()
+                finally:
+                    _test_cv.reset(token)
+
+        @dataclass
+        class Reader(AbstractCapability):
+            seen: list[tuple[str, str | None]] = field(default_factory=lambda: [])
+
+            async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
+                self.seen.append(('before_node_run', _test_cv.get(None)))
+                return node
+
+            async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+                self.seen.append(('after_run', _test_cv.get(None)))
+                return result
+
+        reader = Reader()
+        agent = Agent(TestModel(), capabilities=[Setter(), reader])
+
+        async with agent.iter('hello') as agent_run:
+            node = agent_run.next_node
+            while not isinstance(node, End):
+                node = await agent_run.next(node)
+
+        for hook_name, value in reader.seen:
+            assert value == 'from-iter', f'{hook_name} did not see contextvar'
+
+    async def test_contextvar_cleaned_up_after_run(self):
+        """Context vars set in wrap_run are restored after the run completes."""
+
+        @dataclass
+        class Setter(AbstractCapability):
+            async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+                token = _test_cv.set('temporary')
+                try:
+                    return await handler()
+                finally:
+                    _test_cv.reset(token)
+
+        agent = Agent(TestModel(), capabilities=[Setter()])
+        assert _test_cv.get(None) is None
+
+        await agent.run('hello')
+
+        # After the run, the contextvar should be cleaned up
+        assert _test_cv.get(None) is None
+
+    async def test_contextvar_cleaned_up_on_early_iter_exit(self):
+        """Context vars are restored even when the caller exits iter() early."""
+
+        @dataclass
+        class Setter(AbstractCapability):
+            async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+                token = _test_cv.set('early-exit')
+                try:
+                    return await handler()
+                finally:
+                    _test_cv.reset(token)
+
+        agent = Agent(TestModel(), capabilities=[Setter()])
+        assert _test_cv.get(None) is None
+
+        async with agent.iter('hello') as agent_run:
+            # Exit immediately without driving any nodes
+            _ = agent_run.next_node
+
+        # Context var must be cleaned up even though we abandoned the run
+        assert _test_cv.get(None) is None
+
+    async def test_before_run_contextvar_propagates(self):
+        """Context vars set in before_run (not wrap_run) also propagate."""
+
+        @dataclass
+        class Setter(AbstractCapability):
+            async def before_run(self, ctx: RunContext[Any]) -> None:
+                _test_cv.set('from-before-run')
+
+        @dataclass
+        class Reader(AbstractCapability):
+            seen: list[tuple[str, str | None]] = field(default_factory=lambda: [])
+
+            async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
+                self.seen.append(('before_node_run', _test_cv.get(None)))
+                return node
+
+        reader = Reader()
+        agent = Agent(TestModel(), capabilities=[Setter(), reader])
+        await agent.run('hello')
+
+        for hook_name, value in reader.seen:
+            assert value == 'from-before-run', f'{hook_name} did not see contextvar'
+
+    async def test_contextvar_visible_in_on_run_error(self):
+        """Context vars set in wrap_run are visible in on_run_error."""
+
+        @dataclass
+        class SetterWithRecovery(AbstractCapability):
+            seen_in_error: str | None = None
+
+            async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+                token = _test_cv.set('error-path')
+                try:
+                    return await handler()
+                finally:
+                    _test_cv.reset(token)
+
+            async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+                self.seen_in_error = _test_cv.get(None)
+                return AgentRunResult(output='recovered')
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        cap = SetterWithRecovery()
+        agent = Agent(FunctionModel(failing_model), capabilities=[cap])
+        result = await agent.run('hello')
+
+        assert result.output == 'recovered'
+        assert cap.seen_in_error == 'error-path'
+
+
+# --- WrapperCapability and PrefixTools tests ---
+
+
+async def test_prefix_tools_prefixes_wrapped_capability_tools():
+    """PrefixTools prefixes only the wrapped capability's tools, not other agent tools."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain
+    def inner_tool() -> str:
+        return 'inner'  # pragma: no cover
+
+    cap = PrefixTools(wrapped=Toolset(toolset), prefix='ns')
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_names = sorted(t.name for t in info.function_tools)
+        return ModelResponse(parts=[TextPart(','.join(tool_names))])
+
+    agent = Agent(FunctionModel(respond), capabilities=[cap])
+
+    @agent.tool_plain
+    def outer_tool() -> str:
+        return 'outer'  # pragma: no cover
+
+    result = await agent.run('list tools')
+    # inner_tool should be prefixed, outer_tool should not
+    assert result.output == 'ns_inner_tool,outer_tool'
+
+
+async def test_prefix_tools_from_spec():
+    """PrefixTools from spec supports both dict-form and bare-name nested capabilities."""
+
+    # Dict form (kwargs): nested capability with arguments
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [
+                {
+                    'PrefixTools': {
+                        'prefix': 'search',
+                        'capability': {'BuiltinTool': {'kind': 'web_search'}},
+                    }
+                },
+            ],
+        },
+    )
+    assert agent.model is not None
+
+    # Bare name form with custom_capability_types forwarded through contextvar
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [
+                {
+                    'PrefixTools': {
+                        'prefix': 'custom',
+                        'capability': 'CustomCapability',
+                    }
+                },
+            ],
+        },
+        custom_capability_types=[CustomCapability],
+    )
+    assert agent.model is not None
+
+
+async def test_prefix_tools_from_spec_direct():
+    """PrefixTools.from_spec works outside Agent.from_spec (no contextvar), using default registry."""
+    cap = PrefixTools.from_spec(prefix='ws', capability='WebSearch')  # pyright: ignore[reportArgumentType]
+    assert isinstance(cap, PrefixTools)
+    assert cap.prefix == 'ws'
+
+
+async def test_prefix_tools_returns_none_when_no_toolset():
+    """PrefixTools.get_toolset() returns None if the wrapped capability has no toolset."""
+    cap = PrefixTools(wrapped=CustomCapability(), prefix='ns')
+    assert cap.get_toolset() is None
+
+
+async def test_prefix_tools_with_callable_toolset():
+    """PrefixTools handles a wrapped capability that returns a callable toolset."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain
+    def dynamic_tool() -> str:
+        return 'dynamic'  # pragma: no cover
+
+    def toolset_func(ctx: RunContext[None]) -> FunctionToolset[None]:
+        return toolset
+
+    cap = PrefixTools(wrapped=Toolset(toolset_func), prefix='dyn')
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_names = sorted(t.name for t in info.function_tools)
+        return ModelResponse(parts=[TextPart(','.join(tool_names))])
+
+    agent = Agent(FunctionModel(respond), capabilities=[cap])
+    result = await agent.run('list tools')
+    assert result.output == 'dyn_dynamic_tool'
+
+
+async def test_prefix_tools_convenience_method():
+    """AbstractCapability.prefix_tools() returns a PrefixTools wrapping self."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain
+    def inner_tool() -> str:
+        return 'inner'  # pragma: no cover
+
+    cap = Toolset(toolset).prefix_tools('ns')
+    assert isinstance(cap, PrefixTools)
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_names = sorted(t.name for t in info.function_tools)
+        return ModelResponse(parts=[TextPart(','.join(tool_names))])
+
+    agent = Agent(FunctionModel(respond), capabilities=[cap])
+    result = await agent.run('list tools')
+    assert result.output == 'ns_inner_tool'
+
+
+async def test_wrapper_capability_delegates_hooks():
+    """WrapperCapability delegates lifecycle hooks to the wrapped capability."""
+    hook_calls: list[str] = []
+
+    @dataclass
+    class HookCap(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            hook_calls.append('before_run')
+
+        async def after_run(self, ctx: RunContext[None], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+            hook_calls.append('after_run')
+            return result
+
+    wrapper = WrapperCapability(wrapped=HookCap())
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(respond), capabilities=[wrapper])
+    await agent.run('Hello')
+
+    assert 'before_run' in hook_calls
+    assert 'after_run' in hook_calls
+
+
+async def test_wrapper_capability_for_run_replaces():
+    """WrapperCapability.for_run replaces wrapped when it changes."""
+    toolset_a = FunctionToolset(id='a')
+
+    @toolset_a.tool_plain
+    def tool_a() -> str:
+        return 'a'  # pragma: no cover
+
+    toolset_b = FunctionToolset(id='b')
+
+    @toolset_b.tool_plain
+    def tool_b() -> str:
+        return 'b'  # pragma: no cover
+
+    @dataclass
+    class SwitchCap(AbstractCapability[None]):
+        use_b: bool = False
+
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            return SwitchCap(use_b=True)
+
+        def get_toolset(self) -> AbstractToolset[None]:
+            return toolset_b if self.use_b else toolset_a
+
+    wrapper = WrapperCapability(wrapped=SwitchCap())
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_names = sorted(t.name for t in info.function_tools)
+        return ModelResponse(parts=[TextPart(','.join(tool_names))])
+
+    agent = Agent(FunctionModel(respond), capabilities=[wrapper])
+    result = await agent.run('Hello')
+    # for_run switches to toolset_b
+    assert 'tool_b' in result.output
+
+
+async def test_wrapper_capability_has_wrap_node_run():
+    """WrapperCapability.has_wrap_node_run delegates to the wrapped capability."""
+    plain = CustomCapability()
+    assert WrapperCapability(wrapped=plain).has_wrap_node_run is False
+
+    @dataclass
+    class NodeRunCap(AbstractCapability[None]):
+        async def wrap_node_run(self, ctx: RunContext[None], *, node: Any, handler: Any) -> Any:
+            return await handler(node)  # pragma: no cover
+
+    assert WrapperCapability(wrapped=NodeRunCap()).has_wrap_node_run is True
+
+
+async def test_wrapper_capability_delegates_model_request_hooks():
+    """WrapperCapability delegates before/after model request hooks."""
+    hook_calls: list[str] = []
+
+    @dataclass
+    class ModelRequestHookCap(AbstractCapability[None]):
+        async def before_model_request(
+            self, ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            hook_calls.append('before_model_request')
+            return request_context
+
+        async def after_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            hook_calls.append('after_model_request')
+            return response
+
+    wrapper = WrapperCapability(wrapped=ModelRequestHookCap())
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(respond), capabilities=[wrapper])
+    await agent.run('Hello')
+
+    assert 'before_model_request' in hook_calls
+    assert 'after_model_request' in hook_calls
+
+
+async def test_prefix_tools_tool_call_strips_prefix():
+    """PrefixTools correctly strips the prefix when calling the underlying tool."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain
+    def greet(name: str) -> str:
+        return f'hello {name}'
+
+    cap = PrefixTools(wrapped=Toolset(toolset), prefix='ns')
+
+    call_count = 0
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart('ns_greet', {'name': 'world'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(respond), capabilities=[cap])
+    result = await agent.run('greet world')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='greet world', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='ns_greet',
+                        args={'name': 'world'},
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(input_tokens=52, output_tokens=5),
+                model_name='function:respond:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='ns_greet',
+                        content='hello world',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=54, output_tokens=6),
+                model_name='function:respond:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+def test_wrapper_capability_get_serialization_name():
+    """WrapperCapability.get_serialization_name returns None (abstract base)."""
+    assert WrapperCapability.get_serialization_name() is None
+
+
+async def test_wrapper_capability_delegates_on_run_error():
+    """WrapperCapability delegates on_run_error to the wrapped capability."""
+
+    @dataclass
+    class RecoverCap(AbstractCapability[Any]):
+        async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            return AgentRunResult(output='recovered')
+
+    def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('model exploded')
+
+    agent = Agent(FunctionModel(failing_model), capabilities=[WrapperCapability(wrapped=RecoverCap())])
+    result = await agent.run('hello')
+    assert result.output == 'recovered'
+
+
+async def test_wrapper_capability_delegates_on_node_run_error():
+    """WrapperCapability delegates on_node_run_error to the wrapped capability."""
+    from pydantic_ai.result import FinalResult
+    from pydantic_graph import End
+
+    @dataclass
+    class NodeRecoverCap(AbstractCapability[Any]):
+        async def on_node_run_error(self, ctx: RunContext[Any], *, node: Any, error: Exception) -> Any:
+            return End(FinalResult(output='node recovered'))
+
+    def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('model exploded')
+
+    agent = Agent(FunctionModel(failing_model), capabilities=[WrapperCapability(wrapped=NodeRecoverCap())])
+    async with agent.iter('hello') as agent_run:
+        node = agent_run.next_node
+        while not isinstance(node, End):
+            node = await agent_run.next(node)
+    assert isinstance(node, End)
+    assert node.data.output == 'node recovered'
+
+
+async def test_wrapper_capability_delegates_wrap_run_event_stream():
+    """WrapperCapability delegates wrap_run_event_stream to the wrapped capability."""
+    observed_events: list[AgentStreamEvent] = []
+
+    @dataclass
+    class StreamObserverCap(AbstractCapability[Any]):
+        async def wrap_run_event_stream(
+            self,
+            ctx: RunContext[Any],
+            *,
+            stream: AsyncIterable[AgentStreamEvent],
+        ) -> AsyncIterable[AgentStreamEvent]:
+            async for event in stream:
+                observed_events.append(event)
+                yield event
+
+    agent = Agent(
+        FunctionModel(simple_model_function, stream_function=simple_stream_function),
+        capabilities=[WrapperCapability(wrapped=StreamObserverCap())],
+    )
+
+    async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in stream:
+            pass
+
+    await agent.run('hello', event_stream_handler=handler)
+    assert len(observed_events) > 0
+
+
+async def test_wrapper_capability_delegates_on_model_request_error():
+    """WrapperCapability delegates on_model_request_error to the wrapped capability."""
+
+    @dataclass
+    class ModelErrorRecoverCap(AbstractCapability[Any]):
+        async def on_model_request_error(
+            self, ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='recovered from model error')])
+
+    def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('model request failed')
+
+    agent = Agent(FunctionModel(failing_model), capabilities=[WrapperCapability(wrapped=ModelErrorRecoverCap())])
+    result = await agent.run('hello')
+    assert result.output == 'recovered from model error'
+
+
+async def test_wrapper_capability_delegates_on_tool_validate_error():
+    """WrapperCapability delegates on_tool_validate_error to the wrapped capability."""
+
+    @dataclass
+    class ValidateErrorCap(AbstractCapability[Any]):
+        async def on_tool_validate_error(
+            self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Any
+        ) -> dict[str, Any]:
+            # Recover by providing valid args
+            return {'x': 1}
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        for msg in messages:
+            for part in msg.parts:
+                if isinstance(part, ToolReturnPart):
+                    return ModelResponse(parts=[TextPart(content='done')])
+        if info.function_tools:
+            return ModelResponse(parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='invalid json!!')])
+        return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[WrapperCapability(wrapped=ValidateErrorCap())])
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        return f'result: {x}'
+
+    result = await agent.run('call tool')
+    assert result.output == 'done'
+
+
+async def test_wrapper_capability_delegates_on_tool_execute_error():
+    """WrapperCapability delegates on_tool_execute_error to the wrapped capability."""
+
+    @dataclass
+    class ExecuteErrorCap(AbstractCapability[Any]):
+        async def on_tool_execute_error(
+            self,
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: dict[str, Any],
+            error: Exception,
+        ) -> Any:
+            return 'recovered tool result'
+
+    agent = Agent(
+        FunctionModel(tool_calling_model),
+        capabilities=[WrapperCapability(wrapped=ExecuteErrorCap())],
+    )
+
+    @agent.tool_plain
+    def my_tool() -> str:
+        raise ValueError('tool failed')
+
+    result = await agent.run('call tool')
+    assert result.output == 'final response'
+
+
+# --- Tests for double-execution bug fix (streaming + before_node_run replacement) ---
+
+
+class TestNodeStreamingWithHooks:
+    """Tests that node streaming with event_stream_handler doesn't cause double model execution
+    when before_node_run replaces a node."""
+
+    async def test_before_node_run_replacement_no_double_execution(self):
+        """When before_node_run replaces a ModelRequestNode and event_stream_handler is set,
+        the model should be called exactly once (not twice)."""
+        model_call_count = 0
+
+        async def counting_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            nonlocal model_call_count
+            model_call_count += 1
+            yield 'streamed response'
+
+        cap = _ReplacingCapability()
+        agent = Agent(FunctionModel(simple_model_function, stream_function=counting_stream), capabilities=[cap])
+
+        events_received: list[AgentStreamEvent] = []
+
+        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                events_received.append(event)
+
+        result = await agent.run('hello', event_stream_handler=handler)
+        assert result.output == 'streamed response'
+        assert model_call_count == 1, f'Model was called {model_call_count} times, expected 1'
+        assert len(events_received) > 0
+
+    async def test_hook_ordering_with_event_stream_handler(self):
+        """before_node_run fires BEFORE streaming events, wrap_node_run wraps the streaming,
+        and after_node_run fires after graph advancement."""
+        log: list[str] = []
+
+        @dataclass
+        class OrderTrackingCapability(AbstractCapability[Any]):
+            async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
+                log.append(f'before:{type(node).__name__}')
+                return node
+
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                log.append(f'wrap:enter:{type(node).__name__}')
+                result = await handler(node)
+                log.append(f'wrap:exit:{type(node).__name__}')
+                return result
+
+            async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+                log.append(f'after:{type(node).__name__}')
+                return result
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[OrderTrackingCapability()],
+        )
+
+        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for _ in stream:
+                pass
+            log.append('stream:consumed')
+
+        await agent.run('hello', event_stream_handler=handler)
+
+        # For ModelRequestNode: before → wrap:enter → stream:consumed → wrap:exit → after
+        mr_before = log.index('before:ModelRequestNode')
+        mr_wrap_enter = log.index('wrap:enter:ModelRequestNode')
+        stream_consumed_idx = log.index('stream:consumed')
+        mr_wrap_exit = log.index('wrap:exit:ModelRequestNode')
+        mr_after = log.index('after:ModelRequestNode')
+        assert mr_before < mr_wrap_enter < stream_consumed_idx < mr_wrap_exit < mr_after
+
+    async def test_run_stream_before_node_run_replacement_no_double_execution(self):
+        """Same as the run() test but for run_stream(): before_node_run replacement
+        should not cause double model execution."""
+        model_call_count = 0
+
+        async def counting_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            nonlocal model_call_count
+            model_call_count += 1
+            yield 'streamed response'
+
+        cap = _ReplacingCapability()
+        agent = Agent(FunctionModel(simple_model_function, stream_function=counting_stream), capabilities=[cap])
+
+        async with agent.run_stream('hello') as streamed:
+            output = await streamed.get_output()
+
+        assert output == 'streamed response'
+        assert model_call_count == 1, f'Model was called {model_call_count} times, expected 1'
+
+    async def test_on_node_run_error_fires_in_run_stream(self):
+        """on_node_run_error in run_stream() fires when wrap_node_run raises during graph advancement."""
+        error_log: list[str] = []
+
+        @dataclass
+        class WrapErrorCap(AbstractCapability[Any]):
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                # Raise on CallToolsNode — after UserPromptNode and ModelRequestNode pass through.
+                # ModelRequestNode with tool calls doesn't produce a FinalResultEvent in run_stream(),
+                # so it falls through to wrap_node_run; CallToolsNode is next and triggers the error.
+                from pydantic_ai._agent_graph import CallToolsNode
+
+                if isinstance(node, CallToolsNode):
+                    raise RuntimeError('wrap error')
+                return await handler(node)
+
+            async def on_node_run_error(self, ctx: RunContext[Any], *, node: Any, error: Exception) -> Any:
+                error_log.append(type(node).__name__)
+                raise error
+
+        agent = Agent(
+            FunctionModel(tool_calling_model, stream_function=tool_calling_stream_function),
+            capabilities=[WrapErrorCap()],
+        )
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'
+
+        with pytest.raises(RuntimeError, match='wrap error'):
+            async with agent.run_stream('hello') as _streamed:
+                pass
+
+        assert error_log == ['CallToolsNode']
+
+
+# --- ModelRetry from hooks tests ---
+
+
+class TestModelRetryFromHooks:
+    """Tests for raising ModelRetry from capability hooks."""
+
+    async def test_after_model_request_model_retry(self):
+        """after_model_request raises ModelRetry — model is called again with retry prompt."""
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return make_text_response('bad response')
+            return make_text_response('good response')
+
+        @dataclass
+        class RetryCap(AbstractCapability[Any]):
+            retried: bool = False
+
+            async def after_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                response: ModelResponse,
+            ) -> ModelResponse:
+                if not self.retried:
+                    self.retried = True
+                    raise ModelRetry('Response was bad, please try again')
+                return response
+
+        cap = RetryCap()
+        agent = Agent(FunctionModel(model_fn), capabilities=[cap])
+        result = await agent.run('hello')
+        assert result.output == 'good response'
+        assert call_count == 2
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='bad response')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Response was bad, please try again',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='good response')],
+                    usage=RequestUsage(input_tokens=66, output_tokens=4),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_after_model_request_model_retry_max_retries(self):
+        """after_model_request raises ModelRetry repeatedly — hits max_result_retries."""
+
+        @dataclass
+        class AlwaysRetryCap(AbstractCapability[Any]):
+            async def after_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                response: ModelResponse,
+            ) -> ModelResponse:
+                raise ModelRetry('always bad')
+
+        agent = Agent(
+            FunctionModel(simple_model_function),
+            capabilities=[AlwaysRetryCap()],
+            output_retries=2,
+        )
+        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries'):
+            await agent.run('hello')
+
+    async def test_after_model_request_model_retry_streaming(self):
+        """after_model_request raises ModelRetry during streaming with tool calls — model is called again."""
+        call_count = 0
+
+        async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # First call: return a tool call that after_model_request will reject
+                yield {0: DeltaToolCall(name='my_tool', json_args='{}', tool_call_id='call-1')}
+            elif call_count == 2:
+                # Second call (after retry): return text
+                yield 'good response'
+            else:
+                yield 'unexpected'  # pragma: no cover
+
+        @dataclass
+        class RetryCap(AbstractCapability[Any]):
+            retried: bool = False
+
+            async def after_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                response: ModelResponse,
+            ) -> ModelResponse:
+                if not self.retried:
+                    self.retried = True
+                    raise ModelRetry('Response was bad, please try again')
+                return response
+
+        cap = RetryCap()
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=stream_fn),
+            capabilities=[cap],
+        )
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'  # pragma: no cover
+
+        async with agent.run_stream('hello') as streamed:
+            result = await streamed.get_output()
+        assert result == 'good response'
+        assert call_count == 2
+        assert streamed.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=1),
+                    model_name='function:simple_model_function:stream_fn',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Response was bad, please try again',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='good response')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=2),
+                    model_name='function:simple_model_function:stream_fn',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_wrap_model_request_model_retry_streaming_short_circuit(self):
+        """wrap_model_request raises ModelRetry without calling handler during streaming."""
+
+        async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            yield 'good response'
+
+        @dataclass
+        class ShortCircuitRetryCap(AbstractCapability[Any]):
+            call_count: int = 0
+
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: Any,
+            ) -> ModelResponse:
+                self.call_count += 1
+                if self.call_count == 1:
+                    # Short-circuit: don't call handler, raise ModelRetry
+                    raise ModelRetry('Short-circuit retry')
+                return await handler(request_context)
+
+        cap = ShortCircuitRetryCap()
+        agent = Agent(FunctionModel(simple_model_function, stream_function=stream_fn), capabilities=[cap])
+        async with agent.run_stream('hello') as streamed:
+            result = await streamed.get_output()
+        assert result == 'good response'
+        assert cap.call_count == 2
+        assert streamed.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Short-circuit retry',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='good response')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=2),
+                    model_name='function:simple_model_function:stream_fn',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_wrap_model_request_model_retry_streaming_after_handler(self):
+        """wrap_model_request raises ModelRetry after calling handler during streaming (tool call scenario)."""
+        call_count = 0
+
+        async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # First call: tool call that wrap hook will reject
+                yield {0: DeltaToolCall(name='my_tool', json_args='{}', tool_call_id='call-1')}
+            else:
+                yield 'good response'
+
+        @dataclass
+        class AfterHandlerRetryCap(AbstractCapability[Any]):
+            retried: bool = False
+
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: Any,
+            ) -> ModelResponse:
+                response = await handler(request_context)
+                if not self.retried:
+                    self.retried = True
+                    raise ModelRetry('Post-handler retry')
+                return response
+
+        cap = AfterHandlerRetryCap()
+        agent = Agent(FunctionModel(simple_model_function, stream_function=stream_fn), capabilities=[cap])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'  # pragma: no cover
+
+        async with agent.run_stream('hello') as streamed:
+            result = await streamed.get_output()
+        assert result == 'good response'
+        assert call_count == 2
+        assert streamed.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=1),
+                    model_name='function:simple_model_function:stream_fn',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Post-handler retry',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='good response')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=2),
+                    model_name='function:simple_model_function:stream_fn',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_wrap_model_request_model_retry(self):
+        """wrap_model_request raises ModelRetry after calling handler — triggers retry."""
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return make_text_response('first attempt')
+            return make_text_response('second attempt')
+
+        @dataclass
+        class WrapRetryCap(AbstractCapability[Any]):
+            retried: bool = False
+
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: Any,
+            ) -> ModelResponse:
+                response = await handler(request_context)
+                if not self.retried:
+                    self.retried = True
+                    raise ModelRetry('Wrap says retry')
+                return response
+
+        cap = WrapRetryCap()
+        agent = Agent(FunctionModel(model_fn), capabilities=[cap])
+        result = await agent.run('hello')
+        assert result.output == 'second attempt'
+        assert call_count == 2
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='first attempt')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Wrap says retry',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='second attempt')],
+                    usage=RequestUsage(input_tokens=63, output_tokens=4),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_wrap_model_request_model_retry_skips_on_error(self):
+        """wrap_model_request raising ModelRetry should NOT call on_model_request_error."""
+        on_error_called = False
+
+        @dataclass
+        class WrapRetrySkipErrorCap(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: Any,
+            ) -> ModelResponse:
+                raise ModelRetry('retry please')
+
+            async def on_model_request_error(  # pragma: no cover — verifying this is NOT called
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                error: Exception,
+            ) -> ModelResponse:
+                nonlocal on_error_called
+                on_error_called = True
+                raise error
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[WrapRetrySkipErrorCap()], output_retries=1)
+        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries'):
+            await agent.run('hello')
+        assert not on_error_called
+
+    async def test_on_model_request_error_model_retry(self):
+        """on_model_request_error raises ModelRetry to recover via retry."""
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError('model failed')
+            return make_text_response('recovered response')
+
+        @dataclass
+        class ErrorRetryCap(AbstractCapability[Any]):
+            async def on_model_request_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                error: Exception,
+            ) -> ModelResponse:
+                raise ModelRetry('Model failed, please try again')
+
+        cap = ErrorRetryCap()
+        agent = Agent(FunctionModel(model_fn), capabilities=[cap])
+        result = await agent.run('hello')
+        assert result.output == 'recovered response'
+        assert call_count == 2
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Model failed, please try again',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='recovered response')],
+                    usage=RequestUsage(input_tokens=65, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_after_tool_execute_model_retry(self):
+        """after_tool_execute raises ModelRetry — tool retry prompt sent to model, tool retried on success."""
+        tool_call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            # Always call the tool — after retry, the hook won't raise again
+            if info.function_tools:
+                # Check if we already got a tool return (second call succeeded)
+                for msg in messages:
+                    for part in msg.parts:
+                        if isinstance(part, ToolReturnPart):
+                            return make_text_response(f'got: {part.content}')
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        @dataclass
+        class AfterExecRetryCap(AbstractCapability[Any]):
+            retried: bool = False
+
+            async def after_tool_execute(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                result: Any,
+            ) -> Any:
+                if not self.retried:
+                    self.retried = True
+                    raise ModelRetry('Tool result is bad, try again')
+                return result
+
+        cap = AfterExecRetryCap()
+        agent = Agent(FunctionModel(model_fn), capabilities=[cap])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            nonlocal tool_call_count
+            tool_call_count += 1
+            return 'tool result'
+
+        result = await agent.run('call tool')
+        assert result.output == 'got: tool result'
+        assert tool_call_count == 2  # Tool called twice: first rejected by hook, second succeeds
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='call tool', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=52, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Tool result is bad, try again',
+                            tool_name='my_tool',
+                            tool_call_id='call-1',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=65, output_tokens=4),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='my_tool', content='tool result', tool_call_id='call-1', timestamp=IsDatetime()
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='got: tool result')],
+                    usage=RequestUsage(input_tokens=67, output_tokens=7),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_before_tool_execute_model_retry(self):
+        """before_tool_execute raises ModelRetry — tool execution is skipped, then succeeds on retry."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            # Always call the tool — after retry, the hook won't raise again
+            if info.function_tools:
+                for msg in messages:
+                    for part in msg.parts:
+                        if isinstance(part, ToolReturnPart):
+                            return make_text_response(f'got: {part.content}')
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        hooks = Hooks[Any]()
+        hook_called = False
+
+        @hooks.on.before_tool_execute
+        async def reject_first(
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: dict[str, Any],
+        ) -> dict[str, Any]:
+            nonlocal hook_called
+            if not hook_called:
+                hook_called = True
+                raise ModelRetry('Not ready to execute, try again')
+            return args
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[hooks], retries=2)
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'
+
+        result = await agent.run('call tool')
+        assert result.output == 'got: tool result'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='call tool', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=52, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Not ready to execute, try again',
+                            tool_name='my_tool',
+                            tool_call_id='call-1',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=65, output_tokens=4),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='my_tool', content='tool result', tool_call_id='call-1', timestamp=IsDatetime()
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='got: tool result')],
+                    usage=RequestUsage(input_tokens=67, output_tokens=7),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_wrap_tool_execute_model_retry_skips_on_error(self):
+        """wrap_tool_execute raising ModelRetry should NOT call on_tool_execute_error."""
+        on_error_called = False
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, RetryPromptPart):
+                        return make_text_response('got retry')
+            if info.function_tools:
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        @dataclass
+        class WrapExecRetryCap(AbstractCapability[Any]):
+            async def wrap_tool_execute(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                handler: Any,
+            ) -> Any:
+                raise ModelRetry('Wrap says retry tool')
+
+            async def on_tool_execute_error(  # pragma: no cover — verifying this is NOT called
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                error: Exception,
+            ) -> Any:
+                nonlocal on_error_called
+                on_error_called = True
+                raise error
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[WrapExecRetryCap()], retries=2)
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'  # pragma: no cover
+
+        result = await agent.run('call tool')
+        assert result.output == 'got retry'
+        assert not on_error_called
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='call tool', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=52, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Wrap says retry tool',
+                            tool_name='my_tool',
+                            tool_call_id='call-1',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='got retry')],
+                    usage=RequestUsage(input_tokens=63, output_tokens=4),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_on_tool_execute_error_model_retry(self):
+        """on_tool_execute_error raises ModelRetry to recover via retry."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, RetryPromptPart):
+                        return make_text_response('got retry after error')
+            if info.function_tools:
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        @dataclass
+        class ErrorRetryCap(AbstractCapability[Any]):
+            async def on_tool_execute_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                error: Exception,
+            ) -> Any:
+                raise ModelRetry('Tool errored, please retry')
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[ErrorRetryCap()], retries=2)
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            raise ValueError('tool failed')
+
+        result = await agent.run('call tool')
+        assert result.output == 'got retry after error'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='call tool', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=52, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Tool errored, please retry',
+                            tool_name='my_tool',
+                            tool_call_id='call-1',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='got retry after error')],
+                    usage=RequestUsage(input_tokens=63, output_tokens=6),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_after_tool_validate_model_retry(self):
+        """after_tool_validate raises ModelRetry — validation retry sent to model."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, RetryPromptPart):
+                        return make_text_response('got validation retry')
+            if info.function_tools:
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        @dataclass
+        class AfterValRetryCap(AbstractCapability[Any]):
+            async def after_tool_validate(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+            ) -> dict[str, Any]:
+                raise ModelRetry('Validated args are bad')
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[AfterValRetryCap()], retries=2)
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'  # pragma: no cover
+
+        result = await agent.run('call tool')
+        assert result.output == 'got validation retry'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='call tool', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=52, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Validated args are bad',
+                            tool_name='my_tool',
+                            tool_call_id='call-1',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='got validation retry')],
+                    usage=RequestUsage(input_tokens=63, output_tokens=5),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_before_tool_validate_model_retry(self):
+        """before_tool_validate raises ModelRetry — validation retry sent to model."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, RetryPromptPart):
+                        return make_text_response('got pre-validation retry')
+            if info.function_tools:
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        @dataclass
+        class BeforeValRetryCap(AbstractCapability[Any]):
+            async def before_tool_validate(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: str | dict[str, Any],
+            ) -> str | dict[str, Any]:
+                raise ModelRetry('Args look bad before validation')
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[BeforeValRetryCap()], retries=2)
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'  # pragma: no cover
+
+        result = await agent.run('call tool')
+        assert result.output == 'got pre-validation retry'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='call tool', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=52, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Args look bad before validation',
+                            tool_name='my_tool',
+                            tool_call_id='call-1',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='got pre-validation retry')],
+                    usage=RequestUsage(input_tokens=64, output_tokens=5),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )

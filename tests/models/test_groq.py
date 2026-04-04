@@ -32,6 +32,7 @@ from pydantic_ai import (
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -619,6 +620,28 @@ async def test_extra_headers(allow_model_requests: None, groq_api_key: str):
     m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key=groq_api_key))
     agent = Agent(m, model_settings=GroqModelSettings(extra_headers={'Extra-Header-Key': 'Extra-Header-Value'}))
     await agent.run('hello')
+
+
+async def test_map_text_content_input(allow_model_requests: None, groq_api_key: str):
+    part = UserPromptPart(
+        content=[
+            'Hi',
+            TextContent(
+                content='This is some additional text content that should be included in the prompt.',
+                metadata={'key': 'value'},
+            ),
+        ]
+    )
+    m = await GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key=groq_api_key))._map_user_prompt(part)  # pyright: ignore[reportPrivateUsage]
+    assert m == snapshot(
+        {
+            'role': 'user',
+            'content': [
+                {'text': 'Hi', 'type': 'text'},
+                {'text': 'This is some additional text content that should be included in the prompt.', 'type': 'text'},
+            ],
+        }
+    )
 
 
 async def test_image_url_input(allow_model_requests: None, groq_api_key: str):

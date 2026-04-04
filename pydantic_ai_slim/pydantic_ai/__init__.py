@@ -3,6 +3,7 @@ from importlib.metadata import version as _metadata_version
 from ._template import TemplateStr
 from .agent import (
     Agent,
+    AgentModelSettings,
     CallToolsNode,
     EndStrategy,
     InstrumentationSettings,
@@ -10,6 +11,7 @@ from .agent import (
     UserPromptNode,
     capture_run_messages,
 )
+from .agent.spec import AgentSpec
 from .builtin_tools import (
     CodeExecutionTool,
     FileSearchTool,
@@ -90,6 +92,7 @@ from .messages import (
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -105,6 +108,7 @@ from .messages import (
     VideoMediaType,
     VideoUrl,
 )
+from .models import ModelRequestContext
 from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
 from .output import NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
 from .profiles import (
@@ -147,6 +151,8 @@ __all__ = (
     '__version__',
     # agent
     'Agent',
+    'AgentModelSettings',
+    'AgentSpec',
     'EndStrategy',
     'CallToolsNode',
     'ModelRequestNode',
@@ -220,6 +226,7 @@ __all__ = (
     'PartStartEvent',
     'RetryPromptPart',
     'SystemPromptPart',
+    'TextContent',
     'TextPart',
     'TextPartDelta',
     'ThinkingPart',
@@ -283,6 +290,8 @@ __all__ = (
     'TemplateStr',
     # format_prompt
     'format_as_xml',
+    # models
+    'ModelRequestContext',
     # settings
     'ModelSettings',
     # usage
