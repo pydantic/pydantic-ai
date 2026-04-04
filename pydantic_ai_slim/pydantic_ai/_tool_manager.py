@@ -119,11 +119,20 @@ class ToolManager(Generic[AgentDepsT]):
 
         toolset = await self.toolset.for_run_step(ctx)
 
+        if self.root_capability is not None:
+
+            async def _get_tools_handler() -> dict[str, ToolsetTool[AgentDepsT]]:
+                return await toolset.get_tools(ctx)
+
+            tools = await self.root_capability.wrap_get_tools(ctx, toolset=toolset, handler=_get_tools_handler)
+        else:
+            tools = await toolset.get_tools(ctx)
+
         return self.__class__(
             toolset=toolset,
             root_capability=self.root_capability,
             ctx=ctx,
-            tools=await toolset.get_tools(ctx),
+            tools=tools,
             default_max_retries=self.default_max_retries,
         )
 

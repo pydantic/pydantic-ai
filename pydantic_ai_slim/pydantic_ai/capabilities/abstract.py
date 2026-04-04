@@ -11,7 +11,7 @@ from pydantic_ai._instructions import AgentInstructions
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, RunContext, ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset, AgentToolset
+from pydantic_ai.toolsets import AbstractToolset, AgentToolset, ToolsetTool
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
@@ -51,6 +51,9 @@ WrapToolValidateHandler: TypeAlias = 'Callable[[str | dict[str, Any]], Awaitable
 
 WrapToolExecuteHandler: TypeAlias = 'Callable[[dict[str, Any]], Awaitable[Any]]'
 """Handler type for [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute]."""
+
+WrapGetToolsHandler: TypeAlias = 'Callable[[], Awaitable[dict[str, ToolsetTool[AgentDepsT]]]]'
+"""Handler type for [`wrap_get_tools`][pydantic_ai.capabilities.AbstractCapability.wrap_get_tools]."""
 
 
 @dataclass
@@ -157,6 +160,26 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         or custom [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] subclasses.
         """
         return None
+
+    # --- Toolset I/O hooks ---
+
+    async def wrap_get_tools(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        toolset: AbstractToolset[AgentDepsT],
+        handler: WrapGetToolsHandler[AgentDepsT],
+    ) -> dict[str, ToolsetTool[AgentDepsT]]:
+        """Wraps toolset tool listing. handler() fetches the tools.
+
+        Called per leaf toolset during each run step's tool preparation. The `toolset`
+        parameter identifies which toolset's tools are being fetched (use `toolset.id`
+        for per-toolset configuration).
+
+        Override to intercept tool listing I/O — for example, to route MCP server
+        ``list_tools`` calls through durable execution framework activities.
+        """
+        return await handler()
 
     # --- Tool preparation hook ---
 
