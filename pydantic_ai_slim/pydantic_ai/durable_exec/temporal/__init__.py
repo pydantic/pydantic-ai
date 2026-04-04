@@ -14,6 +14,7 @@ from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
 
 from ...exceptions import UserError
 from ._agent import TemporalAgent
+from ._durability import TemporalDurability
 from ._logfire import LogfirePlugin
 from ._run_context import TemporalRunContext
 from ._toolset import TemporalWrapperToolset
@@ -21,9 +22,11 @@ from ._workflow import PydanticAIWorkflow
 
 __all__ = [
     'TemporalAgent',
+    'TemporalDurability',
     'PydanticAIPlugin',
     'LogfirePlugin',
     'AgentPlugin',
+    'DurabilityPlugin',
     'TemporalRunContext',
     'TemporalWrapperToolset',
     'PydanticAIWorkflow',
@@ -135,4 +138,14 @@ class AgentPlugin(SimplePlugin):
         super().__init__(  # type: ignore[reportUnknownMemberType]
             name='AgentPlugin',
             activities=agent.temporal_activities,
+        )
+
+
+class DurabilityPlugin(SimplePlugin):
+    """Temporal worker plugin for a `TemporalDurability` capability."""
+
+    def __init__(self, durability: TemporalDurability[Any]):
+        super().__init__(  # type: ignore[reportUnknownMemberType]
+            name='DurabilityPlugin',
+            activities=durability.temporal_activities,
         )

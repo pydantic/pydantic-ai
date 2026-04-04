@@ -12,6 +12,7 @@ from ..messages import (
     ModelResponse,
     ModelResponseStreamEvent,
     PartDeltaEvent,
+    PartStartEvent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -85,8 +86,9 @@ class ReplayStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         for part in self.response.parts:
-            # Register the part with the parts manager (returns PartStartEvent)
+            # Register the part with the parts manager (always returns PartStartEvent for new parts)
             start_event = self._parts_manager.handle_part(vendor_part_id=None, part=part)
+            assert isinstance(start_event, PartStartEvent)
             yield start_event
 
             # Emit a delta with the full content

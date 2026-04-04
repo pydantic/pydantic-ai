@@ -81,10 +81,12 @@ try:
 
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
+        DurabilityPlugin,
         LogfirePlugin,
         PydanticAIPlugin,
         PydanticAIWorkflow,
         TemporalAgent,
+        TemporalDurability,
     )
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
     from pydantic_ai.durable_exec.temporal._mcp_server import TemporalMCPServer
@@ -2530,8 +2532,7 @@ async def test_image_agent(allow_model_requests: None, client: Client):
             )
 
 
-# ============================================================================
-# DocumentUrl Serialization Test - Verifies that DocumentUrl with custom
+# =====================================================================# DocumentUrl Serialization Test - Verifies that DocumentUrl with custom
 # media_type is properly serialized through Temporal activities
 # ============================================================================
 
@@ -4043,3 +4044,219 @@ async def test_text_content_serialization_in_workflow(client: Client):
                 run_id=IsStr(),
             )
         )
+=======
+
+
+# ==========================================
+# TemporalDurability capability tests
+# ==========================================
+
+
+def _durability_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Simple model function for durability tests that echoes the last user prompt."""
+    for msg in reversed(messages):
+        for part in msg.parts:
+            if isinstance(part, UserPromptPart):
+                return ModelResponse(parts=[TextPart(content=f'Echo: {part.content}')])
+    return ModelResponse(parts=[TextPart(content='no prompt')])  # pragma: no cover
+
+
+_durability_fn_model = FunctionModel(_durability_model_fn)
+
+simple_durability = TemporalDurability(
+    name='durability_simple_agent',
+    models={'default': _durability_fn_model},
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+simple_durable_agent = Agent(_durability_fn_model, name='durability_simple_agent', capabilities=[simple_durability])
+
+
+@workflow.defn
+class SimpleDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await simple_durable_agent.run(prompt)
+        return result.output
+
+
+async def test_durability_simple_agent_run_in_workflow(client: Client):
+    """TemporalDurability routes model requests through activities."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SimpleDurableAgentWorkflow],
+        plugins=[DurabilityPlugin(simple_durability)],
+    ):
+        output = await client.execute_workflow(
+            SimpleDurableAgentWorkflow.run,
+            args=['What is the capital of Mexico?'],
+            id=SimpleDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'Echo: What is the capital of Mexico?'
+
+
+# --- Durability with tools ---
+
+
+def _tool_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Model function that calls `get_country` tool then returns the result."""
+    # Check if we already have a tool result
+    for msg in reversed(messages):
+        for part in msg.parts:
+            if isinstance(part, ToolReturnPart):
+                return ModelResponse(parts=[TextPart(content=f'The country is: {part.content}')])
+
+    # First call: invoke the tool
+    if info.function_tools:
+        return ModelResponse(parts=[ToolCallPart(tool_name='get_country', args='{}')])
+
+    return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
+
+
+durability_country_toolset = FunctionToolset[Deps](tools=[get_country], id='durability_country')
+
+complex_durability = TemporalDurability[Deps](
+    name='durability_complex_agent',
+    models={'default': FunctionModel(_tool_model_fn)},
+    deps_type=Deps,
+    activity_config=BASE_ACTIVITY_CONFIG,
+    toolsets=[durability_country_toolset],
+)
+complex_durable_agent = Agent(
+    FunctionModel(_tool_model_fn),
+    deps_type=Deps,
+    toolsets=[durability_country_toolset],
+    capabilities=[complex_durability],
+    name='durability_complex_agent',
+)
+
+
+@workflow.defn
+class ComplexDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, deps: Deps) -> str:
+        result = await complex_durable_agent.run(prompt, deps=deps)
+        return result.output
+
+
+async def test_durability_agent_with_tools_in_workflow(client: Client):
+    """TemporalDurability wraps toolsets and routes tool calls through activities."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ComplexDurableAgentWorkflow],
+        plugins=[DurabilityPlugin(complex_durability)],
+    ):
+        output = await client.execute_workflow(
+            ComplexDurableAgentWorkflow.run,
+            args=['What country?', Deps(country='France')],
+            id=ComplexDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'The country is: France'
+
+
+# --- Durability outside workflow (transparent passthrough) ---
+
+
+async def test_durability_outside_workflow_is_transparent():
+    """TemporalDurability is a no-op outside a workflow — calls pass through to the real model."""
+    result = await simple_durable_agent.run('Hello')
+    assert result.output == 'Echo: Hello'
+
+
+# --- Durability wrap_run disables threads ---
+
+
+_threads_durability = TemporalDurability(
+    name='sync_tool_test',
+    models={'default': _durability_fn_model},
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+_threads_agent = Agent(_durability_fn_model, name='sync_tool_test', capabilities=[_threads_durability])
+
+
+@workflow.defn
+class ThreadsDurableWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _threads_agent.run(prompt)
+        return result.output
+
+
+async def test_durability_wrap_run_disables_threads(client: Client):
+    """wrap_run disables threads when inside a Temporal workflow."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ThreadsDurableWorkflow],
+        plugins=[DurabilityPlugin(_threads_durability)],
+    ):
+        output = await client.execute_workflow(
+            ThreadsDurableWorkflow.run,
+            args=['test'],
+            id='ThreadsDurableWorkflow',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'Echo: test'
+
+
+# --- Durability validation ---
+
+
+def test_durability_requires_models():
+    """TemporalDurability raises UserError when no models are provided."""
+    with pytest.raises(UserError, match='must provide at least one Model instance'):
+        TemporalDurability(name='test', models={})
+
+
+def test_durability_image_output_rejected():
+    """TemporalDurability rejects image output because of the 2MB payload limit."""
+    durability = TemporalDurability(
+        name='test',
+        models={'default': _durability_fn_model},
+    )
+    with pytest.raises(UserError, match='Image output is not supported'):
+        durability._validate_model_request_parameters(  # pyright: ignore[reportPrivateUsage]
+            ModelRequestParameters(allow_image_output=True),
+        )
+
+
+# --- Model registry ---
+
+
+def test_durability_find_model_id_by_identity():
+    """_find_model_id matches models by identity."""
+    m1 = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart(content='hi')]))
+    m2 = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart(content='hi')]))
+    durability = TemporalDurability(
+        name='test',
+        models={'default': m1, 'alt': m2},
+    )
+    assert durability._find_model_id(m1) is None  # default → None  # pyright: ignore[reportPrivateUsage]
+    assert durability._find_model_id(m2) == 'alt'  # pyright: ignore[reportPrivateUsage]
+
+
+def test_durability_temporal_activities():
+    """temporal_activities returns all registered activities."""
+    durability = TemporalDurability(
+        name='test',
+        models={'default': _durability_fn_model},
+    )
+    activities = durability.temporal_activities
+    # Should have: request_activity, request_stream_activity, event_stream_handler_activity
+    assert len(activities) == 3
+
+
+def test_durability_temporal_activities_with_toolsets():
+    """temporal_activities includes toolset activities when toolsets are provided."""
+    toolset = FunctionToolset(id='test_toolset')
+    durability = TemporalDurability(
+        name='test',
+        models={'default': _durability_fn_model},
+        toolsets=[toolset],
+    )
+    activities = durability.temporal_activities
+    # 3 base activities + 1 call_tool activity from the function toolset
+    assert len(activities) == 4
