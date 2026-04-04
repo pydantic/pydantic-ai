@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from abc import ABC
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, TypeAlias
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias
 
 from pydantic import ValidationError
 
@@ -56,6 +56,37 @@ WrapGetToolsHandler: TypeAlias = 'Callable[[], Awaitable[dict[str, ToolsetTool[A
 """Handler type for [`wrap_get_tools`][pydantic_ai.capabilities.AbstractCapability.wrap_get_tools]."""
 
 
+CapabilityPosition = Literal['outermost', 'innermost']
+"""Fixed position for a capability in the middleware chain.
+
+- ``'outermost'``: first in the chain, wraps all other capabilities (e.g. instrumentation).
+- ``'innermost'``: last in the chain, closest to the handler (e.g. durable execution).
+"""
+
+
+@dataclass
+class CapabilityOrdering:
+    """Ordering constraints for a capability within a combined capability chain.
+
+    Capabilities declare ordering via
+    [`get_ordering`][pydantic_ai.capabilities.AbstractCapability.get_ordering].
+    When a [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] is
+    constructed, it sorts its children to satisfy these constraints.
+    """
+
+    position: CapabilityPosition | None = None
+    """Fixed position in the chain, or ``None`` for user-provided order."""
+
+    before: Sequence[type[AbstractCapability[Any]]] = field(default_factory=tuple)
+    """This capability must come before (wrap around) these types."""
+
+    after: Sequence[type[AbstractCapability[Any]]] = field(default_factory=tuple)
+    """This capability must come after (be wrapped by) these types."""
+
+    requires: Sequence[type[AbstractCapability[Any]]] = field(default_factory=tuple)
+    """These types must be present in the chain (no ordering implied)."""
+
+
 @dataclass
 class AbstractCapability(ABC, Generic[AgentDepsT]):
     """Abstract base class for agent capabilities.
@@ -100,6 +131,19 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         Override when `__init__` takes non-serializable types.
         """
         return cls(*args, **kwargs)
+
+    @classmethod
+    def get_ordering(cls) -> CapabilityOrdering | None:
+        """Return ordering constraints for this capability, or ``None`` for default behavior.
+
+        Override to declare a fixed position (``'outermost'`` / ``'innermost'``),
+        relative ordering (``before`` / ``after`` other capability types),
+        or dependency requirements (``requires``).
+
+        [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] uses
+        these to topologically sort its children at construction time.
+        """
+        return None
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Return the capability instance to use for this agent run.

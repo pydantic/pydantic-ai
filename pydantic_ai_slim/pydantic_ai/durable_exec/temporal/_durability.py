@@ -18,6 +18,7 @@ from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
+    CapabilityOrdering,
     WrapModelRequestHandler,
     WrapRunHandler,
 )
@@ -425,6 +426,10 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
             return ts
 
         return toolset.visit_and_replace(swap)
+
+    @classmethod
+    def get_ordering(cls) -> CapabilityOrdering:
+        return CapabilityOrdering(position='innermost')
 
     @classmethod
     def get_serialization_name(cls) -> str | None:

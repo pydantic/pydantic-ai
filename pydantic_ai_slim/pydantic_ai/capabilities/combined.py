@@ -32,6 +32,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
     capabilities: Sequence[AbstractCapability[AgentDepsT]]
 
+    def __post_init__(self) -> None:
+        from ._ordering import iter_leaves, sort_capabilities
+
+        if any(type(leaf).get_ordering() is not None for leaf in iter_leaves(self)):
+            self.capabilities = sort_capabilities(list(self.capabilities))
+
     @property
     def has_wrap_node_run(self) -> bool:
         return any(c.has_wrap_node_run for c in self.capabilities)
