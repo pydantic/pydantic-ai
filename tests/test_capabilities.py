@@ -8298,18 +8298,17 @@ class TestCompaction:
         assert parts[1].id == 'cmp_123'
         assert parts[1].provider_details == {'encrypted_content': 'abc123', 'type': 'compaction'}
 
-    async def test_openai_compaction_with_function_model(self):
-        """OpenAICompaction is a no-op when the model is not OpenAIResponsesModel."""
+    async def test_openai_compaction_with_wrong_model(self):
+        """OpenAICompaction raises UserError when used with a non-OpenAI model."""
         pytest.importorskip('openai')
         from pydantic_ai.models.openai import OpenAICompaction
 
         agent = Agent(
             FunctionModel(simple_model_function),
-            capabilities=[OpenAICompaction(message_count_threshold=2)],
+            capabilities=[OpenAICompaction(message_count_threshold=0)],
         )
-        result = await agent.run('hello')
-        # Should work fine — capability skips non-OpenAI models
-        assert result.output == 'response from model'
+        with pytest.raises(UserError, match='OpenAICompaction requires OpenAIResponsesModel'):
+            await agent.run('hello')
 
     def test_openai_compaction_should_compact_with_trigger(self):
         """OpenAICompaction._should_compact delegates to custom trigger."""

@@ -3180,14 +3180,16 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
         if not self._should_compact(request_context.messages):
             return request_context
 
-        # Silently skip if the model doesn't support compaction (e.g. used with FunctionModel in tests)
         from .wrapper import WrapperModel
 
         model = request_context.model
         while isinstance(model, WrapperModel):
             model = model.wrapped  # pragma: no cover
         if not isinstance(model, OpenAIResponsesModel):
-            return request_context  # pragma: no cover
+            raise UserError(
+                f'OpenAICompaction requires OpenAIResponsesModel, got {type(model).__name__}. '
+                f'Use the provider-specific compaction capability for your model.'
+            )
 
         # Need at least 2 messages (history + current request) to compact
         if len(request_context.messages) < 2:  # pragma: no cover
