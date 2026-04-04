@@ -81,7 +81,7 @@ class TestBeforeOutputValidate:
         assert result.output == MyOutput(value=42)
 
     async def test_plain_str_output(self):
-        """before_output_validate fires for plain str output with identity handler."""
+        """For plain str output, validate hooks are skipped; process hooks fire instead."""
         log: list[str] = []
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -96,7 +96,17 @@ class TestBeforeOutputValidate:
                 output_context: OutputContext,
                 output: str | dict[str, Any],
             ) -> str | dict[str, Any]:
-                log.append(f'before_output_validate:{output}')
+                log.append('validate')  # pragma: no cover — should NOT fire for plain text
+                return output  # pragma: no cover
+
+            async def before_output_process(
+                self,
+                ctx: RunContext[Any],
+                *,
+                output_context: OutputContext,
+                output: Any,
+            ) -> Any:
+                log.append(f'process:{output}')
                 assert output_context.mode == 'text'
                 assert output_context.output_type is str
                 assert output_context.has_function is False
@@ -105,10 +115,11 @@ class TestBeforeOutputValidate:
         agent = Agent(FunctionModel(model_fn), capabilities=[LogCap()])
         result = await agent.run('hello')
         assert result.output == 'hello world'
-        assert log == ['before_output_validate:hello world']
+        # Validate hooks do NOT fire for plain text; only process hooks fire
+        assert log == ['process:hello world']
 
     async def test_text_output_function(self):
-        """before_output_validate fires before TextOutput function is called."""
+        """For TextOutput, validate hooks are skipped; process hooks fire and call the function."""
         log: list[str] = []
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -119,13 +130,13 @@ class TestBeforeOutputValidate:
 
         @dataclass
         class LogCap(AbstractCapability[Any]):
-            async def before_output_validate(
+            async def before_output_process(
                 self,
                 ctx: RunContext[Any],
                 *,
                 output_context: OutputContext,
-                output: str | dict[str, Any],
-            ) -> str | dict[str, Any]:
+                output: Any,
+            ) -> Any:
                 log.append(f'before:{output}')
                 assert output_context.has_function is True
                 return output
@@ -136,7 +147,7 @@ class TestBeforeOutputValidate:
         assert log == ['before:world']
 
     async def test_can_transform_text_before_function(self):
-        """before_output_validate can modify text that is then passed to TextOutput function."""
+        """before_output_process can modify text before the TextOutput function runs."""
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return make_text_response('world')
@@ -146,13 +157,13 @@ class TestBeforeOutputValidate:
 
         @dataclass
         class PrependCap(AbstractCapability[Any]):
-            async def before_output_validate(
+            async def before_output_process(
                 self,
                 ctx: RunContext[Any],
                 *,
                 output_context: OutputContext,
-                output: str | dict[str, Any],
-            ) -> str | dict[str, Any]:
+                output: Any,
+            ) -> Any:
                 assert isinstance(output, str)
                 return f'hello {output}'
 
@@ -1225,14 +1236,14 @@ class TestHooksClassOutputDecorators:
         hooks = Hooks()
         log: list[str] = []
 
-        @hooks.on.before_output_validate
+        @hooks.on.before_output_process
         def sync_hook(
             ctx: RunContext[Any],
             /,
             *,
             output_context: OutputContext,
-            output: str | dict[str, Any],
-        ) -> str | dict[str, Any]:
+            output: Any,
+        ) -> Any:
             log.append('sync_before')
             return output
 
@@ -1463,7 +1474,7 @@ class TestOutputContext:
         assert oc.tool_def is None
 
     async def test_output_context_for_plain_text(self):
-        """OutputContext has correct fields for plain text output."""
+        """OutputContext has correct fields for plain text output (via process hooks)."""
         captured: list[OutputContext] = []
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1471,9 +1482,9 @@ class TestOutputContext:
 
         @dataclass
         class CaptureCap(AbstractCapability[Any]):
-            async def before_output_validate(
-                self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
-            ) -> str | dict[str, Any]:
+            async def before_output_process(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+            ) -> Any:
                 captured.append(output_context)
                 return output
 
@@ -1487,7 +1498,7 @@ class TestOutputContext:
         assert oc.has_function is False
 
     async def test_output_context_for_text_function(self):
-        """OutputContext has correct fields for TextOutput function."""
+        """OutputContext has correct fields for TextOutput function (via process hooks)."""
         captured: list[OutputContext] = []
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1498,9 +1509,9 @@ class TestOutputContext:
 
         @dataclass
         class CaptureCap(AbstractCapability[Any]):
-            async def before_output_validate(
-                self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
-            ) -> str | dict[str, Any]:
+            async def before_output_process(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+            ) -> Any:
                 captured.append(output_context)
                 return output
 
@@ -2121,7 +2132,7 @@ class TestOutputHookEdgeCases:
         assert result.output == MyOutput(value=99)
 
     def test_streaming_output_hooks_fire_on_partial(self):
-        """Output hooks fire during streaming, including on partial validation."""
+        """Process hooks fire for plain text output (validate hooks are skipped)."""
         from pydantic_ai.models.function import FunctionModel
 
         log: list[str] = []
@@ -2131,20 +2142,20 @@ class TestOutputHookEdgeCases:
 
         @dataclass
         class StreamLogCapability(AbstractCapability[Any]):
-            async def before_output_validate(
+            async def before_output_process(
                 self,
                 ctx: RunContext[Any],
                 *,
                 output_context: OutputContext,
-                output: str | dict[str, Any],
-            ) -> str | dict[str, Any]:
-                log.append(f'before_validate partial={ctx.partial_output}')
+                output: Any,
+            ) -> Any:
+                log.append(f'before_process partial={ctx.partial_output}')
                 return output
 
         agent = Agent(FunctionModel(model_fn), capabilities=[StreamLogCapability()])
         result = agent.run_sync('hello')
         assert result.output == 'hello world'
-        assert any('before_validate' in entry for entry in log)
+        assert any('before_process' in entry for entry in log)
 
     def test_no_capability_fast_path_text(self):
         """When capability is None, run_output_with_hooks falls through to process() for text."""
@@ -2812,10 +2823,10 @@ class TestNativeOutputWithHooks:
 
 
 class TestImageOutputWithHooks:
-    """Image output currently skips output hooks — only output validators run."""
+    """Image output fires process hooks (not validate hooks, since there's no parsing)."""
 
-    async def test_hooks_do_not_fire_for_image_output(self):
-        """Output hooks are NOT called for image output (only validators run)."""
+    async def test_process_hooks_fire_for_image_output(self):
+        """Process hooks fire for image output; validate hooks are skipped."""
         log: list[str] = []
 
         def return_image(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -2826,14 +2837,21 @@ class TestImageOutputWithHooks:
             async def before_output_validate(
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
             ) -> str | dict[str, Any]:
-                log.append('before_validate')  # pragma: no cover
+                log.append('validate')  # pragma: no cover — should NOT fire for images
                 return output  # pragma: no cover
+
+            async def before_output_process(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+            ) -> Any:
+                log.append(f'process:{output_context.mode}')
+                return output
 
             async def after_output_process(
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
             ) -> Any:
-                log.append('after_execute')  # pragma: no cover
-                return output  # pragma: no cover
+                log.append('after_process')
+                assert isinstance(output, BinaryImage)
+                return output
 
         image_profile = ModelProfile(supports_image_output=True)
         agent = Agent(
@@ -2842,8 +2860,31 @@ class TestImageOutputWithHooks:
         result = await agent.run('hello')
         assert isinstance(result.output, BinaryImage)
         assert result.output.data == b'test-png'
-        # Output hooks do NOT fire for image output (this is a known gap to be addressed)
-        assert log == []
+        # Process hooks fire; validate hooks do NOT (no parsing for images)
+        assert log == ['process:image', 'after_process']
+
+    async def test_image_process_hook_can_transform(self):
+        """Process hooks can transform image output."""
+
+        def return_image(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[FilePart(content=BinaryImage(data=b'original', media_type='image/png'))])
+
+        @dataclass
+        class TransformCap(AbstractCapability[Any]):
+            async def after_output_process(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+            ) -> Any:
+                if isinstance(output, BinaryImage):
+                    return BinaryImage(data=b'transformed', media_type=output.media_type)
+                return output  # pragma: no cover
+
+        image_profile = ModelProfile(supports_image_output=True)
+        agent = Agent(
+            FunctionModel(return_image, profile=image_profile), output_type=BinaryImage, capabilities=[TransformCap()]
+        )
+        result = await agent.run('hello')
+        assert isinstance(result.output, BinaryImage)
+        assert result.output.data == b'transformed'
 
 
 class TestAutoModeOutputWithHooks:

@@ -17,6 +17,7 @@ from ._output import (
     OutputValidator,
     OutputValidatorFunc,
     TextOutputSchema,
+    run_output_process_hooks,
     run_output_with_hooks,
 )
 from ._run_context import AgentDepsT, RunContext
@@ -30,6 +31,7 @@ from .output import (
 from .usage import RunUsage, UsageLimits
 
 if TYPE_CHECKING:
+    from .capabilities.abstract import AbstractCapability
     from .run import AgentRunResult
 
 __all__ = (
@@ -217,11 +219,12 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     )
                 return cast(OutputDataT, deferred_tool_requests)
             elif self._output_schema.allows_image and message.images:
-                result_data = cast(OutputDataT, message.images[0])
+                run_ctx = replace(self._run_ctx, partial_output=allow_partial)
+                result_data = await _run_image_process_hooks(
+                    message.images[0], run_ctx, self._tool_manager.root_capability
+                )
                 for validator in self._output_validators:
-                    result_data = await validator.validate(
-                        result_data, replace(self._run_ctx, partial_output=allow_partial), wrap_validation_errors=False
-                    )
+                    result_data = await validator.validate(result_data, run_ctx, wrap_validation_errors=False)
                 return result_data
             elif text_processor := self._output_schema.text_processor:
                 text = ''
@@ -829,6 +832,37 @@ def _get_usage_checking_stream_response(
         return _usage_checking_iterator()
     else:
         return aiter(stream_response)
+
+
+async def _run_image_process_hooks(
+    image: _messages.BinaryImage,
+    run_context: RunContext[AgentDepsT],
+    capability: AbstractCapability[AgentDepsT] | None,
+) -> Any:
+    """Run output process hooks for image output (no validate hooks — nothing to parse)."""
+    if capability is None:
+        return image
+
+    from .output import OutputContext
+
+    output_context = OutputContext(
+        mode='image',
+        output_type=_messages.BinaryImage,
+        object_def=None,
+        has_function=False,
+    )
+
+    async def do_process(output: Any) -> Any:
+        return output
+
+    return await run_output_process_hooks(
+        capability,
+        run_context=run_context,
+        output_context=output_context,
+        output=image,
+        do_process=do_process,
+        wrap_validation_errors=False,
+    )
 
 
 def _get_deferred_tool_requests(

@@ -567,7 +567,7 @@ class ToolManager(Generic[AgentDepsT]):
         processor = toolset.processors[name]
         output_context = processor.get_output_context('tool', tool_call=validated.call, tool_def=tool.tool_def)
 
-        async def do_execute(output: Any) -> Any:
+        async def do_process(output: Any) -> Any:
             try:
                 return await processor.call(output, validated.ctx, wrap_validation_errors=False)
             except ModelRetry as e:
@@ -582,7 +582,7 @@ class ToolManager(Generic[AgentDepsT]):
             run_context=validated.ctx,
             output_context=output_context,
             output=validated.validated_args,
-            do_execute=do_execute,
+            do_process=do_process,
         )
 
         # Output validators run AFTER all output hooks (consistent with text output)
