@@ -556,7 +556,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ask the model to try again with a custom message.
 
         During streaming, this hook fires on every partial validation attempt as well as
-        the final result. Check ``ctx.partial_output`` to distinguish and avoid expensive
+        the final result. Check `ctx.partial_output` to distinguish and avoid expensive
         work on partial results.
         """
         return output
@@ -654,7 +654,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         (treated as control flow, not an error).
 
         During streaming, this fires only when partial validation succeeds, and on the
-        final result. Check ``ctx.partial_output`` to skip expensive work on partial results.
+        final result. Check `ctx.partial_output` to skip expensive work on partial results.
         """
         return await handler(output)
 

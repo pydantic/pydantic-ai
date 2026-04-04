@@ -280,7 +280,7 @@ class ToolManager(Generic[AgentDepsT]):
         self,
         validated: ValidatedToolCall[AgentDepsT],
         *,
-        usage: RunUsage | None = None,
+        usage: RunUsage,
     ) -> Any:
         """Run execution with before/wrap/after tool_execute hooks."""
         assert validated.tool is not None
@@ -620,7 +620,7 @@ class ToolManager(Generic[AgentDepsT]):
         self,
         validated: ValidatedToolCall[AgentDepsT],
         *,
-        usage: RunUsage | None = None,
+        usage: RunUsage,
     ) -> Any:
         """Execute a validated tool call without tracing, with capability hooks.
 
@@ -641,8 +641,7 @@ class ToolManager(Generic[AgentDepsT]):
         try:
             tool_result = await self._run_execute_hooks(validated, usage=usage)
         except SkipToolExecution as e:
-            if usage is not None:  # pragma: no branch — agent always passes usage
-                usage.tool_calls += 1
+            usage.tool_calls += 1
             return e.result
 
         return tool_result
@@ -651,7 +650,7 @@ class ToolManager(Generic[AgentDepsT]):
         self,
         validated: ValidatedToolCall[AgentDepsT],
         *,
-        usage: RunUsage | None = None,
+        usage: RunUsage,
     ) -> Any:
         """Execute a validated tool call without hooks or tracing."""
         assert validated.tool is not None
@@ -671,8 +670,7 @@ class ToolManager(Generic[AgentDepsT]):
             self.failed_tools.add(name)
             raise self._wrap_error_as_retry(name, validated.call, e) from e
 
-        if usage is not None:  # pragma: no branch — agent always passes usage
-            usage.tool_calls += 1
+        usage.tool_calls += 1
 
         return tool_result
 
@@ -683,7 +681,7 @@ class ToolManager(Generic[AgentDepsT]):
         tracer: Tracer,
         include_content: bool,
         instrumentation_version: int,
-        usage: RunUsage | None = None,
+        usage: RunUsage,
     ) -> Any:
         """Execute a validated function tool call within a trace span.
 

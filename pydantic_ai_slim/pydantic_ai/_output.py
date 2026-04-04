@@ -926,11 +926,11 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
 @dataclass
 class _UnionValidatedOutput:
-    """Wrapper returned by UnionOutputProcessor.validate() carrying the resolved kind key.
+    """Wrapper returned by `UnionOutputProcessor.validate()` carrying the resolved kind key.
 
-    This allows call() to re-resolve the correct inner processor without storing
+    This allows `call()` to re-resolve the correct inner processor without storing
     it as instance state (which would be a race condition under concurrent runs).
-    The wrapper is unwrapped in _build_output_handlers so hooks see clean inner data.
+    The wrapper is unwrapped in `_build_output_handlers` so hooks see clean inner data.
     """
 
     kind: str

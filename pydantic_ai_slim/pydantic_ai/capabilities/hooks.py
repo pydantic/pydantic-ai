@@ -185,35 +185,35 @@ class OnToolExecuteErrorHookFunc(Protocol):
     def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs, error: Exception) -> Any | Awaitable[Any]: ...
 
 class BeforeOutputValidateHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.before_output_validate` hook functions."""
+    """Protocol for [`before_output_validate`][pydantic_ai.capabilities.AbstractCapability.before_output_validate] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, output_context: OutputContext, output: RawOutput) -> RawOutput | Awaitable[RawOutput]: ...
 
 class AfterOutputValidateHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.after_output_validate` hook functions."""
+    """Protocol for [`after_output_validate`][pydantic_ai.capabilities.AbstractCapability.after_output_validate] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, output_context: OutputContext, output: Any) -> Any | Awaitable[Any]: ...
 
 class WrapOutputValidateHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.wrap_output_validate` hook functions."""
+    """Protocol for [`wrap_output_validate`][pydantic_ai.capabilities.AbstractCapability.wrap_output_validate] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, output_context: OutputContext, output: RawOutput, handler: WrapOutputValidateHandler) -> Any | Awaitable[Any]: ...
 
 class OnOutputValidateErrorHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.on_output_validate_error` hook functions."""
+    """Protocol for [`on_output_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_output_validate_error] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, output_context: OutputContext, output: RawOutput, error: ValidationError | ModelRetry) -> Any | Awaitable[Any]: ...
 
 class BeforeOutputExecuteHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.before_output_execute` hook functions."""
+    """Protocol for [`before_output_execute`][pydantic_ai.capabilities.AbstractCapability.before_output_execute] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, output_context: OutputContext, output: Any) -> Any | Awaitable[Any]: ...
 
 class AfterOutputExecuteHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.after_output_execute` hook functions."""
+    """Protocol for [`after_output_execute`][pydantic_ai.capabilities.AbstractCapability.after_output_execute] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, output_context: OutputContext, output: Any) -> Any | Awaitable[Any]: ...
 
 class WrapOutputExecuteHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.wrap_output_execute` hook functions."""
+    """Protocol for [`wrap_output_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_output_execute] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, output_context: OutputContext, output: Any, handler: WrapOutputExecuteHandler) -> Any | Awaitable[Any]: ...
 
 class OnOutputExecuteErrorHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.on_output_execute_error` hook functions."""
+    """Protocol for [`on_output_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_output_execute_error] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, output_context: OutputContext, output: Any, error: Exception) -> Any | Awaitable[Any]: ...
 # fmt: on
 
