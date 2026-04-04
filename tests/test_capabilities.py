@@ -8379,6 +8379,22 @@ class TestCompaction:
         result = await agent.run('Follow up', message_history=history)
         assert result.output == 'response from model'
 
+    async def test_compaction_part_without_content_in_response(self):
+        """CompactionPart with content=None (OpenAI-style) is handled alongside text."""
+        from pydantic_ai.messages import CompactionPart
+
+        def model_with_compaction(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[
+                    CompactionPart(content=None, id='cmp_123', provider_name='openai'),
+                    TextPart(content='actual response'),
+                ]
+            )
+
+        agent = Agent(FunctionModel(model_with_compaction))
+        result = await agent.run('hello')
+        assert result.output == 'actual response'
+
 
 # endregion
 
