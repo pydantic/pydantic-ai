@@ -29,7 +29,7 @@ class Provider(ABC, Generic[InterfaceClient]):
     For example, the `OpenAIChatModel` interface can be supported by the `OpenAIProvider` and the `DeepSeekProvider`.
 
     When used as an async context manager, providers that create their own HTTP client will close it on exit.
-    This is handled automatically when using [`Agent`][pydantic_ai.Agent] as a context manager.
+    This is handled automatically when using [`Agent`][pydantic_ai.agent.Agent] as a context manager.
     """
 
     _client: InterfaceClient

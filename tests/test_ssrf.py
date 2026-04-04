@@ -657,7 +657,9 @@ class TestSafeDownload:
         mock_response = AsyncMock()
         mock_response.is_redirect = False
         mock_response.raise_for_status = lambda: None
-        mock_ssrf_client.return_value.get.return_value = mock_response
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+        mock_ssrf_client.return_value = mock_client
 
         await safe_download('https://example.com/page', allowed_domains=['example.com'])
 
@@ -679,7 +681,9 @@ class TestSafeDownload:
         mock_response = AsyncMock()
         mock_response.is_redirect = False
         mock_response.raise_for_status = lambda: None
-        mock_ssrf_client.return_value.get.return_value = mock_response
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+        mock_ssrf_client.return_value = mock_client
 
         await safe_download('https://example.com/page', blocked_domains=['evil.com'])
 
@@ -692,7 +696,9 @@ class TestSafeDownload:
         redirect_response = AsyncMock()
         redirect_response.is_redirect = True
         redirect_response.headers = {'location': 'https://evil.com/payload'}
-        mock_ssrf_client.return_value.get.return_value = redirect_response
+        mock_client = AsyncMock()
+        mock_client.get.return_value = redirect_response
+        mock_ssrf_client.return_value = mock_client
 
         with pytest.raises(ValueError, match='is blocked'):
             await safe_download('https://example.com/page', blocked_domains=['evil.com'])
@@ -708,7 +714,9 @@ class TestSafeDownload:
         redirect_response = AsyncMock()
         redirect_response.is_redirect = True
         redirect_response.headers = {'location': 'https://other.com/page'}
-        mock_ssrf_client.return_value.get.return_value = redirect_response
+        mock_client = AsyncMock()
+        mock_client.get.return_value = redirect_response
+        mock_ssrf_client.return_value = mock_client
 
         with pytest.raises(ValueError, match='not in the allowed domains'):
             await safe_download('https://example.com/page', allowed_domains=['example.com'])

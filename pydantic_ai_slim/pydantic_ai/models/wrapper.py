@@ -75,7 +75,7 @@ class WrapperModel(Model):
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
-        await self.wrapped.__aexit__(*args)
+        return await self.wrapped.__aexit__(*args)
 
     async def request(
         self,
