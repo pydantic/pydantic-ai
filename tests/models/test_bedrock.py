@@ -246,16 +246,17 @@ async def test_bedrock_model_stream_with_extra_headers(
 
     agent = Agent(model=model)
 
-    chunks = []
+    chunks: list[str] = []
 
-    async for event in agent.run_stream(
-        'Hello!',
-        model_settings=BedrockModelSettings(
-            extra_headers={'X-Test': 'true'}
-        ),
-    ):
-        if hasattr(event, 'content') and event.content:
-            chunks.append(event.content)
+    async with agent.run_stream(
+            'Hello!',
+            model_settings=BedrockModelSettings(
+                extra_headers={'X-Test': 'true'},
+            ),
+    ) as result:
+        async for text in result.stream_text():
+            if text:
+                chunks.append(text)
 
     assert chunks
 
