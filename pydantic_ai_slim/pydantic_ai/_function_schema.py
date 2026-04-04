@@ -231,7 +231,7 @@ def function_schema(  # noqa: C901
 
     # Compute return schema eagerly (before Temporal sandbox where TypeAdapter is too slow)
     return_annotation = type_hints.get('return')
-    return_schema_type = _extract_return_schema_type(return_annotation)
+    return_schema_type = _extract_return_schema_type(return_annotation, function)
     try:
         return_schema: ObjectJsonSchema = TypeAdapter(return_schema_type).json_schema(
             schema_generator=schema_generator, mode='serialization'
@@ -324,13 +324,14 @@ def _build_schema(
     return td_schema, None
 
 
-def _extract_return_schema_type(return_annotation: Any) -> Any:
+def _extract_return_schema_type(return_annotation: Any, function: Callable[..., Any]) -> Any:
     """Extract the type to generate a return schema for.
 
     Always returns a type — every function has a return schema:
     - No annotation (``None`` from ``get()``) → ``Any`` (produces ``{}``)
     - ``-> None`` (``type(None)``) → ``type(None)`` (produces ``{"type": "null"}``)
     - ``-> Any`` → ``Any`` (produces ``{}``)
+    - ``-> Self`` → resolved to owning class for bound methods
     - Bare ``ToolReturn`` → ``Any`` (pre-generic legacy form)
     - ``ToolReturn[Any]`` → ``Any`` (produces ``{}``)
     - ``ToolReturn[T]`` → ``T``
@@ -341,6 +342,14 @@ def _extract_return_schema_type(return_annotation: Any) -> Any:
         return Any
     if return_annotation is type(None):
         return type(None)
+    # Resolve Self to the owning class for bound methods
+    from typing_extensions import Self
+
+    if return_annotation is Self:
+        self_obj = getattr(function, '__self__', None)
+        if self_obj is not None:
+            return cast(type[Any], type(self_obj))
+        return Any
     if return_annotation is ToolReturn:
         # Bare ToolReturn without type parameter — pre-generic legacy form
         return Any
