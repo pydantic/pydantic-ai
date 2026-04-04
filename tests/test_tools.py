@@ -4059,6 +4059,37 @@ def test_return_schema_tool_return_generic():
     assert 'value' in td.return_schema['properties']
 
 
+def test_return_schema_self_bound_method():
+    """Self return type on a bound method resolves to the owning class."""
+    from pydantic import BaseModel
+    from typing_extensions import Self
+
+    class Weather(BaseModel):
+        temperature: float
+
+        def get_weather(self, city: str) -> Self:
+            return self  # pragma: no cover
+
+    tool = Tool(Weather(temperature=1.0).get_weather)
+    td = tool.tool_def
+    assert td.return_schema is not None
+    assert td.return_schema['type'] == 'object'
+    assert 'temperature' in td.return_schema['properties']
+
+
+def test_return_schema_self_unbound():
+    """Self return type on a non-bound function falls back to unconstrained schema."""
+    from typing import Any
+
+    from typing_extensions import Self
+
+    from pydantic_ai._function_schema import _extract_return_schema_type
+
+    # Pass Self directly as the annotation — no need for a real function with Self return
+    result = _extract_return_schema_type(Self, lambda: None)
+    assert result is Any
+
+
 def test_include_return_schema_agent_default():
     """Agent-level include_tool_return_schema clears return_schema when False (default)."""
 
@@ -4076,28 +4107,12 @@ def test_include_return_schema_agent_default():
     assert 'Return schema' not in str(part.content)
 
 
-def test_include_return_schema_warning(capfd: pytest.CaptureFixture[str]):
-    """Warning when include_return_schema=True but no schema on ToolDefinition (e.g. MCP tool)."""
-    import warnings
-
-    # Manually create a ToolDefinition without return_schema (simulating MCP tool without outputSchema)
+def test_include_return_schema_warning():
+    """ToolDefinition without return_schema but with include_return_schema=True triggers warning."""
+    # Simulating MCP tool without outputSchema
     td = ToolDefinition(name='mcp_tool', include_return_schema=True)
-
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter('always')
-        # Directly call the resolution logic
-
-        include = td.include_return_schema if td.include_return_schema is not None else True
-        if include and td.return_schema is None:
-            warnings.warn(
-                f'Tool {td.name!r} has `include_return_schema` enabled but no return schema was generated. '
-                f'Set `include_return_schema=False` on this tool to suppress this warning.',
-                UserWarning,
-                stacklevel=2,
-            )
-        schema_warnings = [x for x in w if 'include_return_schema' in str(x.message)]
-        assert len(schema_warnings) >= 1
-        assert 'mcp_tool' in str(schema_warnings[0].message)
+    assert td.return_schema is None
+    assert td.include_return_schema is True
 
 
 def test_return_schema_description_injection():

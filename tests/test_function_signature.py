@@ -91,6 +91,9 @@ def test_dedup_referenced_types_substring_names():
     # UserMeta must be untouched
     assert user_meta.needs_prefix is False
     assert user_meta.name == 'UserMeta'
+    # apply_prefix is a no-op when needs_prefix is False
+    user_meta.apply_prefix('tool_b')
+    assert user_meta.name == 'UserMeta'
     # Apply prefix at render time
     user2.apply_prefix('tool_b')
     assert user2.name == 'tool_b_User'
