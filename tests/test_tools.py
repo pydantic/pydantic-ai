@@ -4111,7 +4111,7 @@ def test_include_return_schema_warning():
     """Agent warns when include_return_schema=True but no return_schema on tool (e.g. MCP tool)."""
 
     def my_tool(x: int) -> int:
-        return x  # pragma: no cover
+        return x
 
     tool = Tool(my_tool, include_return_schema=True)
     # Simulate MCP tool without outputSchema by clearing return_schema
