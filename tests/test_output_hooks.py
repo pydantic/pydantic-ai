@@ -15,6 +15,8 @@ from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.hooks import Hooks
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
+    BinaryImage,
+    FilePart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -25,7 +27,8 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.output import OutputContext, PromptedOutput, TextOutput
+from pydantic_ai.output import NativeOutput, OutputContext, PromptedOutput, TextOutput
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
@@ -2732,3 +2735,149 @@ class TestTextFunctionOutputCallHook:
         result = agent.run_sync('hello')
         assert result.output == 'HELLO WORLD'
         assert log == ['input: hello world', 'output: HELLO WORLD']
+
+
+class TestNativeOutputWithHooks:
+    """Output hooks fire for native structured output mode."""
+
+    async def test_hooks_fire_for_native_output(self):
+        """Output hooks fire with mode='native' for NativeOutput."""
+        log: list[tuple[str, str]] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='{"value": 7}')])
+
+        @dataclass
+        class LogCap(AbstractCapability[Any]):
+            async def before_output_validate(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
+            ) -> str | dict[str, Any]:
+                log.append(('before_validate', output_context.mode))
+                return output
+
+            async def after_output_execute(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+            ) -> Any:
+                log.append(('after_execute', output_context.mode))
+                return output
+
+        agent = Agent(FunctionModel(model_fn), output_type=NativeOutput(MyOutput), capabilities=[LogCap()])
+        result = await agent.run('hello')
+        assert result.output == MyOutput(value=7)
+        assert log == [('before_validate', 'native'), ('after_execute', 'native')]
+
+    async def test_before_validate_transforms_native_output(self):
+        """before_output_validate can transform raw text before native output parsing."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='{"value": "bad"}')])
+
+        @dataclass
+        class FixCap(AbstractCapability[Any]):
+            async def before_output_validate(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
+            ) -> str | dict[str, Any]:
+                if isinstance(output, str):
+                    return output.replace('"bad"', '42')
+                return output  # pragma: no cover
+
+        agent = Agent(FunctionModel(model_fn), output_type=NativeOutput(MyOutput), capabilities=[FixCap()])
+        result = await agent.run('hello')
+        assert result.output == MyOutput(value=42)
+
+    async def test_model_retry_from_native_output_hook(self):
+        """ModelRetry from output hooks triggers retry for native output."""
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ModelResponse(parts=[TextPart(content='{"value": -1}')])
+            return ModelResponse(parts=[TextPart(content='{"value": 5}')])
+
+        @dataclass
+        class RejectCap(AbstractCapability[Any]):
+            async def after_output_validate(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+            ) -> Any:
+                if isinstance(output, MyOutput) and output.value < 0:
+                    raise ModelRetry('Value must be non-negative')
+                return output
+
+        agent = Agent(FunctionModel(model_fn), output_type=NativeOutput(MyOutput), capabilities=[RejectCap()])
+        result = await agent.run('hello')
+        assert result.output == MyOutput(value=5)
+        assert call_count == 2
+
+
+class TestImageOutputWithHooks:
+    """Image output currently skips output hooks — only output validators run."""
+
+    async def test_hooks_do_not_fire_for_image_output(self):
+        """Output hooks are NOT called for image output (only validators run)."""
+        log: list[str] = []
+
+        def return_image(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[FilePart(content=BinaryImage(data=b'test-png', media_type='image/png'))])
+
+        @dataclass
+        class LogCap(AbstractCapability[Any]):
+            async def before_output_validate(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
+            ) -> str | dict[str, Any]:
+                log.append('before_validate')  # pragma: no cover
+                return output  # pragma: no cover
+
+            async def after_output_execute(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+            ) -> Any:
+                log.append('after_execute')  # pragma: no cover
+                return output  # pragma: no cover
+
+        image_profile = ModelProfile(supports_image_output=True)
+        agent = Agent(
+            FunctionModel(return_image, profile=image_profile), output_type=BinaryImage, capabilities=[LogCap()]
+        )
+        result = await agent.run('hello')
+        assert isinstance(result.output, BinaryImage)
+        assert result.output.data == b'test-png'
+        # Output hooks do NOT fire for image output (this is a known gap to be addressed)
+        assert log == []
+
+
+class TestAutoModeOutputWithHooks:
+    """Output hooks fire for auto mode (which delegates to tool or text based on model)."""
+
+    async def test_hooks_fire_for_auto_mode_tool_path(self):
+        """Auto mode that resolves to tool output fires output hooks."""
+        log: list[tuple[str, str]] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            # Auto mode with default tool profile — model uses output tools
+            if info.output_tools:
+                tool = info.output_tools[0]
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=tool.name, args='{"value": 99}', tool_call_id='call-1')]
+                )
+            return ModelResponse(parts=[TextPart(content='{"value": 99}')])  # pragma: no cover
+
+        @dataclass
+        class LogCap(AbstractCapability[Any]):
+            async def before_output_validate(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
+            ) -> str | dict[str, Any]:
+                log.append(('before_validate', output_context.mode))
+                return output
+
+            async def after_output_execute(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+            ) -> Any:
+                log.append(('after_execute', output_context.mode))
+                return output
+
+        # Default auto mode — FunctionModel defaults to tool mode
+        agent = Agent(FunctionModel(model_fn), output_type=MyOutput, capabilities=[LogCap()])
+        result = await agent.run('hello')
+        assert result.output == MyOutput(value=99)
+        assert log == [('before_validate', 'tool'), ('after_execute', 'tool')]
