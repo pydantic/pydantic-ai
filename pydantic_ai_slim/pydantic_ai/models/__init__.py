@@ -1485,7 +1485,7 @@ def _customize_output_object(transformer: type[JsonSchemaTransformer], output_ob
 
 def _maybe_inject_return_schemas(params: ModelRequestParameters, profile: ModelProfile) -> ModelRequestParameters:
     """For models without native return schema support, inject schemas into tool descriptions."""
-    if not profile.supports_tool_return_schema and any(t.return_schema is not None for t in params.function_tools):
+    if not profile.supports_tool_return_schema and any(t.return_schema for t in params.function_tools):
         return replace(
             params,
             function_tools=[_inject_return_schema_in_description(t) for t in params.function_tools],
@@ -1498,7 +1498,7 @@ def _inject_return_schema_in_description(tool_def: ToolDefinition) -> ToolDefini
 
     This is a fallback for models that don't natively support tool return schemas.
     """
-    if tool_def.return_schema is None:
+    if not tool_def.return_schema:
         return tool_def
 
     import json

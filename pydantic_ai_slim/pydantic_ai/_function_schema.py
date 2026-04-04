@@ -5,6 +5,7 @@ This module has to use numerous internal Pydantic APIs and is therefore brittle 
 
 from __future__ import annotations as _annotations
 
+import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import partial
@@ -237,8 +238,6 @@ def function_schema(  # noqa: C901
             schema_generator=schema_generator, mode='serialization'
         )
     except (PydanticSchemaGenerationError, PydanticUserError):
-        import warnings
-
         warnings.warn(
             f'Could not generate return schema for {original_func.__qualname__!r}: '
             f'unsupported return type {return_annotation!r}. Falling back to unconstrained schema.',
@@ -342,7 +341,10 @@ def _extract_return_schema_type(return_annotation: Any, function: Callable[..., 
         return Any
     if return_annotation is type(None):
         return type(None)
-    # Resolve Self to the owning class for bound methods
+    # Resolve Self to the owning class for bound methods.
+    # Only works when the function is already bound (e.g. instance.method);
+    # unbound methods and classmethods fall back to Any since there's no
+    # instance to infer the class from.
     from typing_extensions import Self
 
     if return_annotation is Self:

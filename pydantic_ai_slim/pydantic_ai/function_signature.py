@@ -519,9 +519,10 @@ def _type_to_expr(
     # Object type
     if schema_type == 'object':
         if 'properties' in schema:
-            # Use `title` from the schema if available (preserves real class names like `User`),
-            # otherwise fall back to a path-based name
-            td_name = schema.get('title') or _path_to_typename(tool_name, path)
+            # Use `title` from the schema if available and is a valid Python identifier
+            # (preserves real class names like `User`), otherwise fall back to a path-based name
+            title = schema.get('title')
+            td_name = title if title and title.isidentifier() else _path_to_typename(tool_name, path)
             if td_name not in referenced_types:
                 _build_and_register_type(td_name, schema, defs, referenced_types, tool_name, path)
             return referenced_types[td_name]

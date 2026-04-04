@@ -633,7 +633,10 @@ class ToolDefinition:
 
         Convenience wrapper around ``self.function_signature.render()`` that
         supplies ``name`` and ``description`` from this tool definition.
+        Also applies any pending dedup prefixes to referenced types.
         """
+        for ts in self.function_signature.referenced_types:
+            ts.apply_prefix(self.name)
         return self.function_signature.render(body, name=self.name, description=self.description, **kwargs)
 
     @property
