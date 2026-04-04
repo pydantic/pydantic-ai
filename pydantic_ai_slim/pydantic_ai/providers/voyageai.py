@@ -59,7 +59,7 @@ class VoyageAIProvider(Provider[AsyncClient]):
             if not api_key:
                 raise UserError(
                     'Set the `VOYAGE_API_KEY` environment variable or pass it via `VoyageAIProvider(api_key=...)` '
-                    'to use the VoyageAI provider.'
+                    ' to use the VoyageAI provider.'
                 )
 
             self._client = AsyncClient(api_key=api_key)

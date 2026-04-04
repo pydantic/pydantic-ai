@@ -88,7 +88,7 @@ class FireworksProvider(Provider[AsyncOpenAI]):
         if not api_key and openai_client is None:
             raise UserError(
                 'Set the `FIREWORKS_API_KEY` environment variable or pass it via `FireworksProvider(api_key=...)`'
-                'to use the Fireworks AI provider.'
+                ' to use the Fireworks AI provider.'
             )
 
         if openai_client is not None:

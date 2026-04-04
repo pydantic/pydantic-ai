@@ -128,7 +128,7 @@ class GoogleProvider(Provider[Client]):
                 if api_key is None:
                     raise UserError(
                         'Set the `GOOGLE_API_KEY` environment variable or pass it via `GoogleProvider(api_key=...)`'
-                        'to use the Google Generative Language API.'
+                        ' to use the Google Generative Language API.'
                     )
                 self._client = Client(vertexai=False, api_key=api_key, http_options=http_options)
             else:

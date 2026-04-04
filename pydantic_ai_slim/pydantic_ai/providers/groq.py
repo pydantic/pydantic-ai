@@ -122,7 +122,7 @@ class GroqProvider(Provider[AsyncGroq]):
             if not api_key:
                 raise UserError(
                     'Set the `GROQ_API_KEY` environment variable or pass it via `GroqProvider(api_key=...)`'
-                    'to use the Groq provider.'
+                    ' to use the Groq provider.'
                 )
             elif http_client is not None:
                 self._client = AsyncGroq(base_url=base_url, api_key=api_key, http_client=http_client)

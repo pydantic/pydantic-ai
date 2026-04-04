@@ -98,7 +98,7 @@ class XaiProvider(Provider[AsyncClient]):
             if not api_key:
                 raise UserError(
                     'Set the `XAI_API_KEY` environment variable or pass it via `XaiProvider(api_key=...)`'
-                    'to use the xAI provider.'
+                    ' to use the xAI provider.'
                 )
             self._lazy_client = _LazyAsyncClient(api_key=api_key)
             self._client = None  # type: ignore[assignment]

@@ -70,7 +70,7 @@ class CohereProvider(Provider[AsyncClientV2]):
             if not api_key:
                 raise UserError(
                     'Set the `CO_API_KEY` environment variable or pass it via `CohereProvider(api_key=...)`'
-                    'to use the Cohere provider.'
+                    ' to use the Cohere provider.'
                 )
 
             base_url = os.getenv('CO_BASE_URL')
