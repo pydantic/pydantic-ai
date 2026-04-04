@@ -42,7 +42,7 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
 
         model = OpenAIChatModel('gpt-5.2')
         durability = DBOSDurability(name='my_agent', model=model)
-        agent = Agent(model=model, capabilities=[durability])
+        agent = Agent(model=durability.model, capabilities=[durability])
         ```
     """
 
@@ -72,12 +72,15 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
             mcp_step_config: DBOS step config for MCP server steps.
             toolsets: Agent toolsets to wrap for DBOS step execution. Only MCP
                 toolsets are wrapped; function toolsets pass through unchanged.
+                The capability provides these to the agent via ``get_toolset()``,
+                so they don't need to be passed to ``Agent(toolsets=...)`` separately.
         """
         self.name = name
-        self._model = model
+        self.model = model
         self._event_stream_handler = event_stream_handler
         self._model_step_config = model_step_config or {}
         self._mcp_step_config = mcp_step_config or {}
+        self._toolsets = list(toolsets) if toolsets else []
 
         # --- Model request steps ---
 
@@ -196,6 +199,16 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
             request_context.model_settings,
             request_context.model_request_parameters,
         )
+
+    def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
+        """Provide the registered toolsets to the agent."""
+        if not self._toolsets:
+            return None
+        if len(self._toolsets) == 1:
+            return self._toolsets[0]
+        from pydantic_ai.toolsets.combined import CombinedToolset
+
+        return CombinedToolset(self._toolsets)
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Replace MCP leaf toolsets with their DBOS-wrapped versions."""

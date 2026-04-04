@@ -4064,7 +4064,7 @@ _durability_fn_model = FunctionModel(_durability_model_fn)
 
 simple_durability = TemporalDurability(
     name='durability_simple_agent',
-    models={'default': _durability_fn_model},
+    model=_durability_fn_model,
     activity_config=BASE_ACTIVITY_CONFIG,
 )
 simple_durable_agent = Agent(_durability_fn_model, name='durability_simple_agent', capabilities=[simple_durability])
@@ -4115,17 +4115,18 @@ def _tool_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelRespon
 
 durability_country_toolset = FunctionToolset[Deps](tools=[get_country], id='durability_country')
 
+_tool_fn_model = FunctionModel(_tool_model_fn)
+
 complex_durability = TemporalDurability[Deps](
     name='durability_complex_agent',
-    models={'default': FunctionModel(_tool_model_fn)},
+    model=_tool_fn_model,
     deps_type=Deps,
     activity_config=BASE_ACTIVITY_CONFIG,
     toolsets=[durability_country_toolset],
 )
 complex_durable_agent = Agent(
-    FunctionModel(_tool_model_fn),
+    complex_durability.model,
     deps_type=Deps,
-    toolsets=[durability_country_toolset],
     capabilities=[complex_durability],
     name='durability_complex_agent',
 )
@@ -4170,7 +4171,7 @@ async def test_durability_outside_workflow_is_transparent():
 
 _threads_durability = TemporalDurability(
     name='sync_tool_test',
-    models={'default': _durability_fn_model},
+    model=_durability_fn_model,
     activity_config=BASE_ACTIVITY_CONFIG,
 )
 _threads_agent = Agent(_durability_fn_model, name='sync_tool_test', capabilities=[_threads_durability])
@@ -4204,17 +4205,17 @@ async def test_durability_wrap_run_disables_threads(client: Client):
 # --- Durability validation ---
 
 
-def test_durability_requires_models():
-    """TemporalDurability raises UserError when no models are provided."""
-    with pytest.raises(UserError, match='must provide at least one Model instance'):
-        TemporalDurability(name='test', models={})
+def test_durability_rejects_default_model_key():
+    """TemporalDurability raises UserError when 'default' is used in the models dict."""
+    with pytest.raises(UserError, match="'default' is reserved"):
+        TemporalDurability(name='test', model=_durability_fn_model, models={'default': _durability_fn_model})
 
 
 def test_durability_image_output_rejected():
     """TemporalDurability rejects image output because of the 2MB payload limit."""
     durability = TemporalDurability(
         name='test',
-        models={'default': _durability_fn_model},
+        model=_durability_fn_model,
     )
     with pytest.raises(UserError, match='Image output is not supported'):
         durability._validate_model_request_parameters(  # pyright: ignore[reportPrivateUsage]
@@ -4231,7 +4232,8 @@ def test_durability_find_model_id_by_identity():
     m2 = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart(content='hi')]))
     durability = TemporalDurability(
         name='test',
-        models={'default': m1, 'alt': m2},
+        model=m1,
+        models={'alt': m2},
     )
     assert durability._find_model_id(m1) is None  # default → None  # pyright: ignore[reportPrivateUsage]
     assert durability._find_model_id(m2) == 'alt'  # pyright: ignore[reportPrivateUsage]
@@ -4241,7 +4243,7 @@ def test_durability_temporal_activities():
     """temporal_activities returns all registered activities."""
     durability = TemporalDurability(
         name='test',
-        models={'default': _durability_fn_model},
+        model=_durability_fn_model,
     )
     activities = durability.temporal_activities
     # Should have: request_activity, request_stream_activity, event_stream_handler_activity
@@ -4253,7 +4255,7 @@ def test_durability_temporal_activities_with_toolsets():
     toolset = FunctionToolset(id='test_toolset')
     durability = TemporalDurability(
         name='test',
-        models={'default': _durability_fn_model},
+        model=_durability_fn_model,
         toolsets=[toolset],
     )
     activities = durability.temporal_activities

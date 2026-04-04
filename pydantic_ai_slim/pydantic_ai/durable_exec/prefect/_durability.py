@@ -40,7 +40,7 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
 
         model = OpenAIChatModel('gpt-5.2')
         durability = PrefectDurability(name='my_agent', model=model)
-        agent = Agent(model=model, capabilities=[durability])
+        agent = Agent(model=durability.model, capabilities=[durability])
         ```
     """
 
@@ -81,11 +81,14 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
             event_stream_handler_task_config: Prefect task config for event
                 stream handler tasks.
             toolsets: Agent toolsets to wrap for Prefect task execution.
+                The capability provides these to the agent via ``get_toolset()``,
+                so they don't need to be passed to ``Agent(toolsets=...)`` separately.
             prefectify_toolset_func: Custom function for wrapping leaf toolsets.
         """
         self.name = name
-        self._model = model
+        self.model = model
         self._event_stream_handler = event_stream_handler
+        self._toolsets = list(toolsets) if toolsets else []
 
         # Merge configs with defaults
         self._model_task_config = default_task_config | (model_task_config or {})
@@ -167,7 +170,7 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
         if FlowRunContext.get() is None:
             return await handler(request_context)
 
-        model_name = self._model.model_name
+        model_name = self.model.model_name
 
         # Use streaming task when event_stream_handler is set
         if self._event_stream_handler is not None:
@@ -185,6 +188,16 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
             request_context.model_settings,
             request_context.model_request_parameters,
         )
+
+    def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
+        """Provide the registered toolsets to the agent."""
+        if not self._toolsets:
+            return None
+        if len(self._toolsets) == 1:
+            return self._toolsets[0]
+        from pydantic_ai.toolsets.combined import CombinedToolset
+
+        return CombinedToolset(self._toolsets)
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Replace leaf toolsets with their Prefect-wrapped versions."""

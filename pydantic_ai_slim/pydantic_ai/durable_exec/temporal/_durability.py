@@ -63,11 +63,8 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         from pydantic_ai.models.openai import OpenAIChatModel
 
         model = OpenAIChatModel('gpt-5.2')
-        durability = TemporalDurability(
-            name='my_agent',
-            models={'default': model},
-        )
-        agent = Agent(model=model, capabilities=[durability])
+        durability = TemporalDurability(name='my_agent', model=model)
+        agent = Agent(model=durability.model, capabilities=[durability])
         ```
     """
 
@@ -84,7 +81,8 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         self,
         *,
         name: str,
-        models: Mapping[str, Model],
+        model: Model,
+        models: Mapping[str, Model] | None = None,
         deps_type: type[AgentDepsT] = type(None),
         provider_factory: TemporalProviderFactory[AgentDepsT] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
@@ -111,9 +109,10 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
 
         Args:
             name: Unique agent name used as a prefix for Temporal activity names.
-            models: Mapping of model IDs to `Model` instances. The ``'default'`` key
-                (or the first entry if no ``'default'``) is used as the primary model.
-                At least one model must be provided.
+            model: The primary model instance. Also used as the agent's model when
+                passed via ``Agent(model=durability.model, ...)``.
+            models: Optional additional models keyed by ID for runtime model switching.
+                The primary ``model`` is registered as ``'default'``.
             deps_type: The type of the agent's dependencies, needed for Temporal
                 serialization of activity parameters.
             provider_factory: Optional callable for instantiating models from provider
@@ -126,8 +125,9 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
             model_activity_config: Activity config merged on top of the base for
                 model request activities.
             toolsets: Agent toolsets to wrap for Temporal activity execution. Each
-                leaf toolset must have a unique ``id``. When omitted, tool calls
-                execute directly in the workflow (only safe for non-I/O tools).
+                leaf toolset must have a unique ``id``. The capability also provides
+                these to the agent via ``get_toolset()``, so they don't need to be
+                passed to ``Agent(toolsets=...)`` separately.
             toolset_activity_config: Per-toolset activity configs keyed by toolset ID,
                 merged on top of the base config.
             tool_activity_config: Per-tool activity configs keyed by toolset ID then
@@ -141,10 +141,12 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
                 Defaults to the built-in ``temporalize_toolset``.
         """
         self.name = name
+        self.model = model
         self.run_context_type = run_context_type
         self._provider_factory = provider_factory
         self._event_stream_handler = event_stream_handler
         self._agent = agent
+        self._toolsets = list(toolsets) if toolsets else []
 
         # --- Normalize activity config ---
         activity_config = activity_config or ActivityConfig(start_to_close_timeout=timedelta(seconds=60))
@@ -165,9 +167,12 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         activities: list[Callable[..., Any]] = []
 
         # --- Build model registry ---
-        self._models_by_id: dict[str, Model] = dict(models)
-        if not self._models_by_id:
-            raise UserError('The `models` parameter must provide at least one Model instance.')
+        self._models_by_id: dict[str, Model] = {'default': model}
+        if models:
+            for model_id, model_instance in models.items():
+                if model_id == 'default':
+                    raise UserError("Model ID 'default' is reserved for the primary model.")
+                self._models_by_id[model_id] = model_instance
 
         # --- Model request activities ---
         self._model_activity_config: ActivityConfig = {**activity_config, **model_activity_config}
@@ -232,8 +237,8 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         # --- Toolset wrapping ---
         self._temporal_toolsets_by_id: dict[str, AbstractToolset[AgentDepsT]] = {}
 
-        if toolsets:
-            for toolset in toolsets:
+        if self._toolsets:
+            for toolset in self._toolsets:
                 self._temporalize_leaf_toolsets(
                     toolset,
                     activity_name_prefix=activity_name_prefix,
@@ -413,6 +418,20 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
     def _validate_model_request_parameters(self, model_request_parameters: ModelRequestParameters) -> None:
         if model_request_parameters.allow_image_output:
             raise UserError('Image output is not supported with Temporal because of the 2MB payload size limit.')
+
+    def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
+        """Provide the registered toolsets to the agent.
+
+        The agent automatically includes these in its toolset tree, so they
+        don't need to be passed to ``Agent(toolsets=...)`` separately.
+        """
+        if not self._toolsets:
+            return None
+        if len(self._toolsets) == 1:
+            return self._toolsets[0]
+        from pydantic_ai.toolsets.combined import CombinedToolset
+
+        return CombinedToolset(self._toolsets)
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Replace leaf toolsets with their Temporal-wrapped versions."""
