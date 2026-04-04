@@ -109,7 +109,7 @@ class CerebrasProvider(Provider[AsyncOpenAI]):
         if not api_key and openai_client is None:
             raise UserError(
                 'Set the `CEREBRAS_API_KEY` environment variable or pass it via `CerebrasProvider(api_key=...)` '
-                ' to use the Cerebras provider.'
+                'to use the Cerebras provider.'
             )
 
         default_headers = {'X-Cerebras-3rd-Party-Integration': 'pydantic-ai'}
