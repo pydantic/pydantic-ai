@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterable, AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterable, AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, cast, overload
@@ -68,6 +68,19 @@ except ImportError as _import_error:
         'Please install `groq` to use the Groq model, '
         'you can use the `groq` optional group — `pip install "pydantic-ai-slim[groq]"`'
     ) from _import_error
+
+
+@contextmanager
+def _map_api_errors(model_name: str) -> Iterator[None]:
+    try:
+        yield
+    except APIStatusError as e:
+        if (status_code := e.status_code) >= 400:
+            raise ModelHTTPError(status_code=status_code, model_name=model_name, body=e.body) from e
+        raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
+    except APIConnectionError as e:
+        raise ModelAPIError(model_name=model_name, message=e.message) from e
+
 
 ProductionGroqModelNames = Literal[
     'llama-3.1-8b-instant',
@@ -314,9 +327,9 @@ class GroqModel(Model):
         ):  # pragma: no branch
             response_format = {'type': 'json_object'}
 
-        try:
-            extra_headers = model_settings.get('extra_headers', {})
-            extra_headers.setdefault('User-Agent', get_user_agent())
+        extra_headers = model_settings.get('extra_headers', {})
+        extra_headers.setdefault('User-Agent', get_user_agent())
+        with _map_api_errors(self.model_name):
             return await self.client.chat.completions.create(
                 model=self._model_name,
                 messages=groq_messages,
@@ -339,12 +352,6 @@ class GroqModel(Model):
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
-        except APIStatusError as e:
-            if (status_code := e.status_code) >= 400:
-                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise ModelAPIError(model_name=self.model_name, message=e.message) from e  # pragma: no cover
-        except APIConnectionError as e:
-            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -387,7 +394,8 @@ class GroqModel(Model):
     ) -> GroqStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
-        first_chunk = await peekable_response.peek()
+        with _map_api_errors(self.model_name):
+            first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior(  # pragma: no cover
                 'Streamed response ended without content or tool calls'
@@ -458,13 +466,13 @@ class GroqModel(Model):
                 groq_messages.append(message_param)
             else:
                 assert_never(message)
-        if instructions := self._get_instructions(messages, model_request_parameters):
+        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
             system_prompt_count = next(
                 (i for i, m in enumerate(groq_messages) if m.get('role') != 'system'), len(groq_messages)
             )
-            groq_messages.insert(
-                system_prompt_count, chat.ChatCompletionSystemMessageParam(role='system', content=instructions)
-            )
+            groq_messages[system_prompt_count:system_prompt_count] = [
+                chat.ChatCompletionSystemMessageParam(role='system', content=part.content) for part in instruction_parts
+            ]
         return groq_messages
 
     @staticmethod
@@ -578,100 +586,101 @@ class GroqStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
-        try:
-            executed_tool_call_id: str | None = None
-            reasoning_index = 0
-            reasoning = False
-            if self._provider_timestamp is not None:  # pragma: no branch
-                self.provider_details = {'timestamp': self._provider_timestamp}
-            async for chunk in self._response:
-                self._usage += _map_usage(chunk)
+        with _map_api_errors(self._model_name):
+            try:
+                executed_tool_call_id: str | None = None
+                reasoning_index = 0
+                reasoning = False
+                if self._provider_timestamp is not None:  # pragma: no branch
+                    self.provider_details = {'timestamp': self._provider_timestamp}
+                async for chunk in self._response:
+                    self._usage += _map_usage(chunk)
 
-                if chunk.id:  # pragma: no branch
-                    self.provider_response_id = chunk.id
+                    if chunk.id:  # pragma: no branch
+                        self.provider_response_id = chunk.id
 
-                try:
-                    choice = chunk.choices[0]
-                except IndexError:
-                    continue
+                    try:
+                        choice = chunk.choices[0]
+                    except IndexError:
+                        continue
 
-                if raw_finish_reason := choice.finish_reason:
-                    self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
-                    self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+                    if raw_finish_reason := choice.finish_reason:
+                        self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
+                        self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
-                if choice.delta.reasoning is not None:
-                    if not reasoning:
-                        reasoning_index += 1
-                        reasoning = True
+                    if choice.delta.reasoning is not None:
+                        if not reasoning:
+                            reasoning_index += 1
+                            reasoning = True
 
-                    # NOTE: The `reasoning` field is only present if `groq_reasoning_format` is set to `parsed`.
-                    for event in self._parts_manager.handle_thinking_delta(
-                        vendor_part_id=f'reasoning-{reasoning_index}', content=choice.delta.reasoning
-                    ):
-                        yield event
-                else:
-                    reasoning = False
+                        # NOTE: The `reasoning` field is only present if `groq_reasoning_format` is set to `parsed`.
+                        for event in self._parts_manager.handle_thinking_delta(
+                            vendor_part_id=f'reasoning-{reasoning_index}', content=choice.delta.reasoning
+                        ):
+                            yield event
+                    else:
+                        reasoning = False
 
-                if choice.delta.executed_tools:
-                    for tool in choice.delta.executed_tools:
-                        call_part, return_part = _map_executed_tool(
-                            tool, self.provider_name, streaming=True, tool_call_id=executed_tool_call_id
+                    if choice.delta.executed_tools:
+                        for tool in choice.delta.executed_tools:
+                            call_part, return_part = _map_executed_tool(
+                                tool, self.provider_name, streaming=True, tool_call_id=executed_tool_call_id
+                            )
+                            if call_part:
+                                executed_tool_call_id = call_part.tool_call_id
+                                yield self._parts_manager.handle_part(
+                                    vendor_part_id=f'executed_tools-{tool.index}-call', part=call_part
+                                )
+                            if return_part:
+                                executed_tool_call_id = None
+                                yield self._parts_manager.handle_part(
+                                    vendor_part_id=f'executed_tools-{tool.index}-return', part=return_part
+                                )
+
+                    # Handle the text part of the response
+                    content = choice.delta.content
+                    if content:
+                        for event in self._parts_manager.handle_text_delta(
+                            vendor_part_id='content',
+                            content=content,
+                            thinking_tags=self._model_profile.thinking_tags,
+                            ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
+                        ):
+                            yield event
+
+                    # Handle the tool calls
+                    for dtc in choice.delta.tool_calls or []:
+                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                            vendor_part_id=dtc.index,
+                            tool_name=dtc.function and dtc.function.name,
+                            args=dtc.function and dtc.function.arguments,
+                            tool_call_id=dtc.id,
                         )
-                        if call_part:
-                            executed_tool_call_id = call_part.tool_call_id
-                            yield self._parts_manager.handle_part(
-                                vendor_part_id=f'executed_tools-{tool.index}-call', part=call_part
-                            )
-                        if return_part:
-                            executed_tool_call_id = None
-                            yield self._parts_manager.handle_part(
-                                vendor_part_id=f'executed_tools-{tool.index}-return', part=return_part
-                            )
-
-                # Handle the text part of the response
-                content = choice.delta.content
-                if content:
-                    for event in self._parts_manager.handle_text_delta(
-                        vendor_part_id='content',
-                        content=content,
-                        thinking_tags=self._model_profile.thinking_tags,
-                        ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
-                    ):
-                        yield event
-
-                # Handle the tool calls
-                for dtc in choice.delta.tool_calls or []:
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
-                        vendor_part_id=dtc.index,
-                        tool_name=dtc.function and dtc.function.name,
-                        args=dtc.function and dtc.function.arguments,
-                        tool_call_id=dtc.id,
-                    )
-                    if maybe_event is not None:
-                        yield maybe_event
-        except APIError as e:
-            # The Groq SDK tries to be helpful by raising an exception when generated tool arguments don't match the schema,
-            # but we'd rather handle it ourselves so we can tell the model to retry the tool call
-            if (failed_generation := _parse_tool_use_failed_error(e.body)) is not None:
-                if isinstance(failed_generation, _GroqToolUseFailedGeneration):
-                    yield self._parts_manager.handle_tool_call_part(
-                        vendor_part_id='tool_use_failed',
-                        tool_name=failed_generation.name,
-                        args=failed_generation.arguments,
-                    )
-                elif failed_generation:  # pragma: no cover
-                    # This branch is not covered because when streaming, the non-tool call text would already
-                    # have streamed before the `tool_use_failed` error which comes with `failed_generation=''`,
-                    # but we keep this here for (hypothetical?) cases where that field would not be empty.
-                    for event in self._parts_manager.handle_text_delta(
-                        vendor_part_id='tool_use_failed',
-                        content=failed_generation,
-                        thinking_tags=self._model_profile.thinking_tags,
-                        ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
-                    ):
-                        yield event
-                return
-            raise  # pragma: no cover
+                        if maybe_event is not None:
+                            yield maybe_event
+            except APIError as e:
+                # The Groq SDK tries to be helpful by raising an exception when generated tool arguments don't match the schema,
+                # but we'd rather handle it ourselves so we can tell the model to retry the tool call
+                if (failed_generation := _parse_tool_use_failed_error(e.body)) is not None:
+                    if isinstance(failed_generation, _GroqToolUseFailedGeneration):
+                        yield self._parts_manager.handle_tool_call_part(
+                            vendor_part_id='tool_use_failed',
+                            tool_name=failed_generation.name,
+                            args=failed_generation.arguments,
+                        )
+                    elif failed_generation:  # pragma: no cover
+                        # This branch is not covered because when streaming, the non-tool call text would already
+                        # have streamed before the `tool_use_failed` error which comes with `failed_generation=''`,
+                        # but we keep this here for (hypothetical?) cases where that field would not be empty.
+                        for event in self._parts_manager.handle_text_delta(
+                            vendor_part_id='tool_use_failed',
+                            content=failed_generation,
+                            thinking_tags=self._model_profile.thinking_tags,
+                            ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
+                        ):
+                            yield event
+                    return
+                raise
 
     @property
     def model_name(self) -> GroqModelName:
@@ -740,7 +749,7 @@ class _GroqToolUseFailedError(BaseModel):
 
 def _parse_tool_use_failed_error(body: Any) -> _GroqToolUseFailedGeneration | str | None:
     if not isinstance(body, dict):
-        return None  # pragma: no cover
+        return None
 
     try:
         error = _GroqToolUseFailedError.model_validate(body)

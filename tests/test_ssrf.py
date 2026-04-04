@@ -651,6 +651,68 @@ class TestSafeDownload:
         assert len(created_clients) == 1
         assert created_clients[0].is_closed
 
+    async def test_allowed_domains_permits(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
+        """Test that allowed domain passes validation."""
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+        mock_response = AsyncMock()
+        mock_response.is_redirect = False
+        mock_response.raise_for_status = lambda: None
+        mock_ssrf_client.return_value.get.return_value = mock_response
+
+        await safe_download('https://example.com/page', allowed_domains=['example.com'])
+
+    async def test_allowed_domains_blocks(self, mock_dns: AsyncMock) -> None:
+        """Test that non-allowed domain is rejected."""
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+        with pytest.raises(ValueError, match='not in the allowed domains'):
+            await safe_download('https://evil.com/page', allowed_domains=['example.com'])
+
+    async def test_blocked_domains_blocks(self, mock_dns: AsyncMock) -> None:
+        """Test that blocked domain is rejected."""
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+        with pytest.raises(ValueError, match='is blocked'):
+            await safe_download('https://evil.com/page', blocked_domains=['evil.com'])
+
+    async def test_blocked_domains_permits(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
+        """Test that non-blocked domain passes validation."""
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+        mock_response = AsyncMock()
+        mock_response.is_redirect = False
+        mock_response.raise_for_status = lambda: None
+        mock_ssrf_client.return_value.get.return_value = mock_response
+
+        await safe_download('https://example.com/page', blocked_domains=['evil.com'])
+
+    async def test_redirect_to_blocked_domain_rejected(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
+        """Test that redirects to blocked domains are caught."""
+        mock_dns.side_effect = [
+            [(2, 1, 6, '', ('93.184.215.14', 0))],
+            [(2, 1, 6, '', ('198.51.100.1', 0))],
+        ]
+        redirect_response = AsyncMock()
+        redirect_response.is_redirect = True
+        redirect_response.headers = {'location': 'https://evil.com/payload'}
+        mock_ssrf_client.return_value.get.return_value = redirect_response
+
+        with pytest.raises(ValueError, match='is blocked'):
+            await safe_download('https://example.com/page', blocked_domains=['evil.com'])
+
+    async def test_redirect_to_non_allowed_domain_rejected(
+        self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
+    ) -> None:
+        """Test that redirects to non-allowed domains are caught."""
+        mock_dns.side_effect = [
+            [(2, 1, 6, '', ('93.184.215.14', 0))],
+            [(2, 1, 6, '', ('198.51.100.1', 0))],
+        ]
+        redirect_response = AsyncMock()
+        redirect_response.is_redirect = True
+        redirect_response.headers = {'location': 'https://other.com/page'}
+        mock_ssrf_client.return_value.get.return_value = redirect_response
+
+        with pytest.raises(ValueError, match='not in the allowed domains'):
+            await safe_download('https://example.com/page', allowed_domains=['example.com'])
+
 
 class TestDnsRebindingPrevention:
     """Tests specifically for DNS rebinding attack prevention."""

@@ -49,6 +49,7 @@ _CLOUD_METADATA_IPS: frozenset[str] = frozenset(
 
 _MAX_REDIRECTS = 10
 _DEFAULT_TIMEOUT = 30  # seconds
+_SENSITIVE_HEADERS = frozenset(('authorization', 'cookie', 'proxy-authorization'))
 
 
 @dataclass
@@ -294,11 +295,26 @@ def resolve_redirect_url(current_url: str, location: str) -> str:
         return urlunparse((parsed_current.scheme, parsed_current.netloc, f'{base_path}/{location}', '', '', ''))
 
 
+def _check_domain(hostname: str, *, allowed_domains: list[str] | None, blocked_domains: list[str] | None) -> None:
+    """Validate a hostname against allowed/blocked domain lists.
+
+    Raises:
+        ValueError: If the hostname is not allowed or is blocked.
+    """
+    if allowed_domains is not None and hostname not in allowed_domains:
+        raise ValueError(f'Domain {hostname!r} is not in the allowed domains list. Allowed: {allowed_domains}')
+    if blocked_domains is not None and hostname in blocked_domains:
+        raise ValueError(f'Domain {hostname!r} is blocked.')
+
+
 async def safe_download(
     url: str,
     allow_local: bool = False,
     max_redirects: int = _MAX_REDIRECTS,
     timeout: int = _DEFAULT_TIMEOUT,
+    headers: dict[str, str] | None = None,
+    allowed_domains: list[str] | None = None,
+    blocked_domains: list[str] | None = None,
 ) -> httpx.Response:
     """Download content from a URL with SSRF protection.
 
@@ -307,8 +323,9 @@ async def safe_download(
     2. Resolves the hostname to IP addresses
     3. Validates that no resolved IP is private (unless allow_local=True)
     4. Always blocks cloud metadata endpoints
-    5. Makes the request to the resolved IP with the Host header set
-    6. Manually follows redirects, validating each hop
+    5. Validates the hostname against allowed/blocked domain lists
+    6. Makes the request to the resolved IP with the Host header set
+    7. Manually follows redirects, validating each hop
 
     Args:
         url: The URL to download from.
@@ -316,21 +333,34 @@ async def safe_download(
                     Cloud metadata endpoints are always blocked regardless.
         max_redirects: Maximum number of redirects to follow (default: 10).
         timeout: Request timeout in seconds (default: 30).
+        headers: Additional HTTP headers to include in the request.
+                The `Host` header is always set to the original hostname
+                and cannot be overridden.
+        allowed_domains: If set, only these hostnames are permitted (exact match).
+                Checked on every hop including redirects.
+        blocked_domains: If set, these hostnames are rejected (exact match).
+                Checked on every hop including redirects.
 
     Returns:
         The httpx.Response object.
 
     Raises:
-        ValueError: If the URL fails SSRF validation or too many redirects occur.
+        ValueError: If the URL fails SSRF validation, domain validation,
+                or too many redirects occur.
         httpx.HTTPStatusError: If the response has an error status code.
     """
     current_url = url
     redirects_followed = 0
+    original_hostname = urlparse(url).hostname
+    effective_headers = dict(headers) if headers else {}
 
     async with create_async_http_client(timeout=timeout) as client:
         while True:
             # Validate and resolve the current URL
             resolved = await validate_and_resolve_url(current_url, allow_local)
+
+            # Check domain restrictions (on every hop to prevent redirect bypass)
+            _check_domain(resolved.hostname, allowed_domains=allowed_domains, blocked_domains=blocked_domains)
 
             # Build URL with resolved IP
             request_url = build_url_with_ip(resolved)
@@ -341,10 +371,13 @@ async def safe_download(
             if resolved.is_https:
                 extensions['sni_hostname'] = resolved.hostname
 
+            request_headers: dict[str, str] = {k: v for k, v in effective_headers.items() if k.lower() != 'host'}
+            request_headers['Host'] = resolved.hostname
+
             # Make request with Host header set to original hostname
             response = await client.get(
                 request_url,
-                headers={'Host': resolved.hostname},
+                headers=request_headers,
                 extensions=extensions,
                 follow_redirects=False,
             )
@@ -361,6 +394,14 @@ async def safe_download(
                     raise ValueError('Redirect response missing Location header')
 
                 current_url = resolve_redirect_url(current_url, location)
+
+                # Strip sensitive headers on cross-origin redirects (RFC 7235)
+                redirect_hostname = urlparse(current_url).hostname
+                if redirect_hostname != original_hostname:
+                    effective_headers = {
+                        k: v for k, v in effective_headers.items() if k.lower() not in _SENSITIVE_HEADERS
+                    }
+
                 continue
 
             # Not a redirect, we're done

@@ -103,6 +103,7 @@ dev = [
     "duckduckgo-search>=7.0.0",
     "exa-py>=2.0.0",
     "tavily-python>=0.5.0",
+    "markdownify>=1.2",
     "inline-snapshot>=0.19.3",
     "pytest>=9.0.0",
     "pytest-examples>=0.0.18",

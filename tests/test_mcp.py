@@ -15,6 +15,7 @@ import pytest
 from pydantic_ai import (
     BinaryContent,
     BinaryImage,
+    InstructionPart,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -244,7 +245,7 @@ async def test_server_instructions_enabled(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True)
     async with server:
         instructions = await server.get_instructions(run_context)
-        assert instructions == 'Be a helpful assistant.'
+        assert instructions == InstructionPart(content='Be a helpful assistant.', dynamic=True)
 
 
 async def test_server_instructions_included_in_agent_request() -> None:
