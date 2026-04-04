@@ -8310,6 +8310,20 @@ class TestCompaction:
         with pytest.raises(UserError, match='OpenAICompaction requires OpenAIResponsesModel'):
             await agent.run('hello')
 
+    async def test_openai_compaction_with_wrapped_wrong_model(self):
+        """OpenAICompaction unwraps WrapperModel and raises for non-OpenAI model."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+        from pydantic_ai.models.wrapper import WrapperModel
+
+        wrapped = WrapperModel(FunctionModel(simple_model_function))
+        agent = Agent(
+            wrapped,
+            capabilities=[OpenAICompaction(message_count_threshold=0)],
+        )
+        with pytest.raises(UserError, match='OpenAICompaction requires OpenAIResponsesModel'):
+            await agent.run('hello')
+
     def test_openai_compaction_should_compact_with_trigger(self):
         """OpenAICompaction._should_compact delegates to custom trigger."""
         pytest.importorskip('openai')

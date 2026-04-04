@@ -499,17 +499,8 @@ class AnthropicModel(Model):
         output_config = self._build_output_config(model_request_parameters, model_settings)
         betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
         betas.update(builtin_tool_betas)
-        # Add compaction beta and context_management if messages contain CompactionParts (for round-tripping)
-        has_compaction_parts = any(
-            isinstance(part, CompactionPart) for msg in messages if isinstance(msg, ModelResponse) for part in msg.parts
-        )
-        if has_compaction_parts:
-            betas.add('compact-2026-01-12')
+        context_management = self._add_compaction_params(messages, betas, model_settings)
         container = self._get_container(messages, model_settings)
-        # Anthropic requires context_management with compact_20260112 strategy when sending compaction blocks
-        context_management = model_settings.get('anthropic_context_management')
-        if has_compaction_parts and context_management is None:
-            context_management = cast(BetaContextManagementConfigParam, {'edits': [{'type': 'compact_20260112'}]})
         with _map_api_errors(self.model_name):
             return await self.client.beta.messages.create(
                 max_tokens=model_settings.get('max_tokens', 4096),
@@ -533,6 +524,26 @@ class AnthropicModel(Model):
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
+
+    @staticmethod
+    def _add_compaction_params(
+        messages: list[ModelMessage],
+        betas: set[str],
+        model_settings: AnthropicModelSettings,
+    ) -> BetaContextManagementConfigParam | None:
+        """Add compaction beta and default context_management when messages contain CompactionParts.
+
+        This ensures CompactionParts can be round-tripped even without AnthropicCompaction active.
+        """
+        has_compaction_parts = any(
+            isinstance(part, CompactionPart) for msg in messages if isinstance(msg, ModelResponse) for part in msg.parts
+        )
+        if has_compaction_parts:
+            betas.add('compact-2026-01-12')
+        context_management = model_settings.get('anthropic_context_management')
+        if has_compaction_parts and context_management is None:
+            context_management = cast(BetaContextManagementConfigParam, {'edits': [{'type': 'compact_20260112'}]})
+        return context_management
 
     def _get_betas_and_extra_headers(
         self,
@@ -598,17 +609,7 @@ class AnthropicModel(Model):
         output_config = self._build_output_config(model_request_parameters, model_settings)
         betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
         betas.update(builtin_tool_betas)
-        # Add compaction beta and context_management if messages contain CompactionParts (for round-tripping)
-        has_compaction_parts = any(
-            isinstance(part, CompactionPart) for msg in messages if isinstance(msg, ModelResponse) for part in msg.parts
-        )
-        if has_compaction_parts:
-            betas.add('compact-2026-01-12')  # pragma: no cover
-        context_management = model_settings.get('anthropic_context_management')
-        if has_compaction_parts and context_management is None:
-            context_management = cast(
-                BetaContextManagementConfigParam, {'edits': [{'type': 'compact_20260112'}]}
-            )  # pragma: no cover
+        context_management = self._add_compaction_params(messages, betas, model_settings)
         with _map_api_errors(self.model_name):
             return await self.client.beta.messages.count_tokens(
                 system=system_prompt or OMIT,
@@ -1426,14 +1427,16 @@ class AnthropicCompaction(AbstractCapability[AgentDepsT]):
             edit['instructions'] = self.instructions
 
         def resolve(ctx: RunContext[AgentDepsT]) -> ModelSettings:
-            # Append our edit to any existing edits the user may have configured,
-            # rather than replacing their anthropic_context_management entirely.
-            existing_edits: list[dict[str, Any]] = []
+            # Append our edit to any existing context_management the user may have configured,
+            # preserving other fields (not just edits).
+            existing_cm: dict[str, Any] = {}
             if ctx.model_settings:
-                existing_cm = cast(dict[str, Any], ctx.model_settings).get('anthropic_context_management')
-                if isinstance(existing_cm, dict):  # pragma: no branch
-                    existing_edits = cast(list[dict[str, Any]], existing_cm.get('edits', []))  # pyright: ignore[reportUnknownMemberType]
-            return cast(ModelSettings, {'anthropic_context_management': {'edits': [*existing_edits, edit]}})
+                raw_cm = cast(dict[str, Any], ctx.model_settings).get('anthropic_context_management')
+                if isinstance(raw_cm, dict):  # pragma: no branch
+                    existing_cm = {**cast(dict[str, Any], raw_cm)}
+            existing_edits = cast(list[dict[str, Any]], existing_cm.get('edits', []))
+            existing_cm['edits'] = [*existing_edits, edit]
+            return cast(ModelSettings, {'anthropic_context_management': existing_cm})
 
         return resolve
 

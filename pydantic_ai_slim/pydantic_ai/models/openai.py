@@ -118,6 +118,7 @@ try:
         ResponseCompactionItem,
         WebSearchToolParam,
     )
+    from openai.types.responses.response_compaction_item_param_param import ResponseCompactionItemParamParam
     from openai.types.responses.response_input_file_content_param import ResponseInputFileContentParam
     from openai.types.responses.response_input_image_content_param import ResponseInputImageContentParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
@@ -2366,11 +2367,11 @@ class OpenAIResponsesModel(Model):
                     elif isinstance(item, CompactionPart):
                         if item.provider_name == self.system and item.provider_details:  # pragma: no branch
                             openai_messages.append(
-                                {
-                                    'id': item.id,
-                                    'encrypted_content': item.provider_details['encrypted_content'],
-                                    'type': 'compaction',
-                                }
+                                ResponseCompactionItemParamParam(
+                                    id=item.id,
+                                    encrypted_content=item.provider_details['encrypted_content'],
+                                    type='compaction',
+                                )
                             )
                     else:
                         assert_never(item)
@@ -3184,7 +3185,7 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
 
         model = request_context.model
         while isinstance(model, WrapperModel):
-            model = model.wrapped  # pragma: no cover
+            model = model.wrapped
         if not isinstance(model, OpenAIResponsesModel):
             raise UserError(
                 f'OpenAICompaction requires OpenAIResponsesModel, got {type(model).__name__}. '

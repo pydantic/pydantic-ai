@@ -1985,7 +1985,7 @@ class ModelResponse:
                     return_part['result'] = InstrumentedModel.serialize_any(part.content)
 
                 parts.append(return_part)
-            elif isinstance(part, CompactionPart):  # pragma: no cover
+            elif isinstance(part, CompactionPart):
                 # Compaction parts don't map to standard OTel message part types
                 pass
         return parts

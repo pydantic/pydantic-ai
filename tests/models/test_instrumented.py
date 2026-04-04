@@ -1111,6 +1111,19 @@ def test_messages_to_otel_events_compaction_part():
     )
 
 
+def test_messages_to_otel_message_parts_compaction_part():
+    """CompactionPart is skipped in otel_message_parts (not a standard GenAI convention type)."""
+    from pydantic_ai.messages import CompactionPart
+
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[CompactionPart(content='Summary.', provider_name='anthropic'), TextPart('response')]),
+    ]
+    settings = InstrumentationSettings()
+    otel_messages = settings.messages_to_otel_messages(messages)
+    # CompactionPart is skipped; only TextPart appears
+    assert otel_messages == snapshot([{'role': 'assistant', 'parts': [{'type': 'text', 'content': 'response'}]}])
+
+
 def test_messages_to_otel_events_image_url(document_content: BinaryContent):
     messages = [
         ModelRequest(

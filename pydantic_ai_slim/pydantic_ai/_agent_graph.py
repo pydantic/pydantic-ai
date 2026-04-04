@@ -989,11 +989,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
                 is_empty = not self.model_response.parts
-                is_non_actionable_only = not is_empty and all(
+                is_thinking_only = not is_empty and all(
                     isinstance(p, _messages.ThinkingPart) for p in self.model_response.parts
                 )
 
-                if is_empty or is_non_actionable_only:
+                if is_empty or is_thinking_only:
                     # No actionable output was returned by the model.
 
                     # Don't retry if the token limit was exceeded, possibly during thinking.
@@ -1066,7 +1066,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     elif isinstance(part, _messages.ThinkingPart):
                         pass
                     elif isinstance(part, _messages.CompactionPart):
-                        if part.content:  # pragma: no branch
+                        if part.content:
                             compaction_text += part.content
                     else:
                         assert_never(part)
