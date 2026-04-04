@@ -3711,6 +3711,7 @@ def test_instrumentation_capability_explicit(
     )
 
 
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 def test_instrumentation_capability_template_description(
     capfire: CaptureLogfire,
 ) -> None:
