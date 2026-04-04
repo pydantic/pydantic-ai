@@ -40,7 +40,7 @@ from .abstract import (
     ValidatedToolArgs,
     WrapModelRequestHandler,
     WrapNodeRunHandler,
-    WrapOutputExecuteHandler,
+    WrapOutputProcessHandler,
     WrapOutputValidateHandler,
     WrapRunHandler,
     WrapToolExecuteHandler,
@@ -200,20 +200,20 @@ class OnOutputValidateErrorHookFunc(Protocol):
     """Protocol for [`on_output_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_output_validate_error] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, output_context: OutputContext, output: RawOutput, error: ValidationError | ModelRetry) -> Any | Awaitable[Any]: ...
 
-class BeforeOutputExecuteHookFunc(Protocol):
-    """Protocol for [`before_output_execute`][pydantic_ai.capabilities.AbstractCapability.before_output_execute] hook functions."""
+class BeforeOutputProcessHookFunc(Protocol):
+    """Protocol for [`before_output_process`][pydantic_ai.capabilities.AbstractCapability.before_output_process] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, output_context: OutputContext, output: Any) -> Any | Awaitable[Any]: ...
 
-class AfterOutputExecuteHookFunc(Protocol):
-    """Protocol for [`after_output_execute`][pydantic_ai.capabilities.AbstractCapability.after_output_execute] hook functions."""
+class AfterOutputProcessHookFunc(Protocol):
+    """Protocol for [`after_output_process`][pydantic_ai.capabilities.AbstractCapability.after_output_process] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, output_context: OutputContext, output: Any) -> Any | Awaitable[Any]: ...
 
-class WrapOutputExecuteHookFunc(Protocol):
-    """Protocol for [`wrap_output_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_output_execute] hook functions."""
-    def __call__(self, ctx: RunContext[Any], /, *, output_context: OutputContext, output: Any, handler: WrapOutputExecuteHandler) -> Any | Awaitable[Any]: ...
+class WrapOutputProcessHookFunc(Protocol):
+    """Protocol for [`wrap_output_process`][pydantic_ai.capabilities.AbstractCapability.wrap_output_process] hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, output_context: OutputContext, output: Any, handler: WrapOutputProcessHandler) -> Any | Awaitable[Any]: ...
 
-class OnOutputExecuteErrorHookFunc(Protocol):
-    """Protocol for [`on_output_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_output_execute_error] hook functions."""
+class OnOutputProcessErrorHookFunc(Protocol):
+    """Protocol for [`on_output_process_error`][pydantic_ai.capabilities.AbstractCapability.on_output_process_error] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, output_context: OutputContext, output: Any, error: Exception) -> Any | Awaitable[Any]: ...
 # fmt: on
 
@@ -628,46 +628,46 @@ class _HookRegistration(Generic[AgentDepsT]):
     # --- Output execution ---
 
     @overload
-    def before_output_execute(self, func: BeforeOutputExecuteHookFunc, /) -> BeforeOutputExecuteHookFunc: ...
+    def before_output_process(self, func: BeforeOutputProcessHookFunc, /) -> BeforeOutputProcessHookFunc: ...
     @overload
-    def before_output_execute(
+    def before_output_process(
         self, *, timeout: float | None = None
-    ) -> Callable[[BeforeOutputExecuteHookFunc], BeforeOutputExecuteHookFunc]: ...
-    def before_output_execute(
-        self, func: BeforeOutputExecuteHookFunc | None = None, *, timeout: float | None = None
+    ) -> Callable[[BeforeOutputProcessHookFunc], BeforeOutputProcessHookFunc]: ...
+    def before_output_process(
+        self, func: BeforeOutputProcessHookFunc | None = None, *, timeout: float | None = None
     ) -> Any:
-        return _bare_or_parameterized(self._r, 'before_output_execute', func, timeout=timeout)
+        return _bare_or_parameterized(self._r, 'before_output_process', func, timeout=timeout)
 
     @overload
-    def after_output_execute(self, func: AfterOutputExecuteHookFunc, /) -> AfterOutputExecuteHookFunc: ...
+    def after_output_process(self, func: AfterOutputProcessHookFunc, /) -> AfterOutputProcessHookFunc: ...
     @overload
-    def after_output_execute(
+    def after_output_process(
         self, *, timeout: float | None = None
-    ) -> Callable[[AfterOutputExecuteHookFunc], AfterOutputExecuteHookFunc]: ...
-    def after_output_execute(
-        self, func: AfterOutputExecuteHookFunc | None = None, *, timeout: float | None = None
+    ) -> Callable[[AfterOutputProcessHookFunc], AfterOutputProcessHookFunc]: ...
+    def after_output_process(
+        self, func: AfterOutputProcessHookFunc | None = None, *, timeout: float | None = None
     ) -> Any:
-        return _bare_or_parameterized(self._r, 'after_output_execute', func, timeout=timeout)
+        return _bare_or_parameterized(self._r, 'after_output_process', func, timeout=timeout)
 
     @overload
-    def output_execute(self, func: WrapOutputExecuteHookFunc, /) -> WrapOutputExecuteHookFunc: ...
+    def output_process(self, func: WrapOutputProcessHookFunc, /) -> WrapOutputProcessHookFunc: ...
     @overload
-    def output_execute(
+    def output_process(
         self, *, timeout: float | None = None
-    ) -> Callable[[WrapOutputExecuteHookFunc], WrapOutputExecuteHookFunc]: ...
-    def output_execute(self, func: WrapOutputExecuteHookFunc | None = None, *, timeout: float | None = None) -> Any:
-        return _bare_or_parameterized(self._r, 'wrap_output_execute', func, timeout=timeout)
+    ) -> Callable[[WrapOutputProcessHookFunc], WrapOutputProcessHookFunc]: ...
+    def output_process(self, func: WrapOutputProcessHookFunc | None = None, *, timeout: float | None = None) -> Any:
+        return _bare_or_parameterized(self._r, 'wrap_output_process', func, timeout=timeout)
 
     @overload
-    def output_execute_error(self, func: OnOutputExecuteErrorHookFunc, /) -> OnOutputExecuteErrorHookFunc: ...
+    def output_process_error(self, func: OnOutputProcessErrorHookFunc, /) -> OnOutputProcessErrorHookFunc: ...
     @overload
-    def output_execute_error(
+    def output_process_error(
         self, *, timeout: float | None = None
-    ) -> Callable[[OnOutputExecuteErrorHookFunc], OnOutputExecuteErrorHookFunc]: ...
-    def output_execute_error(
-        self, func: OnOutputExecuteErrorHookFunc | None = None, *, timeout: float | None = None
+    ) -> Callable[[OnOutputProcessErrorHookFunc], OnOutputProcessErrorHookFunc]: ...
+    def output_process_error(
+        self, func: OnOutputProcessErrorHookFunc | None = None, *, timeout: float | None = None
     ) -> Any:
-        return _bare_or_parameterized(self._r, 'on_output_execute_error', func, timeout=timeout)
+        return _bare_or_parameterized(self._r, 'on_output_process_error', func, timeout=timeout)
 
 
 # --- The Hooks capability ---
@@ -739,10 +739,10 @@ class Hooks(AbstractCapability[AgentDepsT]):
         output_validate: WrapOutputValidateHookFunc | None = None,
         output_validate_error: OnOutputValidateErrorHookFunc | None = None,
         # Output execution
-        before_output_execute: BeforeOutputExecuteHookFunc | None = None,
-        after_output_execute: AfterOutputExecuteHookFunc | None = None,
-        output_execute: WrapOutputExecuteHookFunc | None = None,
-        output_execute_error: OnOutputExecuteErrorHookFunc | None = None,
+        before_output_process: BeforeOutputProcessHookFunc | None = None,
+        after_output_process: AfterOutputProcessHookFunc | None = None,
+        output_process: WrapOutputProcessHookFunc | None = None,
+        output_process_error: OnOutputProcessErrorHookFunc | None = None,
     ):
         self._registry = {}
         # Map constructor kwarg names to internal registry keys (AbstractCapability method names)
@@ -774,10 +774,10 @@ class Hooks(AbstractCapability[AgentDepsT]):
             'after_output_validate': after_output_validate,
             'wrap_output_validate': output_validate,
             'on_output_validate_error': output_validate_error,
-            'before_output_execute': before_output_execute,
-            'after_output_execute': after_output_execute,
-            'wrap_output_execute': output_execute,
-            'on_output_execute_error': output_execute_error,
+            'before_output_process': before_output_process,
+            'after_output_process': after_output_process,
+            'wrap_output_process': output_process,
+            'on_output_process_error': output_process_error,
         }
         for key, func in _kwargs.items():
             if func is not None:
@@ -1112,47 +1112,47 @@ class Hooks(AbstractCapability[AgentDepsT]):
                 error = new_error
         raise error
 
-    async def before_output_execute(
+    async def before_output_process(
         self, ctx: RunContext[AgentDepsT], *, output_context: OutputContext, output: Any
     ) -> Any:
-        for entry in self._get('before_output_execute'):
+        for entry in self._get('before_output_process'):
             output = await _call_entry(
-                entry, 'before_output_execute', ctx, output_context=output_context, output=output
+                entry, 'before_output_process', ctx, output_context=output_context, output=output
             )
         return output
 
-    async def after_output_execute(
+    async def after_output_process(
         self, ctx: RunContext[AgentDepsT], *, output_context: OutputContext, output: Any
     ) -> Any:
-        for entry in self._get('after_output_execute'):
+        for entry in self._get('after_output_process'):
             output = await _call_entry(
                 entry,
-                'after_output_execute',
+                'after_output_process',
                 ctx,
                 output_context=output_context,
                 output=output,
             )
         return output
 
-    async def wrap_output_execute(
+    async def wrap_output_process(
         self,
         ctx: RunContext[AgentDepsT],
         *,
         output_context: OutputContext,
         output: Any,
-        handler: WrapOutputExecuteHandler,
+        handler: WrapOutputProcessHandler,
     ) -> Any:
-        entries = self._get('wrap_output_execute')
+        entries = self._get('wrap_output_process')
         if not entries:
             return await handler(output)
         chain: Callable[..., Any] = handler
         for entry in reversed(entries):
             chain = _make_wrap_link(
-                entry, 'wrap_output_execute', ctx, {'output_context': output_context}, chain, 'output'
+                entry, 'wrap_output_process', ctx, {'output_context': output_context}, chain, 'output'
             )
         return await chain(output)
 
-    async def on_output_execute_error(
+    async def on_output_process_error(
         self,
         ctx: RunContext[AgentDepsT],
         *,
@@ -1160,10 +1160,10 @@ class Hooks(AbstractCapability[AgentDepsT]):
         output: Any,
         error: Exception,
     ) -> Any:
-        for entry in self._get('on_output_execute_error'):
+        for entry in self._get('on_output_process_error'):
             try:
                 return await _call_entry(
-                    entry, 'on_output_execute_error', ctx, output_context=output_context, output=output, error=error
+                    entry, 'on_output_process_error', ctx, output_context=output_context, output=output, error=error
                 )
             except Exception as new_error:
                 error = new_error

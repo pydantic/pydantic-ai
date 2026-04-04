@@ -59,8 +59,8 @@ RawOutput: TypeAlias = 'str | dict[str, Any]'
 WrapOutputValidateHandler: TypeAlias = 'Callable[[RawOutput], Awaitable[Any]]'
 """Handler type for wrap_output_validate."""
 
-WrapOutputExecuteHandler: TypeAlias = 'Callable[[Any], Awaitable[Any]]'
-"""Handler type for wrap_output_execute."""
+WrapOutputProcessHandler: TypeAlias = 'Callable[[Any], Awaitable[Any]]'
+"""Handler type for wrap_output_process."""
 
 
 @dataclass
@@ -609,48 +609,48 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         raise error
 
-    # --- Output execute lifecycle hooks ---
+    # --- Output process lifecycle hooks ---
 
-    async def before_output_execute(
+    async def before_output_process(
         self,
         ctx: RunContext[AgentDepsT],
         *,
         output_context: OutputContext,
         output: Any,
     ) -> Any:
-        """Modify validated output before execution (extraction + function call).
+        """Modify validated output before processing (extraction, output function call).
 
-        Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to skip execution and
+        Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to skip processing and
         ask the model to try again.
         """
         return output
 
-    async def after_output_execute(
+    async def after_output_process(
         self,
         ctx: RunContext[AgentDepsT],
         *,
         output_context: OutputContext,
         output: Any,
     ) -> Any:
-        """Modify result after output execution.
+        """Modify result after output processing.
 
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject the result
         and ask the model to try again.
         """
         return output
 
-    async def wrap_output_execute(
+    async def wrap_output_process(
         self,
         ctx: RunContext[AgentDepsT],
         *,
         output_context: OutputContext,
         output: Any,
-        handler: WrapOutputExecuteHandler,
+        handler: WrapOutputProcessHandler,
     ) -> Any:
-        """Wraps output execution. handler(output) runs extraction + function call.
+        """Wraps output processing. handler(output) runs extraction + output function call.
 
         [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] bypasses
-        [`on_output_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_output_execute_error]
+        [`on_output_process_error`][pydantic_ai.capabilities.AbstractCapability.on_output_process_error]
         (treated as control flow, not an error).
 
         During streaming, this fires only when partial validation succeeds, and on the
@@ -658,7 +658,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return await handler(output)
 
-    async def on_output_execute_error(
+    async def on_output_process_error(
         self,
         ctx: RunContext[AgentDepsT],
         *,
@@ -666,10 +666,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         output: Any,
         error: Exception,
     ) -> Any:
-        """Called when output execution fails with an exception.
+        """Called when output processing fails with an exception.
 
         This is the error counterpart to
-        [`after_output_execute`][pydantic_ai.capabilities.AbstractCapability.after_output_execute].
+        [`after_output_process`][pydantic_ai.capabilities.AbstractCapability.after_output_process].
 
         **Raise** the original `error` (or a different exception) to propagate it.
         **Return** any value to suppress the error and use it as the output.

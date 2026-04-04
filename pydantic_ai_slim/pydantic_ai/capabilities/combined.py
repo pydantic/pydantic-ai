@@ -16,7 +16,7 @@ from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, RunContext, ToolDefi
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
-from .abstract import AbstractCapability, RawOutput, WrapOutputExecuteHandler, WrapOutputValidateHandler
+from .abstract import AbstractCapability, RawOutput, WrapOutputProcessHandler, WrapOutputValidateHandler
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
@@ -453,7 +453,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
     # --- Output execute lifecycle hooks ---
 
-    async def before_output_execute(
+    async def before_output_process(
         self,
         ctx: RunContext[AgentDepsT],
         *,
@@ -461,10 +461,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         output: Any,
     ) -> Any:
         for capability in self.capabilities:
-            output = await capability.before_output_execute(ctx, output_context=output_context, output=output)
+            output = await capability.before_output_process(ctx, output_context=output_context, output=output)
         return output
 
-    async def after_output_execute(
+    async def after_output_process(
         self,
         ctx: RunContext[AgentDepsT],
         *,
@@ -472,23 +472,23 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         output: Any,
     ) -> Any:
         for capability in reversed(self.capabilities):
-            output = await capability.after_output_execute(ctx, output_context=output_context, output=output)
+            output = await capability.after_output_process(ctx, output_context=output_context, output=output)
         return output
 
-    async def wrap_output_execute(
+    async def wrap_output_process(
         self,
         ctx: RunContext[AgentDepsT],
         *,
         output_context: OutputContext,
         output: Any,
-        handler: WrapOutputExecuteHandler,
+        handler: WrapOutputProcessHandler,
     ) -> Any:
         chain = handler
         for cap in reversed(self.capabilities):
-            chain = _make_output_execute_wrap(cap, ctx, output_context, chain)
+            chain = _make_output_process_wrap(cap, ctx, output_context, chain)
         return await chain(output)
 
-    async def on_output_execute_error(
+    async def on_output_process_error(
         self,
         ctx: RunContext[AgentDepsT],
         *,
@@ -498,7 +498,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> Any:
         for capability in reversed(self.capabilities):
             try:
-                return await capability.on_output_execute_error(
+                return await capability.on_output_process_error(
                     ctx, output_context=output_context, output=output, error=error
                 )
             except Exception as new_error:
@@ -594,13 +594,13 @@ def _make_output_validate_wrap(
     return wrapped
 
 
-def _make_output_execute_wrap(
+def _make_output_process_wrap(
     cap: AbstractCapability[AgentDepsT],
     ctx: RunContext[AgentDepsT],
     output_context: OutputContext,
     inner: Callable[[Any], Awaitable[Any]],
 ) -> Callable[[Any], Awaitable[Any]]:
     async def wrapped(output: Any) -> Any:
-        return await cap.wrap_output_execute(ctx, output_context=output_context, output=output, handler=inner)
+        return await cap.wrap_output_process(ctx, output_context=output_context, output=output, handler=inner)
 
     return wrapped

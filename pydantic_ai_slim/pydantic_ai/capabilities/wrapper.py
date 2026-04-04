@@ -21,7 +21,7 @@ from .abstract import (
     ValidatedToolArgs,
     WrapModelRequestHandler,
     WrapNodeRunHandler,
-    WrapOutputExecuteHandler,
+    WrapOutputProcessHandler,
     WrapOutputValidateHandler,
     WrapRunHandler,
     WrapToolExecuteHandler,
@@ -331,37 +331,37 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     # --- Output execute lifecycle hooks ---
 
-    async def before_output_execute(
+    async def before_output_process(
         self,
         ctx: RunContext[AgentDepsT],
         *,
         output_context: OutputContext,
         output: Any,
     ) -> Any:
-        return await self.wrapped.before_output_execute(ctx, output_context=output_context, output=output)
+        return await self.wrapped.before_output_process(ctx, output_context=output_context, output=output)
 
-    async def after_output_execute(
+    async def after_output_process(
         self,
         ctx: RunContext[AgentDepsT],
         *,
         output_context: OutputContext,
         output: Any,
     ) -> Any:
-        return await self.wrapped.after_output_execute(ctx, output_context=output_context, output=output)
+        return await self.wrapped.after_output_process(ctx, output_context=output_context, output=output)
 
-    async def wrap_output_execute(
+    async def wrap_output_process(
         self,
         ctx: RunContext[AgentDepsT],
         *,
         output_context: OutputContext,
         output: Any,
-        handler: WrapOutputExecuteHandler,
+        handler: WrapOutputProcessHandler,
     ) -> Any:
-        return await self.wrapped.wrap_output_execute(
+        return await self.wrapped.wrap_output_process(
             ctx, output_context=output_context, output=output, handler=handler
         )
 
-    async def on_output_execute_error(
+    async def on_output_process_error(
         self,
         ctx: RunContext[AgentDepsT],
         *,
@@ -369,6 +369,6 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         output: Any,
         error: Exception,
     ) -> Any:
-        return await self.wrapped.on_output_execute_error(
+        return await self.wrapped.on_output_process_error(
             ctx, output_context=output_context, output=output, error=error
         )

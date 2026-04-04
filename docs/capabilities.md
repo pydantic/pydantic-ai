@@ -560,10 +560,10 @@ Output hooks fire for **all output types**: text, structured text (native/prompt
 
 | Hook | Signature | Purpose |
 |---|---|---|
-| [`before_output_execute`][pydantic_ai.capabilities.AbstractCapability.before_output_execute] | `(ctx, *, output_context, output: Any) -> Any` | Modify output before execution |
-| [`after_output_execute`][pydantic_ai.capabilities.AbstractCapability.after_output_execute] | `(ctx, *, output_context, output: Any) -> Any` | Modify execution result |
-| [`wrap_output_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_output_execute] | `(ctx, *, output_context, output: Any, handler) -> Any` | Wrap execution |
-| [`on_output_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_output_execute_error] | `(ctx, *, output_context, output: Any, error: Exception) -> Any` | Handle execution errors (see [error hooks](#error-hooks)) |
+| [`before_output_process`][pydantic_ai.capabilities.AbstractCapability.before_output_process] | `(ctx, *, output_context, output: Any) -> Any` | Modify output before execution |
+| [`after_output_process`][pydantic_ai.capabilities.AbstractCapability.after_output_process] | `(ctx, *, output_context, output: Any) -> Any` | Modify execution result |
+| [`wrap_output_process`][pydantic_ai.capabilities.AbstractCapability.wrap_output_process] | `(ctx, *, output_context, output: Any, handler) -> Any` | Wrap execution |
+| [`on_output_process_error`][pydantic_ai.capabilities.AbstractCapability.on_output_process_error] | `(ctx, *, output_context, output: Any, error: Exception) -> Any` | Handle execution errors (see [error hooks](#error-hooks)) |
 
 #### Tool preparation
 
@@ -681,7 +681,7 @@ Error hooks use **raise-to-propagate, return-to-recover** semantics:
 | [`on_tool_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_validate_error] | Tool validation fails | Return validated args `dict` |
 | [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error] | Tool execution fails | Return any tool result |
 | [`on_output_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_output_validate_error] | Output validation fails | Return validated output |
-| [`on_output_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_output_execute_error] | Output execution fails | Return any output result |
+| [`on_output_process_error`][pydantic_ai.capabilities.AbstractCapability.on_output_process_error] | Output execution fails | Return any output result |
 
 ```python {title="error_hooks_example.py" test="skip" lint="skip"}
 from dataclasses import dataclass, field

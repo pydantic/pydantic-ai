@@ -181,7 +181,7 @@ async def run_output_validate_hooks(
         raise  # pragma: no cover — wrap_validation_errors=False only in streaming partial validation
 
 
-async def run_output_execute_hooks(
+async def run_output_process_hooks(
     capability: AbstractCapability[AgentDepsT],
     *,
     run_context: RunContext[AgentDepsT],
@@ -197,22 +197,22 @@ async def run_output_execute_hooks(
     When False (streaming), ModelRetry propagates as-is.
     """
     try:
-        output = await capability.before_output_execute(run_context, output_context=output_context, output=output)
+        output = await capability.before_output_process(run_context, output_context=output_context, output=output)
 
         try:
-            result = await capability.wrap_output_execute(
+            result = await capability.wrap_output_process(
                 run_context, output_context=output_context, output=output, handler=do_execute
             )
         except ToolRetryError:
             raise  # Control flow, not error
         except ModelRetry:
-            raise  # Propagate to outer handler, skip on_output_execute_error
+            raise  # Propagate to outer handler, skip on_output_process_error
         except Exception as e:
-            result = await capability.on_output_execute_error(
+            result = await capability.on_output_process_error(
                 run_context, output_context=output_context, output=output, error=e
             )
 
-        return await capability.after_output_execute(run_context, output_context=output_context, output=result)
+        return await capability.after_output_process(run_context, output_context=output_context, output=result)
     except ToolRetryError:
         raise  # Already wrapped, propagate
     except ModelRetry as e:
@@ -254,7 +254,7 @@ async def run_output_with_hooks(
         allow_partial=allow_partial,
         wrap_validation_errors=wrap_validation_errors,
     )
-    result = await run_output_execute_hooks(
+    result = await run_output_process_hooks(
         capability,
         run_context=run_context,
         output_context=output_context,

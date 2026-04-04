@@ -155,18 +155,18 @@ The primary use case is **pre-parse normalization**: `before_output_validate` le
     For output tools, only output hooks fire — tool hooks (`before_tool_validate`, `before_tool_execute`, etc.) are skipped. Output hooks are the proper interception point for output processing.
 
 !!! note
-    During streaming, output **validation** hooks fire on every partial validation attempt as well as the final result. Output **execution** hooks fire only when partial validation succeeds, and on the final result. Check `ctx.partial_output` in your hooks to distinguish partial from final results and avoid expensive work on partials.
+    During streaming, output **validation** hooks fire on every partial validation attempt as well as the final result. Output **processing** hooks fire only when partial validation succeeds, and on the final result. Check `ctx.partial_output` in your hooks to distinguish partial from final results and avoid expensive work on partials.
 
-### Output execution hooks
+### Output processing hooks
 
 | `hooks.on.` | Constructor kwarg | `AbstractCapability` method |
 |---|---|---|
-| `before_output_execute` | `before_output_execute=` | `before_output_execute` |
-| `after_output_execute` | `after_output_execute=` | `after_output_execute` |
-| `output_execute` | `output_execute=` | `wrap_output_execute` |
-| `output_execute_error` | `output_execute_error=` | `on_output_execute_error` |
+| `before_output_process` | `before_output_process=` | `before_output_process` |
+| `after_output_process` | `after_output_process=` | `after_output_process` |
+| `output_process` | `output_process=` | `wrap_output_process` |
+| `output_process_error` | `output_process_error=` | `on_output_process_error` |
 
-Output execution hooks fire when the validated output is processed — extracting values and calling output functions. Output validators ([`@agent.output_validator`][pydantic_ai.Agent.output_validator]) run after all output hooks for both text and tool output.
+Output processing hooks fire when the output is processed — extracting values and calling output functions. These hooks fire for **all** output types (text, structured, tool, image). Output validators ([`@agent.output_validator`][pydantic_ai.Agent.output_validator]) run after all output hooks for both text and tool output.
 
 ### Tool preparation
 
@@ -341,13 +341,13 @@ Hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the mod
 - Converted to tool retry prompts, same as when a tool function raises `ModelRetry`
 - Retries count against the tool's `max_retries` limit
 
-**Output hooks** (`before/after_output_validate`, `before/after_output_execute`, `wrap_output_execute`, `on_output_execute_error`):
+**Output hooks** (`before/after_output_validate`, `before/after_output_process`, `wrap_output_process`, `on_output_process_error`):
 
 - Converted to retry prompts, same as when an output function raises `ModelRetry`
 - For tool output, retries count against the tool's `max_retries` limit
 - For text output, retries count against the agent's `max_result_retries` limit
 
-`ModelRetry` from `wrap_model_request`, `wrap_tool_execute`, and `wrap_output_execute` is treated as control flow — it bypasses the corresponding `on_*_error` hook.
+`ModelRetry` from `wrap_model_request`, `wrap_tool_execute`, and `wrap_output_process` is treated as control flow — it bypasses the corresponding `on_*_error` hook.
 
 ```python {title="hooks_model_retry.py"}
 from pydantic_ai import Agent, RunContext

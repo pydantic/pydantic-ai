@@ -14,7 +14,7 @@ from typing_extensions import deprecated
 
 from . import messages as _messages
 from ._instrumentation import InstrumentationNames, get_agent_run_baggage_attributes
-from ._output import OutputToolset, run_output_execute_hooks, run_output_validate_hooks
+from ._output import OutputToolset, run_output_process_hooks, run_output_validate_hooks
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import (
     ApprovalRequired,
@@ -577,7 +577,7 @@ class ToolManager(Generic[AgentDepsT]):
 
         cap = self.root_capability
         assert cap is not None, 'execute_output_tool_call requires root_capability'
-        result = await run_output_execute_hooks(
+        result = await run_output_process_hooks(
             cap,
             run_context=validated.ctx,
             output_context=output_context,

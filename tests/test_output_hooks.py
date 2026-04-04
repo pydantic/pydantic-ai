@@ -327,8 +327,8 @@ class TestModelRetryFromOutputHooks:
         assert result.output == MyOutput(value=42)
         assert call_count == 2
 
-    async def test_after_output_execute_raises_model_retry(self):
-        """after_output_execute can raise ModelRetry to reject the execution result."""
+    async def test_after_output_process_raises_model_retry(self):
+        """after_output_process can raise ModelRetry to reject the execution result."""
         call_count = 0
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -340,7 +340,7 @@ class TestModelRetryFromOutputHooks:
 
         @dataclass
         class MinLengthCap(AbstractCapability[Any]):
-            async def after_output_execute(
+            async def after_output_process(
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
             ) -> Any:
                 if isinstance(output, str) and len(output) < 10:
@@ -352,8 +352,8 @@ class TestModelRetryFromOutputHooks:
         assert result.output == 'this is long enough'
         assert call_count == 2
 
-    async def test_wrap_output_execute_model_retry_skips_error_hook(self):
-        """ModelRetry from wrap_output_execute bypasses on_output_execute_error."""
+    async def test_wrap_output_process_model_retry_skips_error_hook(self):
+        """ModelRetry from wrap_output_process bypasses on_output_process_error."""
         error_hook_called = False
         call_count = 0
 
@@ -366,7 +366,7 @@ class TestModelRetryFromOutputHooks:
 
         @dataclass
         class WrapRetryCap(AbstractCapability[Any]):
-            async def wrap_output_execute(
+            async def wrap_output_process(
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any, handler: Any
             ) -> Any:
                 result = await handler(output)
@@ -374,7 +374,7 @@ class TestModelRetryFromOutputHooks:
                     raise ModelRetry('Bad output, please try again')
                 return result
 
-            async def on_output_execute_error(  # pragma: no cover — verifying this is NOT called
+            async def on_output_process_error(  # pragma: no cover — verifying this is NOT called
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any, error: Exception
             ) -> Any:
                 nonlocal error_hook_called
@@ -385,10 +385,10 @@ class TestModelRetryFromOutputHooks:
         result = await agent.run('hello')
         assert result.output == 'good'
         assert call_count == 2
-        assert not error_hook_called  # ModelRetry skips on_output_execute_error
+        assert not error_hook_called  # ModelRetry skips on_output_process_error
 
-    async def test_before_output_execute_raises_model_retry(self):
-        """before_output_execute can raise ModelRetry to skip execution."""
+    async def test_before_output_process_raises_model_retry(self):
+        """before_output_process can raise ModelRetry to skip execution."""
         call_count = 0
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -400,7 +400,7 @@ class TestModelRetryFromOutputHooks:
 
         @dataclass
         class RejectBeforeExecCap(AbstractCapability[Any]):
-            async def before_output_execute(
+            async def before_output_process(
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
             ) -> Any:
                 if isinstance(output, MyOutput) and output.value == 0:
@@ -499,7 +499,7 @@ class TestModelRetryFromOutputHooks:
         )
 
     async def test_output_tool_after_execute_raises_model_retry(self):
-        """ModelRetry from after_output_execute on a tool output triggers retry."""
+        """ModelRetry from after_output_process on a tool output triggers retry."""
         call_count = 0
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -518,7 +518,7 @@ class TestModelRetryFromOutputHooks:
 
         @dataclass
         class RejectZeroCap(AbstractCapability[Any]):
-            async def after_output_execute(
+            async def after_output_process(
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
             ) -> Any:
                 if isinstance(output, MyOutput) and output.value == 0:
@@ -646,7 +646,7 @@ class TestOutputToolWithOutputFunction:
 
         @dataclass
         class LogCap(AbstractCapability[Any]):
-            async def before_output_execute(
+            async def before_output_process(
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
             ) -> Any:
                 log.append(f'execute:{output}')
@@ -741,18 +741,18 @@ class TestWrapOutputValidate:
         assert result.output == {'value': 0}
 
 
-class TestAfterOutputExecute:
-    """after_output_execute can transform the final result after execution."""
+class TestAfterOutputProcess:
+    """after_output_process can transform the final result after execution."""
 
     async def test_transform_structured_result(self):
-        """after_output_execute transforms the result of structured output."""
+        """after_output_process transforms the result of structured output."""
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(parts=[TextPart(content='{"value": 5}')])
 
         @dataclass
         class DoubleResultCap(AbstractCapability[Any]):
-            async def after_output_execute(
+            async def after_output_process(
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -767,14 +767,14 @@ class TestAfterOutputExecute:
         assert result.output == MyOutput(value=10)
 
     async def test_transform_plain_text_result(self):
-        """after_output_execute can transform plain text output."""
+        """after_output_process can transform plain text output."""
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return make_text_response('hello')
 
         @dataclass
         class UpperCap(AbstractCapability[Any]):
-            async def after_output_execute(
+            async def after_output_process(
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -788,7 +788,7 @@ class TestAfterOutputExecute:
         assert result.output == 'HELLO'
 
     async def test_transform_text_function_result(self):
-        """after_output_execute fires after TextOutput function has executed."""
+        """after_output_process fires after TextOutput function has executed."""
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return make_text_response('world')
@@ -798,7 +798,7 @@ class TestAfterOutputExecute:
 
         @dataclass
         class WrapResultCap(AbstractCapability[Any]):
-            async def after_output_execute(
+            async def after_output_process(
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -850,24 +850,24 @@ class TestToolOutputWithOutputHooks:
                 log.append('after_output_validate')
                 return output
 
-            async def before_output_execute(
+            async def before_output_process(
                 self,
                 ctx: RunContext[Any],
                 *,
                 output_context: OutputContext,
                 output: str | dict[str, Any],
             ) -> str | dict[str, Any]:
-                log.append('before_output_execute')
+                log.append('before_output_process')
                 return output
 
-            async def after_output_execute(
+            async def after_output_process(
                 self,
                 ctx: RunContext[Any],
                 *,
                 output_context: OutputContext,
                 output: Any,
             ) -> Any:
-                log.append('after_output_execute')
+                log.append('after_output_process')
                 return output
 
         agent = Agent(FunctionModel(model_fn), output_type=MyOutput, capabilities=[OutputLogCap()])
@@ -875,8 +875,8 @@ class TestToolOutputWithOutputHooks:
         assert result.output == MyOutput(value=42)
         assert 'before_output_validate:tool' in log
         assert 'after_output_validate' in log
-        assert 'before_output_execute' in log
-        assert 'after_output_execute' in log
+        assert 'before_output_process' in log
+        assert 'after_output_process' in log
 
     async def test_output_hooks_fire_without_tool_hooks(self):
         """Output tools use output hooks only — tool hooks do NOT fire."""
@@ -924,14 +924,14 @@ class TestToolOutputWithOutputHooks:
                 log.append('output_validate')
                 return output
 
-            async def before_output_execute(
+            async def before_output_process(
                 self,
                 ctx: RunContext[Any],
                 *,
                 output_context: OutputContext,
                 output: Any,
             ) -> Any:
-                log.append('output_execute')
+                log.append('output_process')
                 return output
 
         agent = Agent(FunctionModel(model_fn), output_type=MyOutput, capabilities=[BothHooksCap()])
@@ -941,10 +941,10 @@ class TestToolOutputWithOutputHooks:
         assert 'tool_validate:final_result' not in log
         assert 'tool_execute:final_result' not in log
         assert 'output_validate' in log
-        assert 'output_execute' in log
+        assert 'output_process' in log
 
-    async def test_after_output_execute_transforms_tool_output(self):
-        """after_output_execute can transform the result of tool-based output."""
+    async def test_after_output_process_transforms_tool_output(self):
+        """after_output_process can transform the result of tool-based output."""
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             if info.output_tools:
@@ -956,7 +956,7 @@ class TestToolOutputWithOutputHooks:
 
         @dataclass
         class DoubleOutputCap(AbstractCapability[Any]):
-            async def after_output_execute(
+            async def after_output_process(
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -1019,7 +1019,7 @@ class TestHookComposition:
 
         @dataclass
         class AddExclamation(AbstractCapability[Any]):
-            async def after_output_execute(
+            async def after_output_process(
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -1030,7 +1030,7 @@ class TestHookComposition:
 
         @dataclass
         class AddQuestion(AbstractCapability[Any]):
-            async def after_output_execute(
+            async def after_output_process(
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -1146,12 +1146,12 @@ class TestHooksClassOutputDecorators:
         # Error recovery bypasses Pydantic validation, so the output is the raw dict
         assert result.output == {'value': 999}
 
-    async def test_before_output_execute_decorator(self):
-        """Hooks.on.before_output_execute registers correctly."""
+    async def test_before_output_process_decorator(self):
+        """Hooks.on.before_output_process registers correctly."""
         hooks = Hooks()
         log: list[str] = []
 
-        @hooks.on.before_output_execute
+        @hooks.on.before_output_process
         async def before_exec(
             ctx: RunContext[Any],
             /,
@@ -1159,7 +1159,7 @@ class TestHooksClassOutputDecorators:
             output_context: OutputContext,
             output: str | dict[str, Any],
         ) -> str | dict[str, Any]:
-            log.append('before_output_execute')
+            log.append('before_output_process')
             return output
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1168,13 +1168,13 @@ class TestHooksClassOutputDecorators:
         agent = Agent(FunctionModel(model_fn), output_type=PromptedOutput(MyOutput), capabilities=[hooks])
         result = await agent.run('hello')
         assert result.output == MyOutput(value=6)
-        assert log == ['before_output_execute']
+        assert log == ['before_output_process']
 
-    async def test_after_output_execute_decorator(self):
-        """Hooks.on.after_output_execute transforms the final result."""
+    async def test_after_output_process_decorator(self):
+        """Hooks.on.after_output_process transforms the final result."""
         hooks = Hooks()
 
-        @hooks.on.after_output_execute
+        @hooks.on.after_output_process
         async def double_output(
             ctx: RunContext[Any],
             /,
@@ -1193,12 +1193,12 @@ class TestHooksClassOutputDecorators:
         result = await agent.run('hello')
         assert result.output == MyOutput(value=14)
 
-    async def test_wrap_output_execute_decorator(self):
-        """Hooks.on.output_execute (wrap) registers correctly."""
+    async def test_wrap_output_process_decorator(self):
+        """Hooks.on.output_process (wrap) registers correctly."""
         hooks = Hooks()
         log: list[str] = []
 
-        @hooks.on.output_execute
+        @hooks.on.output_process
         async def wrap_exec(
             ctx: RunContext[Any],
             /,
@@ -1286,13 +1286,13 @@ class TestOutputHookFullLifecycle:
                 log.append('after_validate')
                 return output
 
-            async def before_output_execute(
+            async def before_output_process(
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
             ) -> str | dict[str, Any]:
                 log.append('before_execute')
                 return output
 
-            async def wrap_output_execute(
+            async def wrap_output_process(
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -1305,7 +1305,7 @@ class TestOutputHookFullLifecycle:
                 log.append('wrap_execute:after')
                 return result
 
-            async def after_output_execute(
+            async def after_output_process(
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -1378,13 +1378,13 @@ class TestOutputHookFullLifecycle:
                 log.append('after_validate')
                 return output
 
-            async def before_output_execute(
+            async def before_output_process(
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
             ) -> str | dict[str, Any]:
                 log.append('before_execute')
                 return output
 
-            async def after_output_execute(
+            async def after_output_process(
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -1547,11 +1547,11 @@ class TestOutputContext:
         assert oc.tool_def.kind == 'output'
 
 
-class TestWrapOutputExecute:
-    """wrap_output_execute provides full middleware control around execution."""
+class TestWrapOutputProcess:
+    """wrap_output_process provides full middleware control around execution."""
 
     async def test_wrap_can_observe(self):
-        """wrap_output_execute can observe without modifying."""
+        """wrap_output_process can observe without modifying."""
         log: list[str] = []
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1559,7 +1559,7 @@ class TestWrapOutputExecute:
 
         @dataclass
         class WrapCap(AbstractCapability[Any]):
-            async def wrap_output_execute(
+            async def wrap_output_process(
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -1578,14 +1578,14 @@ class TestWrapOutputExecute:
         assert log == ['before', 'after']
 
     async def test_wrap_can_replace_result(self):
-        """wrap_output_execute can replace the result entirely."""
+        """wrap_output_process can replace the result entirely."""
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(parts=[TextPart(content='{"value": 42}')])
 
         @dataclass
         class ReplaceCap(AbstractCapability[Any]):
-            async def wrap_output_execute(
+            async def wrap_output_process(
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -1601,11 +1601,11 @@ class TestWrapOutputExecute:
         assert result.output == MyOutput(value=0)
 
 
-class TestOnOutputExecuteError:
-    """on_output_execute_error can recover from execution failures."""
+class TestOnOutputProcessError:
+    """on_output_process_error can recover from execution failures."""
 
     async def test_recover_from_output_function_error(self):
-        """on_output_execute_error catches errors from output functions."""
+        """on_output_process_error catches errors from output functions."""
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return make_text_response('trigger error')
@@ -1615,7 +1615,7 @@ class TestOnOutputExecuteError:
 
         @dataclass
         class RecoverCap(AbstractCapability[Any]):
-            async def on_output_execute_error(
+            async def on_output_process_error(
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -1712,8 +1712,8 @@ class TestOutputHookErrorPaths:
         assert len(error_log) == 1
         assert error_log[0] == 'validate_error: ValidationError'
 
-    def test_on_output_execute_error_recovery(self):
-        """on_output_execute_error can recover from output function failure."""
+    def test_on_output_process_error_recovery(self):
+        """on_output_process_error can recover from output function failure."""
 
         def bad_function(value: int) -> str:
             raise ValueError('value too small')
@@ -1724,7 +1724,7 @@ class TestOutputHookErrorPaths:
 
         @dataclass
         class RecoverCapability(AbstractCapability[Any]):
-            async def on_output_execute_error(
+            async def on_output_process_error(
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -1789,8 +1789,8 @@ class TestOutputHookErrorPaths:
         assert 'second_error' in error_log
         assert 'first_error' in error_log
 
-    def test_composed_on_output_execute_error_chain(self):
-        """Multiple capabilities' on_output_execute_error hooks chain correctly."""
+    def test_composed_on_output_process_error_chain(self):
+        """Multiple capabilities' on_output_process_error hooks chain correctly."""
 
         def failing_func(value: int) -> str:
             raise ValueError('intentional')
@@ -1801,7 +1801,7 @@ class TestOutputHookErrorPaths:
 
         @dataclass
         class FirstCap(AbstractCapability[Any]):
-            async def on_output_execute_error(
+            async def on_output_process_error(
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -1813,7 +1813,7 @@ class TestOutputHookErrorPaths:
 
         @dataclass
         class SecondCap(AbstractCapability[Any]):
-            async def on_output_execute_error(
+            async def on_output_process_error(
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -1859,8 +1859,8 @@ class TestOutputHookErrorPaths:
         result = agent.run_sync('hello')
         assert result.output == MyOutput(value=99)
 
-    def test_hooks_output_execute_error_decorator(self):
-        """Test on_output_execute_error via Hooks decorator API."""
+    def test_hooks_output_process_error_decorator(self):
+        """Test on_output_process_error via Hooks decorator API."""
 
         def bad_function(value: int) -> str:
             raise ValueError('intentional failure')
@@ -1871,7 +1871,7 @@ class TestOutputHookErrorPaths:
 
         hooks = Hooks()
 
-        @hooks.on.output_execute_error
+        @hooks.on.output_process_error
         async def handle_error(
             ctx: RunContext[Any],
             *,
@@ -1936,7 +1936,7 @@ class TestOutputHookErrorPaths:
                 log.append('inner_before_validate')
                 return output
 
-            async def after_output_execute(
+            async def after_output_process(
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -1990,8 +1990,8 @@ class TestDefaultOutputErrorHooks:
         assert result.output == MyOutput(value=7)
         assert call_count == 2
 
-    def test_default_on_output_execute_error_reraises(self):
-        """Default on_output_execute_error re-raises the error."""
+    def test_default_on_output_process_error_reraises(self):
+        """Default on_output_process_error re-raises the error."""
 
         def failing_func(value: int) -> str:
             raise ValueError('intentional')
@@ -2000,10 +2000,10 @@ class TestDefaultOutputErrorHooks:
             assert info.output_tools is not None
             return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"value": 1}')])
 
-        # Hooks with only a before_output_execute hook (no error hook override).
+        # Hooks with only a before_output_process hook (no error hook override).
         hooks = Hooks()
 
-        @hooks.on.before_output_execute
+        @hooks.on.before_output_process
         def noop(
             ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
         ) -> str | dict[str, Any]:
@@ -2038,7 +2038,7 @@ class TestStreamingOutputHooks:
                 hook_calls.append(('before_validate', ctx.partial_output))
                 return output
 
-            async def after_output_execute(
+            async def after_output_process(
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
             ) -> Any:
                 hook_calls.append(('after_execute', ctx.partial_output))
@@ -2331,8 +2331,8 @@ class TestOutputHookEdgeCases:
         with pytest.raises(ToolRetryError):
             asyncio.get_event_loop().run_until_complete(run())
 
-    def test_hooks_on_output_execute_via_hooks_class(self):
-        """Test wrap_output_execute via Hooks decorator API."""
+    def test_hooks_on_output_process_via_hooks_class(self):
+        """Test wrap_output_process via Hooks decorator API."""
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(parts=[TextPart(content='{"value": 10}')])
@@ -2340,7 +2340,7 @@ class TestOutputHookEdgeCases:
         hooks = Hooks()
         execute_log: list[str] = []
 
-        @hooks.on.output_execute
+        @hooks.on.output_process
         async def wrap_exec(
             ctx: RunContext[Any],
             *,
@@ -2388,7 +2388,7 @@ class TestErrorHookCoveragePaths:
         assert result.output == MyOutput(value=3)
         assert call_count == 2  # First attempt failed, retried
 
-    def test_bare_capability_default_on_output_execute_error(self):
+    def test_bare_capability_default_on_output_process_error(self):
         """A bare AbstractCapability subclass with no error hook override lets execute errors propagate."""
 
         def failing_func(value: int) -> str:
@@ -2445,8 +2445,8 @@ class TestErrorHookCoveragePaths:
         assert result.output == MyOutput(value=8)
         assert 'inner_error' in error_log
 
-    def test_wrapper_on_output_execute_error_delegates(self):
-        """WrapperCapability delegates on_output_execute_error to the wrapped capability."""
+    def test_wrapper_on_output_process_error_delegates(self):
+        """WrapperCapability delegates on_output_process_error to the wrapped capability."""
         from pydantic_ai.capabilities.wrapper import WrapperCapability
 
         def failing_func(value: int) -> str:
@@ -2458,7 +2458,7 @@ class TestErrorHookCoveragePaths:
 
         @dataclass
         class InnerCap(AbstractCapability[Any]):
-            async def on_output_execute_error(
+            async def on_output_process_error(
                 self,
                 ctx: RunContext[Any],
                 *,
@@ -2476,8 +2476,8 @@ class TestErrorHookCoveragePaths:
         result = agent.run_sync('hello')
         assert result.output == 'wrapper_recovered'
 
-    def test_hooks_on_output_execute_error_chaining(self):
-        """Hooks class on_output_execute_error re-raises, chaining errors."""
+    def test_hooks_on_output_process_error_chaining(self):
+        """Hooks class on_output_process_error re-raises, chaining errors."""
 
         def failing_func(value: int) -> str:
             raise ValueError('original')
@@ -2488,13 +2488,13 @@ class TestErrorHookCoveragePaths:
 
         hooks = Hooks()
 
-        @hooks.on.output_execute_error
+        @hooks.on.output_process_error
         async def first_handler(
             ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any], error: Exception
         ) -> Any:
             raise ValueError('chained')  # Re-raise different error
 
-        @hooks.on.output_execute_error
+        @hooks.on.output_process_error
         async def second_handler(
             ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any], error: Exception
         ) -> Any:
@@ -2542,13 +2542,13 @@ class TestUnionOutputWithHooks:
                 log.append('after_validate')
                 return output
 
-            async def before_output_execute(
+            async def before_output_process(
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
             ) -> Any:
                 log.append('before_execute')
                 return output
 
-            async def after_output_execute(
+            async def after_output_process(
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
             ) -> Any:
                 log.append('after_execute')
@@ -2568,7 +2568,7 @@ class TestUnionOutputWithHooks:
         assert 'before_execute' in log
         assert 'after_execute' in log
 
-    def test_union_output_execute_hook_transforms_result(self):
+    def test_union_output_process_hook_transforms_result(self):
         """Execute hooks can transform the result for union output types."""
 
         class TypeA(BaseModel):
@@ -2582,7 +2582,7 @@ class TestUnionOutputWithHooks:
 
         @dataclass
         class DoubleCapability(AbstractCapability[Any]):
-            async def after_output_execute(
+            async def after_output_process(
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
             ) -> Any:
                 assert isinstance(output, TypeA)
@@ -2719,7 +2719,7 @@ class TestTextFunctionOutputCallHook:
 
         @dataclass
         class ExecLogCap(AbstractCapability[Any]):
-            async def wrap_output_execute(
+            async def wrap_output_process(
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any, handler: Any
             ) -> Any:
                 log.append(f'input: {output}')
@@ -2755,7 +2755,7 @@ class TestNativeOutputWithHooks:
                 log.append(('before_validate', output_context.mode))
                 return output
 
-            async def after_output_execute(
+            async def after_output_process(
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
             ) -> Any:
                 log.append(('after_execute', output_context.mode))
@@ -2829,7 +2829,7 @@ class TestImageOutputWithHooks:
                 log.append('before_validate')  # pragma: no cover
                 return output  # pragma: no cover
 
-            async def after_output_execute(
+            async def after_output_process(
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
             ) -> Any:
                 log.append('after_execute')  # pragma: no cover
@@ -2870,7 +2870,7 @@ class TestAutoModeOutputWithHooks:
                 log.append(('before_validate', output_context.mode))
                 return output
 
-            async def after_output_execute(
+            async def after_output_process(
                 self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
             ) -> Any:
                 log.append(('after_execute', output_context.mode))
