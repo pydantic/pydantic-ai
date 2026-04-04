@@ -621,7 +621,7 @@ class ToolDefinition:
     """
 
     def __post_init__(self) -> None:
-        if self.function_signature is None:  # type: ignore[comparison-overlap]
+        if self.function_signature is None and self.kind != 'output':  # type: ignore[comparison-overlap]
             self.function_signature = FunctionSignature.from_schema(
                 name=self.name,
                 parameters_schema=self.parameters_json_schema,
