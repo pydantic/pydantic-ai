@@ -142,13 +142,16 @@ async def run_output_validate_hooks(
     output_context: OutputContext,
     output: str | dict[str, Any],
     do_validate: Callable[[str | dict[str, Any]], Awaitable[Any]],
-    allow_partial: bool,
-    wrap_validation_errors: bool,
+    allow_partial: bool = False,
+    wrap_validation_errors: bool = True,
 ) -> Any:
     """Run the output validate hooks around do_validate.
 
+    Validate hooks only fire for structured output that needs parsing.
+
     ModelRetry from any hook (before, after, wrap, on_error) is caught by the outer handler
-    and converted to ToolRetryError, triggering a model retry.
+    and converted to ToolRetryError when `wrap_validation_errors` is True.
+    When False (streaming), errors propagate as-is.
     """
     try:
         output = await capability.before_output_validate(run_context, output_context=output_context, output=output)
