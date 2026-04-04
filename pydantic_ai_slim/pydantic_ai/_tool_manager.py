@@ -329,12 +329,53 @@ class ToolManager(Generic[AgentDepsT]):
 
         return tool_result
 
+    def _resolve_tool(self, call: ToolCallPart) -> tuple[str, ToolsetTool[AgentDepsT]]:
+        """Resolve tool name to ResolvedTool, raising ModelRetry for unknown tools."""
+        if self.tools is None or self.ctx is None:
+            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
+
+        name = call.tool_name
+        tool = self.tools.get(name)
+        if tool is None:
+            if self.tools:
+                msg = f'Available tools: {", ".join(f"{n!r}" for n in self.tools)}'
+            else:
+                msg = 'No tools available.'
+            raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
+        return name, tool
+
+    def _make_validation_failure(
+        self,
+        name: str,
+        call: ToolCallPart,
+        tool: ToolsetTool[AgentDepsT] | None,
+        ctx: RunContext[AgentDepsT],
+        error: ToolRetryError | ValidationError | ModelRetry,
+        *,
+        allow_partial: bool = False,
+    ) -> ValidatedToolCall[AgentDepsT]:
+        """Handle validation failure: check retries, mark failed, wrap error."""
+        max_retries = tool.max_retries if tool is not None else self.default_max_retries
+        cause = (
+            error.__cause__ if isinstance(error, ToolRetryError) and isinstance(error.__cause__, Exception) else error
+        )
+        self._check_max_retries(name, max_retries, cause)
+        if not allow_partial:
+            self.failed_tools.add(name)
+        validation_error = error if isinstance(error, ToolRetryError) else self._wrap_error_as_retry(name, call, error)
+        return ValidatedToolCall(
+            call=call,
+            tool=tool,
+            ctx=ctx,
+            args_valid=False,
+            validated_args=None,
+            validation_error=validation_error,
+        )
+
     async def validate_tool_call(
         self,
         call: ToolCallPart,
         *,
-        allow_partial: bool = False,
-        wrap_validation_errors: bool = True,
         approved: bool = False,
         metadata: Any = None,
     ) -> ValidatedToolCall[AgentDepsT]:
@@ -347,34 +388,20 @@ class ToolManager(Generic[AgentDepsT]):
 
         Args:
             call: The tool call part to validate.
-            allow_partial: Whether to allow partial validation of the tool arguments.
-            wrap_validation_errors: Whether to wrap validation errors in ToolRetryError.
             approved: Whether the tool call has been approved.
             metadata: Additional metadata from DeferredToolResults.metadata.
 
         Returns:
             ValidatedToolCall with validation results, ready for execution via execute_tool_call().
         """
-        if self.tools is None or self.ctx is None:
-            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
-
-        name = call.tool_name
-        tool = self.tools.get(name)
+        assert self.ctx is not None
         ctx = self.ctx
+        tool: ToolsetTool[AgentDepsT] | None = None
 
         try:
-            if tool is None:
-                if self.tools:
-                    msg = f'Available tools: {", ".join(f"{n!r}" for n in self.tools)}'
-                else:
-                    msg = 'No tools available.'
-                raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
-
-            ctx = self._build_tool_context(
-                call, tool, allow_partial=allow_partial, approved=approved, metadata=metadata
-            )
-
-            validated_args = await self._run_validate_hooks(call, tool, ctx, allow_partial=allow_partial)
+            name, tool = self._resolve_tool(call)
+            ctx = self._build_tool_context(call, tool, allow_partial=False, approved=approved, metadata=metadata)
+            validated_args = await self._run_validate_hooks(call, tool, ctx, allow_partial=False)
             return ValidatedToolCall(
                 call=call,
                 tool=tool,
@@ -384,8 +411,7 @@ class ToolManager(Generic[AgentDepsT]):
                 validation_error=None,
             )
         except SkipToolValidation as e:
-            if tool is None:
-                raise ValueError('Cannot skip validation for unknown tool')  # pragma: no cover
+            assert tool is not None
             return ValidatedToolCall(
                 call=call,
                 tool=tool,
@@ -395,26 +421,8 @@ class ToolManager(Generic[AgentDepsT]):
                 validation_error=None,
             )
         except (ValidationError, ModelRetry) as e:
-            max_retries = tool.max_retries if tool is not None else self.default_max_retries
-            self._check_max_retries(name, max_retries, e)
-
-            if not allow_partial:  # pragma: no branch — allow_partial only used via validate_output_tool_call
-                # If we're validating partial arguments, we don't want to count this as a failed tool as it may still succeed once the full arguments are received.
-                self.failed_tools.add(name)
-
-            if not wrap_validation_errors:  # pragma: no cover — callers always use wrap_validation_errors=True
-                raise
-
-            validation_error = self._wrap_error_as_retry(name, call, e)
-
-            return ValidatedToolCall(
-                call=call,
-                tool=tool,
-                ctx=ctx,
-                args_valid=False,
-                validated_args=None,
-                validation_error=validation_error,
-            )
+            name = call.tool_name
+            return self._make_validation_failure(name, call, tool, ctx, e)
 
     async def execute_tool_call(
         self,
@@ -460,33 +468,22 @@ class ToolManager(Generic[AgentDepsT]):
         Raises:
             UnexpectedModelBehavior: If max retries exceeded.
         """
-        if self.tools is None or self.ctx is None:
-            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
+        assert self.ctx is not None
+        name, tool = self._resolve_tool(call)
+        ctx = self._build_tool_context(call, tool, allow_partial=allow_partial)
 
-        name = call.tool_name
-        tool = self.tools.get(name)
-        ctx = self.ctx
+        toolset = tool.toolset
+        assert isinstance(toolset, OutputToolset)
+        processor = toolset.processors[name]
+        output_context = processor.get_output_context('tool', tool_call=call, tool_def=tool.tool_def)
+
+        async def do_validate(args: str | dict[str, Any]) -> str | dict[str, Any]:
+            return await self._validate_tool_args(call, tool, ctx, allow_partial=allow_partial, args_override=args)
+
+        cap = self.root_capability
+        assert cap is not None, 'validate_output_tool_call requires root_capability'
 
         try:
-            if tool is None:  # pragma: no cover — output tool names are agent-defined, always exist
-                if self.tools:
-                    msg = f'Available tools: {", ".join(f"{n!r}" for n in self.tools)}'
-                else:
-                    msg = 'No tools available.'
-                raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
-
-            ctx = self._build_tool_context(call, tool, allow_partial=allow_partial)
-
-            toolset = tool.toolset
-            assert isinstance(toolset, OutputToolset)
-            processor = toolset.processors[name]
-            output_context = processor.get_output_context('tool', tool_call=call, tool_def=tool.tool_def)
-
-            async def do_validate(args: str | dict[str, Any]) -> str | dict[str, Any]:
-                return await self._validate_tool_args(call, tool, ctx, allow_partial=allow_partial, args_override=args)
-
-            cap = self.root_capability
-            assert cap is not None, 'validate_output_tool_call requires root_capability'
             raw_args: str | dict[str, Any] = call.args if call.args is not None else {}
             validated_args: dict[str, Any] = await run_output_validate_hooks(
                 cap,
@@ -497,7 +494,6 @@ class ToolManager(Generic[AgentDepsT]):
                 allow_partial=allow_partial,
                 wrap_validation_errors=wrap_validation_errors,
             )
-
             return ValidatedToolCall(
                 call=call,
                 tool=tool,
@@ -506,42 +502,10 @@ class ToolManager(Generic[AgentDepsT]):
                 validated_args=validated_args,
                 validation_error=None,
             )
-        except ToolRetryError as e:
-            # From run_output_validate_hooks wrapping validation errors
-            max_retries = tool.max_retries if tool is not None else self.default_max_retries
-            cause = e.__cause__ if isinstance(e.__cause__, Exception) else e
-            self._check_max_retries(name, max_retries, cause)
-            if not allow_partial:  # pragma: no branch — allow_partial only used in streaming
-                self.failed_tools.add(name)
-            if not wrap_validation_errors:  # pragma: no cover — only in streaming partial validation
-                raise
-            return ValidatedToolCall(
-                call=call,
-                tool=tool,
-                ctx=ctx,
-                args_valid=False,
-                validated_args=None,
-                validation_error=e,
-            )
-        except (ValidationError, ModelRetry) as e:
-            # Only reachable when root_capability is None (no hooks to wrap errors as ToolRetryError)
-            max_retries = tool.max_retries if tool is not None else self.default_max_retries
-            self._check_max_retries(name, max_retries, e)
-            if not allow_partial:
-                self.failed_tools.add(name)
+        except (ToolRetryError, ValidationError, ModelRetry) as e:
             if not wrap_validation_errors:
                 raise
-            validation_error = self._wrap_error_as_retry(
-                name, call, e
-            )  # pragma: no cover — agents always have root_capability
-            return ValidatedToolCall(  # pragma: no cover
-                call=call,
-                tool=tool,
-                ctx=ctx,
-                args_valid=False,
-                validated_args=None,
-                validation_error=validation_error,
-            )
+            return self._make_validation_failure(name, call, tool, ctx, e, allow_partial=allow_partial)
 
     async def execute_output_tool_call(
         self,
@@ -761,8 +725,6 @@ class ToolManager(Generic[AgentDepsT]):
     async def handle_call(
         self,
         call: ToolCallPart,
-        allow_partial: bool = False,
-        wrap_validation_errors: bool = True,
         *,
         approved: bool = False,
         metadata: Any = None,
@@ -773,15 +735,11 @@ class ToolManager(Generic[AgentDepsT]):
 
         Args:
             call: The tool call part to handle.
-            allow_partial: Whether to allow partial validation of the tool arguments.
-            wrap_validation_errors: Whether to wrap validation errors in a retry prompt part.
             approved: Whether the tool call has been approved.
             metadata: Additional metadata from DeferredToolResults.metadata.
         """
         validated = await self.validate_tool_call(
             call,
-            allow_partial=allow_partial,
-            wrap_validation_errors=wrap_validation_errors,
             approved=approved,
             metadata=metadata,
         )
