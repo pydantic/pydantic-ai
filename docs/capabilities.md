@@ -541,13 +541,13 @@ To skip execution and provide a replacement result, raise [`SkipToolExecution(re
 
 #### Output hooks
 
-Like tool processing, output processing has two phases: **validation** (parsing the model's raw output against the output schema) and **execution** (extracting the value and calling any output function). Each phase has its own hooks.
+Like tool processing, output processing has two phases: **validation** (parsing the model's raw output against the output schema) and **processing** (extracting the value and calling any output function). Each phase has its own hooks.
 
 All output hooks receive an `output_context` parameter with [`OutputContext`][pydantic_ai.capabilities.OutputContext] (mode, output type, schema info, and tool call details for tool output).
 
-Output hooks fire for **all output types**: text, structured text (native/prompted), and tool-based output. For tool output, only output hooks fire — tool hooks are skipped entirely. The output validate hooks wrap Pydantic schema validation of the tool arguments, and the output execute hooks wrap the output function call and output validators.
+**Validate hooks** fire only for structured output that requires parsing (prompted, native, tool, union output). They do not fire for plain text or image output. **Process hooks** fire for **all output types** including text, structured, tool, and image output. For output tools, only output hooks fire — tool hooks are skipped entirely.
 
-**Validation hooks** — `output` is `str` for text output, or `dict` for tool output:
+**Validation hooks** — fire for structured output only; `output` is `str` (raw text) or `dict` (tool args):
 
 | Hook | Signature | Purpose |
 |---|---|---|
@@ -556,14 +556,14 @@ Output hooks fire for **all output types**: text, structured text (native/prompt
 | [`wrap_output_validate`][pydantic_ai.capabilities.AbstractCapability.wrap_output_validate] | `(ctx, *, output_context, output: RawOutput, handler) -> Any` | Wrap the validation step |
 | [`on_output_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_output_validate_error] | `(ctx, *, output_context, output: RawOutput, error: ValidationError \| ModelRetry) -> Any` | Handle validation errors (see [error hooks](#error-hooks)) |
 
-**Execution hooks** — `output` is the validated output from the validation phase:
+**Processing hooks** — fire for all output types; `output` is the validated/raw output:
 
 | Hook | Signature | Purpose |
 |---|---|---|
-| [`before_output_process`][pydantic_ai.capabilities.AbstractCapability.before_output_process] | `(ctx, *, output_context, output: Any) -> Any` | Modify output before execution |
-| [`after_output_process`][pydantic_ai.capabilities.AbstractCapability.after_output_process] | `(ctx, *, output_context, output: Any) -> Any` | Modify execution result |
-| [`wrap_output_process`][pydantic_ai.capabilities.AbstractCapability.wrap_output_process] | `(ctx, *, output_context, output: Any, handler) -> Any` | Wrap execution |
-| [`on_output_process_error`][pydantic_ai.capabilities.AbstractCapability.on_output_process_error] | `(ctx, *, output_context, output: Any, error: Exception) -> Any` | Handle execution errors (see [error hooks](#error-hooks)) |
+| [`before_output_process`][pydantic_ai.capabilities.AbstractCapability.before_output_process] | `(ctx, *, output_context, output: Any) -> Any` | Modify output before processing |
+| [`after_output_process`][pydantic_ai.capabilities.AbstractCapability.after_output_process] | `(ctx, *, output_context, output: Any) -> Any` | Modify processed result |
+| [`wrap_output_process`][pydantic_ai.capabilities.AbstractCapability.wrap_output_process] | `(ctx, *, output_context, output: Any, handler) -> Any` | Wrap processing |
+| [`on_output_process_error`][pydantic_ai.capabilities.AbstractCapability.on_output_process_error] | `(ctx, *, output_context, output: Any, error: Exception) -> Any` | Handle processing errors (see [error hooks](#error-hooks)) |
 
 #### Tool preparation
 

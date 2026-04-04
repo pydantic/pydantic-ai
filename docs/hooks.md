@@ -147,7 +147,7 @@ To skip execution, raise [`SkipToolExecution(result)`][pydantic_ai.exceptions.Sk
 | `output_validate` | `output_validate=` | `wrap_output_validate` |
 | `output_validate_error` | `output_validate_error=` | `on_output_validate_error` |
 
-Output validation hooks fire when the model's output is parsed and validated — for text/structured output, this wraps Pydantic validation of the raw text; for tool output, this wraps Pydantic validation of the tool arguments. All output hooks receive an `output_context` ([`OutputContext`][pydantic_ai.capabilities.OutputContext]) parameter.
+Output validation hooks fire when structured output is parsed and validated — for prompted/native structured output, this wraps Pydantic validation of the raw text; for tool output, this wraps Pydantic validation of the tool arguments. These hooks only fire for output types that require parsing; they do **not** fire for plain text or image output. All output hooks receive an `output_context` ([`OutputContext`][pydantic_ai.capabilities.OutputContext]) parameter.
 
 The primary use case is **pre-parse normalization**: `before_output_validate` lets you fix malformed model output before it reaches the parser.
 
