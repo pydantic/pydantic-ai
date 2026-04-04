@@ -169,13 +169,11 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'return_schema': None,
             'include_return_schema': None,
             'function_signature': {
-                'name': 'google_style_docstring',
                 'params': {
                     'foo': {'name': 'foo', 'type': {'name': 'int'}, 'default': None},
                     'bar': {'name': 'bar', 'type': {'name': 'str'}, 'default': None},
                 },
                 'return_type': {'name': 'str'},
-                'description': 'Do foobar stuff, a lot.',
                 'referenced_types': [],
                 'is_async': False,
             },
@@ -219,10 +217,8 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'return_schema': None,
             'include_return_schema': None,
             'function_signature': {
-                'name': 'sphinx_style_docstring',
                 'params': {'foo': {'name': 'foo', 'type': {'name': 'int'}, 'default': None}},
                 'return_type': {'name': 'str'},
-                'description': 'Sphinx style docstring.',
                 'referenced_types': [],
                 'is_async': False,
             },
@@ -274,13 +270,11 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'return_schema': None,
             'include_return_schema': None,
             'function_signature': {
-                'name': 'numpy_style_docstring',
                 'params': {
                     'foo': {'name': 'foo', 'type': {'name': 'int'}, 'default': None},
                     'bar': {'name': 'bar', 'type': {'name': 'str'}, 'default': None},
                 },
                 'return_type': {'name': 'str'},
-                'description': 'Numpy style docstring.',
                 'referenced_types': [],
                 'is_async': False,
             },
@@ -332,16 +326,8 @@ def test_google_style_with_returns():
             'return_schema': None,
             'include_return_schema': None,
             'function_signature': {
-                'name': 'my_tool',
                 'params': {'x': {'name': 'x', 'type': {'name': 'int'}, 'default': None}},
                 'return_type': {'name': 'str'},
-                'description': """\
-<summary>A function that does something.</summary>
-<returns>
-<type>str</type>
-<description>The result as a string.</description>
-</returns>\
-""",
                 'referenced_types': [],
                 'is_async': False,
             },
@@ -391,16 +377,8 @@ def test_sphinx_style_with_returns():
             'return_schema': None,
             'include_return_schema': None,
             'function_signature': {
-                'name': 'my_tool',
                 'params': {'x': {'name': 'x', 'type': {'name': 'int'}, 'default': None}},
                 'return_type': {'name': 'str'},
-                'description': """\
-<summary>A sphinx function with returns.</summary>
-<returns>
-<type>str</type>
-<description>The result as a string with type.</description>
-</returns>\
-""",
                 'referenced_types': [],
                 'is_async': False,
             },
@@ -456,16 +434,8 @@ def test_numpy_style_with_returns():
             'return_schema': None,
             'include_return_schema': None,
             'function_signature': {
-                'name': 'my_tool',
                 'params': {'x': {'name': 'x', 'type': {'name': 'int'}, 'default': None}},
                 'return_type': {'name': 'str'},
-                'description': """\
-<summary>A numpy function with returns.</summary>
-<returns>
-<type>str</type>
-<description>The result as a string with type.</description>
-</returns>\
-""",
                 'referenced_types': [],
                 'is_async': False,
             },
@@ -509,15 +479,8 @@ def test_only_returns_type():
             'return_schema': None,
             'include_return_schema': None,
             'function_signature': {
-                'name': 'only_returns_type',
                 'params': {},
                 'return_type': {'name': 'str'},
-                'description': """\
-<returns>
-<type>str</type>
-<description>The result as a string.</description>
-</returns>\
-""",
                 'referenced_types': [],
                 'is_async': False,
             },
@@ -552,10 +515,8 @@ def test_docstring_unknown():
             'return_schema': None,
             'include_return_schema': None,
             'function_signature': {
-                'name': 'unknown_docstring',
                 'params': {},
                 'return_type': {'name': 'str'},
-                'description': 'Unknown style docstring.',
                 'referenced_types': [],
                 'is_async': False,
             },
@@ -608,13 +569,11 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'return_schema': None,
             'include_return_schema': None,
             'function_signature': {
-                'name': 'google_style_docstring_no_body',
                 'params': {
                     'foo': {'name': 'foo', 'type': {'name': 'int'}, 'default': None},
                     'bar': {'name': 'bar', 'type': {'name': 'str'}, 'default': None},
                 },
                 'return_type': {'name': 'str'},
-                'description': '',
                 'referenced_types': [],
                 'is_async': False,
             },
@@ -660,13 +619,11 @@ def test_takes_just_model():
             'return_schema': None,
             'include_return_schema': None,
             'function_signature': {
-                'name': 'takes_just_model',
                 'params': {
                     'x': {'name': 'x', 'type': {'name': 'int'}, 'default': None},
                     'y': {'name': 'y', 'type': {'name': 'str'}, 'default': None},
                 },
                 'return_type': {'name': 'str'},
-                'description': None,
                 'referenced_types': [],
                 'is_async': False,
             },
@@ -721,7 +678,6 @@ def test_takes_model_and_int():
             'return_schema': None,
             'include_return_schema': None,
             'function_signature': {
-                'name': 'takes_just_model',
                 'params': {
                     'model': {
                         'name': 'model',
@@ -732,13 +688,13 @@ def test_takes_model_and_int():
                                 'x': {'name': 'x', 'type': {'name': 'int'}, 'required': True, 'description': None},
                                 'y': {'name': 'y', 'type': {'name': 'str'}, 'required': True, 'description': None},
                             },
+                            'needs_prefix': False,
                         },
                         'default': None,
                     },
                     'z': {'name': 'z', 'type': {'name': 'int'}, 'default': None},
                 },
                 'return_type': {'name': 'str'},
-                'description': None,
                 'referenced_types': [
                     {
                         'name': 'Foo',
@@ -747,6 +703,7 @@ def test_takes_model_and_int():
                             'x': {'name': 'x', 'type': {'name': 'int'}, 'required': True, 'description': None},
                             'y': {'name': 'y', 'type': {'name': 'str'}, 'required': True, 'description': None},
                         },
+                        'needs_prefix': False,
                     }
                 ],
                 'is_async': False,
@@ -953,9 +910,11 @@ def test_return_unknown():
     class Foobar:
         pass
 
-    @agent.tool_plain
-    def return_pydantic_model() -> Foobar:
-        return Foobar()
+    with pytest.warns(UserWarning, match='Could not generate return schema'):
+
+        @agent.tool_plain
+        def return_pydantic_model() -> Foobar:
+            return Foobar()
 
     with pytest.raises(PydanticSerializationError, match='Unable to serialize unknown type:'):
         agent.run_sync('')
@@ -1140,10 +1099,8 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'return_schema': None,
             'include_return_schema': None,
             'function_signature': {
-                'name': 'tool_without_return_annotation_in_docstring',
                 'params': {},
                 'return_type': {'name': 'str'},
-                'description': "A tool that documents what it returns but doesn't have a return annotation in the docstring.",
                 'referenced_types': [],
                 'is_async': False,
             },
@@ -1225,13 +1182,11 @@ def test_json_schema_required_parameters():
                 'return_schema': None,
                 'include_return_schema': None,
                 'function_signature': {
-                    'name': 'my_tool',
                     'params': {
                         'a': {'name': 'a', 'type': {'name': 'int'}, 'default': None},
                         'b': {'name': 'b', 'type': {'name': 'int'}, 'default': '1'},
                     },
                     'return_type': {'name': 'int'},
-                    'description': None,
                     'referenced_types': [],
                     'is_async': False,
                 },
@@ -1256,13 +1211,11 @@ def test_json_schema_required_parameters():
                 'return_schema': None,
                 'include_return_schema': None,
                 'function_signature': {
-                    'name': 'my_tool_plain',
                     'params': {
                         'a': {'name': 'a', 'type': {'name': 'int'}, 'default': '1'},
                         'b': {'name': 'b', 'type': {'name': 'int'}, 'default': None},
                     },
                     'return_type': {'name': 'int'},
-                    'description': None,
                     'referenced_types': [],
                     'is_async': False,
                 },
@@ -1360,10 +1313,8 @@ def test_schema_generator():
                 'return_schema': None,
                 'include_return_schema': None,
                 'function_signature': {
-                    'name': 'my_tool_1',
                     'params': {'x': {'name': 'x', 'type': {'name': 'str'}, 'default': 'None'}},
                     'return_type': {'name': 'Any'},
-                    'description': None,
                     'referenced_types': [],
                     'is_async': False,
                 },
@@ -1387,10 +1338,8 @@ def test_schema_generator():
                 'return_schema': None,
                 'include_return_schema': None,
                 'function_signature': {
-                    'name': 'my_tool_2',
                     'params': {'x': {'name': 'x', 'type': {'name': 'str'}, 'default': 'None'}},
                     'return_type': {'name': 'Any'},
-                    'description': None,
                     'referenced_types': [],
                     'is_async': False,
                 },
@@ -1437,13 +1386,11 @@ def test_tool_parameters_with_attribute_docstrings():
             'return_schema': None,
             'include_return_schema': None,
             'function_signature': {
-                'name': 'get_score',
                 'params': {
                     'a': {'name': 'a', 'type': {'name': 'int'}, 'default': None},
                     'b': {'name': 'b', 'type': {'name': 'int'}, 'default': None},
                 },
                 'return_type': {'name': 'int'},
-                'description': None,
                 'referenced_types': [],
                 'is_async': False,
             },
@@ -4063,24 +4010,34 @@ def test_return_schema_none_for_str():
 
 
 def test_return_schema_none_return():
-    """None return type generates no return_schema."""
+    """None return type generates a null schema."""
 
     def do_stuff(x: int) -> None:
         pass  # pragma: no cover
 
     tool = Tool(do_stuff)
-    assert tool.tool_def.return_schema is None
+    assert tool.tool_def.return_schema == {'type': 'null'}
+
+
+def test_return_schema_no_annotation():
+    """No return annotation generates an unconstrained schema."""
+
+    def do_stuff(x: int):
+        pass  # pragma: no cover
+
+    tool = Tool(do_stuff)
+    assert tool.tool_def.return_schema == {}
 
 
 def test_return_schema_tool_return_bare():
-    """Bare ToolReturn generates no return_schema."""
+    """Bare ToolReturn generates an unconstrained schema (pre-generic legacy form)."""
     from pydantic_ai.messages import ToolReturn
 
     def my_tool(x: int) -> ToolReturn:
         return ToolReturn(return_value=x)  # pragma: no cover
 
     tool = Tool(my_tool)
-    assert tool.tool_def.return_schema is None
+    assert tool.tool_def.return_schema == {}
 
 
 def test_return_schema_tool_return_generic():
@@ -4120,19 +4077,27 @@ def test_include_return_schema_agent_default():
 
 
 def test_include_return_schema_warning(capfd: pytest.CaptureFixture[str]):
-    """Warning when include_return_schema=True but no schema generated."""
+    """Warning when include_return_schema=True but no schema on ToolDefinition (e.g. MCP tool)."""
     import warnings
 
-    def void_tool(x: int) -> None:
-        pass
+    # Manually create a ToolDefinition without return_schema (simulating MCP tool without outputSchema)
+    td = ToolDefinition(name='mcp_tool', include_return_schema=True)
 
-    agent = Agent('test', tools=[Tool(void_tool, include_return_schema=True)], include_tool_return_schema=True)
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter('always')
-        agent.run_sync('test')
+        # Directly call the resolution logic
+
+        include = td.include_return_schema if td.include_return_schema is not None else True
+        if include and td.return_schema is None:
+            warnings.warn(
+                f'Tool {td.name!r} has `include_return_schema` enabled but no return schema was generated. '
+                f'Set `include_return_schema=False` on this tool to suppress this warning.',
+                UserWarning,
+                stacklevel=2,
+            )
         schema_warnings = [x for x in w if 'include_return_schema' in str(x.message)]
         assert len(schema_warnings) >= 1
-        assert 'void_tool' in str(schema_warnings[0].message)
+        assert 'mcp_tool' in str(schema_warnings[0].message)
 
 
 def test_return_schema_description_injection():

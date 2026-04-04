@@ -19,28 +19,9 @@ __all__ = (
     'UnionTypeExpr',
 )
 
-import inspect
 import re
-import types
-from collections.abc import Callable
 from dataclasses import dataclass, field
-from functools import partial
-from inspect import Parameter, Signature as InspectSignature, signature
-from typing import Any, Literal, TypeAlias, Union, cast, get_args, get_origin
-
-from pydantic import BaseModel, TypeAdapter
-from typing_extensions import get_type_hints
-
-from ._run_context import RunContext
-from ._utils import is_model_like
-
-
-def _get_schema_from_type(t: Any, *, mode: Literal['validation', 'serialization'] = 'validation') -> dict[str, Any]:
-    """Extract JSON schema from a `BaseModel`, dataclass, or `TypedDict`."""
-    if isinstance(t, type) and issubclass(t, BaseModel):
-        return t.model_json_schema(mode=mode)
-    return TypeAdapter(t).json_schema(mode=mode)  # pyright: ignore[reportUnknownArgumentType]
-
+from typing import Any, TypeAlias, cast
 
 # =============================================================================
 # Type expression tree
@@ -139,9 +120,26 @@ class TypeSignature:
 
     fields: dict[str, TypeFieldSignature] = field(default_factory=dict[str, TypeFieldSignature])
 
+    needs_prefix: bool = False
+    """Whether this type needs a tool-name prefix to disambiguate during rendering.
+
+    Set by `dedup_referenced_types` when two different tools define structurally
+    different types with the same name. The actual prefix is applied at render time
+    via `apply_prefix()`.
+    """
+
     def __str__(self) -> str:
         """Return the type name (for use in type expressions like `def foo(x: User)`)."""
         return self.name
+
+    def apply_prefix(self, tool_name: str) -> None:
+        """Apply a tool-name prefix to disambiguate this type during rendering.
+
+        Only has an effect if `needs_prefix` was set by `dedup_referenced_types`.
+        """
+        if self.needs_prefix:
+            self.name = f'{tool_name}_{self.name}'
+            self.needs_prefix = False
 
     def render_definition(self) -> str:
         """Render the full TypedDict class definition."""
@@ -185,19 +183,15 @@ class FunctionParam:
         return f'{self.name}: {type_str}'
 
 
-_UNSET = object()  # sentinel for render() description default
-
-
 @dataclass(kw_only=True)
 class FunctionSignature:
-    """Function signature with referenced type definitions.
+    """Function signature shape with referenced type definitions.
 
-    This class holds all the data needed to render a function signature.
-    Use `str(sig)` for the default rendering, or `render()` for customization.
+    This class holds the structural data (params, return type, referenced types)
+    needed to render a function signature. Name and description are not stored
+    here — they are provided at render time from the ``ToolDefinition``, so the
+    signature stays valid after ``dataclasses.replace(td, name=...)``.
     """
-
-    name: str
-    """The function name."""
 
     params: dict[str, FunctionParam]
     """Function parameters."""
@@ -205,38 +199,28 @@ class FunctionSignature:
     return_type: TypeExpr
     """The return type expression."""
 
-    description: str | None = None
-    """Optional description for the function."""
-
     referenced_types: list[TypeSignature] = field(default_factory=list[TypeSignature])
     """TypedDict class definitions needed by the signature."""
 
     is_async: bool = False
     """Whether the underlying function is async."""
 
-    def __str__(self) -> str:
-        """Render with `...` body."""
-        return self.render('...')
-
     def render(
         self,
         body: str,
         *,
-        name: str | None = None,
-        description: str | None = _UNSET,  # type: ignore[assignment]
+        name: str,
+        description: str | None = None,
         is_async: bool | None = None,
     ) -> str:
         """Render the signature with a specific body.
 
         Args:
             body: The function body (e.g. `'...'` or `'return await tool()'`).
-            name: Override the function name. If `None`, uses `self.name`.
-            description: Override the description. Pass `None` explicitly to suppress.
-                If not provided, uses `self.description`.
-            is_async: Override async rendering. If `None`, uses `self.is_async`.
+            name: The function name.
+            description: Optional docstring to include.
+            is_async: Override async rendering. If ``None``, uses ``self.is_async``.
         """
-        render_name = name if name is not None else self.name
-        render_description = self.description if description is _UNSET else description
         async_flag = is_async if is_async is not None else self.is_async
         prefix = 'async def' if async_flag else 'def'
         params_str = ', '.join(str(p) for p in self.params.values())
@@ -244,60 +228,16 @@ class FunctionSignature:
         return_str = str(self.return_type)
         if params_str:
             # Force keyword-only params so LLMs always use named arguments
-            parts = [f'{prefix} {render_name}(*, {params_str}) -> {return_str}:']
+            parts = [f'{prefix} {name}(*, {params_str}) -> {return_str}:']
         else:
-            parts = [f'{prefix} {render_name}() -> {return_str}:']
+            parts = [f'{prefix} {name}() -> {return_str}:']
 
-        if render_description:
-            parts.extend(_render_description(render_description, indent='    '))
+        if description:
+            parts.extend(_render_description(description, indent='    '))
 
         parts.append(f'    {body}')
 
         return '\n'.join(parts)
-
-    @classmethod
-    def from_function(
-        cls,
-        func: Callable[..., Any],
-        *,
-        name: str | None = None,
-        description: str | None = None,
-    ) -> FunctionSignature:
-        """Build a FunctionSignature from a Python function using inspect.
-
-        Uses `inspect.signature()` and `get_type_hints()` for rich type information
-        (e.g. TypedDict fields, union types, BaseModel references).
-        """
-        # Unwrap functools.partial to get the original function's type hints
-        original_func = func.func if isinstance(func, partial) else func
-        func = cast(Callable[..., Any], func)
-        name = name or original_func.__name__
-        sig = signature(func)
-
-        try:
-            type_hints = get_type_hints(original_func)
-        except (NameError, TypeError, AttributeError):
-            type_hints = {}
-
-        referenced_types: dict[str, TypeSignature] = {}
-        params = _build_function_params(sig, type_hints, referenced_types, name)
-
-        return_annotation = type_hints.get('return')
-        if return_annotation is not None:
-            _collect_referenced_types(return_annotation, referenced_types, name, 'Return', mode='serialization')
-
-        return_type: TypeExpr = (
-            _annotation_to_type_expr(return_annotation, referenced_types) if return_annotation else _ANY
-        )
-
-        return cls(
-            name=name,
-            params=params,
-            return_type=return_type,
-            description=description,
-            referenced_types=list(referenced_types.values()),
-            is_async=inspect.iscoroutinefunction(func),
-        )
 
     @classmethod
     def from_schema(
@@ -305,15 +245,18 @@ class FunctionSignature:
         *,
         name: str,
         parameters_schema: dict[str, Any],
-        description: str | None = None,
         return_schema: dict[str, Any] | None = None,
     ) -> FunctionSignature:
-        """Build a FunctionSignature from a JSON schema.
+        """Build a FunctionSignature from JSON schemas.
+
+        ``name`` is used only for generating fallback type names (e.g.
+        ``GetUserAddress``) when the schema has no ``title``; it is **not** stored
+        on the resulting signature.
 
         Parameter and return schemas are processed independently — each resolves
-        `$ref`s against its own `$defs`. Name collisions between parameter and return
-        types (e.g. both define a `User` `$def` with different structures) are handled
-        by `dedup_referenced_types` at a later stage.
+        ``$ref``s against its own ``$defs``. Name collisions between parameter and return
+        types (e.g. both define a ``User`` ``$def`` with different structures) are handled
+        by ``dedup_referenced_types`` at a later stage.
         """
         # Process parameter schema with its own $defs
         param_defs = parameters_schema.get('$defs', {})
@@ -329,14 +272,18 @@ class FunctionSignature:
             _process_schema_defs(return_defs, return_referenced, name)
             resolved_return_type = _schema_to_type_expr(return_schema, return_defs, return_referenced, name, 'Return')
 
-        # Merge referenced types — dedup_referenced_types handles collisions later
-        all_referenced = list(param_referenced.values()) + list(return_referenced.values())
+        # Merge referenced types, deduplicating structurally identical types within this signature.
+        # Cross-signature collisions are handled later by dedup_referenced_types.
+        all_referenced = list(param_referenced.values())
+        for ret_type in return_referenced.values():
+            existing = param_referenced.get(ret_type.name)
+            if existing is not None and existing.structurally_equal(ret_type):
+                continue  # already present from param schema
+            all_referenced.append(ret_type)
 
         return cls(
-            name=name,
             params=params,
             return_type=resolved_return_type,
-            description=description,
             referenced_types=all_referenced,
         )
 
@@ -346,10 +293,12 @@ class FunctionSignature:
 
         Each signature keeps all its referenced types (so it remains self-contained),
         but identical types (same name and structure) are unified to the same object
-        instance, and conflicting types (same name, different structure) are renamed
-        by prefixing the tool name to disambiguate.
+        instance. Conflicting types (same name, different structure) are marked with
+        ``needs_prefix = True`` so that the caller can apply tool-name prefixes at
+        render time via ``TypeSignature.apply_prefix(tool_name)``.
 
-        Use `collect_unique_referenced_types()` when rendering to emit each definition once.
+        Use ``collect_unique_referenced_types()`` when rendering to emit each
+        definition once.
         """
         seen: dict[str, TypeSignature] = {}
 
@@ -365,9 +314,7 @@ class FunctionSignature:
                     _replace_type_refs(sig, type_sig, canonical)
                     deduped.append(canonical)
                 else:
-                    new_name = f'{sig.name}_{name}'
-                    type_sig.name = new_name
-                    seen[new_name] = type_sig
+                    type_sig.needs_prefix = True
                     deduped.append(type_sig)
             sig.referenced_types = deduped
 
@@ -387,147 +334,6 @@ class FunctionSignature:
 # Shared singletons
 _ANY = SimpleTypeExpr('Any')
 _NONE = SimpleTypeExpr('None')
-
-
-# =============================================================================
-# Type annotation to TypeExpr conversion (Python annotations)
-# =============================================================================
-
-
-def _get_type_name(t: Any) -> SimpleTypeExpr:
-    """Get a SimpleTypeExpr for a type."""
-    if isinstance(t, type):
-        return SimpleTypeExpr(t.__name__)
-    s = repr(t)
-    return SimpleTypeExpr(s.replace('typing.', '').replace('typing_extensions.', ''))
-
-
-def _annotation_to_type_expr(
-    annotation: Any,
-    referenced_types: dict[str, TypeSignature],
-) -> TypeExpr:
-    """Convert a Python type annotation to a TypeExpr."""
-    if annotation is None or annotation is type(None):
-        return _NONE
-
-    # Named types (BaseModel/TypedDict/dataclass) → look up in referenced_types
-    if is_model_like(annotation):
-        type_name = annotation.__name__
-        if type_name in referenced_types:
-            return referenced_types[type_name]
-        return SimpleTypeExpr(type_name)
-
-    # Handle Python 3.10+ union syntax (X | Y creates types.UnionType)
-    if isinstance(annotation, types.UnionType):
-        members = [_annotation_to_type_expr(arg, referenced_types) for arg in get_args(annotation)]
-        return UnionTypeExpr(members=members)
-
-    origin = get_origin(annotation)
-    args = get_args(annotation)
-
-    if origin is not None:
-        if args:
-            if origin is Union:
-                members = [_annotation_to_type_expr(arg, referenced_types) for arg in args]
-                return UnionTypeExpr(members=members)
-            base = _get_type_name(origin)
-            type_args = [_annotation_to_type_expr(arg, referenced_types) for arg in args]
-            return GenericTypeExpr(base=base.name, args=type_args)
-        return _get_type_name(origin)
-
-    return _get_type_name(annotation)
-
-
-# =============================================================================
-# Function signature builder (from Python functions)
-# =============================================================================
-
-
-def _collect_referenced_types(
-    annotation: Any,
-    referenced_types: dict[str, TypeSignature],
-    tool_name: str,
-    path: str = '',
-    *,
-    mode: Literal['validation', 'serialization'] = 'validation',
-) -> None:
-    """Walk a type annotation tree, adding TypeSignature entries for any structured types found.
-
-    Structured types (BaseModel, TypedDict, dataclass) are converted to TypeSignature
-    objects and added to `referenced_types`. This is called before `_annotation_to_type_expr`
-    so that type references can be resolved by name.
-    """
-    if annotation is None or annotation is type(None):
-        return
-
-    if is_model_like(annotation):
-        type_name = annotation.__name__
-        if type_name not in referenced_types:
-            schema = _get_schema_from_type(annotation, mode=mode)
-            schema_defs = schema.get('$defs', {})
-
-            # Process any $defs first (nested models referenced by the main schema)
-            for def_name, def_schema in schema_defs.items():
-                if (
-                    def_name not in referenced_types
-                    and def_schema.get('type') == 'object'
-                    and 'properties' in def_schema
-                ):
-                    _build_and_register_type(def_name, def_schema, schema_defs, referenced_types, tool_name, path)
-
-            # Then process the main schema
-            if schema.get('type') == 'object' and 'properties' in schema:
-                _build_and_register_type(type_name, schema, schema_defs, referenced_types, tool_name, path)
-        return
-
-    # Handle Python 3.10+ union syntax (X | Y creates types.UnionType)
-    if isinstance(annotation, types.UnionType):
-        for arg in get_args(annotation):
-            _collect_referenced_types(arg, referenced_types, tool_name, path, mode=mode)
-        return
-
-    origin = get_origin(annotation)
-    args = get_args(annotation)
-    if origin is not None and args:
-        for arg in args:
-            _collect_referenced_types(arg, referenced_types, tool_name, path, mode=mode)
-
-
-def _build_function_params(
-    sig: InspectSignature,
-    type_hints: dict[str, Any],
-    referenced_types: dict[str, TypeSignature],
-    tool_name: str,
-) -> dict[str, FunctionParam]:
-    """Build FunctionParam objects from a function's signature and type hints."""
-    params: dict[str, FunctionParam] = {}
-    for i, (param_name, param) in enumerate(sig.parameters.items()):
-        if i == 0:
-            annotation = type_hints.get(param_name)
-            if annotation is not None and (annotation is RunContext or get_origin(annotation) is RunContext):
-                continue
-
-        # Skip **kwargs — these map to additionalProperties in JSON schema, not named params
-        if param.kind == Parameter.VAR_KEYWORD:
-            continue
-
-        annotation = type_hints.get(param_name)
-
-        if annotation is not None:
-            _collect_referenced_types(annotation, referenced_types, tool_name, param_name)
-            type_expr = _annotation_to_type_expr(annotation, referenced_types)
-            # *args should be typed as list[T], matching how _function_schema handles VAR_POSITIONAL
-            if param.kind == Parameter.VAR_POSITIONAL:
-                type_expr = GenericTypeExpr(base='list', args=[type_expr])
-        else:
-            type_expr = _ANY
-
-        if param.default is Parameter.empty:
-            params[param_name] = FunctionParam(name=param_name, type=type_expr, default=None)
-        else:
-            default_str = repr(param.default)
-            params[param_name] = FunctionParam(name=param_name, type=type_expr, default=default_str)
-    return params
 
 
 # =============================================================================

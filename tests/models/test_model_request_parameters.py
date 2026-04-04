@@ -76,10 +76,8 @@ def test_model_request_parameters_are_serializable():
                     'return_schema': None,
                     'include_return_schema': None,
                     'function_signature': {
-                        'name': 'test',
                         'params': {},
                         'return_type': {'name': 'Any'},
-                        'description': None,
                         'referenced_types': [],
                         'is_async': False,
                     },
@@ -153,10 +151,8 @@ def test_model_request_parameters_are_serializable():
                     'return_schema': None,
                     'include_return_schema': None,
                     'function_signature': {
-                        'name': 'final_result',
                         'params': {},
                         'return_type': {'name': 'Any'},
-                        'description': None,
                         'referenced_types': [],
                         'is_async': False,
                     },

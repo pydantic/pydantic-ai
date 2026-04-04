@@ -7,7 +7,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from functools import cached_property, partial
+from functools import partial
 from inspect import Parameter, signature
 from typing import TYPE_CHECKING, Any, Concatenate, Literal, cast, get_args, get_origin
 
@@ -33,6 +33,7 @@ from ._utils import (
 from .messages import ToolReturn
 
 if TYPE_CHECKING:
+    from .function_signature import FunctionSignature
     from .tools import DocstringFormat, ObjectJsonSchema
 
 
@@ -54,23 +55,10 @@ class FunctionSchema:
     single_arg_name: str | None = None
     positional_fields: list[str] = field(default_factory=list[str])
     var_positional_field: str | None = None
-    schema_generator: type[GenerateJsonSchema] = GenerateJsonSchema
-
-    @cached_property
-    def return_schema(self) -> ObjectJsonSchema | None:
-        """Generate a JSON schema for the function's return type, lazily on first access."""
-        original_func = self.function.func if isinstance(self.function, partial) else self.function  # pyright: ignore[reportUnknownMemberType]
-        type_hints = get_type_hints(original_func, include_extras=True)
-        return_annotation = type_hints.get('return')
-
-        schema_type = _extract_return_schema_type(return_annotation)
-        if schema_type is None:
-            return None
-
-        try:
-            return TypeAdapter(schema_type).json_schema(schema_generator=self.schema_generator, mode='serialization')
-        except (PydanticSchemaGenerationError, PydanticUserError):
-            return None
+    return_schema: ObjectJsonSchema = field(default_factory=dict[str, Any])
+    """JSON schema for the function's return type. At minimum ``{}`` (equivalent to ``Any``)."""
+    function_signature: FunctionSignature = field(default=None)  # type: ignore[assignment]
+    """Pre-computed function signature shape for this function."""
 
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
         args, kwargs = self._call_args(args_dict, ctx)
@@ -238,18 +226,49 @@ def function_schema(  # noqa: C901
         # and set it on the tool
         description = json_schema.pop('description', None)
 
+    name = tool_name or function.__name__
+    checked_json_schema = check_object_json_schema(json_schema)
+
+    # Compute return schema eagerly (before Temporal sandbox where TypeAdapter is too slow)
+    return_annotation = type_hints.get('return')
+    return_schema_type = _extract_return_schema_type(return_annotation)
+    try:
+        return_schema: ObjectJsonSchema = TypeAdapter(return_schema_type).json_schema(
+            schema_generator=schema_generator, mode='serialization'
+        )
+    except (PydanticSchemaGenerationError, PydanticUserError):
+        import warnings
+
+        warnings.warn(
+            f'Could not generate return schema for {original_func.__qualname__!r}: '
+            f'unsupported return type {return_annotation!r}. Falling back to unconstrained schema.',
+            UserWarning,
+            stacklevel=2,
+        )
+        return_schema = {}
+
+    # Compute function signature eagerly alongside the other schemas
+    from .function_signature import FunctionSignature as _FunctionSignature
+
+    func_sig = _FunctionSignature.from_schema(
+        name=name,
+        parameters_schema=checked_json_schema,
+        return_schema=return_schema,
+    )
+
     return FunctionSchema(
-        name=tool_name or function.__name__,
+        name=name,
         description=description,
         validator=schema_validator,
-        json_schema=check_object_json_schema(json_schema),
+        json_schema=checked_json_schema,
         single_arg_name=single_arg_name,
         positional_fields=positional_fields,
         var_positional_field=var_positional_field,
         takes_ctx=bool(takes_ctx),
         is_async=is_async_callable(function),
         function=function,
-        schema_generator=schema_generator,
+        return_schema=return_schema,
+        function_signature=func_sig,
     )
 
 
@@ -306,19 +325,29 @@ def _build_schema(
 
 
 def _extract_return_schema_type(return_annotation: Any) -> Any:
-    """Extract the type to generate a return schema for, or None if no schema should be generated.
+    """Extract the type to generate a return schema for.
 
-    Handles bare types, `ToolReturn[T]`, bare `ToolReturn` (no schema), and `None`/`type(None)`.
+    Always returns a type — every function has a return schema:
+    - No annotation (``None`` from ``get()``) → ``Any`` (produces ``{}``)
+    - ``-> None`` (``type(None)``) → ``type(None)`` (produces ``{"type": "null"}``)
+    - ``-> Any`` → ``Any`` (produces ``{}``)
+    - Bare ``ToolReturn`` → ``Any`` (pre-generic legacy form)
+    - ``ToolReturn[Any]`` → ``Any`` (produces ``{}``)
+    - ``ToolReturn[T]`` → ``T``
+    - Other types → the type itself
     """
-    if return_annotation is None or return_annotation is type(None):
-        return None
+    if return_annotation is None:
+        # No annotation — untyped, same as Any
+        return Any
+    if return_annotation is type(None):
+        return type(None)
     if return_annotation is ToolReturn:
-        # Bare ToolReturn without type parameter — no schema to generate
-        return None
+        # Bare ToolReturn without type parameter — pre-generic legacy form
+        return Any
     if get_origin(return_annotation) is ToolReturn:
         type_args = get_args(return_annotation)
         inner_type = type_args[0] if type_args else Any
-        return None if inner_type is Any else inner_type
+        return inner_type
     return return_annotation
 
 

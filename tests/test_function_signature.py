@@ -7,6 +7,7 @@ from enum import Enum
 from typing import Optional, Union
 
 import pytest
+import typing_extensions
 from pydantic import BaseModel, RootModel
 
 from pydantic_ai._run_context import RunContext
@@ -37,15 +38,20 @@ class _ConfigWithEnum(BaseModel):
     color: _Color
 
 
+class _SearchParams(typing_extensions.TypedDict):
+    query: str
+    limit: int
+
+
 def test_render_function_signature_with_no_params():
-    sig = FunctionSignature(name='ping', params={}, return_type=SimpleTypeExpr('None'))
-    assert str(sig) == 'def ping() -> None:\n    ...'
+    sig = FunctionSignature(params={}, return_type=SimpleTypeExpr('None'))
+    assert sig.render('...', name='ping') == 'def ping() -> None:\n    ...'
     # render() can override is_async
-    assert sig.render('...', is_async=True) == 'async def ping() -> None:\n    ...'
+    assert sig.render('...', name='ping', is_async=True) == 'async def ping() -> None:\n    ...'
 
 
 def test_dedup_referenced_types_substring_names():
-    """Renaming 'User' must not corrupt 'UserMeta' in the same signature."""
+    """Marking 'User' for prefix must not affect 'UserMeta' in the same signature."""
     user1 = TypeSignature(
         name='User',
         fields={
@@ -66,13 +72,11 @@ def test_dedup_referenced_types_substring_names():
     )
 
     sig1 = FunctionSignature(
-        name='tool_a',
         params={'user': FunctionParam(name='user', type=user1, default=None)},
         return_type=SimpleTypeExpr('Any'),
         referenced_types=[user1],
     )
     sig2 = FunctionSignature(
-        name='tool_b',
         params={
             'user': FunctionParam(name='user', type=user2, default=None),
             'meta': FunctionParam(name='meta', type=user_meta, default=None),
@@ -82,10 +86,14 @@ def test_dedup_referenced_types_substring_names():
     )
     FunctionSignature.dedup_referenced_types([sig1, sig2])
 
-    # User in sig2 was renamed to tool_b_User
-    assert user2.name == 'tool_b_User'
+    # User in sig2 is marked for prefix, not renamed yet
+    assert user2.needs_prefix is True
     # UserMeta must be untouched
+    assert user_meta.needs_prefix is False
     assert user_meta.name == 'UserMeta'
+    # Apply prefix at render time
+    user2.apply_prefix('tool_b')
+    assert user2.name == 'tool_b_User'
     # Params render correctly
     assert str(sig2.params['user']) == 'user: tool_b_User'
     assert str(sig2.params['meta']) == 'meta: UserMeta'
@@ -108,13 +116,11 @@ def test_dedup_identical_types_unified():
     )
 
     sig1 = FunctionSignature(
-        name='tool_a',
         params={'user': FunctionParam(name='user', type=user1, default=None)},
         return_type=SimpleTypeExpr('Any'),
         referenced_types=[user1],
     )
     sig2 = FunctionSignature(
-        name='tool_b',
         params={'user': FunctionParam(name='user', type=user2, default=None)},
         return_type=SimpleTypeExpr('Any'),
         referenced_types=[user2],
@@ -164,13 +170,11 @@ def test_dedup_replaces_nested_generic_and_union_refs_with_canonical():
     )
 
     sig1 = FunctionSignature(
-        name='tool_a',
         params={'user': FunctionParam(name='user', type=user1, default=None)},
         return_type=SimpleTypeExpr('Any'),
         referenced_types=[user1],
     )
     sig2 = FunctionSignature(
-        name='tool_b',
         params={
             'wrapper': FunctionParam(name='wrapper', type=wrapper, default=None),
             'tags': FunctionParam(
@@ -252,7 +256,10 @@ def test_dedup_mixed_identical_and_conflicting_from_schemas():
     assert sig2.referenced_types[0] is sig1.referenced_types[0]
     assert sig2.params['user'].type is sig1.referenced_types[0]
 
-    # sig3's User was renamed to tool_c_User
+    # sig3's User is marked for prefix, not renamed yet
+    assert sig3.referenced_types[0].needs_prefix is True
+    # Apply prefix at render time
+    sig3.referenced_types[0].apply_prefix('tool_c')
     assert sig3.referenced_types[0].name == 'tool_c_User'
     assert str(sig3.params['user']) == 'user: tool_c_User'
 
@@ -286,21 +293,22 @@ def test_dedup_composite_type_expr_rename_propagates():
     )
 
     sig1 = FunctionSignature(
-        name='tool_a',
         params={'user': FunctionParam(name='user', type=user1, default=None)},
         return_type=SimpleTypeExpr('Any'),
         referenced_types=[user1],
     )
     # sig2 references user2 via list[User]
     sig2 = FunctionSignature(
-        name='tool_b',
         params={'users': FunctionParam(name='users', type=GenericTypeExpr(base='list', args=[user2]), default=None)},
         return_type=SimpleTypeExpr('Any'),
         referenced_types=[user2],
     )
     FunctionSignature.dedup_referenced_types([sig1, sig2])
 
-    # user2 was renamed in place
+    # user2 is marked for prefix, not renamed yet
+    assert user2.needs_prefix is True
+    # Apply prefix at render time
+    user2.apply_prefix('tool_b')
     assert user2.name == 'tool_b_User'
     # The list[User] now renders as list[tool_b_User]
     assert str(sig2.params['users']) == 'users: list[tool_b_User]'
@@ -432,7 +440,6 @@ def test_tool_def_function_signature_from_schema():
     tool_def = tool.tool_def
 
     sig = tool_def.function_signature
-    assert sig.name == 'my_tool'
     assert 'x' in sig.params
     assert 'y' in sig.params
 
@@ -446,8 +453,6 @@ def test_tool_def_has_schema_based_signature():
 
     tool = Tool(my_tool)
     sig = tool.tool_def.function_signature
-    assert sig.name == 'my_tool'
-    assert sig.description == 'A test tool.'
     assert 'x' in sig.params
     assert 'y' in sig.params
     assert str(sig.params['x'].type) == 'int'
@@ -463,8 +468,6 @@ def test_tool_definition_function_signature_computed_from_schema():
         description='A test tool',
     )
     sig = td.function_signature
-    assert sig.description == 'A test tool'
-    assert sig.name == 'test_tool'
     assert 'x' in sig.params
 
 
@@ -477,7 +480,6 @@ def test_tool_definition_schema_based_function_signature():
         description='A schema-based tool',
     )
     sig = td.function_signature
-    assert sig.name == 'schema_tool'
     assert 'q' in sig.params
     assert str(sig.params['q'].type) == 'str'
 
@@ -499,7 +501,7 @@ def test_tool_from_schema_function_signature_uses_schema():
             'required': ['query'],
         },
     )
-    assert str(tool.tool_def.function_signature) == snapshot('''\
+    assert tool.tool_def.render_signature('...') == snapshot('''\
 def search(*, query: str, limit: int | None = None) -> Any:
     """Search documents"""
     ...\
@@ -512,12 +514,13 @@ def search(*, query: str, limit: int | None = None) -> Any:
 
 
 def test_function_signature_special_params():
-    """RunContext skipped, unannotated → Any."""
+    """RunContext skipped, unannotated params become Any via schema path."""
 
     def with_ctx(ctx: RunContext[None], x: int) -> int:
         return x  # pragma: no cover
 
-    assert str(FunctionSignature.from_function(with_ctx, name='with_ctx')) == snapshot("""\
+    td = Tool(with_ctx, takes_ctx=True).tool_def
+    assert td.render_signature('...') == snapshot("""\
 def with_ctx(*, x: int) -> int:
     ...\
 """)
@@ -525,28 +528,27 @@ def with_ctx(*, x: int) -> int:
     def no_annot(x):  # pyright: ignore[reportUnknownParameterType,reportMissingParameterType]
         return x  # pragma: no cover  # pyright: ignore[reportUnknownVariableType]
 
-    assert str(
-        FunctionSignature.from_function(no_annot, name='no_annot')  # pyright: ignore[reportUnknownArgumentType]
-    ) == snapshot("""\
+    td = Tool(no_annot).tool_def  # pyright: ignore[reportUnknownArgumentType]
+    assert td.render_signature('...') == snapshot("""\
 def no_annot(*, x: Any) -> Any:
     ...\
 """)
 
 
 def test_from_function_kwargs_and_varargs():
-    """from_function skips **kwargs and wraps *args as list[T]."""
+    """Schema path skips **kwargs and wraps *args as list[T]."""
 
     def with_kwargs(x: int, **kwargs: str) -> str:
         return ''  # pragma: no cover
 
-    sig = FunctionSignature.from_function(with_kwargs, name='with_kwargs')
+    sig = Tool(with_kwargs).tool_def.function_signature
     assert 'kwargs' not in sig.params
     assert 'x' in sig.params
 
     def with_args(*args: int) -> str:
         return ''  # pragma: no cover
 
-    sig = FunctionSignature.from_function(with_args, name='with_args')
+    sig = Tool(with_args).tool_def.function_signature
     assert 'args' in sig.params
     assert str(sig.params['args'].type) == 'list[int]'
 
@@ -565,7 +567,7 @@ class _TreeNode(BaseModel):
 
 
 def test_function_signature_union_and_model_types():
-    """Unions, optionals, and model types render correct signatures."""
+    """Unions, optionals, and model types render correct signatures via schema path."""
 
     def complex_func(
         a: Union[int, str],  # noqa: UP007 — testing Union[] code path
@@ -574,12 +576,12 @@ def test_function_signature_union_and_model_types():
         d: _UserInfo | None = None,
     ) -> _UserInfo: ...  # pragma: no cover
 
-    sig = FunctionSignature.from_function(complex_func, name='complex_func')
-    assert str(sig) == snapshot("""\
+    td = Tool(complex_func).tool_def
+    assert td.render_signature('...') == snapshot("""\
 def complex_func(*, a: int | str, b: int | str, c: int | None = None, d: _UserInfo | None = None) -> _UserInfo:
     ...\
 """)
-    assert [t.render_definition() for t in sig.referenced_types] == snapshot(
+    assert [t.render_definition() for t in td.function_signature.referenced_types] == snapshot(
         [
             """\
 class _UserInfo(TypedDict):
@@ -621,7 +623,7 @@ def test_schema_signature_const_enum():
             'required': ['mode'],
         },
     )
-    assert str(sig_const) == snapshot("""\
+    assert sig_const.render('...', name='tool_const') == snapshot("""\
 def tool_const(*, mode: Literal['fast']) -> Any:
     ...\
 """)
@@ -635,7 +637,7 @@ def tool_const(*, mode: Literal['fast']) -> Any:
             'required': ['color'],
         },
     )
-    assert str(sig_enum) == snapshot("""\
+    assert sig_enum.render('...', name='tool_enum') == snapshot("""\
 def tool_enum(*, color: Literal['red', 'green', 'blue']) -> Any:
     ...\
 """)
@@ -645,7 +647,7 @@ def test_collect_unique_referenced_types_empty():
     """Empty input returns empty list."""
     assert FunctionSignature.collect_unique_referenced_types([]) == []
 
-    sig = FunctionSignature(name='no_refs', params={}, return_type=SimpleTypeExpr('Any'), referenced_types=[])
+    sig = FunctionSignature(params={}, return_type=SimpleTypeExpr('Any'), referenced_types=[])
     assert FunctionSignature.collect_unique_referenced_types([sig]) == []
 
 
@@ -659,7 +661,7 @@ def test_schema_signature_union_ref_allof():
             'required': ['value'],
         },
     )
-    assert str(sig_oneof) == snapshot("""\
+    assert sig_oneof.render('...', name='my_tool') == snapshot("""\
 def my_tool(*, value: str | int) -> Any:
     ...\
 """)
@@ -672,7 +674,7 @@ def my_tool(*, value: str | int) -> Any:
             'required': ['x'],
         },
     )
-    assert str(sig_allof_single) == snapshot("""\
+    assert sig_allof_single.render('...', name='tool2') == snapshot("""\
 def tool2(*, x: str) -> Any:
     ...\
 """)
@@ -685,7 +687,7 @@ def tool2(*, x: str) -> Any:
             'required': ['x'],
         },
     )
-    assert str(sig_allof_multi) == snapshot("""\
+    assert sig_allof_multi.render('...', name='tool3') == snapshot("""\
 def tool3(*, x: Any) -> Any:
     ...\
 """)
@@ -699,7 +701,7 @@ def tool3(*, x: Any) -> Any:
             '$defs': {'User': {'type': 'object', 'properties': {'name': {'type': 'string'}}, 'required': ['name']}},
         },
     )
-    assert str(sig_ref) == snapshot("""\
+    assert sig_ref.render('...', name='tool4') == snapshot("""\
 def tool4(*, user: User) -> Any:
     ...\
 """)
@@ -721,7 +723,7 @@ class User(TypedDict):
             '$defs': {'StringAlias': {'type': 'string'}},
         },
     )
-    assert str(sig_ref_nonobj) == snapshot("""\
+    assert sig_ref_nonobj.render('...', name='tool5') == snapshot("""\
 def tool5(*, x: StringAlias) -> Any:
     ...\
 """)
@@ -730,91 +732,85 @@ def tool5(*, x: StringAlias) -> Any:
 def test_schema_signature_array_object_typelist():
     """Arrays, objects, additionalProperties, and type lists."""
     # Tuple array
-    assert str(
-        FunctionSignature.from_schema(
-            name='t1',
-            parameters_schema={
-                'type': 'object',
-                'properties': {'coords': {'type': 'array', 'items': [{'type': 'number'}, {'type': 'number'}]}},
-                'required': ['coords'],
-            },
-        )
-    ) == snapshot("""\
+    sig = FunctionSignature.from_schema(
+        name='t1',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'coords': {'type': 'array', 'items': [{'type': 'number'}, {'type': 'number'}]}},
+            'required': ['coords'],
+        },
+    )
+    assert sig.render('...', name='t1') == snapshot("""\
 def t1(*, coords: tuple[float, float]) -> Any:
     ...\
 """)
 
     # Empty array
-    assert str(
-        FunctionSignature.from_schema(
-            name='t2',
-            parameters_schema={
-                'type': 'object',
-                'properties': {'data': {'type': 'array'}},
-                'required': ['data'],
-            },
-        )
-    ) == snapshot("""\
+    sig = FunctionSignature.from_schema(
+        name='t2',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'data': {'type': 'array'}},
+            'required': ['data'],
+        },
+    )
+    assert sig.render('...', name='t2') == snapshot("""\
 def t2(*, data: list[Any]) -> Any:
     ...\
 """)
 
     # additionalProperties: true
-    assert str(
-        FunctionSignature.from_schema(
-            name='t3',
-            parameters_schema={
-                'type': 'object',
-                'properties': {'meta': {'type': 'object', 'additionalProperties': True}},
-                'required': ['meta'],
-            },
-        )
-    ) == snapshot("""\
+    sig = FunctionSignature.from_schema(
+        name='t3',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'meta': {'type': 'object', 'additionalProperties': True}},
+            'required': ['meta'],
+        },
+    )
+    assert sig.render('...', name='t3') == snapshot("""\
 def t3(*, meta: dict[str, Any]) -> Any:
     ...\
 """)
 
     # Typed additionalProperties
-    assert str(
-        FunctionSignature.from_schema(
-            name='t4',
-            parameters_schema={
-                'type': 'object',
-                'properties': {'tags': {'type': 'object', 'additionalProperties': {'type': 'string'}}},
-                'required': ['tags'],
-            },
-        )
-    ) == snapshot("""\
+    sig = FunctionSignature.from_schema(
+        name='t4',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'tags': {'type': 'object', 'additionalProperties': {'type': 'string'}}},
+            'required': ['tags'],
+        },
+    )
+    assert sig.render('...', name='t4') == snapshot("""\
 def t4(*, tags: dict[str, str]) -> Any:
     ...\
 """)
 
     # Type list ['string', 'null']
-    assert str(
-        FunctionSignature.from_schema(
-            name='t5',
-            parameters_schema={
-                'type': 'object',
-                'properties': {'name': {'type': ['string', 'null']}},
-                'required': ['name'],
-            },
-        )
-    ) == snapshot("""\
+    sig = FunctionSignature.from_schema(
+        name='t5',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'name': {'type': ['string', 'null']}},
+            'required': ['name'],
+        },
+    )
+    assert sig.render('...', name='t5') == snapshot("""\
 def t5(*, name: str | None) -> Any:
     ...\
 """)
 
     # Type list multi
-    assert str(
-        FunctionSignature.from_schema(
-            name='t6',
-            parameters_schema={
-                'type': 'object',
-                'properties': {'value': {'type': ['string', 'integer', 'boolean']}},
-                'required': ['value'],
-            },
-        )
-    ) == snapshot("""\
+    sig = FunctionSignature.from_schema(
+        name='t6',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'value': {'type': ['string', 'integer', 'boolean']}},
+            'required': ['value'],
+        },
+    )
+    assert sig.render('...', name='t6') == snapshot("""\
 def t6(*, value: str | int | bool) -> Any:
     ...\
 """)
@@ -834,7 +830,7 @@ def t6(*, value: str | int | bool) -> Any:
             'required': ['config'],
         },
     )
-    assert str(sig) == snapshot("""\
+    assert sig.render('...', name='t7') == snapshot("""\
 def t7(*, config: T7Config | None) -> Any:
     ...\
 """)
@@ -851,43 +847,40 @@ class T7Config(TypedDict):
 def test_schema_signature_optional_params_and_return():
     """Optional params, return schema edge cases, anyOf dedup."""
     # Optional already nullable
-    assert str(
-        FunctionSignature.from_schema(
-            name='t1',
-            parameters_schema={
-                'type': 'object',
-                'properties': {'x': {'type': ['string', 'null']}},
-            },
-        )
-    ) == snapshot("""\
+    sig = FunctionSignature.from_schema(
+        name='t1',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'x': {'type': ['string', 'null']}},
+        },
+    )
+    assert sig.render('...', name='t1') == snapshot("""\
 def t1(*, x: str | None = None) -> Any:
     ...\
 """)
 
     # Optional not nullable → adds | None
-    assert str(
-        FunctionSignature.from_schema(
-            name='t2',
-            parameters_schema={
-                'type': 'object',
-                'properties': {'x': {'type': 'string'}},
-            },
-        )
-    ) == snapshot("""\
+    sig = FunctionSignature.from_schema(
+        name='t2',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'x': {'type': 'string'}},
+        },
+    )
+    assert sig.render('...', name='t2') == snapshot("""\
 def t2(*, x: str | None = None) -> Any:
     ...\
 """)
 
     # Optional with explicit default preserves default value
-    assert str(
-        FunctionSignature.from_schema(
-            name='t_default',
-            parameters_schema={
-                'type': 'object',
-                'properties': {'x': {'type': 'integer', 'default': 7}},
-            },
-        )
-    ) == snapshot("""\
+    sig = FunctionSignature.from_schema(
+        name='t_default',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'x': {'type': 'integer', 'default': 7}},
+        },
+    )
+    assert sig.render('...', name='t_default') == snapshot("""\
 def t_default(*, x: int = 7) -> Any:
     ...\
 """)
@@ -896,10 +889,9 @@ def t_default(*, x: int = 7) -> Any:
     sig3 = FunctionSignature.from_schema(
         name='t3',
         parameters_schema={'type': 'object', 'properties': {'x': {'type': 'string'}}, 'required': ['x']},
-        description='A tool',
         return_schema={},
     )
-    assert str(sig3) == snapshot('''\
+    assert sig3.render('...', name='t3', description='A tool') == snapshot('''\
 def t3(*, x: str) -> Any:
     """A tool"""
     ...\
@@ -914,7 +906,7 @@ def t3(*, x: str) -> Any:
             '$defs': {'Result': {'type': 'object', 'properties': {'v': {'type': 'integer'}}, 'required': ['v']}},
         },
     )
-    assert str(sig4) == snapshot("""\
+    assert sig4.render('...', name='t4') == snapshot("""\
 def t4(*, x: str) -> Result:
     ...\
 """)
@@ -928,16 +920,15 @@ class Result(TypedDict):
     )
 
     # anyOf with duplicates → deduplicated
-    assert str(
-        FunctionSignature.from_schema(
-            name='t5',
-            parameters_schema={
-                'type': 'object',
-                'properties': {'x': {'anyOf': [{'type': 'string'}, {'type': 'string'}, {'type': 'null'}]}},
-                'required': ['x'],
-            },
-        )
-    ) == snapshot("""\
+    sig5 = FunctionSignature.from_schema(
+        name='t5',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'x': {'anyOf': [{'type': 'string'}, {'type': 'string'}, {'type': 'null'}]}},
+            'required': ['x'],
+        },
+    )
+    assert sig5.render('...', name='t5') == snapshot("""\
 def t5(*, x: str | None) -> Any:
     ...\
 """)
@@ -955,15 +946,18 @@ def test_tool_definition_eq_non_tool():
 
 
 def test_function_signature_literal_annotation():
-    """Literal type annotations exercise the repr fallback in _get_type_name."""
+    """Literal type annotations render via schema path."""
     ns: dict[str, object] = {'typing': typing}
     exec("def func(x: typing.Literal['a', 'b']) -> None: ...", ns)
-    sig = FunctionSignature.from_function(ns['func'], name='func')  # pyright: ignore[reportArgumentType]
-    assert "Literal['a', 'b']" in str(sig)
+    td = Tool(ns['func']).tool_def  # pyright: ignore[reportArgumentType]
+    assert td.render_signature('...') == snapshot("""\
+def func(*, x: Literal['a', 'b']) -> None:
+    ...\
+""")
 
 
 def test_function_with_bare_generic_annotation():
-    """Bare generic (e.g. `typing.List` without type args) renders as the base type name."""
+    """Bare generic (e.g. `typing.List` without type args) renders as list[Any] via schema path."""
     # Create a function with bare generic annotation (typing.List, not list)
     # via a helper module that doesn't use `from __future__ import annotations`
     import types as t
@@ -974,21 +968,20 @@ def test_function_with_bare_generic_annotation():
         compile('def func(items: List) -> None: ...', '<test>', 'exec'),
         mod.__dict__,
     )
-    sig = FunctionSignature.from_function(mod.func)
-    assert 'items: list' in str(sig)
+    td = Tool(mod.func).tool_def
+    assert 'items: list[Any]' in td.render_signature('...')
 
 
-def test_function_signature_nameerror_fallback():
-    """Functions with unresolvable forward refs fall back to empty type hints."""
+def test_function_signature_nameerror_for_unresolvable_forward_ref():
+    """Functions with unresolvable forward refs raise NameError via the schema path."""
     ns: dict[str, object] = {}
     exec(
         "def func_with_fwd_ref(x: 'NonexistentType') -> None: ...",
         ns,
     )
     func = ns['func_with_fwd_ref']
-    sig = FunctionSignature.from_function(func, name='func_fwd')  # pyright: ignore[reportArgumentType]
-    # Should not raise — falls back to empty hints, x becomes Any
-    assert 'x' in sig.params
+    with pytest.raises(NameError, match='NonexistentType'):
+        Tool(func)  # pyright: ignore[reportArgumentType]
 
 
 def test_schema_bare_object():
@@ -1001,7 +994,7 @@ def test_schema_bare_object():
             'required': ['data'],
         },
     )
-    assert 'dict[str, Any]' in str(sig)
+    assert 'dict[str, Any]' in sig.render('...', name='t_bare')
 
 
 def test_schema_object_type_list_no_null():
@@ -1020,7 +1013,7 @@ def test_schema_object_type_list_no_null():
             'required': ['config'],
         },
     )
-    rendered = str(sig)
+    rendered = sig.render('...', name='t_obj_list')
     assert 'None' not in rendered
     assert 'TObjListConfig' in rendered
 
@@ -1035,9 +1028,10 @@ def test_schema_single_type_after_filtering():
             'required': ['x'],
         },
     )
-    assert 'str' in str(sig)
+    rendered = sig.render('...', name='t_single')
+    assert 'str' in rendered
     # Should not be a union
-    assert '|' not in str(sig)
+    assert '|' not in rendered
 
 
 def test_schema_single_anyof_member():
@@ -1050,7 +1044,7 @@ def test_schema_single_anyof_member():
             'required': ['x'],
         },
     )
-    rendered = str(sig)
+    rendered = sig.render('...', name='t_anyof_single')
     assert 'str' in rendered
     assert '|' not in rendered
 
@@ -1129,29 +1123,29 @@ def test_schema_object_type_name_collision():
 
 
 def test_function_signature_root_model():
-    """RootModel wrapping a non-object type renders as the type name without a TypedDict."""
+    """RootModel parameter renders as list type via schema path."""
 
-    def func_with_root_model(x: _IntList) -> None: ...  # pragma: no cover
+    def func_with_root_model(x: _IntList, y: int) -> None: ...  # pragma: no cover
 
-    sig = FunctionSignature.from_function(func_with_root_model, name='func_with_root_model')
-    # RootModel produces a non-object schema, so it's referenced by name but not as a TypedDict
-    assert str(sig) == snapshot("""\
-def func_with_root_model(*, x: _IntList) -> None:
+    td = Tool(func_with_root_model).tool_def
+    assert td.render_signature('...') == snapshot("""\
+def func_with_root_model(*, x: _IntList, y: int) -> None:
     ...\
 """)
-    assert sig.referenced_types == []
+    assert td.function_signature.referenced_types == []
 
 
 def test_function_signature_recursive_model():
-    """Recursive BaseModel with top-level $ref in schema produces correct TypedDict."""
+    """Recursive BaseModel with $ref in schema produces correct TypedDict via schema path."""
 
-    def func_with_tree(x: _TreeNode) -> None: ...  # pragma: no cover
+    def func_with_tree(x: _TreeNode, label: str = '') -> None: ...  # pragma: no cover
 
-    sig = FunctionSignature.from_function(func_with_tree, name='func_with_tree')
-    assert str(sig) == snapshot("""\
-def func_with_tree(*, x: _TreeNode) -> None:
+    td = Tool(func_with_tree).tool_def
+    assert td.render_signature('...') == snapshot("""\
+def func_with_tree(*, x: _TreeNode, label: str = '') -> None:
     ...\
 """)
+    sig = td.function_signature
     assert len(sig.referenced_types) == 1
     assert sig.referenced_types[0].name == '_TreeNode'
     assert 'value' in sig.referenced_types[0].fields
@@ -1180,7 +1174,7 @@ def test_schema_cross_referencing_defs():
             },
         },
     )
-    assert str(sig) == snapshot("""\
+    assert sig.render('...', name='tool') == snapshot("""\
 def tool(*, item: Container) -> Any:
     ...\
 """)
@@ -1233,7 +1227,7 @@ def test_schema_additional_properties_false():
             'required': ['meta'],
         },
     )
-    assert 'dict[str, Any]' in str(sig)
+    assert 'dict[str, Any]' in sig.render('...', name='t_ap_false')
 
 
 def test_schema_empty_type_list():
@@ -1246,31 +1240,17 @@ def test_schema_empty_type_list():
             'required': ['x'],
         },
     )
-    assert 'Any' in str(sig)
+    assert 'Any' in sig.render('...', name='t_empty')
 
 
 def test_function_with_typed_dict_param():
-    """TypedDict parameters use TypeAdapter path for schema extraction."""
-    import types as t
+    """TypedDict parameters render correctly via schema path."""
 
-    from typing_extensions import TypedDict
+    def search(params: _SearchParams, verbose: bool = False) -> str: ...  # pragma: no cover
 
-    # Define in a separate module to avoid `from __future__ import annotations` interference
-    mod = t.ModuleType('_test_typed_dict')
-    mod.__dict__['TypedDict'] = TypedDict
-
-    exec(
-        compile(
-            'class SearchParams(TypedDict):\n    query: str\n    limit: int\n'
-            'def search(params: SearchParams) -> str: ...',
-            '<test>',
-            'exec',
-        ),
-        mod.__dict__,
-    )
-    sig = FunctionSignature.from_function(mod.search, name='search')
-    assert 'params: SearchParams' in str(sig)
-    assert any(rt.name == 'SearchParams' for rt in sig.referenced_types)
+    td = Tool(search).tool_def
+    assert 'params: _SearchParams' in td.render_signature('...')
+    assert any(rt.name == '_SearchParams' for rt in td.function_signature.referenced_types)
 
 
 def test_schema_optional_with_anyof_null():
@@ -1286,7 +1266,7 @@ def test_schema_optional_with_anyof_null():
             'required': ['name'],
         },
     )
-    rendered = str(sig)
+    rendered = sig.render('...', name='tool')
     assert 'tag: str | None' in rendered
 
 
@@ -1303,20 +1283,20 @@ def test_schema_optional_with_oneof_null():
             'required': ['name'],
         },
     )
-    rendered = str(sig)
+    rendered = sig.render('...', name='tool')
     assert 'tag: str | None' in rendered
 
 
 def test_function_with_enum_field_in_model():
-    """Model with an enum field produces non-object $defs that are skipped during type collection."""
+    """Model with an enum field skips non-object $defs (enums) via schema path."""
 
-    def configure(cfg: _ConfigWithEnum) -> str:
+    def configure(cfg: _ConfigWithEnum, dry_run: bool = False) -> str:
         return cfg.name  # pragma: no cover
 
-    sig = FunctionSignature.from_function(configure, name='configure')
-    assert 'cfg: _ConfigWithEnum' in str(sig)
+    td = Tool(configure).tool_def
+    assert 'cfg: _ConfigWithEnum' in td.render_signature('...')
     # _ConfigWithEnum should be a TypedDict, but _Color (enum) should not
-    type_names = {rt.name for rt in sig.referenced_types}
+    type_names = {rt.name for rt in td.function_signature.referenced_types}
     assert '_ConfigWithEnum' in type_names
     assert '_Color' not in type_names
 
@@ -1346,7 +1326,7 @@ def test_schema_with_described_optional_fields():
         },
     )
     # Check that optional field 'bio' is rendered with description
-    rendered = str(sig)
+    rendered = sig.render('...', name='create_user')
     assert 'bio: str' in rendered
 
     # Check that Address type has description in its definition

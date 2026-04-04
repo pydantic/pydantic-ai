@@ -191,10 +191,10 @@ async def test_toolset_tool_function_signature_property():
     managed_toolset = await ToolManager[None](toolset).for_run_step(build_run_context(None))
     assert managed_toolset.tools is not None
 
-    sig = managed_toolset.tools['add'].tool_def.function_signature
-    assert sig.name == 'add'
+    td = managed_toolset.tools['add'].tool_def
+    sig = td.function_signature
     assert list(sig.params) == ['a', 'b']
-    assert str(sig) == snapshot("""\
+    assert td.render_signature('...') == snapshot("""\
 def add(*, a: int, b: int) -> int:
     ...\
 """)
