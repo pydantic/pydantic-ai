@@ -351,6 +351,7 @@ print(test_model.last_model_request_parameters.function_tools)
             'type': 'object',
         },
         description='This is a Foobar',
+        toolset_id='<agent>',
     )
 ]
 """

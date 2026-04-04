@@ -518,6 +518,7 @@ def test_logfire(
                                 'metadata': None,
                                 'timeout': None,
                                 'defer_loading': False,
+                                'toolset_id': None,
                                 'prefer_builtin': None,
                             }
                         ],
@@ -1016,6 +1017,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                                 'metadata': None,
                                 'timeout': None,
                                 'defer_loading': False,
+                                'toolset_id': '<output>',
                                 'prefer_builtin': None,
                             }
                         ],

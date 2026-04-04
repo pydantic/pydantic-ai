@@ -73,6 +73,7 @@ def test_model_request_parameters_are_serializable():
                     'metadata': None,
                     'timeout': None,
                     'defer_loading': False,
+                    'toolset_id': None,
                     'prefer_builtin': None,
                 }
             ],
@@ -140,6 +141,7 @@ def test_model_request_parameters_are_serializable():
                     'metadata': None,
                     'timeout': None,
                     'defer_loading': False,
+                    'toolset_id': None,
                     'prefer_builtin': None,
                 }
             ],

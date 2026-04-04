@@ -15,6 +15,7 @@ from temporalio.workflow import ActivityConfig
 
 from pydantic_ai import _utils, messages as _messages, models
 from pydantic_ai.agent import EventStreamHandler
+from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     WrapModelRequestHandler,
@@ -22,7 +23,6 @@ from pydantic_ai.capabilities.abstract import (
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse
-from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
@@ -58,10 +58,10 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
     Example:
         ```python
         from pydantic_ai import Agent
-        from pydantic_ai.models.openai import OpenAIModel
         from pydantic_ai.durable_exec.temporal import TemporalDurability
+        from pydantic_ai.models.openai import OpenAIChatModel
 
-        model = OpenAIModel('gpt-5.2')
+        model = OpenAIChatModel('gpt-5.2')
         durability = TemporalDurability(
             name='my_agent',
             models={'default': model},
@@ -134,6 +134,8 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
                 (only valid for async tool functions).
             run_context_type: The `TemporalRunContext` subclass for run context
                 serialization/deserialization.
+            agent: Optional agent instance attached to deserialized run contexts
+                inside activities, enabling ``ctx.agent`` access.
             temporalize_toolset_func: Custom function for wrapping leaf toolsets.
                 Defaults to the built-in ``temporalize_toolset``.
         """

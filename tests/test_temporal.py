@@ -4044,7 +4044,6 @@ async def test_text_content_serialization_in_workflow(client: Client):
                 run_id=IsStr(),
             )
         )
-=======
 
 
 # ==========================================

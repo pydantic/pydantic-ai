@@ -41,6 +41,7 @@ try:
     from pydantic_ai.durable_exec.prefect import (
         DEFAULT_PYDANTIC_AI_CACHE_POLICY,
         PrefectAgent,
+        PrefectDurability,
         PrefectFunctionToolset,
         PrefectMCPServer,
         PrefectModel,
@@ -1233,3 +1234,49 @@ async def test_disabled_tool():
     flow_result = await test_flow()
     flow_messages = flow_result.all_messages()
     assert any('my_tool' in str(msg) for msg in flow_messages)
+
+
+# ==========================================
+# PrefectDurability capability tests
+# ==========================================
+
+
+def _durability_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Simple model function for durability tests."""
+    for msg in reversed(messages):
+        for part in msg.parts:
+            if isinstance(part, UserPromptPart):
+                return ModelResponse(parts=[TextPart(content=f'Echo: {part.content}')])
+    return ModelResponse(parts=[TextPart(content='no prompt')])  # pragma: no cover
+
+
+_durability_fn_model = FunctionModel(_durability_model_fn)
+
+
+async def test_prefect_durability_simple_agent(prefect_harness: None) -> None:
+    """PrefectDurability routes model requests through Prefect tasks."""
+    durability = PrefectDurability(
+        name='durability_simple',
+        model=_durability_fn_model,
+    )
+    agent = Agent(_durability_fn_model, name='durability_simple', capabilities=[durability])
+
+    @flow
+    async def run_durable_agent() -> str:
+        result = await agent.run('Hello Prefect')
+        return result.output
+
+    output = await run_durable_agent()
+    assert output == 'Echo: Hello Prefect'
+
+
+async def test_prefect_durability_outside_flow() -> None:
+    """PrefectDurability is transparent outside a Prefect flow."""
+    durability = PrefectDurability(
+        name='durability_outside',
+        model=_durability_fn_model,
+    )
+    agent = Agent(_durability_fn_model, name='durability_outside', capabilities=[durability])
+
+    result = await agent.run('Hello outside')
+    assert result.output == 'Echo: Hello outside'

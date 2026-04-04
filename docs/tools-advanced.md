@@ -242,6 +242,7 @@ print(test_model.last_model_request_parameters.function_tools)
             'required': ['name'],
             'type': 'object',
         },
+        toolset_id='<agent>',
     )
 ]
 """

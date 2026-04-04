@@ -45,7 +45,7 @@ from .conftest import IsDatetime, IsNow, IsStr
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
 
-    from pydantic_ai.durable_exec.dbos import DBOSAgent, DBOSMCPServer, DBOSModel
+    from pydantic_ai.durable_exec.dbos import DBOSAgent, DBOSDurability, DBOSMCPServer, DBOSModel
     from pydantic_ai.durable_exec.dbos._mcp import DBOSMCPToolset
 
 except ImportError:  # pragma: lax no cover
@@ -1639,3 +1639,75 @@ def test_dbos_mcp_wrapper_visit_and_replace():
     # visit_and_replace should return self for DBOS wrappers
     result = dbos_mcp_toolset.visit_and_replace(lambda t: FunctionToolset(id='replaced'))
     assert result is dbos_mcp_toolset
+
+
+# ==========================================
+# DBOSDurability capability tests
+# ==========================================
+
+
+def _durability_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Simple model function for durability tests."""
+    for msg in reversed(messages):
+        for part in msg.parts:
+            if isinstance(part, UserPromptPart):
+                return ModelResponse(parts=[TextPart(content=f'Echo: {part.content}')])
+    return ModelResponse(parts=[TextPart(content='no prompt')])  # pragma: no cover
+
+
+_durability_fn_model = FunctionModel(_durability_model_fn)
+
+# DBOSDurability must be created after DBOS.launch() (in fixture), but since the module-level
+# agents are created at import time before DBOS is initialized, we use a fixture-based approach.
+
+
+async def test_dbos_durability_simple_agent(dbos: DBOS) -> None:
+    """DBOSDurability routes model requests through DBOS steps."""
+    durability = DBOSDurability(
+        name='durability_simple',
+        model=_durability_fn_model,
+    )
+    agent = Agent(_durability_fn_model, name='durability_simple', capabilities=[durability])
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        result = await agent.run('Hello DBOS')
+        return result.output
+
+    output = await run_durable_agent()
+    assert output == 'Echo: Hello DBOS'
+
+
+async def test_dbos_durability_outside_workflow() -> None:
+    """DBOSDurability is transparent outside a DBOS workflow."""
+    durability = DBOSDurability(
+        name='durability_outside',
+        model=_durability_fn_model,
+    )
+    agent = Agent(_durability_fn_model, name='durability_outside', capabilities=[durability])
+
+    result = await agent.run('Hello outside')
+    assert result.output == 'Echo: Hello outside'
+
+
+async def test_dbos_durability_step_verification(dbos: DBOS) -> None:
+    """Verify that model requests become DBOS steps."""
+    durability = DBOSDurability(
+        name='durability_steps',
+        model=_durability_fn_model,
+    )
+    agent = Agent(_durability_fn_model, name='durability_steps', capabilities=[durability])
+
+    wfid = str(uuid.uuid4())
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        result = await agent.run('verify steps')
+        return result.output
+
+    with SetWorkflowID(wfid):
+        await run_durable_agent()
+
+    steps = await dbos.list_workflow_steps_async(wfid)
+    step_names = [step['function_name'] for step in steps]
+    assert 'durability_steps__model.request' in step_names
