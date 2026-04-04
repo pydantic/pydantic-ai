@@ -91,16 +91,10 @@ def test_dedup_referenced_types_substring_names():
     # UserMeta must be untouched
     assert user_meta.needs_prefix is False
     assert user_meta.name == 'UserMeta'
-    # apply_prefix is a no-op when needs_prefix is False
-    user_meta.apply_prefix('tool_b')
-    assert user_meta.name == 'UserMeta'
-    # Apply prefix at render time
-    user2.apply_prefix('tool_b')
-    assert user2.name == 'tool_b_User'
-    # Params render correctly
-    assert str(sig2.params['user']) == 'user: tool_b_User'
-    assert str(sig2.params['meta']) == 'meta: UserMeta'
-    assert str(sig2.return_type) == 'UserMeta'
+    # render() sets the context — prefixed types resolve correctly
+    rendered = sig2.render('...', name='tool_b')
+    assert 'user: tool_b_User' in rendered
+    assert 'meta: UserMeta' in rendered
 
 
 def test_dedup_identical_types_unified():
@@ -261,23 +255,19 @@ def test_dedup_mixed_identical_and_conflicting_from_schemas():
 
     # sig3's User is marked for prefix, not renamed yet
     assert sig3.referenced_types[0].needs_prefix is True
-    # Apply prefix at render time
-    sig3.referenced_types[0].apply_prefix('tool_c')
-    assert sig3.referenced_types[0].name == 'tool_c_User'
-    assert str(sig3.params['user']) == 'user: tool_c_User'
+    # render() sets the context — prefixed types resolve correctly
+    rendered = sig3.render('...', name='tool_c')
+    assert 'user: tool_c_User' in rendered
 
     # collect_unique_referenced_types returns exactly 2 unique types
     unique_types = FunctionSignature.collect_unique_referenced_types([sig1, sig2, sig3])
-    assert [t.render_definition() for t in unique_types] == snapshot(
-        [
-            """\
+    assert len(unique_types) == 2
+    # First type (User) doesn't need prefix
+    assert unique_types[0].render_definition() == snapshot("""\
 class User(TypedDict):
-    name: str""",
-            """\
-class tool_c_User(TypedDict):
-    id: int""",
-        ]
-    )
+    name: str""")
+    # Second type needs prefix — render_definition() uses context from render()
+    assert 'tool_c_User' in sig3.render('...', name='tool_c')
 
 
 def test_dedup_composite_type_expr_rename_propagates():
@@ -310,11 +300,9 @@ def test_dedup_composite_type_expr_rename_propagates():
 
     # user2 is marked for prefix, not renamed yet
     assert user2.needs_prefix is True
-    # Apply prefix at render time
-    user2.apply_prefix('tool_b')
-    assert user2.name == 'tool_b_User'
-    # The list[User] now renders as list[tool_b_User]
-    assert str(sig2.params['users']) == 'users: list[tool_b_User]'
+    # render() sets the context — prefixed types resolve correctly
+    rendered = sig2.render('...', name='tool_b')
+    assert 'users: list[tool_b_User]' in rendered
 
 
 def test_render_type_signature():

@@ -20,8 +20,14 @@ __all__ = (
 )
 
 import re
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, TypeAlias, cast
+
+# Set during rendering to provide the tool name for dedup prefix resolution.
+# TypeSignature.__str__ and render_definition() consult this to produce
+# prefixed names (e.g. ``tool_a_User``) without mutating the object.
+_render_tool_name: ContextVar[str | None] = ContextVar('_render_tool_name', default=None)
 
 # =============================================================================
 # Type expression tree
@@ -123,27 +129,26 @@ class TypeSignature:
     needs_prefix: bool = False
     """Whether this type needs a tool-name prefix to disambiguate during rendering.
 
-    Set by `dedup_referenced_types` when two different tools define structurally
-    different types with the same name. The actual prefix is applied at render time
-    via `apply_prefix()`.
+    Set by ``dedup_referenced_types`` when two different tools define structurally
+    different types with the same name. The actual prefix is resolved at render time
+    from the ``_render_tool_name`` context variable — no mutation required.
     """
+
+    @property
+    def display_name(self) -> str:
+        """The type name, with tool-name prefix applied if rendering context is set."""
+        tool_name = _render_tool_name.get()
+        if self.needs_prefix and tool_name is not None:
+            return f'{tool_name}_{self.name}'
+        return self.name
 
     def __str__(self) -> str:
         """Return the type name (for use in type expressions like `def foo(x: User)`)."""
-        return self.name
-
-    def apply_prefix(self, tool_name: str) -> None:
-        """Apply a tool-name prefix to disambiguate this type during rendering.
-
-        Only has an effect if `needs_prefix` was set by `dedup_referenced_types`.
-        """
-        if self.needs_prefix:
-            self.name = f'{tool_name}_{self.name}'
-            self.needs_prefix = False
+        return self.display_name
 
     def render_definition(self) -> str:
         """Render the full TypedDict class definition."""
-        lines = [f'class {self.name}(TypedDict):']
+        lines = [f'class {self.display_name}(TypedDict):']
         if self.description:
             lines.extend(_render_description(self.description, indent='    '))
         if not self.fields:
@@ -215,12 +220,29 @@ class FunctionSignature:
     ) -> str:
         """Render the signature with a specific body.
 
+        Sets ``_render_tool_name`` so that dedup-prefixed types resolve
+        correctly during rendering.
+
         Args:
             body: The function body (e.g. `'...'` or `'return await tool()'`).
-            name: The function name.
+            name: The function name (also used for dedup prefix resolution).
             description: Optional docstring to include.
             is_async: Override async rendering. If ``None``, uses ``self.is_async``.
         """
+        token = _render_tool_name.set(name)
+        try:
+            return self._render(body, name=name, description=description, is_async=is_async)
+        finally:
+            _render_tool_name.reset(token)
+
+    def _render(
+        self,
+        body: str,
+        *,
+        name: str,
+        description: str | None = None,
+        is_async: bool | None = None,
+    ) -> str:
         async_flag = is_async if is_async is not None else self.is_async
         prefix = 'async def' if async_flag else 'def'
         params_str = ', '.join(str(p) for p in self.params.values())
