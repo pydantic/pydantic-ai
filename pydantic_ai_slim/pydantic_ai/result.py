@@ -840,7 +840,7 @@ async def _run_image_process_hooks(
     capability: AbstractCapability[AgentDepsT] | None,
 ) -> Any:
     """Run output process hooks for image output (no validate hooks — nothing to parse)."""
-    if capability is None:
+    if capability is None:  # pragma: no cover — agents always have root_capability
         return image
 
     from .output import OutputContext

@@ -360,7 +360,7 @@ class ToolManager(Generic[AgentDepsT]):
             error.__cause__ if isinstance(error, ToolRetryError) and isinstance(error.__cause__, Exception) else error
         )
         self._check_max_retries(name, max_retries, cause)
-        if not allow_partial:
+        if not allow_partial:  # pragma: no branch — allow_partial only used in streaming
             self.failed_tools.add(name)
         validation_error = error if isinstance(error, ToolRetryError) else self._wrap_error_as_retry(name, call, error)
         return ValidatedToolCall(
