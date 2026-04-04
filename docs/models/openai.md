@@ -232,8 +232,8 @@ for question in ['What is 2+2?', 'And 3+3?', 'And 4+4?']:
 
 For advanced use cases, you can call [`compact_messages`][pydantic_ai.models.openai.OpenAIResponsesModel.compact_messages] directly on the model.
 
-!!! note
-    Compaction works best with [`openai_previous_response_id='auto'`](#automatically-referencing-earlier-responses), which lets the server-side history work alongside compaction.
+!!! tip
+    For best results, combine compaction with [`openai_previous_response_id='auto'`](#automatically-referencing-earlier-responses) in your model settings. This lets OpenAI's server-side history work alongside compaction for improved context continuity. Note that this sends conversation data to OpenAI's server-side storage.
 
 ## OpenAI-compatible Models
 
