@@ -2036,6 +2036,38 @@ class ModelResponse:
 ModelMessage = Annotated[ModelRequest | ModelResponse, pydantic.Discriminator('kind')]
 """Any message sent to or returned by a model."""
 
+
+PendingMessagePriority = Literal['steering', 'follow_up']
+"""Priority level for a pending message.
+
+- `'steering'`: Drained into the next model request (before the model call).
+- `'follow_up'`: Drained only when the agent would otherwise end, preventing
+    premature termination while background work is pending.
+"""
+
+
+@dataclass
+class PendingMessage:
+    """A message queued for injection into the agent conversation.
+
+    Pending messages are enqueued via [`RunContext.enqueue_message`][pydantic_ai.tools.RunContext.enqueue_message]
+    or [`AgentRun.enqueue_message`][pydantic_ai.run.AgentRun.enqueue_message] and are
+    automatically drained at the appropriate time during the agent run.
+    """
+
+    parts: Sequence[ModelRequestPart]
+    """The message parts to inject."""
+
+    _: KW_ONLY
+
+    priority: PendingMessagePriority = 'steering'
+    """When to drain this message:
+
+    - `'steering'`: injected before the next model request.
+    - `'follow_up'`: injected only when the agent would otherwise finish.
+    """
+
+
 ModelMessagesTypeAdapter = pydantic.TypeAdapter(
     list[ModelMessage], config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
 )

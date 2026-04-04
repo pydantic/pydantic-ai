@@ -47,7 +47,12 @@ from .._instructions import AgentInstructions
 from .._output import OutputToolset
 from .._template import TemplateStr, validate_from_spec_args
 from ..builtin_tools import AbstractBuiltinTool
-from ..capabilities import AbstractCapability, CombinedCapability
+from ..capabilities import (
+    AbstractCapability,
+    BackgroundToolCapability,
+    CombinedCapability,
+    PendingMessageDrainCapability,
+)
 from ..capabilities._ordering import has_capability_type
 from ..capabilities._tool_search import ToolSearch as ToolSearchCap
 from ..capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
@@ -1155,6 +1160,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             messages=state.message_history,
             tracer=tracer,
             run_step=0,
+            pending_messages=state.pending_messages,
         )
 
         # Determine root capability: override > agent default
@@ -2020,6 +2026,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         strict: bool | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
+        background: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
@@ -2042,6 +2049,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         strict: bool | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
+        background: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
@@ -2100,6 +2108,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
+            background: Whether this tool runs in the background. Defaults to False.
+                When True, the tool executes asynchronously and the agent continues working.
+                The result is delivered as a follow-up message when the task completes.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
@@ -2127,6 +2138,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 strict=strict,
                 sequential=sequential,
                 requires_approval=requires_approval,
+                background=background,
                 metadata=metadata,
                 timeout=timeout,
                 defer_loading=defer_loading,
@@ -2155,6 +2167,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         strict: bool | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
+        background: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
@@ -2177,6 +2190,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         strict: bool | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
+        background: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
@@ -2236,6 +2250,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
+            background: Whether this tool runs in the background. Defaults to False.
+                When True, the tool executes asynchronously and the agent continues working.
+                The result is delivered as a follow-up message when the task completes.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
@@ -2261,6 +2278,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 strict=strict,
                 sequential=sequential,
                 requires_approval=requires_approval,
+                background=background,
                 metadata=metadata,
                 timeout=timeout,
                 defer_loading=defer_loading,
@@ -2663,7 +2681,11 @@ _UNSUPPORTED_SPEC_FIELDS: tuple[str, ...] = (
 )
 """AgentSpec fields that are not supported at run/override time."""
 
-_AUTO_INJECT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (ToolSearchCap,)
+_AUTO_INJECT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (
+    ToolSearchCap,
+    PendingMessageDrainCapability,
+    BackgroundToolCapability,
+)
 """Infrastructure capabilities auto-injected when not already present."""
 
 

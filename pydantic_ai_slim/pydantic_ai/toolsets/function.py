@@ -69,6 +69,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         strict: bool | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
+        background: bool = False,
         metadata: dict[str, Any] | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
@@ -98,6 +99,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
                 Applies to all tools, unless overridden when adding a tool.
+            background: Whether tools run in the background. Defaults to False.
+                Applies to all tools, unless overridden when adding a tool.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 Applies to all tools, unless overridden when adding a tool, which will be merged with the toolset's metadata.
             defer_loading: Whether to hide tools from the model until discovered via tool search. Defaults to False.
@@ -121,6 +124,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         self.strict = strict
         self.sequential = sequential
         self.requires_approval = requires_approval
+        self.background = background
         self.metadata = metadata
         self._defer_loading = defer_loading
         self.include_return_schema = include_return_schema
@@ -165,6 +169,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         strict: bool | None = None,
         sequential: bool | None = None,
         requires_approval: bool | None = None,
+        background: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool | None = None,
@@ -187,6 +192,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         strict: bool | None = None,
         sequential: bool | None = None,
         requires_approval: bool | None = None,
+        background: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool | None = None,
@@ -251,6 +257,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
                 If `None`, the default value is determined by the toolset.
+            background: Whether this tool runs in the background. Defaults to False.
+                If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
@@ -285,6 +293,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 strict=strict,
                 sequential=sequential,
                 requires_approval=requires_approval,
+                background=background,
                 metadata=metadata,
                 timeout=timeout,
                 defer_loading=defer_loading,
@@ -320,6 +329,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         strict: bool | None = None,
         sequential: bool | None = None,
         requires_approval: bool | None = None,
+        background: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool | None = None,
@@ -342,6 +352,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         strict: bool | None = None,
         sequential: bool | None = None,
         requires_approval: bool | None = None,
+        background: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool | None = None,
@@ -407,6 +418,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
                 If `None`, the default value is determined by the toolset.
+            background: Whether this tool runs in the background. Defaults to False.
+                If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
@@ -436,6 +449,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 strict=strict,
                 sequential=sequential,
                 requires_approval=requires_approval,
+                background=background,
                 metadata=metadata,
                 timeout=timeout,
                 defer_loading=defer_loading,
@@ -492,6 +506,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         defer_loading: bool | None = None,
+        background: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         include_return_schema: bool | None = None,
@@ -536,6 +551,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             defer_loading: Whether to hide this tool until it's discovered via tool search.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
                 If `None`, the default value is determined by the toolset.
+            background: Whether this tool runs in the background. Defaults to False.
+                If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
@@ -559,6 +576,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             defer_loading = self._defer_loading
         if include_return_schema is None:
             include_return_schema = self.include_return_schema
+        if background is None:
+            background = self.background
 
         tool = Tool[AgentDepsT](
             func,
@@ -574,6 +593,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             strict=strict,
             sequential=sequential,
             requires_approval=requires_approval,
+            background=background,
             metadata=metadata,
             timeout=timeout,
             defer_loading=defer_loading,
