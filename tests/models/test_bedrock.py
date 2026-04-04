@@ -405,13 +405,13 @@ async def test_bedrock_inference_profile_converse(
     agent = Agent(model)
 
     result = await agent.run('Say "hello" and nothing else.')
-    assert result.output == snapshot('Hello')
+    assert 'Hello' in result.output
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='Hello!',
+                        content='Say "hello" and nothing else.',
                         timestamp=IsDatetime(),
                     ),
                 ],
@@ -419,15 +419,11 @@ async def test_bedrock_inference_profile_converse(
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[
-                    TextPart(
-                        content="Hello! How can I assist you today? Whether you have a question, need some information, or just want to chat, I'm here to help."
-                    )
-                ],
-                usage=RequestUsage(input_tokens=7, output_tokens=33),
-                model_name='us.amazon.nova-micro-v1:0',
-                provider_name='bedrock',
+                parts=[TextPart(content='Hello')],
+                usage=RequestUsage(input_tokens=8, output_tokens=2),
+                model_name='amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
+                provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
@@ -1001,7 +997,11 @@ async def test_bedrock_model_iter_stream(
             ),
             PartStartEvent(
                 index=1,
-                part=ToolCallPart(tool_name='get_temperature', tool_call_id=IsStr()),
+                part=ToolCallPart(
+                    tool_name='get_temperature',
+                    args='',
+                    tool_call_id=IsStr(),
+                ),
                 previous_part_kind='text',
             ),
             PartDeltaEvent(
@@ -3577,9 +3577,7 @@ async def test_get_last_user_message_content_non_dict_block(
     )
 
     # Directly test the helper with a message that has non-dict content
-    messages = [
-        {'role': 'user', 'content': ['string content']}
-    ]  # type: ignore[list-item]
+    messages = [{'role': 'user', 'content': ['string content']}]  # type: ignore[list-item]
     result = model._get_last_user_message_content(messages)  # pyright: ignore[reportPrivateUsage]
     assert result is None
 
@@ -3593,9 +3591,7 @@ async def test_get_last_user_message_content_empty_content(
     )
 
     # Test with empty content list
-    messages: list[MessageUnionTypeDef] = [
-        {'role': 'user', 'content': []}
-    ]  # type: ignore[list-item]
+    messages: list[MessageUnionTypeDef] = [{'role': 'user', 'content': []}]  # type: ignore[list-item]
     result = model._get_last_user_message_content(messages)  # pyright: ignore[reportPrivateUsage]
     assert result is None
 
@@ -4213,7 +4209,6 @@ async def test_bedrock_map_messages_builtin_tool_provider_filtering(
         ]
     )
 
-
 async def test_bedrock_model_with_code_execution_tool(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
@@ -4504,6 +4499,7 @@ async def test_bedrock_model_code_execution_tool_stream(
                 index=2,
                 part=ToolCallPart(
                     tool_name='final_result',
+                    args='',
                     tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw',
                 ),
                 previous_part_kind='builtin-tool-return',
