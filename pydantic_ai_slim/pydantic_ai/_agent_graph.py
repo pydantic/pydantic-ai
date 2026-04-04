@@ -1179,25 +1179,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         image: _messages.BinaryImage,
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
-        from .output import OutputContext
-
         run_context = _build_output_run_context(ctx)
-        output_context = OutputContext(
-            mode='image',
-            output_type=_messages.BinaryImage,
-            object_def=None,
-            has_function=False,
-        )
-
-        async def do_process(output: Any) -> Any:
-            return output
-
-        result_data = await _output.run_output_process_hooks(
-            ctx.deps.root_capability,
-            run_context=run_context,
-            output_context=output_context,
-            output=image,
-            do_process=do_process,
+        result_data = await _output.run_image_process_hooks(
+            image, capability=ctx.deps.root_capability, run_context=run_context
         )
 
         result_data = await _run_output_validators(ctx, result_data, run_context)

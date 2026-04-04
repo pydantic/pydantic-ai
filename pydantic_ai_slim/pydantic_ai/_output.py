@@ -36,7 +36,7 @@ from .tools import GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
 if TYPE_CHECKING:
-    from .capabilities.abstract import AbstractCapability
+    from .capabilities.abstract import AbstractCapability, RawOutput
 
 T = TypeVar('T')
 """An invariant TypeVar."""
@@ -80,7 +80,7 @@ def _build_output_handlers(
     allow_partial: bool,
     wrap_validation_errors: bool,
 ) -> tuple[
-    Callable[[str | dict[str, Any]], Awaitable[Any]],
+    Callable[[RawOutput], Awaitable[Any]],
     Callable[[Any], Awaitable[Any]],
 ]:
     """Build validate and execute handler functions using processor's validate/call methods.
@@ -92,7 +92,7 @@ def _build_output_handlers(
     """
     _union_kind: str | None = None
 
-    async def do_validate(data: str | dict[str, Any]) -> Any:
+    async def do_validate(data: RawOutput) -> Any:
         nonlocal _union_kind
         result = processor.validate(
             data,
@@ -140,8 +140,8 @@ async def run_output_validate_hooks(
     *,
     run_context: RunContext[AgentDepsT],
     output_context: OutputContext,
-    output: str | dict[str, Any],
-    do_validate: Callable[[str | dict[str, Any]], Awaitable[Any]],
+    output: RawOutput,
+    do_validate: Callable[[RawOutput], Awaitable[Any]],
     allow_partial: bool = False,
     wrap_validation_errors: bool = True,
 ) -> Any:
@@ -224,6 +224,34 @@ async def run_output_process_hooks(
         if wrap_validation_errors:
             raise _make_retry_prompt(e, run_context) from e
         raise  # pragma: no cover — streaming partial validation; ModelRetry from hooks propagates as-is
+
+
+async def run_image_process_hooks(
+    image: _messages.BinaryImage,
+    *,
+    capability: AbstractCapability[AgentDepsT],
+    run_context: RunContext[AgentDepsT],
+    wrap_validation_errors: bool = True,
+) -> Any:
+    """Run output process hooks for image output (no validate hooks — nothing to parse)."""
+    output_context = OutputContext(
+        mode='image',
+        output_type=_messages.BinaryImage,
+        object_def=None,
+        has_function=False,
+    )
+
+    async def do_process(output: Any) -> Any:
+        return output
+
+    return await run_output_process_hooks(
+        capability,
+        run_context=run_context,
+        output_context=output_context,
+        output=image,
+        do_process=do_process,
+        wrap_validation_errors=wrap_validation_errors,
+    )
 
 
 async def run_output_with_hooks(

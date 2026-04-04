@@ -510,6 +510,8 @@ class ToolManager(Generic[AgentDepsT]):
     async def execute_output_tool_call(
         self,
         validated: ValidatedToolCall[AgentDepsT],
+        *,
+        wrap_validation_errors: bool = True,
     ) -> Any:
         """Execute output tool through output execute hooks (skipping tool hooks).
 
@@ -541,13 +543,20 @@ class ToolManager(Generic[AgentDepsT]):
 
         cap = self.root_capability
         assert cap is not None, 'execute_output_tool_call requires root_capability'
-        result = await run_output_process_hooks(
-            cap,
-            run_context=validated.ctx,
-            output_context=output_context,
-            output=validated.validated_args,
-            do_process=do_process,
-        )
+        try:
+            result = await run_output_process_hooks(
+                cap,
+                run_context=validated.ctx,
+                output_context=output_context,
+                output=validated.validated_args,
+                do_process=do_process,
+                wrap_validation_errors=wrap_validation_errors,
+            )
+        except ToolRetryError as e:
+            cause = e.__cause__ if isinstance(e.__cause__, Exception) else e
+            self._check_max_retries(name, tool.max_retries, cause)
+            self.failed_tools.add(name)
+            raise
 
         # Output validators run AFTER all output hooks (consistent with text output)
         try:
@@ -578,7 +587,7 @@ class ToolManager(Generic[AgentDepsT]):
         if not validated.args_valid:  # pragma: no cover — caller (result.py) uses wrap_validation_errors=False
             assert validated.validation_error is not None
             raise validated.validation_error
-        return await self.execute_output_tool_call(validated)
+        return await self.execute_output_tool_call(validated, wrap_validation_errors=wrap_validation_errors)
 
     async def _execute_tool_call_impl(
         self,
