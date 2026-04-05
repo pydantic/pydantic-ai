@@ -2403,12 +2403,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 include = td.include_return_schema if td.include_return_schema is not None else agent_default
                 if not include and td.return_schema is not None:
                     td = dataclasses.replace(td, return_schema=None)
-                elif include and td.return_schema is None:
+                elif include and not td.return_schema:
                     import warnings
 
                     warnings.warn(
-                        f'Tool {td.name!r} has `include_return_schema` enabled but no return schema was generated. '
-                        f'Set `include_return_schema=False` on this tool to suppress this warning.',
+                        f'Tool {td.name!r} has `include_return_schema` enabled but no meaningful return schema'
+                        f' was generated. Set `include_return_schema=False` on this tool to suppress this warning.',
                         UserWarning,
                         stacklevel=2,
                     )

@@ -4107,8 +4107,8 @@ def test_include_return_schema_agent_default():
     assert 'Return schema' not in str(part.content)
 
 
-def test_include_return_schema_warning():
-    """Agent warns when include_return_schema=True but no return_schema on tool (e.g. MCP tool)."""
+def test_include_return_schema_warning_no_schema():
+    """Agent warns when include_return_schema=True but return_schema is None (e.g. MCP tool)."""
 
     def my_tool(x: int) -> int:
         return x
@@ -4120,6 +4120,18 @@ def test_include_return_schema_warning():
     agent = Agent('test', tools=[tool], include_tool_return_schema=True)
 
     with pytest.warns(UserWarning, match='include_return_schema'):
+        agent.run_sync('test')
+
+
+def test_include_return_schema_warning_empty_schema():
+    """Agent warns when include_return_schema=True but return_schema is {} (Any-typed return)."""
+
+    def untyped_tool(x: int):
+        return x
+
+    agent = Agent('test', tools=[Tool(untyped_tool, include_return_schema=True)], include_tool_return_schema=True)
+
+    with pytest.warns(UserWarning, match='no meaningful return schema'):
         agent.run_sync('test')
 
 
