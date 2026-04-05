@@ -1950,6 +1950,65 @@ async def test_messages_support_multiple_future_input_content_shapes(document_co
     )
 
 
+async def test_messages_reject_unsupported_future_input_content_shape() -> None:
+    unsupported_part = type('UnsupportedInputContent', (), {'type': 'other'})()
+    messages = [
+        UserMessage.model_construct(
+            id='msg_future',
+            content=[unsupported_part],
+        )
+    ]
+
+    with pytest.raises(ValueError, match='Unsupported user message part type'):
+        AGUIAdapter.load_messages(messages)
+
+
+async def test_messages_reject_binary_input_content_without_url_or_data() -> None:
+    messages = [
+        UserMessage.model_construct(
+            id='msg_future',
+            content=[BinaryInputContent.model_construct(mime_type='application/pdf', url=None, data=None)],
+        )
+    ]
+
+    with pytest.raises(ValueError, match='BinaryInputContent must have either a `url` or `data` field.'):
+        AGUIAdapter.load_messages(messages)
+
+
+@pytest.mark.parametrize(
+    ('source', 'expected_message'),
+    [
+        pytest.param(
+            _FutureInputContentSource(type='url', value='http://example.com/image.png', mimeType=None),
+            'with URL source must include a MIME type.',
+            id='typed-url-missing-mime',
+        ),
+        pytest.param(
+            _FutureInputContentSource(type='data', value='JVBERi0xLjQ=', mimeType=None),
+            'with data source must include a MIME type.',
+            id='typed-data-missing-mime',
+        ),
+        pytest.param(
+            _FutureInputContentSource(type='file', value='whatever', mimeType='image/png'),
+            "Unsupported _FutureImageInputContent source: 'file'",
+            id='typed-unsupported-source',
+        ),
+    ],
+)
+async def test_messages_reject_invalid_future_typed_content_sources(
+    source: _FutureInputContentSource, expected_message: str
+) -> None:
+    messages = [
+        UserMessage.model_construct(
+            id='msg_future',
+            content=[_FutureImageInputContent(source=source)],
+        )
+    ]
+
+    with pytest.raises(ValueError, match=expected_message):
+        AGUIAdapter.load_messages(messages)
+
+
 async def test_builtin_tool_return_json_string_content_parsed() -> None:
     """Regression test for https://github.com/pydantic/pydantic-ai/issues/4623.
 
