@@ -5,6 +5,8 @@ from __future__ import annotations as _annotations
 from copy import deepcopy
 from typing import Any
 
+import pytest
+
 from pydantic_ai._json_schema import JsonSchemaTransformer
 
 
@@ -87,3 +89,55 @@ def test_schema_defs_not_modified():
 
     # Verify the result is correct
     assert result == original_schema_copy
+
+
+@pytest.mark.parametrize('value_schema', [True, False])
+def test_boolean_schema_nodes_round_trip(value_schema: bool):
+    """Boolean JSON Schema nodes should not crash the walker."""
+
+    class TestTransformer(JsonSchemaTransformer):
+        def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
+            return schema
+
+    original_schema = {
+        'type': 'object',
+        'properties': {
+            'fields': {
+                'type': 'array',
+                'items': {
+                    'type': 'object',
+                    'properties': {
+                        'value': value_schema,
+                    },
+                },
+            }
+        },
+    }
+
+    transformer = TestTransformer(original_schema)
+
+    assert transformer.walk() == original_schema
+
+
+def test_boolean_schema_in_single_member_union():
+    """A union that collapses to a single boolean member should be preserved."""
+
+    class TestTransformer(JsonSchemaTransformer):
+        def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
+            return schema
+
+    schema = {'anyOf': [True]}
+    result = TestTransformer(schema).walk()
+    assert result == {'anyOf': [True]}
+
+
+def test_simplify_nullable_union_with_boolean_member():
+    """simplify_nullable_unions should not crash when a member is a boolean schema."""
+
+    class TestTransformer(JsonSchemaTransformer):
+        def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
+            return schema
+
+    schema = {'anyOf': [True, {'type': 'null'}]}
+    result = TestTransformer(schema, simplify_nullable_unions=True).walk()
+    assert result == {'anyOf': [True, {'type': 'null'}]}
