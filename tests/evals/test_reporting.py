@@ -18,7 +18,10 @@ with try_import() as imports_successful:
         ReportCaseAggregate,
     )
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason="pydantic-evals not installed"),
+    pytest.mark.anyio,
+]
 
 
 class TaskInput(BaseModel):
@@ -36,16 +39,20 @@ class TaskMetadata(BaseModel):
 @pytest.fixture
 def mock_evaluator() -> Evaluator[TaskInput, TaskOutput, TaskMetadata]:
     class MockEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
-        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> bool:
+        def evaluate(
+            self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]
+        ) -> bool:
             raise NotImplementedError
 
     return MockEvaluator()
 
 
 @pytest.fixture
-def sample_assertion(mock_evaluator: Evaluator[TaskInput, TaskOutput, TaskMetadata]) -> EvaluationResult[bool]:
+def sample_assertion(
+    mock_evaluator: Evaluator[TaskInput, TaskOutput, TaskMetadata],
+) -> EvaluationResult[bool]:
     return EvaluationResult(
-        name='MockEvaluator',
+        name="MockEvaluator",
         value=True,
         reason=None,
         source=mock_evaluator.as_spec(),
@@ -53,20 +60,24 @@ def sample_assertion(mock_evaluator: Evaluator[TaskInput, TaskOutput, TaskMetada
 
 
 @pytest.fixture
-def sample_score(mock_evaluator: Evaluator[TaskInput, TaskOutput, TaskMetadata]) -> EvaluationResult[float]:
+def sample_score(
+    mock_evaluator: Evaluator[TaskInput, TaskOutput, TaskMetadata],
+) -> EvaluationResult[float]:
     return EvaluationResult(
-        name='MockEvaluator',
+        name="MockEvaluator",
         value=2.5,
-        reason='my reason',
+        reason="my reason",
         source=mock_evaluator.as_spec(),
     )
 
 
 @pytest.fixture
-def sample_label(mock_evaluator: Evaluator[TaskInput, TaskOutput, TaskMetadata]) -> EvaluationResult[str]:
+def sample_label(
+    mock_evaluator: Evaluator[TaskInput, TaskOutput, TaskMetadata],
+) -> EvaluationResult[str]:
     return EvaluationResult(
-        name='MockEvaluator',
-        value='hello',
+        name="MockEvaluator",
+        value="hello",
         reason=None,
         source=mock_evaluator.as_spec(),
     )
@@ -74,23 +85,25 @@ def sample_label(mock_evaluator: Evaluator[TaskInput, TaskOutput, TaskMetadata])
 
 @pytest.fixture
 def sample_report_case(
-    sample_assertion: EvaluationResult[bool], sample_score: EvaluationResult[float], sample_label: EvaluationResult[str]
+    sample_assertion: EvaluationResult[bool],
+    sample_score: EvaluationResult[float],
+    sample_label: EvaluationResult[str],
 ) -> ReportCase:
     return ReportCase(
-        name='test_case',
-        inputs={'query': 'What is 2+2?'},
-        output={'answer': '4'},
-        expected_output={'answer': '4'},
-        metadata={'difficulty': 'easy'},
-        metrics={'accuracy': 0.95},
+        name="test_case",
+        inputs={"query": "What is 2+2?"},
+        output={"answer": "4"},
+        expected_output={"answer": "4"},
+        metadata={"difficulty": "easy"},
+        metrics={"accuracy": 0.95},
         attributes={},
-        scores={'score1': sample_score},
-        labels={'label1': sample_label},
+        scores={"score1": sample_score},
+        labels={"label1": sample_label},
         assertions={sample_assertion.name: sample_assertion},
         task_duration=0.1,
         total_duration=0.2,
-        trace_id='test-trace-id',
-        span_id='test-span-id',
+        trace_id="test-trace-id",
+        span_id="test-span-id",
     )
 
 
@@ -98,7 +111,7 @@ def sample_report_case(
 def sample_report(sample_report_case: ReportCase) -> EvaluationReport:
     return EvaluationReport(
         cases=[sample_report_case],
-        name='test_report',
+        name="test_report",
     )
 
 
@@ -186,37 +199,37 @@ async def test_evaluation_renderer_with_baseline(sample_report: EvaluationReport
     baseline_report = EvaluationReport(
         cases=[
             ReportCase(
-                name='test_case',
-                inputs={'query': 'What is 2+2?'},
-                output={'answer': '4'},
-                expected_output={'answer': '4'},
-                metadata={'difficulty': 'easy'},
-                metrics={'accuracy': 0.90},
+                name="test_case",
+                inputs={"query": "What is 2+2?"},
+                output={"answer": "4"},
+                expected_output={"answer": "4"},
+                metadata={"difficulty": "easy"},
+                metrics={"accuracy": 0.90},
                 attributes={},
                 scores={
-                    'score1': EvaluationResult(
-                        name='MockEvaluator',
+                    "score1": EvaluationResult(
+                        name="MockEvaluator",
                         value=2.5,
                         reason=None,
-                        source=sample_report.cases[0].scores['score1'].source,
+                        source=sample_report.cases[0].scores["score1"].source,
                     )
                 },
                 labels={
-                    'label1': EvaluationResult(
-                        name='MockEvaluator',
-                        value='hello',
+                    "label1": EvaluationResult(
+                        name="MockEvaluator",
+                        value="hello",
                         reason=None,
-                        source=sample_report.cases[0].labels['label1'].source,
+                        source=sample_report.cases[0].labels["label1"].source,
                     )
                 },
                 assertions={},
                 task_duration=0.15,
                 total_duration=0.25,
-                trace_id='test-trace-id',
-                span_id='test-span-id',
+                trace_id="test-trace-id",
+                span_id="test-span-id",
             )
         ],
-        name='baseline_report',
+        name="baseline_report",
     )
 
     renderer = EvaluationRenderer(
@@ -261,23 +274,23 @@ async def test_evaluation_renderer_with_removed_cases(sample_report: EvaluationR
     baseline_report = EvaluationReport(
         cases=[
             ReportCase(
-                name='removed_case',
-                inputs={'query': 'What is 3+3?'},
-                output={'answer': '6'},
-                expected_output={'answer': '6'},
-                metadata={'difficulty': 'medium'},
-                metrics={'accuracy': 0.85},
+                name="removed_case",
+                inputs={"query": "What is 3+3?"},
+                output={"answer": "6"},
+                expected_output={"answer": "6"},
+                metadata={"difficulty": "medium"},
+                metrics={"accuracy": 0.85},
                 attributes={},
                 scores={},
                 labels={},
                 assertions={},
                 task_duration=0.1,
                 total_duration=0.15,
-                trace_id='test-trace-id-2',
-                span_id='test-span-id-2',
+                trace_id="test-trace-id-2",
+                span_id="test-span-id-2",
             )
         ],
-        name='baseline_report',
+        name="baseline_report",
     )
 
     renderer = EvaluationRenderer(
@@ -331,37 +344,37 @@ async def test_evaluation_renderer_with_custom_configs(sample_report: Evaluation
         include_total_duration=True,
         include_removed_cases=False,
         include_averages=True,
-        input_config={'value_formatter': lambda x: str(x)},
-        metadata_config={'value_formatter': lambda x: str(x)},
-        output_config={'value_formatter': lambda x: str(x)},
+        input_config={"value_formatter": lambda x: str(x)},
+        metadata_config={"value_formatter": lambda x: str(x)},
+        output_config={"value_formatter": lambda x: str(x)},
         score_configs={
-            'score1': {
-                'value_formatter': '{:.2f}',
-                'diff_formatter': '{:+.2f}',
-                'diff_atol': 0.01,
-                'diff_rtol': 0.05,
-                'diff_increase_style': 'bold green',
-                'diff_decrease_style': 'bold red',
+            "score1": {
+                "value_formatter": "{:.2f}",
+                "diff_formatter": "{:+.2f}",
+                "diff_atol": 0.01,
+                "diff_rtol": 0.05,
+                "diff_increase_style": "bold green",
+                "diff_decrease_style": "bold red",
             }
         },
-        label_configs={'label1': {'value_formatter': lambda x: str(x)}},
+        label_configs={"label1": {"value_formatter": lambda x: str(x)}},
         metric_configs={
-            'accuracy': {
-                'value_formatter': '{:.1%}',
-                'diff_formatter': '{:+.1%}',
-                'diff_atol': 0.01,
-                'diff_rtol': 0.05,
-                'diff_increase_style': 'bold green',
-                'diff_decrease_style': 'bold red',
+            "accuracy": {
+                "value_formatter": "{:.1%}",
+                "diff_formatter": "{:+.1%}",
+                "diff_atol": 0.01,
+                "diff_rtol": 0.05,
+                "diff_increase_style": "bold green",
+                "diff_decrease_style": "bold red",
             }
         },
         duration_config={
-            'value_formatter': '{:.3f}s',
-            'diff_formatter': '{:+.3f}s',
-            'diff_atol': 0.001,
-            'diff_rtol': 0.05,
-            'diff_increase_style': 'bold red',
-            'diff_decrease_style': 'bold green',
+            "value_formatter": "{:.3f}s",
+            "diff_formatter": "{:+.3f}s",
+            "diff_atol": 0.001,
+            "diff_rtol": 0.05,
+            "diff_increase_style": "bold red",
+            "diff_decrease_style": "bold green",
         },
         include_reasons=False,
         include_error_message=False,
@@ -389,37 +402,39 @@ async def test_report_case_aggregate_average():
 
     @dataclass
     class MockEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
-        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> float:
+        def evaluate(
+            self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]
+        ) -> float:
             raise NotImplementedError
 
     cases = [
         ReportCase(
-            name='case1',
-            inputs={'query': 'What is 2+2?'},
-            output={'answer': '4'},
-            expected_output={'answer': '4'},
-            metadata={'difficulty': 'easy'},
-            metrics={'accuracy': 0.95},
+            name="case1",
+            inputs={"query": "What is 2+2?"},
+            output={"answer": "4"},
+            expected_output={"answer": "4"},
+            metadata={"difficulty": "easy"},
+            metrics={"accuracy": 0.95},
             attributes={},
             scores={
-                'score1': EvaluationResult(
-                    name='MockEvaluator',
+                "score1": EvaluationResult(
+                    name="MockEvaluator",
                     value=0.8,
                     reason=None,
                     source=MockEvaluator().as_spec(),
                 )
             },
             labels={
-                'label1': EvaluationResult(
-                    name='MockEvaluator',
-                    value='good',
+                "label1": EvaluationResult(
+                    name="MockEvaluator",
+                    value="good",
                     reason=None,
                     source=MockEvaluator().as_spec(),
                 )
             },
             assertions={
-                'assert1': EvaluationResult(
-                    name='MockEvaluator',
+                "assert1": EvaluationResult(
+                    name="MockEvaluator",
                     value=True,
                     reason=None,
                     source=MockEvaluator().as_spec(),
@@ -427,36 +442,36 @@ async def test_report_case_aggregate_average():
             },
             task_duration=0.1,
             total_duration=0.2,
-            trace_id='test-trace-id-1',
-            span_id='test-span-id-1',
+            trace_id="test-trace-id-1",
+            span_id="test-span-id-1",
         ),
         ReportCase(
-            name='case2',
-            inputs={'query': 'What is 3+3?'},
-            output={'answer': '6'},
-            expected_output={'answer': '6'},
-            metadata={'difficulty': 'medium'},
-            metrics={'accuracy': 0.85},
+            name="case2",
+            inputs={"query": "What is 3+3?"},
+            output={"answer": "6"},
+            expected_output={"answer": "6"},
+            metadata={"difficulty": "medium"},
+            metrics={"accuracy": 0.85},
             attributes={},
             scores={
-                'score1': EvaluationResult(
-                    name='MockEvaluator',
+                "score1": EvaluationResult(
+                    name="MockEvaluator",
                     value=0.7,
                     reason=None,
                     source=MockEvaluator().as_spec(),
                 )
             },
             labels={
-                'label1': EvaluationResult(
-                    name='MockEvaluator',
-                    value='good',
+                "label1": EvaluationResult(
+                    name="MockEvaluator",
+                    value="good",
                     reason=None,
                     source=MockEvaluator().as_spec(),
                 )
             },
             assertions={
-                'assert1': EvaluationResult(
-                    name='MockEvaluator',
+                "assert1": EvaluationResult(
+                    name="MockEvaluator",
                     value=False,
                     reason=None,
                     source=MockEvaluator().as_spec(),
@@ -464,17 +479,19 @@ async def test_report_case_aggregate_average():
             },
             task_duration=0.15,
             total_duration=0.25,
-            trace_id='test-trace-id-2',
-            span_id='test-span-id-2',
+            trace_id="test-trace-id-2",
+            span_id="test-span-id-2",
         ),
     ]
 
     aggregate = ReportCaseAggregate.average(cases)
 
-    assert aggregate.name == 'Averages'
-    assert aggregate.scores['score1'] == 0.75  # (0.8 + 0.7) / 2
-    assert aggregate.labels['label1']['good'] == 1.0  # Both cases have 'good' label
-    assert abs(aggregate.metrics['accuracy'] - 0.90) < 1e-10  # floating-point error  # (0.95 + 0.85) / 2
+    assert aggregate.name == "Averages"
+    assert aggregate.scores["score1"] == 0.75  # (0.8 + 0.7) / 2
+    assert aggregate.labels["label1"]["good"] == 1.0  # Both cases have 'good' label
+    assert (
+        abs(aggregate.metrics["accuracy"] - 0.90) < 1e-10
+    )  # floating-point error  # (0.95 + 0.85) / 2
     assert aggregate.assertions == 0.5  # 1 passing out of 2 assertions
     assert aggregate.task_duration == 0.125  # (0.1 + 0.15) / 2
     assert aggregate.total_duration == 0.225  # (0.2 + 0.25) / 2
@@ -483,13 +500,13 @@ async def test_report_case_aggregate_average():
 async def test_report_case_aggregate_empty():
     """Test ReportCaseAggregate.average() with empty cases list."""
     assert ReportCaseAggregate.average([]).model_dump() == {
-        'assertions': None,
-        'labels': {},
-        'metrics': {},
-        'name': 'Averages',
-        'scores': {},
-        'task_duration': 0.0,
-        'total_duration': 0.0,
+        "assertions": None,
+        "labels": {},
+        "metrics": {},
+        "name": "Averages",
+        "scores": {},
+        "task_duration": 0.0,
+        "total_duration": 0.0,
     }
 
 
@@ -498,20 +515,20 @@ async def test_evaluation_renderer_with_failures(sample_report_case: ReportCase)
     from pydantic_evals.reporting import ReportCaseFailure
 
     failure = ReportCaseFailure(
-        name='failed_case',
-        inputs={'query': 'What is 10/0?'},
-        metadata={'difficulty': 'impossible'},
-        expected_output={'answer': 'undefined'},
-        error_message='Division by zero',
+        name="failed_case",
+        inputs={"query": "What is 10/0?"},
+        metadata={"difficulty": "impossible"},
+        expected_output={"answer": "undefined"},
+        error_message="Division by zero",
         error_stacktrace='Traceback (most recent call last):\n  File "test.py", line 1\n    10/0\nZeroDivisionError: division by zero',
-        trace_id='test-trace-failure',
-        span_id='test-span-failure',
+        trace_id="test-trace-failure",
+        span_id="test-span-failure",
     )
 
     report = EvaluationReport(
         cases=[sample_report_case],
         failures=[failure],
-        name='test_report_with_failures',
+        name="test_report_with_failures",
     )
 
     # Test with include_error_message=True, include_error_stacktrace=False
@@ -555,37 +572,39 @@ async def test_evaluation_renderer_with_failures(sample_report_case: ReportCase)
 
 
 async def test_evaluation_renderer_with_evaluator_failures(
-    sample_assertion: EvaluationResult[bool], sample_score: EvaluationResult[float], sample_label: EvaluationResult[str]
+    sample_assertion: EvaluationResult[bool],
+    sample_score: EvaluationResult[float],
+    sample_label: EvaluationResult[str],
 ):
     """Test EvaluationRenderer with evaluator failures."""
     from pydantic_evals.evaluators.evaluator import EvaluatorFailure
 
     case_with_evaluator_failures = ReportCase(
-        name='test_case',
-        inputs={'query': 'What is 2+2?'},
-        output={'answer': '4'},
-        expected_output={'answer': '4'},
-        metadata={'difficulty': 'easy'},
-        metrics={'accuracy': 0.95},
+        name="test_case",
+        inputs={"query": "What is 2+2?"},
+        output={"answer": "4"},
+        expected_output={"answer": "4"},
+        metadata={"difficulty": "easy"},
+        metrics={"accuracy": 0.95},
         attributes={},
-        scores={'score1': sample_score},
-        labels={'label1': sample_label},
+        scores={"score1": sample_score},
+        labels={"label1": sample_label},
         assertions={sample_assertion.name: sample_assertion},
         task_duration=0.1,
         total_duration=0.2,
-        trace_id='test-trace-id',
-        span_id='test-span-id',
+        trace_id="test-trace-id",
+        span_id="test-span-id",
         evaluator_failures=[
             EvaluatorFailure(
-                name='CustomEvaluator',
-                error_message='Failed to evaluate: timeout',
-                error_stacktrace='Timeout stacktrace',
+                name="CustomEvaluator",
+                error_message="Failed to evaluate: timeout",
+                error_stacktrace="Timeout stacktrace",
                 source=sample_score.source,
             ),
             EvaluatorFailure(
-                name='AnotherEvaluator',
-                error_message='Connection refused',
-                error_stacktrace='Connection refused stacktrace',
+                name="AnotherEvaluator",
+                error_message="Connection refused",
+                error_stacktrace="Connection refused stacktrace",
                 source=sample_label.source,
             ),
         ],
@@ -593,7 +612,7 @@ async def test_evaluation_renderer_with_evaluator_failures(
 
     report = EvaluationReport(
         cases=[case_with_evaluator_failures],
-        name='test_report_with_evaluator_failures',
+        name="test_report_with_evaluator_failures",
     )
 
     # Test with include_evaluator_failures=True (default)
@@ -669,32 +688,34 @@ async def test_evaluation_renderer_with_evaluator_failures(
 
 
 async def test_evaluation_renderer_with_evaluator_failures_diff(
-    sample_assertion: EvaluationResult[bool], sample_score: EvaluationResult[float], sample_label: EvaluationResult[str]
+    sample_assertion: EvaluationResult[bool],
+    sample_score: EvaluationResult[float],
+    sample_label: EvaluationResult[str],
 ):
     """Test EvaluationRenderer with evaluator failures in diff table."""
     from pydantic_evals.evaluators.evaluator import EvaluatorFailure
 
     # Create baseline case with one evaluator failure
     baseline_case = ReportCase(
-        name='test_case',
-        inputs={'query': 'What is 2+2?'},
-        output={'answer': '4'},
-        expected_output={'answer': '4'},
-        metadata={'difficulty': 'easy'},
-        metrics={'accuracy': 0.95},
+        name="test_case",
+        inputs={"query": "What is 2+2?"},
+        output={"answer": "4"},
+        expected_output={"answer": "4"},
+        metadata={"difficulty": "easy"},
+        metrics={"accuracy": 0.95},
         attributes={},
-        scores={'score1': sample_score},
-        labels={'label1': sample_label},
+        scores={"score1": sample_score},
+        labels={"label1": sample_label},
         assertions={sample_assertion.name: sample_assertion},
         task_duration=0.1,
         total_duration=0.2,
-        trace_id='test-trace-id',
-        span_id='test-span-id',
+        trace_id="test-trace-id",
+        span_id="test-span-id",
         evaluator_failures=[
             EvaluatorFailure(
-                name='BaselineEvaluator',
-                error_message='Baseline error',
-                error_stacktrace='Baseline stacktrace',
+                name="BaselineEvaluator",
+                error_message="Baseline error",
+                error_stacktrace="Baseline stacktrace",
                 source=sample_score.source,
             ),
         ],
@@ -702,25 +723,25 @@ async def test_evaluation_renderer_with_evaluator_failures_diff(
 
     # Create new case with different evaluator failures
     new_case = ReportCase(
-        name='test_case',
-        inputs={'query': 'What is 2+2?'},
-        output={'answer': '4'},
-        expected_output={'answer': '4'},
-        metadata={'difficulty': 'easy'},
-        metrics={'accuracy': 0.97},
+        name="test_case",
+        inputs={"query": "What is 2+2?"},
+        output={"answer": "4"},
+        expected_output={"answer": "4"},
+        metadata={"difficulty": "easy"},
+        metrics={"accuracy": 0.97},
         attributes={},
-        scores={'score1': sample_score},
-        labels={'label1': sample_label},
+        scores={"score1": sample_score},
+        labels={"label1": sample_label},
         assertions={sample_assertion.name: sample_assertion},
         task_duration=0.09,
         total_duration=0.19,
-        trace_id='test-trace-id-new',
-        span_id='test-span-id-new',
+        trace_id="test-trace-id-new",
+        span_id="test-span-id-new",
         evaluator_failures=[
             EvaluatorFailure(
-                name='NewEvaluator',
-                error_message='New error',
-                error_stacktrace='New stacktrace',
+                name="NewEvaluator",
+                error_message="New error",
+                error_stacktrace="New stacktrace",
                 source=sample_label.source,
             ),
         ],
@@ -728,12 +749,12 @@ async def test_evaluation_renderer_with_evaluator_failures_diff(
 
     baseline_report = EvaluationReport(
         cases=[baseline_case],
-        name='baseline_report',
+        name="baseline_report",
     )
 
     new_report = EvaluationReport(
         cases=[new_case],
-        name='new_report',
+        name="new_report",
     )
 
     # Test diff table with evaluator failures
@@ -774,26 +795,28 @@ async def test_evaluation_renderer_with_evaluator_failures_diff(
 """)
 
 
-async def test_evaluation_renderer_failures_without_error_message(sample_report_case: ReportCase):
+async def test_evaluation_renderer_failures_without_error_message(
+    sample_report_case: ReportCase,
+):
     """Test failures table without error message."""
     from pydantic_evals.reporting import ReportCaseFailure
 
     # Create failure without error message
     failure = ReportCaseFailure(
-        name='failed_case',
-        inputs={'query': 'What is 10/0?'},
-        metadata={'difficulty': 'impossible'},
-        expected_output={'answer': 'undefined'},
-        error_message='',  # Empty error message
-        error_stacktrace='Traceback',
-        trace_id='test-trace-failure',
-        span_id='test-span-failure',
+        name="failed_case",
+        inputs={"query": "What is 10/0?"},
+        metadata={"difficulty": "impossible"},
+        expected_output={"answer": "undefined"},
+        error_message="",  # Empty error message
+        error_stacktrace="Traceback",
+        trace_id="test-trace-failure",
+        span_id="test-span-failure",
     )
 
     report = EvaluationReport(
         cases=[sample_report_case],
         failures=[failure],
-        name='test_report_with_failures',
+        name="test_report_with_failures",
     )
 
     # Test with include_error_message=True even though message is empty
@@ -822,32 +845,34 @@ async def test_evaluation_renderer_evaluator_failures_without_message():
 
     @dataclass
     class MockEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
-        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> float:
+        def evaluate(
+            self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]
+        ) -> float:
             raise NotImplementedError
 
     source = MockEvaluator().as_spec()
 
     # Create case with evaluator failure that has no error message
     case_with_no_message_failure = ReportCase(
-        name='test_case',
-        inputs={'query': 'What is 2+2?'},
-        output={'answer': '4'},
-        expected_output={'answer': '4'},
-        metadata={'difficulty': 'easy'},
-        metrics={'accuracy': 0.95},
+        name="test_case",
+        inputs={"query": "What is 2+2?"},
+        output={"answer": "4"},
+        expected_output={"answer": "4"},
+        metadata={"difficulty": "easy"},
+        metrics={"accuracy": 0.95},
         attributes={},
         scores={},
         labels={},
         assertions={},
         task_duration=0.1,
         total_duration=0.2,
-        trace_id='test-trace-id',
-        span_id='test-span-id',
+        trace_id="test-trace-id",
+        span_id="test-span-id",
         evaluator_failures=[
             EvaluatorFailure(
-                name='EmptyMessageEvaluator',
-                error_message='',  # Empty error message
-                error_stacktrace='Some stacktrace',
+                name="EmptyMessageEvaluator",
+                error_message="",  # Empty error message
+                error_stacktrace="Some stacktrace",
                 source=source,
             ),
         ],
@@ -855,7 +880,7 @@ async def test_evaluation_renderer_evaluator_failures_without_message():
 
     report = EvaluationReport(
         cases=[case_with_no_message_failure],
-        name='test_report',
+        name="test_report",
     )
 
     renderer = EvaluationRenderer(
@@ -895,26 +920,26 @@ async def test_evaluation_renderer_no_evaluator_failures_column():
     """Test that evaluator failures column is omitted when no failures exist even if flag is True."""
 
     case_without_evaluator_failures = ReportCase(
-        name='test_case',
-        inputs={'query': 'What is 2+2?'},
-        output={'answer': '4'},
-        expected_output={'answer': '4'},
-        metadata={'difficulty': 'easy'},
-        metrics={'accuracy': 0.95},
+        name="test_case",
+        inputs={"query": "What is 2+2?"},
+        output={"answer": "4"},
+        expected_output={"answer": "4"},
+        metadata={"difficulty": "easy"},
+        metrics={"accuracy": 0.95},
         attributes={},
         scores={},
         labels={},
         assertions={},
         task_duration=0.1,
         total_duration=0.2,
-        trace_id='test-trace-id',
-        span_id='test-span-id',
+        trace_id="test-trace-id",
+        span_id="test-span-id",
         evaluator_failures=[],  # No evaluator failures
     )
 
     report = EvaluationReport(
         cases=[case_without_evaluator_failures],
-        name='test_report_no_evaluator_failures',
+        name="test_report_no_evaluator_failures",
     )
 
     # Even with include_evaluator_failures=True, column should not appear if no failures exist
@@ -952,12 +977,18 @@ async def test_evaluation_renderer_no_evaluator_failures_column():
 """)
 
 
-async def test_evaluation_renderer_with_experiment_metadata(sample_report_case: ReportCase):
+async def test_evaluation_renderer_with_experiment_metadata(
+    sample_report_case: ReportCase,
+):
     """Test EvaluationRenderer with experiment metadata."""
     report = EvaluationReport(
         cases=[sample_report_case],
-        name='test_report',
-        experiment_metadata={'model': 'gpt-4o', 'temperature': 0.7, 'prompt_version': 'v2'},
+        name="test_report",
+        experiment_metadata={
+            "model": "gpt-4o",
+            "temperature": 0.7,
+            "prompt_version": "v2",
+        },
     )
 
     output = report.render(
@@ -988,30 +1019,38 @@ async def test_evaluation_renderer_with_experiment_metadata(sample_report_case: 
 │ temperature: 0.7                  │
 │ prompt_version: v2                │
 ╰───────────────────────────────────╯
-┏━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ Case ID   ┃ Inputs                    ┃ Scores       ┃ Labels                 ┃ Metrics         ┃ Assertions ┃ Duration ┃
-┡━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ test_case │ {'query': 'What is 2+2?'} │ score1: 2.50 │ label1: hello          │ accuracy: 0.950 │ ✔          │  100.0ms │
-├───────────┼───────────────────────────┼──────────────┼────────────────────────┼─────────────────┼────────────┼──────────┤
-│ Averages  │                           │ score1: 2.50 │ label1: {'hello': 1.0} │ accuracy: 0.950 │ 100.0% ✔   │  100.0ms │
-└───────────┴───────────────────────────┴──────────────┴────────────────────────┴─────────────────┴────────────┴──────────┘
+┏━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┓
+┃          ┃          ┃           ┃          ┃           ┃ Assertio ┃          ┃
+┃ Case ID  ┃ Inputs   ┃ Scores    ┃ Labels   ┃ Metrics   ┃ ns       ┃ Duration ┃
+┡━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━┩
+│ test_ca… │ {'query' │ score1:   │ label1:  │ accuracy: │ ✔        │  100.0ms │
+│          │ : 'What  │ 2.50      │ hello    │ 0.950     │          │          │
+│          │ is       │           │          │           │          │          │
+│          │ 2+2?'}   │           │          │           │          │          │
+├──────────┼──────────┼───────────┼──────────┼───────────┼──────────┼──────────┤
+│ Averages │          │ score1:   │ label1:  │ accuracy: │ 100.0% ✔ │  100.0ms │
+│          │          │ 2.50      │ {'hello' │ 0.950     │          │          │
+│          │          │           │ : 1.0}   │           │          │          │
+└──────────┴──────────┴───────────┴──────────┴───────────┴──────────┴──────────┘
 """)
 
 
-async def test_evaluation_renderer_with_long_experiment_metadata(sample_report_case: ReportCase):
+async def test_evaluation_renderer_with_long_experiment_metadata(
+    sample_report_case: ReportCase,
+):
     """Test EvaluationRenderer with very long experiment metadata."""
     report = EvaluationReport(
         cases=[sample_report_case],
-        name='test_report',
+        name="test_report",
         experiment_metadata={
-            'model': 'gpt-4o-2024-08-06',
-            'temperature': 0.7,
-            'prompt_version': 'v2.1.5',
-            'system_prompt': 'You are a helpful assistant',
-            'max_tokens': 1000,
-            'top_p': 0.9,
-            'frequency_penalty': 0.1,
-            'presence_penalty': 0.1,
+            "model": "gpt-4o-2024-08-06",
+            "temperature": 0.7,
+            "prompt_version": "v2.1.5",
+            "system_prompt": "You are a helpful assistant",
+            "max_tokens": 1000,
+            "top_p": 0.9,
+            "frequency_penalty": 0.1,
+            "presence_penalty": 0.1,
         },
     )
 
@@ -1048,26 +1087,29 @@ async def test_evaluation_renderer_with_long_experiment_metadata(sample_report_c
 │ frequency_penalty: 0.1                     │
 │ presence_penalty: 0.1                      │
 ╰────────────────────────────────────────────╯
-┏━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ Case ID   ┃ Scores       ┃ Labels        ┃ Metrics         ┃ Assertions ┃ Duration ┃
-┡━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ test_case │ score1: 2.50 │ label1: hello │ accuracy: 0.950 │ ✔          │  100.0ms │
-└───────────┴──────────────┴───────────────┴─────────────────┴────────────┴──────────┘
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID   ┃ Scores      ┃ Labels       ┃ Metrics     ┃ Assertions ┃ Duration ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ test_case │ score1:     │ label1:      │ accuracy:   │ ✔          │  100.0ms │
+│           │ 2.50        │ hello        │ 0.950       │            │          │
+└───────────┴─────────────┴──────────────┴─────────────┴────────────┴──────────┘
 """)
 
 
-async def test_evaluation_renderer_diff_with_experiment_metadata(sample_report_case: ReportCase):
+async def test_evaluation_renderer_diff_with_experiment_metadata(
+    sample_report_case: ReportCase,
+):
     """Test EvaluationRenderer diff table with experiment metadata."""
     baseline_report = EvaluationReport(
         cases=[sample_report_case],
-        name='baseline_report',
-        experiment_metadata={'model': 'gpt-4', 'temperature': 0.5},
+        name="baseline_report",
+        experiment_metadata={"model": "gpt-4", "temperature": 0.5},
     )
 
     new_report = EvaluationReport(
         cases=[sample_report_case],
-        name='new_report',
-        experiment_metadata={'model': 'gpt-4o', 'temperature': 0.7},
+        name="new_report",
+        experiment_metadata={"model": "gpt-4o", "temperature": 0.7},
     )
 
     output = new_report.render(
@@ -1098,28 +1140,33 @@ async def test_evaluation_renderer_diff_with_experiment_metadata(sample_report_c
 │ model: gpt-4 → gpt-4o                           │
 │ temperature: 0.5 → 0.7                          │
 ╰─────────────────────────────────────────────────╯
-┏━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ Case ID   ┃ Scores       ┃ Labels                 ┃ Metrics         ┃ Assertions ┃ Duration ┃
-┡━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ test_case │ score1: 2.50 │ label1: hello          │ accuracy: 0.950 │ ✔          │  100.0ms │
-├───────────┼──────────────┼────────────────────────┼─────────────────┼────────────┼──────────┤
-│ Averages  │ score1: 2.50 │ label1: {'hello': 1.0} │ accuracy: 0.950 │ 100.0% ✔   │  100.0ms │
-└───────────┴──────────────┴────────────────────────┴─────────────────┴────────────┴──────────┘
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID   ┃ Scores      ┃ Labels       ┃ Metrics     ┃ Assertions ┃ Duration ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ test_case │ score1:     │ label1:      │ accuracy:   │ ✔          │  100.0ms │
+│           │ 2.50        │ hello        │ 0.950       │            │          │
+├───────────┼─────────────┼──────────────┼─────────────┼────────────┼──────────┤
+│ Averages  │ score1:     │ label1:      │ accuracy:   │ 100.0% ✔   │  100.0ms │
+│           │ 2.50        │ {'hello':    │ 0.950       │            │          │
+│           │             │ 1.0}         │             │            │          │
+└───────────┴─────────────┴──────────────┴─────────────┴────────────┴──────────┘
 """)
 
 
-async def test_evaluation_renderer_diff_with_only_new_metadata(sample_report_case: ReportCase):
+async def test_evaluation_renderer_diff_with_only_new_metadata(
+    sample_report_case: ReportCase,
+):
     """Test EvaluationRenderer diff table where only new report has metadata."""
     baseline_report = EvaluationReport(
         cases=[sample_report_case],
-        name='baseline_report',
+        name="baseline_report",
         experiment_metadata=None,  # No metadata
     )
 
     new_report = EvaluationReport(
         cases=[sample_report_case],
-        name='new_report',
-        experiment_metadata={'model': 'gpt-4o', 'temperature': 0.7},
+        name="new_report",
+        experiment_metadata={"model": "gpt-4o", "temperature": 0.7},
     )
 
     output = new_report.render(
@@ -1150,25 +1197,28 @@ async def test_evaluation_renderer_diff_with_only_new_metadata(sample_report_cas
 │ + model: gpt-4o                                 │
 │ + temperature: 0.7                              │
 ╰─────────────────────────────────────────────────╯
-┏━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ Case ID   ┃ Scores       ┃ Labels        ┃ Metrics         ┃ Assertions ┃ Duration ┃
-┡━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ test_case │ score1: 2.50 │ label1: hello │ accuracy: 0.950 │ ✔          │  100.0ms │
-└───────────┴──────────────┴───────────────┴─────────────────┴────────────┴──────────┘
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID   ┃ Scores      ┃ Labels       ┃ Metrics     ┃ Assertions ┃ Duration ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ test_case │ score1:     │ label1:      │ accuracy:   │ ✔          │  100.0ms │
+│           │ 2.50        │ hello        │ 0.950       │            │          │
+└───────────┴─────────────┴──────────────┴─────────────┴────────────┴──────────┘
 """)
 
 
-async def test_evaluation_renderer_diff_with_only_baseline_metadata(sample_report_case: ReportCase):
+async def test_evaluation_renderer_diff_with_only_baseline_metadata(
+    sample_report_case: ReportCase,
+):
     """Test EvaluationRenderer diff table where only baseline report has metadata."""
     baseline_report = EvaluationReport(
         cases=[sample_report_case],
-        name='baseline_report',
-        experiment_metadata={'model': 'gpt-4', 'temperature': 0.5},
+        name="baseline_report",
+        experiment_metadata={"model": "gpt-4", "temperature": 0.5},
     )
 
     new_report = EvaluationReport(
         cases=[sample_report_case],
-        name='new_report',
+        name="new_report",
         experiment_metadata=None,  # No metadata
     )
 
@@ -1200,27 +1250,30 @@ async def test_evaluation_renderer_diff_with_only_baseline_metadata(sample_repor
 │ - model: gpt-4                                  │
 │ - temperature: 0.5                              │
 ╰─────────────────────────────────────────────────╯
-┏━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ Case ID   ┃ Scores       ┃ Labels        ┃ Metrics         ┃ Assertions ┃ Duration ┃
-┡━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ test_case │ score1: 2.50 │ label1: hello │ accuracy: 0.950 │ ✔          │  100.0ms │
-└───────────┴──────────────┴───────────────┴─────────────────┴────────────┴──────────┘
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID   ┃ Scores      ┃ Labels       ┃ Metrics     ┃ Assertions ┃ Duration ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ test_case │ score1:     │ label1:      │ accuracy:   │ ✔          │  100.0ms │
+│           │ 2.50        │ hello        │ 0.950       │            │          │
+└───────────┴─────────────┴──────────────┴─────────────┴────────────┴──────────┘
 """)
 
 
-async def test_evaluation_renderer_diff_with_same_metadata(sample_report_case: ReportCase):
+async def test_evaluation_renderer_diff_with_same_metadata(
+    sample_report_case: ReportCase,
+):
     """Test EvaluationRenderer diff table where both reports have the same metadata."""
-    metadata = {'model': 'gpt-4o', 'temperature': 0.7}
+    metadata = {"model": "gpt-4o", "temperature": 0.7}
 
     baseline_report = EvaluationReport(
         cases=[sample_report_case],
-        name='baseline_report',
+        name="baseline_report",
         experiment_metadata=metadata,
     )
 
     new_report = EvaluationReport(
         cases=[sample_report_case],
-        name='new_report',
+        name="new_report",
         experiment_metadata=metadata,
     )
 
@@ -1251,34 +1304,37 @@ async def test_evaluation_renderer_diff_with_same_metadata(sample_report_case: R
 │ model: gpt-4o                                   │
 │ temperature: 0.7                                │
 ╰─────────────────────────────────────────────────╯
-┏━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ Case ID   ┃ Scores       ┃ Labels        ┃ Metrics         ┃ Assertions ┃ Duration ┃
-┡━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ test_case │ score1: 2.50 │ label1: hello │ accuracy: 0.950 │ ✔          │  100.0ms │
-└───────────┴──────────────┴───────────────┴─────────────────┴────────────┴──────────┘
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID   ┃ Scores      ┃ Labels       ┃ Metrics     ┃ Assertions ┃ Duration ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ test_case │ score1:     │ label1:      │ accuracy:   │ ✔          │  100.0ms │
+│           │ 2.50        │ hello        │ 0.950       │            │          │
+└───────────┴─────────────┴──────────────┴─────────────┴────────────┴──────────┘
 """)
 
 
-async def test_evaluation_renderer_diff_with_changed_metadata(sample_report_case: ReportCase):
+async def test_evaluation_renderer_diff_with_changed_metadata(
+    sample_report_case: ReportCase,
+):
     """Test EvaluationRenderer diff table where both reports have the same metadata."""
 
     baseline_report = EvaluationReport(
         cases=[sample_report_case],
-        name='baseline_report',
+        name="baseline_report",
         experiment_metadata={
-            'updated-key': 'original value',
-            'preserved-key': 'preserved value',
-            'old-key': 'old value',
+            "updated-key": "original value",
+            "preserved-key": "preserved value",
+            "old-key": "old value",
         },
     )
 
     new_report = EvaluationReport(
         cases=[sample_report_case],
-        name='new_report',
+        name="new_report",
         experiment_metadata={
-            'updated-key': 'updated value',
-            'preserved-key': 'preserved value',
-            'new-key': 'new value',
+            "updated-key": "updated value",
+            "preserved-key": "preserved value",
+            "new-key": "new value",
         },
     )
 
@@ -1311,25 +1367,28 @@ async def test_evaluation_renderer_diff_with_changed_metadata(sample_report_case
 │ preserved-key: preserved value                  │
 │ updated-key: original value → updated value     │
 ╰─────────────────────────────────────────────────╯
-┏━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ Case ID   ┃ Scores       ┃ Labels        ┃ Metrics         ┃ Assertions ┃ Duration ┃
-┡━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ test_case │ score1: 2.50 │ label1: hello │ accuracy: 0.950 │ ✔          │  100.0ms │
-└───────────┴──────────────┴───────────────┴─────────────────┴────────────┴──────────┘
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID   ┃ Scores      ┃ Labels       ┃ Metrics     ┃ Assertions ┃ Duration ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ test_case │ score1:     │ label1:      │ accuracy:   │ ✔          │  100.0ms │
+│           │ 2.50        │ hello        │ 0.950       │            │          │
+└───────────┴─────────────┴──────────────┴─────────────┴────────────┴──────────┘
 """)
 
 
-async def test_evaluation_renderer_diff_with_no_metadata(sample_report_case: ReportCase):
+async def test_evaluation_renderer_diff_with_no_metadata(
+    sample_report_case: ReportCase,
+):
     """Test EvaluationRenderer diff table where both reports have the same metadata."""
 
     baseline_report = EvaluationReport(
         cases=[sample_report_case],
-        name='baseline_report',
+        name="baseline_report",
     )
 
     new_report = EvaluationReport(
         cases=[sample_report_case],
-        name='new_report',
+        name="new_report",
     )
 
     output = new_report.render(
@@ -1355,10 +1414,11 @@ async def test_evaluation_renderer_diff_with_no_metadata(sample_report_case: Rep
         include_errors=False,  # Prevent failures table from being added
     )
     assert output == snapshot("""\
-                    Evaluation Diff: baseline_report → new_report                     \n\
-┏━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ Case ID   ┃ Scores       ┃ Labels        ┃ Metrics         ┃ Assertions ┃ Duration ┃
-┡━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ test_case │ score1: 2.50 │ label1: hello │ accuracy: 0.950 │ ✔          │  100.0ms │
-└───────────┴──────────────┴───────────────┴─────────────────┴────────────┴──────────┘
+                 Evaluation Diff: baseline_report → new_report                  \n\
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID   ┃ Scores      ┃ Labels       ┃ Metrics     ┃ Assertions ┃ Duration ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ test_case │ score1:     │ label1:      │ accuracy:   │ ✔          │  100.0ms │
+│           │ 2.50        │ hello        │ 0.950       │            │          │
+└───────────┴─────────────┴──────────────┴─────────────┴────────────┴──────────┘
 """)
