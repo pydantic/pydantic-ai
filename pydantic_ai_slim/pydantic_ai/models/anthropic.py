@@ -815,8 +815,9 @@ class AnthropicModel(Model):
                             if isinstance(item, UploadedFile):
                                 if item.provider_name != self.system:
                                     raise UserError(
-                                        f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with AnthropicModel. '
-                                        f'Expected `provider_name` to be `{self.system!r}`.'
+                                        f'UploadedFile with `provider_name={item.provider_name!r}` '
+                                        f'cannot be used with AnthropicModel. Expected `provider_name` '
+                                        f'to be `{self.system!r}`.'
                                     )
                                 if item.media_type.startswith('image/'):
                                     tool_result_content.append(
