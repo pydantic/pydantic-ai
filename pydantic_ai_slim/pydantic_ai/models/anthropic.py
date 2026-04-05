@@ -498,7 +498,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._limit_cache_points(system_prompt, anthropic_messages, tools)
         output_config = self._build_output_config(model_request_parameters, model_settings)
-        betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
+        betas, extra_headers = self._get_betas_and_extra_headers(model_settings)
         betas.update(builtin_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         container = self._get_container(messages, model_settings)
@@ -548,8 +548,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     def _get_betas_and_extra_headers(
         self,
-        tools: list[BetaToolUnionParam],
-        model_request_parameters: ModelRequestParameters,
         model_settings: AnthropicModelSettings,
     ) -> tuple[set[str], dict[str, str]]:
         """Prepare beta features list and extra headers for API request.
@@ -561,11 +559,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         extra_headers.setdefault('User-Agent', get_user_agent())
 
         betas: set[str] = set()
-
-        has_strict_tools = any(tool.get('strict') for tool in tools)
-
-        if has_strict_tools or model_request_parameters.output_mode == 'native':
-            betas.add('structured-outputs-2025-11-13')
 
         if model_settings.get('anthropic_context_management'):
             betas.add('compact-2026-01-12')
@@ -608,7 +601,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._limit_cache_points(system_prompt, anthropic_messages, tools)
         output_config = self._build_output_config(model_request_parameters, model_settings)
-        betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
+        betas, extra_headers = self._get_betas_and_extra_headers(model_settings)
         betas.update(builtin_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         with _map_api_errors(self.model_name):
