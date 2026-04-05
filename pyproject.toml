@@ -275,7 +275,7 @@ filterwarnings = [
     "ignore:Found propagated trace context:RuntimeWarning",
     # fastmcp v3.2.0 uses asyncio.iscoroutinefunction(), deprecated in Python 3.14.
     # Upstream fix: fastmcp should use inspect.iscoroutinefunction() instead.
-    "ignore:'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning",
+    "ignore:'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:fastmcp",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
