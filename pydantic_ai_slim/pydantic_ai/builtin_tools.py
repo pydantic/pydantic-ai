@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from abc import ABC
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal, Union
 
 import pydantic
@@ -190,7 +190,7 @@ class CodeExecutionTool(AbstractBuiltinTool):
     * xAI
     """
 
-    file_ids: list[str] | None = None
+    file_ids: list[str] | None = field(default=None, repr=False)
     """The file IDs to make available to the code execution environment.
 
     Supported by:

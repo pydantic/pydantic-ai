@@ -9003,4 +9003,3 @@ async def test_anthropic_code_execution_tool_file_ids(allow_model_requests: None
 
     messages = completion_kwargs['messages']
     assert messages[0]['content'][0] == {'type': 'container_upload', 'file_id': 'file_123'}
-

@@ -203,14 +203,9 @@ from pydantic_ai import Agent, CodeExecutionTool
 
 # file_123 was uploaded via the Anthropic Files API
 agent = Agent(
-    'anthropic:claude-3-5-sonnet-latest', 
+    'anthropic:claude-sonnet-4-6',
     builtin_tools=[CodeExecutionTool(file_ids=['file_123'])]
 )
-```
-        ),
-    )
-]
-"""
 ```
 
 _(This example is complete, it can be run "as is")_
