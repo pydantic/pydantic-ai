@@ -9034,9 +9034,8 @@ async def test_anthropic_code_execution_tool_file_ids_not_resent_with_reused_con
     assert first_kwargs['messages'][0]['content'][0] == {'type': 'container_upload', 'file_id': 'file_123'}
 
     assert second_kwargs['container'] == BetaContainerParams(id='container_from_first_run')
-    assert not any(
-        block.get('type') == 'container_upload'
-        for message in second_kwargs['messages']
-        for block in message['content']
-        if isinstance(block, dict)
-    )
+    second_message_contents = [
+        cast(list[dict[str, Any]], message['content'])
+        for message in cast(list[dict[str, Any]], second_kwargs['messages'])
+    ]
+    assert not any(block['type'] == 'container_upload' for content in second_message_contents for block in content)
