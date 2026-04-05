@@ -2305,7 +2305,11 @@ async def test_run_stream_request_error():
                 'toolName': 'tool',
                 'input': {'query': 'a'},
             },
-            {'type': 'tool-output-error', 'toolCallId': 'pyd_ai_tool_call_id__tool', 'errorText': 'Unknown tool'},
+            {
+                'type': 'tool-output-error',
+                'toolCallId': 'pyd_ai_tool_call_id__tool',
+                'errorText': 'Tool execution was interrupted by an error.',
+            },
             {'type': 'error', 'errorText': 'Unknown tool'},
             {'type': 'finish-step'},
             {'type': 'finish', 'finishReason': 'error'},

@@ -201,11 +201,11 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 elif isinstance(event, FinalResultEvent):
                     self._final_result_event = event
 
-                if isinstance(event, FunctionToolResultEvent):
+                elif isinstance(event, FunctionToolResultEvent):
                     tool_call_id = event.result.tool_call_id
                     self._pending_tool_calls.pop(tool_call_id, None)
 
-                if isinstance(event, BuiltinToolCallEvent | BuiltinToolResultEvent):  # pyright: ignore[reportDeprecated]
+                elif isinstance(event, BuiltinToolCallEvent | BuiltinToolResultEvent):  # pyright: ignore[reportDeprecated]
                     # These events were deprecated before this feature was introduced
                     continue
 
@@ -232,7 +232,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                     result=ToolReturnPart(
                         tool_call_id=tool_call_id,
                         tool_name=tool_name,
-                        content=str(exc),
+                        content='Tool execution was interrupted by an error.',
                         outcome='failed',
                     )
                 )
