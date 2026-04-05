@@ -8998,7 +8998,7 @@ async def test_anthropic_code_execution_tool_file_ids(allow_model_requests: None
     await agent.run('Analyze the file.')
 
     # Verify container_upload and beta header
-    completion_kwargs = mock_client.chat_completion_kwargs[0]
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert 'files-api-2025-04-14' in completion_kwargs['betas']
 
     messages = completion_kwargs['messages']

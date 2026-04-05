@@ -782,21 +782,22 @@ class AnthropicModel(Model):
             if isinstance(tool, CodeExecutionTool) and tool.file_ids:
                 code_execution_file_ids.extend(tool.file_ids)
 
-        last_request_index = -1
+        first_request_index = -1
         for i, m in enumerate(messages):
             if isinstance(m, ModelRequest):
-                last_request_index = i
+                first_request_index = i
+                break
 
         for i, m in enumerate(messages):
             if isinstance(m, ModelRequest):
                 user_content_params: list[BetaContentBlockParam] = []
 
-                if i == last_request_index and code_execution_file_ids:
+                if i == first_request_index and code_execution_file_ids:
                     for file_id in code_execution_file_ids:
                         # container_upload is a beta feature for mounting files into the code execution sandbox.
                         # It is currently only supported in the content array of a user message.
                         user_content_params.append(
-                            {'type': 'container_upload', 'file_id': file_id}  # type: ignore
+                            {'type': 'container_upload', 'file_id': file_id}
                         )
 
                 for request_part in m.parts:

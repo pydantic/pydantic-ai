@@ -196,8 +196,6 @@ class CodeExecutionTool(AbstractBuiltinTool):
     Supported by:
 
     * Anthropic
-    * OpenAI Responses
-    * Google
     """
 
     kind: str = 'code_execution'
