@@ -10,6 +10,7 @@ from http import HTTPStatus
 from typing import Any
 
 import httpx
+import pydantic
 import pytest
 from asgi_lifespan import LifespanManager
 from pydantic import BaseModel
@@ -1950,31 +1951,22 @@ async def test_messages_support_multiple_future_input_content_shapes(document_co
     )
 
 
-async def test_messages_support_runtime_typed_input_content_classes() -> None:
+async def test_messages_support_runtime_typed_input_content_classes(monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime_typed_image_content = pydantic.create_model(
+        'RuntimeTypedImageContent',
+        source=(Any, ...),
+    )
+    source = type('Source', (), {'type': 'url', 'value': 'http://example.com/image.png', 'mime_type': 'image/png'})()
+    monkeypatch.setattr(
+        'pydantic_ai.ui.ag_ui._adapter._TYPED_BINARY_INPUT_CONTENT_TYPES', (runtime_typed_image_content,)
+    )
+
     messages = [
         UserMessage.model_construct(
             id='msg_future',
-            content=[
-                BinaryInputContent.model_construct(
-                    type='image',
-                    url='http://example.com/image.png',
-                    mime_type='image/png',
-                )
-            ],
+            content=[runtime_typed_image_content.model_construct(source=source)],
         )
     ]
-
-    # Exercise the branch that accepts concrete AG-UI typed input-content runtime classes
-    # when they are exposed by the installed ag_ui.core module.
-    adapter_typed_classes = getattr(AGUIAdapter, '_load_user_prompt_content_part').__func__.__globals__[
-        '_TYPED_BINARY_INPUT_CONTENT_TYPES'
-    ]
-    if adapter_typed_classes:
-        typed_cls = adapter_typed_classes[0]
-        source = type(
-            'Source', (), {'type': 'url', 'value': 'http://example.com/image.png', 'mime_type': 'image/png'}
-        )()
-        messages = [UserMessage.model_construct(id='msg_future', content=[typed_cls.model_construct(source=source)])]
 
     assert AGUIAdapter.load_messages(messages) == snapshot(
         [
