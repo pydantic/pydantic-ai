@@ -38,10 +38,10 @@ async def test_graph_repr():
     graph_repr = repr(graph)
 
     # Replace the non-constant graph object id with a constant string:
-    normalized_graph_repr = re.sub(hex(id(graph)), "0xGraphObjectId", graph_repr)
+    normalized_graph_repr = re.sub(hex(id(graph)), '0xGraphObjectId', graph_repr)
 
     assert normalized_graph_repr == snapshot("""\
-<pydantic_graph.beta.graph.Graph object at 0x00000222E6F824B0
+<pydantic_graph.beta.graph.Graph object at 0xGraphObjectId
 stateDiagram-v2
   simple_step
 
@@ -65,7 +65,7 @@ async def test_graph_render_with_title():
     )
 
     graph = g.build()
-    rendered = graph.render(title="My Graph")
+    rendered = graph.render(title='My Graph')
     assert rendered == snapshot("""\
 ---
 title: My Graph
@@ -96,8 +96,8 @@ async def test_get_parent_fork_missing():
     graph = g.build()
 
     # Try to get a parent fork for a non-existent join
-    fake_join_id = JoinID(NodeID("fake_join"))
-    with pytest.raises(RuntimeError, match="not a join node"):
+    fake_join_id = JoinID(NodeID('fake_join'))
+    with pytest.raises(RuntimeError, match='not a join node'):
         graph.get_parent_fork(fake_join_id)
 
 
@@ -111,21 +111,19 @@ async def test_decision_no_matching_branch():
 
     @g.step
     async def handle_str(ctx: StepContext[MyState, None, str]) -> str:
-        return f"Got: {ctx.inputs}"  # pragma: no cover
+        return f'Got: {ctx.inputs}'  # pragma: no cover
 
     # the purpose of this test is to test runtime behavior when you have this type failure, which is why
     # we have the `# type: ignore` below
     g.add(
         g.edge_from(g.start_node).to(return_unexpected),
-        g.edge_from(return_unexpected).to(
-            g.decision().branch(g.match(str).to(handle_str))
-        ),  # type: ignore
+        g.edge_from(return_unexpected).to(g.decision().branch(g.match(str).to(handle_str))),  # type: ignore
         g.edge_from(handle_str).to(g.end_node),
     )
 
     graph = g.build()
 
-    with pytest.raises(RuntimeError, match="No branch matched"):
+    with pytest.raises(RuntimeError, match='No branch matched'):
         await graph.run(state=MyState())
 
 
@@ -147,15 +145,13 @@ async def test_decision_invalid_type_check():
     # For now, just test normal union types work
     g.add(
         g.edge_from(g.start_node).to(return_value),
-        g.edge_from(return_value).to(
-            g.decision().branch(g.match(int).to(handle_value))
-        ),
+        g.edge_from(return_value).to(g.decision().branch(g.match(int).to(handle_value))),
         g.edge_from(handle_value).to(g.end_node),
     )
 
     graph = g.build()
     result = await graph.run(state=MyState())
-    assert result == "42"
+    assert result == '42'
 
 
 async def test_map_non_iterable():
@@ -183,7 +179,7 @@ async def test_map_non_iterable():
 
     graph = g.build()
 
-    with pytest.raises(RuntimeError, match="Cannot map non-iterable"):
+    with pytest.raises(RuntimeError, match='Cannot map non-iterable'):
         await graph.run(state=MyState())
 
 
@@ -197,9 +193,7 @@ async def test_reducer_stop_iteration():
     g = GraphBuilder(state_type=EarlyStopState, output_type=int)
 
     @g.step
-    async def generate_numbers(
-        ctx: StepContext[EarlyStopState, None, None],
-    ) -> list[int]:
+    async def generate_numbers(ctx: StepContext[EarlyStopState, None, None]) -> list[int]:
         return [1, 2, 3, 4, 5]
 
     @g.step
@@ -210,16 +204,12 @@ async def test_reducer_stop_iteration():
     def get_early_stopping_reducer():
         count = 0
 
-        def reduce(
-            ctx: ReducerContext[EarlyStopState, object], current: int, inputs: int
-        ) -> int:
+        def reduce(ctx: ReducerContext[EarlyStopState, object], current: int, inputs: int) -> int:
             nonlocal count
             count += 1
             current += inputs
             if count >= 2:
-                ctx.state.stopped = (
-                    True  # update the state so we can assert on it later
-                )
+                ctx.state.stopped = True  # update the state so we can assert on it later
                 ctx.cancel_sibling_tasks()
             return current
 
@@ -254,18 +244,16 @@ async def test_parallel_reducer_stop_iteration_explicit_fork_ids():
     async def generate_numbers(ctx: StepContext[None, None, None]) -> list[int]:
         return [1, 1, 1, 1, 1]
 
-    stop_early_1 = g.join(ReduceFirstValue[int](), initial=0, parent_fork_id="map_1")
-    stop_early_2 = g.join(ReduceFirstValue[int](), initial=0, parent_fork_id="map_2")
+    stop_early_1 = g.join(ReduceFirstValue[int](), initial=0, parent_fork_id='map_1')
+    stop_early_2 = g.join(ReduceFirstValue[int](), initial=0, parent_fork_id='map_2')
     collect = g.join(reduce_sum, initial=0)
 
     g.add(
         g.edge_from(g.start_node).to(generate_numbers),
         g.edge_from(generate_numbers).broadcast(
             lambda b: [
-                b.map(fork_id="map_1")
-                .transform(lambda ctx: ctx.inputs * 10)
-                .to(stop_early_1),
-                b.map(fork_id="map_2").to(stop_early_2),
+                b.map(fork_id='map_1').transform(lambda ctx: ctx.inputs * 10).to(stop_early_1),
+                b.map(fork_id='map_2').to(stop_early_2),
             ]
         ),
         g.edge_from(stop_early_1, stop_early_2).to(collect),
@@ -288,12 +276,8 @@ async def test_parallel_reducer_stop_iteration_implicit_fork_ids():
     async def generate_numbers(ctx: StepContext[None, None, None]) -> list[int]:
         return [1, 1, 1, 1, 1]
 
-    stop_early_1 = g.join(
-        ReduceFirstValue[int](), initial=0, preferred_parent_fork="closest"
-    )
-    stop_early_2 = g.join(
-        ReduceFirstValue[int](), initial=0, preferred_parent_fork="closest"
-    )
+    stop_early_1 = g.join(ReduceFirstValue[int](), initial=0, preferred_parent_fork='closest')
+    stop_early_2 = g.join(ReduceFirstValue[int](), initial=0, preferred_parent_fork='closest')
     collect = g.join(reduce_sum, initial=0)
 
     g.add(
@@ -339,22 +323,20 @@ async def test_literal_branch_matching():
     g = GraphBuilder(state_type=MyState, output_type=str)
 
     @g.step
-    async def choose_option(
-        ctx: StepContext[MyState, None, None],
-    ) -> Literal["a", "b", "c"]:
-        return "b"
+    async def choose_option(ctx: StepContext[MyState, None, None]) -> Literal['a', 'b', 'c']:
+        return 'b'
 
     @g.step
     async def handle_a(ctx: StepContext[MyState, None, object]) -> str:
-        return "Chose A"  # pragma: no cover
+        return 'Chose A'  # pragma: no cover
 
     @g.step
     async def handle_b(ctx: StepContext[MyState, None, object]) -> str:
-        return "Chose B"
+        return 'Chose B'
 
     @g.step
     async def handle_c(ctx: StepContext[MyState, None, object]) -> str:
-        return "Chose C"  # pragma: no cover
+        return 'Chose C'  # pragma: no cover
 
     from pydantic_graph.beta import TypeExpression
 
@@ -362,16 +344,16 @@ async def test_literal_branch_matching():
         g.edge_from(g.start_node).to(choose_option),
         g.edge_from(choose_option).to(
             g.decision()
-            .branch(g.match(TypeExpression[Literal["a"]]).to(handle_a))
-            .branch(g.match(TypeExpression[Literal["b"]]).to(handle_b))
-            .branch(g.match(TypeExpression[Literal["c"]]).to(handle_c))
+            .branch(g.match(TypeExpression[Literal['a']]).to(handle_a))
+            .branch(g.match(TypeExpression[Literal['b']]).to(handle_b))
+            .branch(g.match(TypeExpression[Literal['c']]).to(handle_c))
         ),
         g.edge_from(handle_a, handle_b, handle_c).to(g.end_node),
     )
 
     graph = g.build()
     result = await graph.run(state=MyState())
-    assert result == "Chose B"
+    assert result == 'Chose B'
 
 
 async def test_path_with_label_marker():
@@ -388,9 +370,9 @@ async def test_path_with_label_marker():
 
     # Add labels to the path
     g.add(
-        g.edge_from(g.start_node).label("start").to(step_a),
-        g.edge_from(step_a).label("middle").to(step_b),
-        g.edge_from(step_b).label("end").to(g.end_node),
+        g.edge_from(g.start_node).label('start').to(step_a),
+        g.edge_from(step_a).label('middle').to(step_b),
+        g.edge_from(step_b).label('end').to(g.end_node),
     )
 
     graph = g.build()
