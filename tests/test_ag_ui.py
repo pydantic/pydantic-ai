@@ -3890,7 +3890,9 @@ def test_dump_messages_text_content() -> None:
             DocumentUrl(url='https://example.com/doc.pdf', media_type='application/pdf'),
             id='document-url',
         ),
-    ],
+    ]
+    if imports_successful()
+    else [],
 )
 def test_load_multimodal_url_sources(
     input_content: ImageInputContent | AudioInputContent | VideoInputContent | DocumentInputContent,
