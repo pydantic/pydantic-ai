@@ -102,7 +102,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     """UI adapter for the Agent-User Interaction (AG-UI) protocol."""
 
     @classmethod
-    def _load_user_prompt_content_part(cls, part: Any) -> str | BinaryContent | ImageUrl | AudioUrl | VideoUrl | DocumentUrl:
+    def _load_user_prompt_content_part(
+        cls, part: Any
+    ) -> str | BinaryContent | ImageUrl | AudioUrl | VideoUrl | DocumentUrl:
         if isinstance(part, TextInputContent):
             return part.text
         if isinstance(part, BinaryInputContent):
@@ -114,7 +116,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         raise ValueError(f'Unsupported user message part type: {type(part)}')
 
     @staticmethod
-    def _binary_part_from_binary_input_content(part: BinaryInputContent) -> BinaryContent | ImageUrl | AudioUrl | VideoUrl | DocumentUrl:
+    def _binary_part_from_binary_input_content(
+        part: BinaryInputContent,
+    ) -> BinaryContent | ImageUrl | AudioUrl | VideoUrl | DocumentUrl:
         if part.url:
             try:
                 return BinaryContent.from_data_uri(part.url)
@@ -125,7 +129,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         raise ValueError('BinaryInputContent must have either a `url` or `data` field.')
 
     @staticmethod
-    def _binary_part_from_typed_input_content(part: Any) -> BinaryContent | ImageUrl | AudioUrl | VideoUrl | DocumentUrl:
+    def _binary_part_from_typed_input_content(
+        part: Any,
+    ) -> BinaryContent | ImageUrl | AudioUrl | VideoUrl | DocumentUrl:
         source = part.source
         source_type = getattr(source, 'type', None)
         source_value = getattr(source, 'value', None)

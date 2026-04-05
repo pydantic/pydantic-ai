@@ -1867,7 +1867,50 @@ async def test_messages(image_content: BinaryContent, document_content: BinaryCo
     )
 
 
-async def test_messages_support_future_input_content_shapes(document_content: BinaryContent) -> None:
+@pytest.mark.parametrize(
+    ('content_model', 'source', 'expected_content'),
+    [
+        pytest.param(
+            _FutureImageInputContent,
+            _FutureInputContentSource(type='url', value='http://example.com/image.png', mimeType='image/png'),
+            ImageUrl(url='http://example.com/image.png', media_type='image/png'),
+            id='image-url',
+        ),
+        pytest.param(
+            _FutureDocumentInputContent,
+            _FutureInputContentSource(type='data', value='JVBERi0xLjQ=', mimeType='application/pdf'),
+            BinaryContent(data=b'%PDF-1.4', media_type='application/pdf'),
+            id='document-data',
+        ),
+    ],
+)
+async def test_messages_support_future_input_content_shapes(
+    content_model: type[BaseModel],
+    source: _FutureInputContentSource,
+    expected_content: ImageUrl | BinaryContent,
+) -> None:
+    messages = [
+        UserMessage.model_construct(
+            id='msg_future',
+            content=[content_model(source=source)],
+        )
+    ]
+
+    assert AGUIAdapter.load_messages(messages) == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[expected_content],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            )
+        ]
+    )
+
+
+async def test_messages_support_multiple_future_input_content_shapes(document_content: BinaryContent) -> None:
     messages = [
         UserMessage.model_construct(
             id='msg_future',
