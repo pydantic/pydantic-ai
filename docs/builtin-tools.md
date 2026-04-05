@@ -196,6 +196,8 @@ print(result.output)
 #> The factorial of 15 is **1,307,674,368,000**.
 ```
 
+_(This example is complete, it can be run "as is")_
+
 On supported models (e.g. Anthropic), you can also provide `file_ids` to be mounted into the code execution environment.
 
 ```py {title="code_execution_file_ids.py"}
@@ -207,8 +209,6 @@ agent = Agent(
     builtin_tools=[CodeExecutionTool(file_ids=['file_123'])]
 )
 ```
-
-_(This example is complete, it can be run "as is")_
 
 In addition to text output, code execution with OpenAI can generate images as part of their response. Accessing this image via [`ModelResponse.images`][pydantic_ai.messages.ModelResponse.images] or [image output](output.md#image-output) requires the [`OpenAIResponsesModelSettings.openai_include_code_execution_outputs`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_code_execution_outputs] [model setting](agent.md#model-run-settings) to be enabled.
 

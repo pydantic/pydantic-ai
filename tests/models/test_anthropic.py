@@ -9003,3 +9003,40 @@ async def test_anthropic_code_execution_tool_file_ids(allow_model_requests: None
 
     messages = completion_kwargs['messages']
     assert messages[0]['content'][0] == {'type': 'container_upload', 'file_id': 'file_123'}
+
+
+async def test_anthropic_code_execution_tool_file_ids_not_resent_with_reused_container(
+    allow_model_requests: None,
+):
+    first_response = BetaMessage(
+        id='msg_first',
+        content=[BetaTextBlock(text='I have analyzed the file.', type='text')],
+        model='claude-3-5-haiku-123',
+        role='assistant',
+        stop_reason='end_turn',
+        type='message',
+        usage=BetaUsage(input_tokens=5, output_tokens=10),
+        container=BetaContainer(id='container_from_first_run', expires_at=datetime(2025, 1, 1, 0, 0, 0)),
+    )
+    second_response = completion_message(
+        [BetaTextBlock(text='Summary complete.', type='text')],
+        usage=BetaUsage(input_tokens=6, output_tokens=9),
+    )
+
+    mock_client = MockAnthropic.create_mock([first_response, second_response])
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, builtin_tools=[CodeExecutionTool(file_ids=['file_123'])])
+
+    first_result = await agent.run('Analyze the file.')
+    await agent.run('Summarize it again.', message_history=first_result.new_messages())
+
+    first_kwargs, second_kwargs = get_mock_chat_completion_kwargs(mock_client)
+    assert first_kwargs['messages'][0]['content'][0] == {'type': 'container_upload', 'file_id': 'file_123'}
+
+    assert second_kwargs['container'] == BetaContainerParams(id='container_from_first_run')
+    assert not any(
+        block.get('type') == 'container_upload'
+        for message in second_kwargs['messages']
+        for block in message['content']
+        if isinstance(block, dict)
+    )
