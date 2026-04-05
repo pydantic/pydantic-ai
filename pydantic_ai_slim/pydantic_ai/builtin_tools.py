@@ -190,6 +190,16 @@ class CodeExecutionTool(AbstractBuiltinTool):
     * xAI
     """
 
+    file_ids: list[str] | None = None
+    """The file IDs to make available to the code execution environment.
+
+    Supported by:
+
+    * Anthropic
+    * OpenAI Responses
+    * Google
+    """
+
     kind: str = 'code_execution'
     """The kind of tool."""
 

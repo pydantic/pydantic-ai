@@ -8984,3 +8984,23 @@ Fix the errors and try again.\
             },
         ]
     )
+
+
+async def test_anthropic_code_execution_tool_file_ids(allow_model_requests: None):
+    c = completion_message(
+        [BetaTextBlock(text='I have analyzed the file.', type='text')],
+        usage=BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, builtin_tools=[CodeExecutionTool(file_ids=['file_123'])])
+
+    await agent.run('Analyze the file.')
+
+    # Verify container_upload and beta header
+    completion_kwargs = mock_client.chat_completion_kwargs[0]
+    assert 'files-api-2025-04-14' in completion_kwargs['betas']
+
+    messages = completion_kwargs['messages']
+    assert messages[0]['content'][0] == {'type': 'container_upload', 'file_id': 'file_123'}
+

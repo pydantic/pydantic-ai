@@ -702,6 +702,8 @@ class AnthropicModel(Model):
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tools.append(BetaCodeExecutionTool20260120Param(name='code_execution', type='code_execution_20260120'))
                 beta_features.add('code-execution-2026-01-20')
+                if tool.file_ids:
+                    beta_features.add('files-api-2025-04-14')
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
                 citations = BetaCitationsConfigParam(enabled=tool.enable_citations) if tool.enable_citations else None
                 tools.append(
@@ -774,9 +776,29 @@ class AnthropicModel(Model):
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
-        for m in messages:
+
+        code_execution_file_ids: list[str] = []
+        for tool in model_request_parameters.builtin_tools:
+            if isinstance(tool, CodeExecutionTool) and tool.file_ids:
+                code_execution_file_ids.extend(tool.file_ids)
+
+        last_request_index = -1
+        for i, m in enumerate(messages):
+            if isinstance(m, ModelRequest):
+                last_request_index = i
+
+        for i, m in enumerate(messages):
             if isinstance(m, ModelRequest):
                 user_content_params: list[BetaContentBlockParam] = []
+
+                if i == last_request_index and code_execution_file_ids:
+                    for file_id in code_execution_file_ids:
+                        # container_upload is a beta feature for mounting files into the code execution sandbox.
+                        # It is currently only supported in the content array of a user message.
+                        user_content_params.append(
+                            {'type': 'container_upload', 'file_id': file_id}  # type: ignore
+                        )
+
                 for request_part in m.parts:
                     if isinstance(request_part, SystemPromptPart):
                         system_prompt_parts.append(request_part.content)

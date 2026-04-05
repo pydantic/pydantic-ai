@@ -194,30 +194,19 @@ agent = Agent('anthropic:claude-sonnet-4-6', builtin_tools=[CodeExecutionTool()]
 result = agent.run_sync('Calculate the factorial of 15.')
 print(result.output)
 #> The factorial of 15 is **1,307,674,368,000**.
-print(result.response.builtin_tool_calls)
-"""
-[
-    (
-        BuiltinToolCallPart(
-            tool_name='code_execution',
-            args={
-                'code': 'import math\n\n# Calculate factorial of 15\nresult = math.factorial(15)\nprint(f"15! = {result}")\n\n# Let\'s also show it in a more readable format with commas\nprint(f"15! = {result:,}")'
-            },
-            tool_call_id='srvtoolu_017qRH1J3XrhnpjP2XtzPCmJ',
-            provider_name='anthropic',
-        ),
-        BuiltinToolReturnPart(
-            tool_name='code_execution',
-            content={
-                'content': [],
-                'return_code': 0,
-                'stderr': '',
-                'stdout': '15! = 1307674368000\n15! = 1,307,674,368,000',
-                'type': 'code_execution_result',
-            },
-            tool_call_id='srvtoolu_017qRH1J3XrhnpjP2XtzPCmJ',
-            timestamp=datetime.datetime(...),
-            provider_name='anthropic',
+```
+
+On supported models (e.g. Anthropic), you can also provide `file_ids` to be mounted into the code execution environment.
+
+```py {title="code_execution_file_ids.py"}
+from pydantic_ai import Agent, CodeExecutionTool
+
+# file_123 was uploaded via the Anthropic Files API
+agent = Agent(
+    'anthropic:claude-3-5-sonnet-latest', 
+    builtin_tools=[CodeExecutionTool(file_ids=['file_123'])]
+)
+```
         ),
     )
 ]
