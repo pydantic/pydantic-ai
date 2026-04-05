@@ -94,6 +94,22 @@ with try_import() as imports_successful:
     from pydantic_ai.ui.ag_ui import AGUIEventStream
 
 
+class _FutureInputContentSource(BaseModel):
+    type: str
+    value: str
+    mimeType: str | None = None
+
+
+class _FutureImageInputContent(BaseModel):
+    type: str = 'image'
+    source: _FutureInputContentSource
+
+
+class _FutureDocumentInputContent(BaseModel):
+    type: str = 'document'
+    source: _FutureInputContentSource
+
+
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='ag-ui-protocol not installed'),
@@ -1847,6 +1863,46 @@ async def test_messages(image_content: BinaryContent, document_content: BinaryCo
                 parts=[TextPart(content='Assistant message')],
                 timestamp=IsDatetime(),
             ),
+        ]
+    )
+
+
+async def test_messages_support_future_input_content_shapes(document_content: BinaryContent) -> None:
+    messages = [
+        UserMessage.model_construct(
+            id='msg_future',
+            content=[
+                _FutureImageInputContent(
+                    source=_FutureInputContentSource(
+                        type='url', value='http://example.com/image.png', mimeType='image/png'
+                    )
+                ),
+                _FutureDocumentInputContent(
+                    source=_FutureInputContentSource(
+                        type='data', value=document_content.base64, mimeType=document_content.media_type
+                    )
+                ),
+            ],
+        )
+    ]
+
+    assert AGUIAdapter.load_messages(messages) == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            ImageUrl(
+                                url='http://example.com/image.png',
+                                _media_type='image/png',
+                                media_type='image/png',
+                            ),
+                            document_content,
+                        ],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            )
         ]
     )
 

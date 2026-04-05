@@ -33,6 +33,7 @@ from ...tools import AgentDepsT
 from ...toolsets import AbstractToolset
 
 try:
+    import ag_ui.core as ag_ui_core
     from ag_ui.core import (
         ActivityMessage,
         AssistantMessage,
@@ -60,6 +61,12 @@ if TYPE_CHECKING:
     pass
 
 __all__ = ['AGUIAdapter']
+
+_TYPED_BINARY_INPUT_CONTENT_TYPES = tuple(
+    input_content_type
+    for type_name in ('ImageInputContent', 'AudioInputContent', 'VideoInputContent', 'DocumentInputContent')
+    if (input_content_type := getattr(ag_ui_core, type_name, None)) is not None
+)
 
 
 # Frontend toolset
@@ -93,6 +100,57 @@ class _AGUIFrontendToolset(ExternalToolset[AgentDepsT]):
 
 class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, OutputDataT]):
     """UI adapter for the Agent-User Interaction (AG-UI) protocol."""
+
+    @classmethod
+    def _load_user_prompt_content_part(cls, part: Any) -> str | BinaryContent | ImageUrl | AudioUrl | VideoUrl | DocumentUrl:
+        if isinstance(part, TextInputContent):
+            return part.text
+        if isinstance(part, BinaryInputContent):
+            return cls._binary_part_from_binary_input_content(part)
+        if _TYPED_BINARY_INPUT_CONTENT_TYPES and isinstance(part, _TYPED_BINARY_INPUT_CONTENT_TYPES):
+            return cls._binary_part_from_typed_input_content(part)
+        if getattr(part, 'type', None) in {'image', 'audio', 'video', 'document'} and hasattr(part, 'source'):
+            return cls._binary_part_from_typed_input_content(part)
+        raise ValueError(f'Unsupported user message part type: {type(part)}')
+
+    @staticmethod
+    def _binary_part_from_binary_input_content(part: BinaryInputContent) -> BinaryContent | ImageUrl | AudioUrl | VideoUrl | DocumentUrl:
+        if part.url:
+            try:
+                return BinaryContent.from_data_uri(part.url)
+            except ValueError:
+                return AGUIAdapter._binary_url_part(url=part.url, mime_type=part.mime_type)
+        if part.data:
+            return BinaryContent(data=b64decode(part.data), media_type=part.mime_type)
+        raise ValueError('BinaryInputContent must have either a `url` or `data` field.')
+
+    @staticmethod
+    def _binary_part_from_typed_input_content(part: Any) -> BinaryContent | ImageUrl | AudioUrl | VideoUrl | DocumentUrl:
+        source = part.source
+        source_type = getattr(source, 'type', None)
+        source_value = getattr(source, 'value', None)
+        mime_type = getattr(source, 'mime_type', None) or getattr(source, 'mimeType', None)
+
+        if source_type == 'url' and isinstance(source_value, str):
+            if mime_type is None:
+                raise ValueError(f'{type(part).__name__} with URL source must include a MIME type.')
+            return AGUIAdapter._binary_url_part(url=source_value, mime_type=mime_type)
+        if source_type == 'data' and isinstance(source_value, str):
+            if mime_type is None:
+                raise ValueError(f'{type(part).__name__} with data source must include a MIME type.')
+            return BinaryContent(data=b64decode(source_value), media_type=mime_type)
+        raise ValueError(f'Unsupported {type(part).__name__} source: {source_type!r}')
+
+    @staticmethod
+    def _binary_url_part(*, url: str, mime_type: str) -> ImageUrl | AudioUrl | VideoUrl | DocumentUrl:
+        media_type_constructors = {
+            'image': ImageUrl,
+            'video': VideoUrl,
+            'audio': AudioUrl,
+        }
+        media_type_prefix = mime_type.split('/', 1)[0]
+        constructor = media_type_constructors.get(media_type_prefix, DocumentUrl)
+        return constructor(url=url, media_type=mime_type)
 
     @classmethod
     def build_run_input(cls, body: bytes) -> RunAgentInput:
@@ -138,33 +196,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     if isinstance(content, str):
                         builder.add(UserPromptPart(content=content))
                     else:
-                        user_prompt_content: list[Any] = []
-                        for part in content:
-                            match part:
-                                case TextInputContent(text=text):
-                                    user_prompt_content.append(text)
-                                case BinaryInputContent():
-                                    if part.url:
-                                        try:
-                                            binary_part = BinaryContent.from_data_uri(part.url)
-                                        except ValueError:
-                                            media_type_constructors = {
-                                                'image': ImageUrl,
-                                                'video': VideoUrl,
-                                                'audio': AudioUrl,
-                                            }
-                                            media_type_prefix = part.mime_type.split('/', 1)[0]
-                                            constructor = media_type_constructors.get(media_type_prefix, DocumentUrl)
-                                            binary_part = constructor(url=part.url, media_type=part.mime_type)
-                                    elif part.data:
-                                        binary_part = BinaryContent(
-                                            data=b64decode(part.data), media_type=part.mime_type
-                                        )
-                                    else:  # pragma: no cover
-                                        raise ValueError('BinaryInputContent must have either a `url` or `data` field.')
-                                    user_prompt_content.append(binary_part)
-                                case _:  # pragma: no cover
-                                    raise ValueError(f'Unsupported user message part type: {type(part)}')
+                        user_prompt_content = [cls._load_user_prompt_content_part(part) for part in content]
 
                         if user_prompt_content:
                             content_to_add = (
