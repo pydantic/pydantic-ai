@@ -1026,14 +1026,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                                 'prefer_builtin': None,
                                 'return_schema': None,
                                 'include_return_schema': None,
-                                'function_signature': {
-                                    'params': {
-                                        'content': {'name': 'content', 'type': {'name': 'str'}, 'default': None}
-                                    },
-                                    'return_type': {'name': 'Any'},
-                                    'referenced_types': [],
-                                    'is_async': False,
-                                },
+                                'function_signature': None,
                             }
                         ],
                         'prompted_output_template': None,
