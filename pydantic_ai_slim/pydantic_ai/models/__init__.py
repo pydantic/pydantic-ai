@@ -1217,6 +1217,11 @@ def infer_model_profile(model: str) -> ModelProfile:
     if provider is None:
         return DEFAULT_PROFILE
 
+    if provider.startswith('gateway/'):
+        from ..providers.gateway import normalize_gateway_provider
+
+        provider = normalize_gateway_provider(provider, model_name=model_name)
+
     try:
         provider_class = infer_provider_class(provider)
     except ValueError:
@@ -1263,7 +1268,20 @@ def infer_model(  # noqa: C901
     if model_kind.startswith('gateway/'):
         from ..providers.gateway import normalize_gateway_provider
 
-        model_kind = normalize_gateway_provider(model_kind)
+        model_kind = normalize_gateway_provider(model_kind, model_name=model_name)
+
+        # When model-name routing diverged (e.g. Claude on google-vertex → anthropic),
+        # the factory-produced provider is the wrong type. With the default factory we
+        # can recreate it; with a custom factory we fail explicitly since silently
+        # discarding its output would break the customization contract.
+        if model_kind != normalize_gateway_provider(provider_name):
+            if provider_factory is not infer_provider:
+                raise UserError(
+                    f'Model {model_name!r} on {provider_name!r} requires an {model_kind!r} provider, '
+                    f'but the custom `provider_factory` returned {type(provider).__name__}. '
+                    f'Pass a model-aware factory that returns the correct provider type for this model.'
+                )
+            provider = infer_provider(provider_name, model_name=model_name)
 
     # OpenRouter and Cerebras need to be checked before OpenAI,
     # as they are in `OpenAIChatCompatibleProvider` but have their own model classes.

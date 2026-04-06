@@ -186,13 +186,19 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         raise ValueError(f'Unknown provider: {provider}')
 
 
-def infer_provider(provider: str) -> Provider[Any]:
-    """Infer the provider from the provider name."""
+def infer_provider(provider: str, *, model_name: str | None = None) -> Provider[Any]:
+    """Infer the provider from the provider name.
+
+    Args:
+        provider: The provider name.
+        model_name: The model name, used to route Anthropic models on google-vertex
+            gateway to the Anthropic provider instead of Google.
+    """
     if provider.startswith('gateway/'):
         from .gateway import gateway_provider
 
         upstream_provider = provider.removeprefix('gateway/')
-        return gateway_provider(upstream_provider)
+        return gateway_provider(upstream_provider, model_name=model_name)
     elif provider in ('google-vertex', 'google-gla', 'vertexai'):
         from .google import GoogleProvider
 
