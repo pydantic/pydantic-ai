@@ -431,6 +431,7 @@ def test_tool_def_function_signature_from_schema():
     tool_def = tool.tool_def
 
     sig = tool_def.function_signature
+    assert sig is not None
     assert 'x' in sig.params
     assert 'y' in sig.params
 
@@ -444,6 +445,7 @@ def test_tool_def_has_schema_based_signature():
 
     tool = Tool(my_tool)
     sig = tool.tool_def.function_signature
+    assert sig is not None
     assert 'x' in sig.params
     assert 'y' in sig.params
     assert str(sig.params['x'].type) == 'int'
@@ -459,6 +461,7 @@ def test_tool_definition_function_signature_computed_from_schema():
         description='A test tool',
     )
     sig = td.function_signature
+    assert sig is not None
     assert 'x' in sig.params
 
 
@@ -471,6 +474,7 @@ def test_tool_definition_schema_based_function_signature():
         description='A schema-based tool',
     )
     sig = td.function_signature
+    assert sig is not None
     assert 'q' in sig.params
     assert str(sig.params['q'].type) == 'str'
 
@@ -533,6 +537,7 @@ def test_from_function_kwargs_and_varargs():
         return ''  # pragma: no cover
 
     sig = Tool(with_kwargs).tool_def.function_signature
+    assert sig is not None
     assert 'kwargs' not in sig.params
     assert 'x' in sig.params
 
@@ -540,6 +545,7 @@ def test_from_function_kwargs_and_varargs():
         return ''  # pragma: no cover
 
     sig = Tool(with_args).tool_def.function_signature
+    assert sig is not None
     assert 'args' in sig.params
     assert str(sig.params['args'].type) == 'list[int]'
 
@@ -572,6 +578,7 @@ def test_function_signature_union_and_model_types():
 def complex_func(*, a: int | str, b: int | str, c: int | None = None, d: _UserInfo | None = None) -> _UserInfo:
     ...\
 """)
+    assert td.function_signature is not None
     assert [t.render_definition() for t in td.function_signature.referenced_types] == snapshot(
         [
             """\
@@ -1123,6 +1130,7 @@ def test_function_signature_root_model():
 def func_with_root_model(*, x: _IntList, y: int) -> None:
     ...\
 """)
+    assert td.function_signature is not None
     assert td.function_signature.referenced_types == []
 
 
@@ -1137,6 +1145,7 @@ def func_with_tree(*, x: _TreeNode, label: str = '') -> None:
     ...\
 """)
     sig = td.function_signature
+    assert sig is not None
     assert len(sig.referenced_types) == 1
     assert sig.referenced_types[0].name == '_TreeNode'
     assert 'value' in sig.referenced_types[0].fields
@@ -1241,6 +1250,7 @@ def test_function_with_typed_dict_param():
 
     td = Tool(search).tool_def
     assert 'params: _SearchParams' in td.render_signature('...')
+    assert td.function_signature is not None
     assert any(rt.name == '_SearchParams' for rt in td.function_signature.referenced_types)
 
 
@@ -1287,6 +1297,7 @@ def test_function_with_enum_field_in_model():
     td = Tool(configure).tool_def
     assert 'cfg: _ConfigWithEnum' in td.render_signature('...')
     # _ConfigWithEnum should be a TypedDict, but _Color (enum) should not
+    assert td.function_signature is not None
     type_names = {rt.name for rt in td.function_signature.referenced_types}
     assert '_ConfigWithEnum' in type_names
     assert '_Color' not in type_names

@@ -612,7 +612,7 @@ class ToolDefinition:
     When `None` (default), the agent-level `include_tool_return_schema` default is used.
     """
 
-    function_signature: FunctionSignature = field(default=None, repr=False, compare=False)  # type: ignore[assignment]
+    function_signature: FunctionSignature | None = field(default=None, repr=False, compare=False)
     """The function signature shape for this tool.
 
     If not provided, computed from the JSON schema in ``__post_init__``.
@@ -621,7 +621,7 @@ class ToolDefinition:
     """
 
     def __post_init__(self) -> None:
-        if self.function_signature is None and self.kind != 'output':  # type: ignore[comparison-overlap]
+        if self.function_signature is None and self.kind != 'output':
             self.function_signature = FunctionSignature.from_schema(
                 name=self.name,
                 parameters_schema=self.parameters_json_schema,
@@ -634,6 +634,7 @@ class ToolDefinition:
         Convenience wrapper around ``self.function_signature.render()`` that
         supplies ``name`` and ``description`` from this tool definition.
         """
+        assert self.function_signature is not None, 'function_signature is not available for output tools'
         return self.function_signature.render(body, name=self.name, description=self.description, **kwargs)
 
     @property
