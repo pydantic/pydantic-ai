@@ -3,18 +3,18 @@
 import json
 from collections import defaultdict
 from collections.abc import AsyncIterator, Iterator, Sequence
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, cast
 
 from typing_extensions import assert_never
 
-from .. import _utils
+from .. import ModelHTTPError, _utils
 from .._output import OutputObjectDefinition
 from .._run_context import RunContext
 from ..builtin_tools import CodeExecutionTool, MCPServerTool, WebSearchTool
-from ..exceptions import UnexpectedModelBehavior, UserError
+from ..exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -33,11 +33,13 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
+    UserContent,
     UserPromptPart,
     VideoUrl,
 )
@@ -51,10 +53,21 @@ from ..models import (
 from ..profiles import ModelProfileSpec
 from ..profiles.grok import GrokModelProfile
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ThinkingLevel
 from ..usage import RequestUsage
 
+XAI_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'high']] = {
+    True: 'high',
+    'minimal': 'low',
+    'low': 'low',
+    'medium': 'high',
+    'high': 'high',
+    'xhigh': 'high',
+}
+"""Maps unified thinking values to xAI reasoning_effort. xAI only supports 'low' and 'high'."""
+
 try:
+    import grpc
     import xai_sdk.chat as chat_types
     from xai_sdk import AsyncClient
     from xai_sdk.chat import assistant, file, image, system, tool, tool_result, user
@@ -66,6 +79,29 @@ except ImportError as _import_error:
         'Please install `xai-sdk` to use the xAI model, '
         'you can use the `xai` optional group — `pip install "pydantic-ai-slim[xai]"`'
     ) from _import_error
+
+
+@contextmanager
+def _map_api_errors(model_name: str) -> Iterator[None]:
+    try:
+        yield
+    except grpc.RpcError as e:
+        status_code = _GRPC_STATUS_TO_HTTP.get(e.code())
+        details = e.details() or str(e)
+        if status_code is not None:
+            raise ModelHTTPError(status_code=status_code, model_name=model_name, body=details) from e
+        raise ModelAPIError(model_name=model_name, message=details) from e
+
+
+_GRPC_STATUS_TO_HTTP: dict[grpc.StatusCode, int] = {
+    grpc.StatusCode.UNAUTHENTICATED: 401,
+    grpc.StatusCode.PERMISSION_DENIED: 403,
+    grpc.StatusCode.NOT_FOUND: 404,
+    grpc.StatusCode.RESOURCE_EXHAUSTED: 429,
+    grpc.StatusCode.INTERNAL: 500,
+    grpc.StatusCode.UNAVAILABLE: 503,
+    grpc.StatusCode.DEADLINE_EXCEEDED: 504,
+}
 
 XaiModelName = str | ChatModel
 """Possible xAI model names."""
@@ -139,6 +175,12 @@ class XaiModelSettings(ModelSettings, total=False):
     Corresponds to the `mcp_call.outputs` value of the `include` parameter in the Responses API.
     """
 
+    xai_reasoning_effort: Literal['low', 'high']
+    """Reasoning effort level for Grok reasoning models.
+
+    See https://docs.x.ai for details.
+    """
+
 
 # Mapping of XaiModelSettings keys to xAI SDK parameter names.
 # Most keys are the same, but some differ (e.g., 'stop_sequences' -> 'stop').
@@ -155,6 +197,7 @@ _XAI_MODEL_SETTINGS_MAPPING: dict[str, str] = {
     'xai_user': 'user',
     'xai_store_messages': 'store_messages',
     'xai_previous_response_id': 'previous_response_id',
+    'xai_reasoning_effort': 'reasoning_effort',
 }
 
 
@@ -232,10 +275,13 @@ class XaiModel(Model):
             else:
                 assert_never(message)
 
-        # Insert instructions as a system message after existing system messages if present
-        if instructions := self._get_instructions(messages, model_request_parameters):
-            system_prompt_count = sum(1 for m in xai_messages if m.role == chat_types.chat_pb2.MessageRole.ROLE_SYSTEM)
-            xai_messages.insert(system_prompt_count, system(instructions))
+        # Insert instructions as system messages after existing system messages if present
+        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
+            system_prompt_count = next(
+                (i for i, m in enumerate(xai_messages) if m.role != chat_types.chat_pb2.MessageRole.ROLE_SYSTEM),
+                len(xai_messages),
+            )
+            xai_messages[system_prompt_count:system_prompt_count] = [system(part.content) for part in instruction_parts]
 
         return xai_messages
 
@@ -268,9 +314,18 @@ class XaiModel(Model):
         if tool_results:
             order = {id: i for i, id in enumerate(pending_tool_call_ids)}
             tool_results.sort(key=lambda p: order.get(p.tool_call_id, float('inf')))
+            file_content: list[UserContent] = []
             for part in tool_results:
-                text = part.model_response_str() if isinstance(part, ToolReturnPart) else part.model_response()
-                xai_messages.append(tool_result(text))
+                if isinstance(part, ToolReturnPart):
+                    text, files = part.model_response_str_and_user_content()
+                    xai_messages.append(tool_result(text))
+                    file_content.extend(files)
+                else:
+                    xai_messages.append(tool_result(part.model_response()))
+            if file_content and (
+                user_msg := await self._map_user_prompt(UserPromptPart(content=file_content))
+            ):  # pragma: no branch
+                xai_messages.append(user_msg)
 
         return xai_messages
 
@@ -429,8 +484,9 @@ class XaiModel(Model):
         content_items: list[chat_types.Content] = []
 
         for item in part.content:
-            if isinstance(item, str):
-                content_items.append(item)
+            if isinstance(item, str | TextContent):
+                text = item if isinstance(item, str) else item.content
+                content_items.append(text)
             elif isinstance(item, ImageUrl):
                 # Get detail from vendor_metadata if available
                 detail: chat_types.ImageDetail = 'auto'
@@ -449,16 +505,18 @@ class XaiModel(Model):
                         image_detail = item.vendor_metadata['detail']
                     content_items.append(image(item.data_uri, detail=image_detail))
                 elif item.is_audio:
-                    raise NotImplementedError('AudioUrl/BinaryContent with audio is not supported by xAI SDK')
+                    raise NotImplementedError('BinaryContent with audio is not supported in xAI user prompts')
                 elif item.is_document:
                     # Upload document to xAI files API and reference it
                     filename = item.identifier or f'document.{item.format}'
                     file_id = await self._upload_file_to_xai(item.data, filename)
                     content_items.append(file(file_id))
-                else:
+                elif item.is_video:
+                    raise NotImplementedError('BinaryContent with video is not supported in xAI user prompts')
+                else:  # pragma: no cover
                     raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
             elif isinstance(item, AudioUrl):
-                raise NotImplementedError('AudioUrl is not supported by xAI SDK')
+                raise NotImplementedError('AudioUrl is not supported in xAI user prompts')
             elif isinstance(item, DocumentUrl):
                 # Download and upload to xAI files API
                 downloaded = await download_item(item, data_format='bytes')
@@ -470,7 +528,7 @@ class XaiModel(Model):
                 file_id = await self._upload_file_to_xai(downloaded['data'], filename)
                 content_items.append(file(file_id))
             elif isinstance(item, VideoUrl):
-                raise NotImplementedError('VideoUrl is not supported by xAI SDK')
+                raise NotImplementedError('VideoUrl is not supported in xAI user prompts')
             elif isinstance(item, UploadedFile):
                 if item.provider_name != self.system:
                     raise UserError(
@@ -534,6 +592,12 @@ class XaiModel(Model):
         # Map model settings to xAI SDK parameters
         xai_settings = _map_model_settings(model_settings)
 
+        # Fall back to unified thinking when xai_reasoning_effort is not set
+        if 'reasoning_effort' not in xai_settings and model_request_parameters.thinking is not None:
+            thinking = model_request_parameters.thinking
+            if thinking is not False:
+                xai_settings['reasoning_effort'] = XAI_EFFORT_MAP[thinking]
+
         # Populate use_encrypted_content and include based on model settings
         include: list[chat_pb2.IncludeOption] = []
         use_encrypted_content = model_settings.get('xai_include_encrypted_content') or False
@@ -574,7 +638,8 @@ class XaiModel(Model):
         )
 
         chat = await self._create_chat(messages, cast(XaiModelSettings, model_settings or {}), model_request_parameters)
-        response = await chat.sample()
+        with _map_api_errors(self.model_name):
+            response = await chat.sample()
         return self._process_response(response)
 
     @asynccontextmanager
@@ -673,7 +738,8 @@ class XaiModel(Model):
     ) -> 'XaiStreamedResponse':
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
-        first_item = await peekable_response.peek()
+        with _map_api_errors(self.model_name):
+            first_item = await peekable_response.peek()
         if isinstance(first_item, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
@@ -808,87 +874,87 @@ class XaiStreamedResponse(StreamedResponse):
             yield self._parts_manager.handle_part(vendor_part_id=return_vendor_id, part=return_part)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        """Iterate over streaming events from xAI SDK."""
-        # Local state to avoid re-emmiting duplicate events.
-        prev_reasoning_content = ''
-        prev_encrypted_content = ''
-        seen_tool_call_ids: set[str] = set()
-        seen_tool_return_ids: set[str] = set()
-        last_tool_return_content: dict[str, dict[str, Any] | str | None] = {}
-        # Track previous tool call args to compute deltas (like we do for reasoning content).
-        prev_tool_call_args: dict[str, str] = {}
+        with _map_api_errors(self._model_name):
+            # Local state to avoid re-emmiting duplicate events.
+            prev_reasoning_content = ''
+            prev_encrypted_content = ''
+            seen_tool_call_ids: set[str] = set()
+            seen_tool_return_ids: set[str] = set()
+            last_tool_return_content: dict[str, dict[str, Any] | str | None] = {}
+            # Track previous tool call args to compute deltas (like we do for reasoning content).
+            prev_tool_call_args: dict[str, str] = {}
 
-        async for response, chunk in self._response:
-            self._update_response_state(response)
+            async for response, chunk in self._response:
+                self._update_response_state(response)
 
-            prev_reasoning_content, prev_encrypted_content, reasoning_events = self._collect_reasoning_events(
-                response=response,
-                prev_reasoning_content=prev_reasoning_content,
-                prev_encrypted_content=prev_encrypted_content,
-            )
-            for event in reasoning_events:
-                yield event
-
-            # Handle text content (property filters for ROLE_ASSISTANT)
-            if chunk.content:
-                for event in self._parts_manager.handle_text_delta(
-                    vendor_part_id='content',
-                    content=chunk.content,
-                ):
+                prev_reasoning_content, prev_encrypted_content, reasoning_events = self._collect_reasoning_events(
+                    response=response,
+                    prev_reasoning_content=prev_reasoning_content,
+                    prev_encrypted_content=prev_encrypted_content,
+                )
+                for event in reasoning_events:
                     yield event
 
-            # Handle tool calls/tool results from *this chunk*.
-            #
-            # Important: xAI SDK `Response` is an accumulated view; `response.tool_calls` includes tool calls from
-            # previous chunks. Iterating over it would re-emit tool calls repeatedly. Instead, we read tool calls
-            # from the chunk's deltas which represent what changed in this frame.
-            for output_chunk in chunk.proto.outputs:
-                delta = output_chunk.delta
-                if not delta.tool_calls:
-                    continue
-                for tool_call in delta.tool_calls:
-                    if not tool_call.function.name:
+                # Handle text content (property filters for ROLE_ASSISTANT)
+                if chunk.content:
+                    for event in self._parts_manager.handle_text_delta(
+                        vendor_part_id='content',
+                        content=chunk.content,
+                    ):
+                        yield event
+
+                # Handle tool calls/tool results from *this chunk*.
+                #
+                # Important: xAI SDK `Response` is an accumulated view; `response.tool_calls` includes tool calls from
+                # previous chunks. Iterating over it would re-emit tool calls repeatedly. Instead, we read tool calls
+                # from the chunk's deltas which represent what changed in this frame.
+                for output_chunk in chunk.proto.outputs:
+                    delta = output_chunk.delta
+                    if not delta.tool_calls:
                         continue
+                    for tool_call in delta.tool_calls:
+                        if not tool_call.function.name:
+                            continue
 
-                    if tool_call.type != chat_pb2.ToolCallType.TOOL_CALL_TYPE_CLIENT_SIDE_TOOL:
-                        for event in self._handle_server_side_tool_call(
-                            tool_call=tool_call,
-                            delta=delta,
-                            seen_tool_call_ids=seen_tool_call_ids,
-                            seen_tool_return_ids=seen_tool_return_ids,
-                            last_tool_return_content=last_tool_return_content,
-                        ):
-                            yield event
-                    else:
-                        # Client-side tools: emit args as deltas so UI adapters receive PartDeltaEvents
-                        # (not repeated PartStartEvents). Use accumulated args from response.tool_calls
-                        # and compute the delta like we do for reasoning content.
-                        accumulated = next((tc for tc in response.tool_calls if tc.id == tool_call.id), None)
-                        accumulated_args = (
-                            accumulated.function.arguments
-                            if accumulated is not None and accumulated.function.arguments
-                            else tool_call.function.arguments
-                        )
-                        prev_args = prev_tool_call_args.get(tool_call.id, '')
-                        is_new_tool_call = tool_call.id not in prev_tool_call_args
-                        args_changed = accumulated_args != prev_args
-
-                        if is_new_tool_call or args_changed:
-                            # Compute delta: if accumulated starts with prev, extract the new portion.
-                            if accumulated_args.startswith(prev_args):
-                                args_delta = accumulated_args[len(prev_args) :] or None
-                            else:
-                                args_delta = accumulated_args or None
-                            prev_tool_call_args[tool_call.id] = accumulated_args
-                            maybe_event = self._parts_manager.handle_tool_call_delta(
-                                vendor_part_id=tool_call.id,
-                                # Only pass tool_name on the first call; it would be appended otherwise.
-                                tool_name=tool_call.function.name if is_new_tool_call else None,
-                                args=args_delta,
-                                tool_call_id=tool_call.id,
+                        if tool_call.type != chat_pb2.ToolCallType.TOOL_CALL_TYPE_CLIENT_SIDE_TOOL:
+                            for event in self._handle_server_side_tool_call(
+                                tool_call=tool_call,
+                                delta=delta,
+                                seen_tool_call_ids=seen_tool_call_ids,
+                                seen_tool_return_ids=seen_tool_return_ids,
+                                last_tool_return_content=last_tool_return_content,
+                            ):
+                                yield event
+                        else:
+                            # Client-side tools: emit args as deltas so UI adapters receive PartDeltaEvents
+                            # (not repeated PartStartEvents). Use accumulated args from response.tool_calls
+                            # and compute the delta like we do for reasoning content.
+                            accumulated = next((tc for tc in response.tool_calls if tc.id == tool_call.id), None)
+                            accumulated_args = (
+                                accumulated.function.arguments
+                                if accumulated is not None and accumulated.function.arguments
+                                else tool_call.function.arguments
                             )
-                            if maybe_event is not None:  # pragma: no branch
-                                yield maybe_event
+                            prev_args = prev_tool_call_args.get(tool_call.id, '')
+                            is_new_tool_call = tool_call.id not in prev_tool_call_args
+                            args_changed = accumulated_args != prev_args
+
+                            if is_new_tool_call or args_changed:
+                                # Compute delta: if accumulated starts with prev, extract the new portion.
+                                if accumulated_args.startswith(prev_args):
+                                    args_delta = accumulated_args[len(prev_args) :] or None
+                                else:
+                                    args_delta = accumulated_args or None
+                                prev_tool_call_args[tool_call.id] = accumulated_args
+                                maybe_event = self._parts_manager.handle_tool_call_delta(
+                                    vendor_part_id=tool_call.id,
+                                    # Only pass tool_name on the first call; it would be appended otherwise.
+                                    tool_name=tool_call.function.name if is_new_tool_call else None,
+                                    args=args_delta,
+                                    tool_call_id=tool_call.id,
+                                )
+                                if maybe_event is not None:  # pragma: no branch
+                                    yield maybe_event
 
     @property
     def model_name(self) -> str:
@@ -1058,7 +1124,7 @@ def _extract_usage(
 
     # Add cached prompt tokens if available (optional attribute)
     if usage_obj.cached_prompt_text_tokens:
-        usage_data['cache_read_tokens'] = usage_obj.cached_prompt_text_tokens
+        usage_data['cached_prompt_text_tokens'] = usage_obj.cached_prompt_text_tokens
 
     # Aggregate server-side tools used by PydanticAI builtin tool name
     if usage_obj.server_side_tools_used:
@@ -1071,13 +1137,17 @@ def _extract_usage(
             usage_data[f'server_side_tools_{tool_name}'] = count
 
     # Build details from non-standard fields
-    details = {k: v for k, v in usage_data.items() if k not in {'prompt_tokens', 'completion_tokens'}}
+    details = {
+        k: v
+        for k, v in usage_data.items()
+        if k not in {'prompt_tokens', 'completion_tokens', 'cached_prompt_text_tokens'}
+    }
 
     extracted = RequestUsage.extract(
         dict(model=model, usage=usage_data),
         provider=provider,
         provider_url=provider_url,
-        provider_fallback='x_ai',  # Pricing file is defined as x_ai.yml
+        provider_fallback='x-ai',  # genai-prices provider ID is 'x-ai'
         details=details or None,
     )
 
