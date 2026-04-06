@@ -15,8 +15,11 @@ import anyio.to_thread
 try:
     from botocore.exceptions import ClientError
 except ImportError:
+
     class ClientError(Exception):
         """Fallback ClientError type when botocore is unavailable."""
+
+
 from typing_extensions import ParamSpec, assert_never
 
 from pydantic_ai import (
@@ -1322,10 +1325,10 @@ class BedrockStreamedResponse(StreamedResponse):
                                     yield self._parts_manager.handle_part(vendor_part_id=index, part=part)
 
                             elif maybe_event := self._parts_manager.handle_tool_call_delta(
-                                    vendor_part_id=index,
-                                    tool_name=tool_name,
-                                    tool_call_id=tool_id,
-                                    args='',
+                                vendor_part_id=index,
+                                tool_name=tool_name,
+                                tool_call_id=tool_id,
+                                args='',
                             ):
                                 yield maybe_event
 
@@ -1339,7 +1342,11 @@ class BedrockStreamedResponse(StreamedResponse):
                                     tool_name=CodeExecutionTool.kind,
                                     content=None,
                                     tool_call_id=tool_id,
-                                    provider_details={'status': tool_result_start['status']},
+                                    provider_details={'status': tool_result_start['status']}
+                                    if 'status' in tool_result_start
+                                    else {}
+                                    if 'status' in tool_result_start
+                                    else {},
                                 )
                                 builtin_tool_returns[index] = return_part
 
@@ -1350,19 +1357,19 @@ class BedrockStreamedResponse(StreamedResponse):
                         if 'reasoningContent' in delta:
                             if redacted_content := delta['reasoningContent'].get('redactedContent'):
                                 for event in self._parts_manager.handle_thinking_delta(
-                                        vendor_part_id=index,
-                                        id='redacted_content',
-                                        signature=redacted_content.decode('utf-8'),
-                                        provider_name=self.provider_name,
+                                    vendor_part_id=index,
+                                    id='redacted_content',
+                                    signature=redacted_content.decode('utf-8'),
+                                    provider_name=self.provider_name,
                                 ):
                                     yield event
                             else:
                                 signature = delta['reasoningContent'].get('signature')
                                 for event in self._parts_manager.handle_thinking_delta(
-                                        vendor_part_id=index,
-                                        content=delta['reasoningContent'].get('text'),
-                                        signature=signature,
-                                        provider_name=self.provider_name if signature else None,
+                                    vendor_part_id=index,
+                                    content=delta['reasoningContent'].get('text'),
+                                    signature=signature,
+                                    provider_name=self.provider_name if signature else None,
                                 ):
                                     yield event
 
@@ -1382,10 +1389,10 @@ class BedrockStreamedResponse(StreamedResponse):
                                 yield maybe_event
 
                         if (
-                                'toolResult' in delta
-                                and (return_part := builtin_tool_returns.get(index))
-                                and return_part.tool_name == CodeExecutionTool.kind
-                                and (tr_content := delta['toolResult'])
+                            'toolResult' in delta
+                            and (return_part := builtin_tool_returns.get(index))
+                            and return_part.tool_name == CodeExecutionTool.kind
+                            and (tr_content := delta['toolResult'])
                         ):
                             return_part.content = tr_content[0].get('json')
 
