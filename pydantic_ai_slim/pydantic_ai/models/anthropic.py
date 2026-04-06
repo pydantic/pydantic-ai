@@ -523,11 +523,6 @@ class AnthropicModel(Model):
 
         betas: set[str] = set()
 
-        has_strict_tools = any(tool.get('strict') for tool in tools)
-
-        if has_strict_tools or model_request_parameters.output_mode == 'native':
-            betas.add('structured-outputs-2025-11-13')
-
         if betas_from_setting := model_settings.get('anthropic_betas'):
             betas.update(str(b) for b in betas_from_setting)
 
