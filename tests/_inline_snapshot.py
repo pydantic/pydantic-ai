@@ -14,6 +14,7 @@ Pass --inline-snapshot=<mode> or --snap/--snap-fix to use the real library.
 
 from __future__ import annotations
 
+import os
 import sys
 import warnings
 from collections.abc import Iterator
@@ -28,7 +29,10 @@ if TYPE_CHECKING:
         snapshot as snapshot,
     )
     from inline_snapshot.extra import raises as raises, warns as warns
-elif any(arg.startswith('--inline-snapshot') or arg.startswith('--snap') for arg in sys.argv):
+elif (
+    any(arg.startswith('--inline-snapshot') or arg.startswith('--snap') for arg in sys.argv)
+    or 'INLINE_SNAPSHOT_DEFAULT_FLAGS' in os.environ
+):
     from inline_snapshot import (
         Is as Is,
         customize_repr as customize_repr,  # pyright: ignore[reportUnknownVariableType]

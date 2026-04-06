@@ -206,7 +206,7 @@ async def test_openrouter_tool_calling(allow_model_requests: None, openrouter_ap
     assert tool_call_part.tool_name == 'divide'
     assert tool_call_part.args == snapshot('{"numerator": 123, "denominator": 456, "on_inf": "infinity"}')
 
-    mapped_messages = await model._map_messages([response], None)  # type: ignore[reportPrivateUsage]
+    mapped_messages = await model._map_messages([response], ModelRequestParameters())  # type: ignore[reportPrivateUsage]
     tool_call_message = mapped_messages[0]
     assert tool_call_message['role'] == 'assistant'
     assert tool_call_message.get('content') is None
@@ -254,7 +254,7 @@ async def test_openrouter_preserve_reasoning_block(allow_model_requests: None, o
     )
     messages.append(await model_request(model, messages))
 
-    openai_messages = await model._map_messages(messages, None)  # type: ignore[reportPrivateUsage]
+    openai_messages = await model._map_messages(messages, ModelRequestParameters())  # type: ignore[reportPrivateUsage]
 
     assistant_message = openai_messages[1]
     assert assistant_message['role'] == 'assistant'
@@ -565,7 +565,7 @@ async def test_openrouter_map_messages_reasoning(allow_model_requests: None, ope
     user_message = ModelRequest.user_text_prompt('Who are you. Think about it.')
     response = await model_request(model, [user_message])
 
-    mapped_messages = await model._map_messages([user_message, response], None)  # type: ignore[reportPrivateUsage]
+    mapped_messages = await model._map_messages([user_message, response], ModelRequestParameters())  # type: ignore[reportPrivateUsage]
 
     assert len(mapped_messages) == 2
     assert mapped_messages[1]['reasoning_details'] == snapshot(  # type: ignore[reportGeneralTypeIssues]
@@ -622,7 +622,7 @@ async def test_openrouter_tool_optional_parameters(allow_model_requests: None, o
     assert tool_call_part.tool_name == 'find_education_content'
     assert tool_call_part.args == snapshot(None)
 
-    mapped_messages = await model._map_messages([response], None)  # type: ignore[reportPrivateUsage]
+    mapped_messages = await model._map_messages([response], ModelRequestParameters())  # type: ignore[reportPrivateUsage]
     tool_call_message = mapped_messages[0]
     assert tool_call_message['role'] == 'assistant'
     assert tool_call_message.get('content') == snapshot("I'll search for education content for you.")
