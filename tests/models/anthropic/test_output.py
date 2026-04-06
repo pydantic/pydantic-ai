@@ -54,7 +54,7 @@ pytestmark = [
 def test_strict_tools_supported_model_auto_enabled(
     allow_model_requests: None, weather_tool_responses: list[BetaMessage]
 ):
-    """sonnet-4-5: strict=None + compatible schema → no strict field,"""
+    """sonnet-4-5: strict=None + compatible schema → no strict field."""
     mock_client = MockAnthropic.create_mock(weather_tool_responses)
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(model)
@@ -91,7 +91,7 @@ def test_strict_tools_supported_model_auto_enabled(
 def test_strict_tools_supported_model_explicit_false(
     allow_model_requests: None, weather_tool_responses: list[BetaMessage]
 ):
-    """sonnet-4-5: strict=False → no strict field,"""
+    """sonnet-4-5: strict=False → no strict field."""
     mock_client = MockAnthropic.create_mock(weather_tool_responses)
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(model)
@@ -114,7 +114,7 @@ def test_strict_tools_supported_model_explicit_false(
 def test_strict_tools_unsupported_model_no_strict_sent(
     allow_model_requests: None, weather_tool_responses: list[BetaMessage]
 ):
-    """sonnet-4-0: strict=None → no strict field,  (model doesn't support strict)."""
+    """sonnet-4-0: strict=None → no strict field (model doesn't support strict)."""
     mock_client = MockAnthropic.create_mock(weather_tool_responses)
     model = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(model)
@@ -140,7 +140,7 @@ def test_strict_tools_unsupported_model_no_strict_sent(
 
 
 def test_strict_tools_incompatible_schema_not_auto_enabled(allow_model_requests: None):
-    """sonnet-4-5: strict=None → no strict field,"""
+    """sonnet-4-5: strict=None → no strict field."""
     mock_client = MockAnthropic.create_mock(
         completion_message([BetaTextBlock(text='Sure', type='text')], BetaUsage(input_tokens=5, output_tokens=2))
     )
@@ -211,7 +211,7 @@ def test_no_tools_no_output(
     allow_model_requests: None,
     anthropic_model: ANTHROPIC_MODEL_FIXTURE,
 ) -> None:
-    """Agent with no tools and no output_type →"""
+    """Agent with no tools and no output_type."""
     model = anthropic_model('claude-sonnet-4-5')
     agent = Agent(model)
     agent.run_sync('Tell me a brief fact about Paris')
@@ -222,7 +222,7 @@ def test_no_tools_basemodel_output(
     allow_model_requests: None,
     anthropic_model: ANTHROPIC_MODEL_FIXTURE,
 ) -> None:
-    """Agent with no tools and BaseModel output_type →"""
+    """Agent with no tools and BaseModel output_type."""
     model = anthropic_model('claude-sonnet-4-5')
     agent = Agent(model, output_type=CityInfo)
     agent.run_sync('Give me information about Tokyo')
@@ -375,7 +375,7 @@ def test_strict_false_tool_no_output(
     allow_model_requests: None,
     anthropic_model: ANTHROPIC_MODEL_FIXTURE,
 ) -> None:
-    """Tool with strict=False, no output_type →"""
+    """Tool with strict=False, no output_type."""
     model = anthropic_model('claude-sonnet-4-5')
     agent = Agent(model)
 

@@ -267,7 +267,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """List of Anthropic beta features to enable for API requests.
 
     Each item can be a known beta name (e.g. 'interleaved-thinking-2025-05-14') or a custom string.
-    Merged with auto-added betas (e.g. structured-outputs, builtin tools) and any betas from
+    Merged with auto-added betas (e.g. builtin tools) and any betas from
     extra_headers['anthropic-beta']. See the Anthropic docs for available beta features.
     """
 
