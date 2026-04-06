@@ -73,6 +73,7 @@ with try_import() as imports_successful:
         BedrockConverseModel,
         BedrockModelName,
         BedrockModelSettings,
+        _AsyncIteratorWrapper,
     )
     from pydantic_ai.models.openai import (
         OpenAIResponsesModel,
@@ -293,8 +294,7 @@ async def test_bedrock_model_stream_with_extra_headers(
         ),
     ) as result:
         async for text in result.stream_text():
-            if text:
-                chunks.append(text)
+            chunks.append(text or '')
 
     assert ''.join(chunks) == snapshot(
         "Hello! How can I assist you today? Whether you have questions, need information, or just want to chat, I'm here to help."
@@ -460,6 +460,20 @@ async def test_bedrock_stream_non_http_error():
                 pass
 
     assert 'broken connection' in exc_info.value.message
+
+
+async def test_async_iterator_wrapper_reraises_runtime_error():
+    class _BoomIterator:
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            raise RuntimeError('boom')
+
+    wrapper = _AsyncIteratorWrapper(_BoomIterator())
+
+    with pytest.raises(RuntimeError, match='boom'):
+        await wrapper.__anext__()
 
 
 async def test_stub_provider_properties():
