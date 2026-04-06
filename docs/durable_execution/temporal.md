@@ -70,10 +70,10 @@ Any agent can be wrapped in a [`TemporalAgent`][pydantic_ai.durable_exec.tempora
 
 At the time of wrapping, the agent's [model](../models/overview.md) and [toolsets](../toolsets.md) (including function tools registered on the agent and MCP servers) are frozen, activities are dynamically created for each, and the original model and toolsets are wrapped to call on the worker to execute the corresponding activities instead of directly performing the actions inside the workflow. The original agent can still be used as normal outside the Temporal workflow, but any changes to its model or toolsets after wrapping will not be reflected in the durable agent.
 
-Here is a simple but complete example of wrapping an agent for durable execution, creating a Temporal workflow with durable execution logic, connecting to a Temporal server, and running the workflow from non-durable code. All it requires is to install Pydantic AI with [Temporal](https://github.com/temporalio/sdk-python):
+Here is a simple but complete example of wrapping an agent for durable execution, creating a Temporal workflow with durable execution logic, connecting to a Temporal server, and running the workflow from non-durable code. All it requires is to install Pydantic AI, which already includes [Temporal](https://github.com/temporalio/sdk-python) support:
 
 ```bash
-pip/uv-add pydantic-ai[temporal]
+pip/uv-add pydantic-ai
 ```
 
 Or if you're using the slim package, you can install it with the `temporal` optional group:
@@ -106,7 +106,7 @@ from pydantic_ai.durable_exec.temporal import (
 agent = Agent(
     'openai:gpt-5.2',
     instructions="You're an expert in geography.",
-    name='geography',  # (10)!
+    name='geography',  # (9)!
 )
 
 temporal_agent = TemporalAgent(agent)  # (1)!
