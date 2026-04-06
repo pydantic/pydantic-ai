@@ -1049,6 +1049,8 @@ def _get_builtin_tools(model_request_parameters: ModelRequestParameters) -> list
                 web_search(
                     excluded_domains=builtin_tool.blocked_domains,
                     allowed_domains=builtin_tool.allowed_domains,
+                    # xAI supports image understanding but WebSearchTool doesn't expose that field.
+                    # TODO(david): add field to WebSearchTool
                     enable_image_understanding=False,
                 )
             )

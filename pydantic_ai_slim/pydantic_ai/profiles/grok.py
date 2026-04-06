@@ -23,6 +23,7 @@ class GrokModelProfile(ModelProfile):
 def grok_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Grok model."""
     grok_supports_builtin_tools = model_name.startswith('grok-4') or 'code' in model_name
+    # See https://docs.x.ai/docs/guides/reasoning
     is_always_reasoning = 'reasoning' in model_name and 'non-reasoning' not in model_name
     supports_thinking_effort = model_name.startswith('grok-3-mini')
 
