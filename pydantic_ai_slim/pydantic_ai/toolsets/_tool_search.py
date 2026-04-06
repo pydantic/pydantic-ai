@@ -163,8 +163,16 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
 
         matches: list[dict[str, str | None]] = []
         for entry in search_tool.search_index:
-            searchable = entry.name_lower + (' ' + entry.description_lower if entry.description_lower else '')
-            if any(term in searchable for term in terms):
+            # Split tool name by underscores for word-level matching to avoid
+            # false positives like "me" matching "comment" or "github" matching
+            # every github_* tool via substring.
+            name_words = set(entry.name_lower.split('_'))
+            desc_text = entry.description_lower or ''
+
+            if all(
+                term in name_words or term in desc_text
+                for term in terms
+            ):
                 matches.append({'name': entry.name, 'description': entry.description})
                 if len(matches) >= _MAX_SEARCH_RESULTS:
                     break
