@@ -18,7 +18,7 @@ class Provider(ABC, Generic[InterfaceClient]):
 
     The provider is in charge of providing an authenticated client to the API.
 
-    Each provider only supports a specific interface. A interface can be supported by multiple providers.
+    Each provider only supports a specific interface. An interface can be supported by multiple providers.
 
     For example, the `OpenAIChatModel` interface can be supported by the `OpenAIProvider` and the `DeepSeekProvider`.
     """

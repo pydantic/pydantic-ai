@@ -24,7 +24,7 @@ from pydantic_ai import (
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart
+from pydantic_ai.messages import InstructionPart, ModelRequest, ModelResponse, TextPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -1045,7 +1045,7 @@ async def test_function_toolset_get_instructions_string():
 
     ctx = build_run_context(None)
     result = await toolset.get_instructions(ctx)
-    assert result == ['Always use tool X for math.']
+    assert result == [InstructionPart(content='Always use tool X for math.', dynamic=False)]
 
 
 async def test_function_toolset_get_instructions_function():
@@ -1054,7 +1054,7 @@ async def test_function_toolset_get_instructions_function():
 
     ctx = build_run_context(None)
     result = await toolset.get_instructions(ctx)
-    assert result == ['Use search for lookups.']
+    assert result == [InstructionPart(content='Use search for lookups.', dynamic=True)]
 
 
 async def test_function_toolset_get_instructions_with_ctx():
@@ -1067,7 +1067,7 @@ async def test_function_toolset_get_instructions_with_ctx():
 
     ctx = build_run_context('hello')
     result = await toolset.get_instructions(ctx)
-    assert result == ['Deps are: hello']
+    assert result == [InstructionPart(content='Deps are: hello', dynamic=True)]
 
 
 async def test_function_toolset_get_instructions_async():
@@ -1080,7 +1080,7 @@ async def test_function_toolset_get_instructions_async():
 
     ctx = build_run_context(None)
     result = await toolset.get_instructions(ctx)
-    assert result == ['Async instructions here.']
+    assert result == [InstructionPart(content='Async instructions here.', dynamic=True)]
 
 
 async def test_function_toolset_get_instructions_multiple():
@@ -1089,7 +1089,10 @@ async def test_function_toolset_get_instructions_multiple():
 
     ctx = build_run_context(None)
     result = await toolset.get_instructions(ctx)
-    assert result == ['First instruction.', 'Second instruction.']
+    assert result == [
+        InstructionPart(content='First instruction.', dynamic=False),
+        InstructionPart(content='Second instruction.', dynamic=True),
+    ]
 
 
 async def test_function_toolset_get_instructions_none_default():
@@ -1111,7 +1114,7 @@ async def test_function_toolset_instructions_decorator():
 
     ctx = build_run_context(None)
     result = await toolset.get_instructions(ctx)
-    assert result == ['Use tool Y for data processing.']
+    assert result == [InstructionPart(content='Use tool Y for data processing.', dynamic=True)]
 
 
 async def test_function_toolset_instructions_decorator_with_ctx():
@@ -1124,7 +1127,7 @@ async def test_function_toolset_instructions_decorator_with_ctx():
 
     ctx = build_run_context(42)
     result = await toolset.get_instructions(ctx)
-    assert result == ['Dep value: 42']
+    assert result == [InstructionPart(content='Dep value: 42', dynamic=True)]
 
 
 async def test_function_toolset_instructions_decorator_combined_with_constructor():
@@ -1137,7 +1140,10 @@ async def test_function_toolset_instructions_decorator_combined_with_constructor
 
     ctx = build_run_context(None)
     result = await toolset.get_instructions(ctx)
-    assert result == ['From constructor.', 'From decorator.']
+    assert result == [
+        InstructionPart(content='From constructor.', dynamic=False),
+        InstructionPart(content='From decorator.', dynamic=True),
+    ]
 
 
 async def test_function_toolset_instructions_none_filtered():
@@ -1146,7 +1152,7 @@ async def test_function_toolset_instructions_none_filtered():
 
     ctx = build_run_context(None)
     result = await toolset.get_instructions(ctx)
-    assert result == ['Only this.']
+    assert result == [InstructionPart(content='Only this.', dynamic=False)]
 
 
 async def test_function_toolset_empty_string_instructions():
@@ -1174,7 +1180,7 @@ async def test_wrapper_toolset_passes_through_instructions():
 
     ctx = build_run_context(None)
     result = await wrapped.get_instructions(ctx)
-    assert result == ['Inner instructions.']
+    assert result == [InstructionPart(content='Inner instructions.', dynamic=False)]
 
 
 async def test_combined_toolset_aggregates_instructions():
@@ -1185,7 +1191,10 @@ async def test_combined_toolset_aggregates_instructions():
 
     ctx = build_run_context(None)
     result = await combined.get_instructions(ctx)
-    assert result == ['Toolset 1 instructions.', 'Toolset 2 instructions.']
+    assert result == [
+        InstructionPart(content='Toolset 1 instructions.', dynamic=False),
+        InstructionPart(content='Toolset 2 instructions.', dynamic=False),
+    ]
 
 
 async def test_combined_toolset_skips_none_instructions():
@@ -1196,7 +1205,7 @@ async def test_combined_toolset_skips_none_instructions():
 
     ctx = build_run_context(None)
     result = await combined.get_instructions(ctx)
-    assert result == ['Only from ts1.']
+    assert result == [InstructionPart(content='Only from ts1.', dynamic=False)]
 
 
 async def test_combined_toolset_all_none_returns_none():
@@ -1221,7 +1230,11 @@ async def test_combined_toolset_with_nested_list_instructions():
     ctx = build_run_context(None)
 
     result = await outer.get_instructions(ctx)
-    assert result == ['Instruction A.', 'Instruction B.', 'Instruction C.']
+    assert result == [
+        InstructionPart(content='Instruction A.', dynamic=False),
+        InstructionPart(content='Instruction B.', dynamic=False),
+        InstructionPart(content='Instruction C.', dynamic=False),
+    ]
 
 
 async def test_dynamic_toolset_instructions_before_resolution():
@@ -1246,7 +1259,7 @@ async def test_dynamic_toolset_instructions_after_resolution():
     # for_run_step triggers factory resolution for per_run_step=True
     await dynamic.for_run_step(ctx)
     result = await dynamic.get_instructions(ctx)
-    assert result == ['Dynamic instructions.']
+    assert result == [InstructionPart(content='Dynamic instructions.', dynamic=False)]
 
 
 async def test_toolset_instructions_in_agent():
@@ -1746,3 +1759,41 @@ async def test_concurrent_runs_dont_share_state():
     assert results[1].output == 'Done'
     # Each run should have its own count (1), not share state (1, 2)
     assert all(c == 1 for c in call_counts)
+
+
+async def test_custom_toolset_returning_plain_str_instructions():
+    """A custom AbstractToolset returning a plain str from get_instructions is treated as dynamic."""
+    from pydantic_ai import Agent
+
+    class PlainStrInstructionsToolset(FunctionToolset[None]):
+        """A toolset that overrides get_instructions to return a plain str instead of InstructionPart."""
+
+        async def get_instructions(self, ctx: RunContext[None]) -> str | None:  # type: ignore[override]
+            return 'Custom toolset instruction.'
+
+    agent = Agent(TestModel(), toolsets=[PlainStrInstructionsToolset()])
+    result = await agent.run('Hello')
+    first_message = result.all_messages()[0]
+    assert first_message.instructions == 'Custom toolset instruction.'  # type: ignore[union-attr]
+
+
+async def test_toolset_empty_instructions_filtered():
+    """Empty and whitespace-only instructions from toolsets are filtered out."""
+    from pydantic_ai import Agent
+    from pydantic_ai.messages import InstructionPart
+
+    class EmptyInstructionsToolset(FunctionToolset[None]):
+        async def get_instructions(self, ctx: RunContext[None]) -> list[str | InstructionPart] | None:  # type: ignore[override]
+            return [
+                '',
+                '   ',
+                InstructionPart(content='', dynamic=True),
+                InstructionPart(content='  ', dynamic=False),
+                'valid instruction',
+                InstructionPart(content='another valid', dynamic=True),
+            ]
+
+    agent = Agent(TestModel(), toolsets=[EmptyInstructionsToolset()])
+    result = await agent.run('Hello')
+    first_message = result.all_messages()[0]
+    assert first_message.instructions == 'valid instruction\n\nanother valid'  # type: ignore[union-attr]
