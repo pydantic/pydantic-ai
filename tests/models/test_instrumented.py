@@ -28,6 +28,7 @@ from pydantic_ai import (
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -197,6 +198,8 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
+                        'thinking': None,
                     },
                     'logfire.json_schema': {
                         'type': 'object',
@@ -438,6 +441,8 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
+                        'thinking': None,
                     },
                     'logfire.json_schema': {
                         'type': 'object',
@@ -539,6 +544,8 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
+                        'thinking': None,
                     },
                     'logfire.json_schema': {
                         'type': 'object',
@@ -662,6 +669,8 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire, instr
                             'prompted_output_template': None,
                             'allow_text_output': True,
                             'allow_image_output': False,
+                            'instruction_parts': None,
+                            'thinking': None,
                         },
                         'gen_ai.request.temperature': 1,
                         'logfire.msg': 'chat gpt-4o',
@@ -797,6 +806,8 @@ Fix the errors and try again.\
                             'prompted_output_template': None,
                             'allow_text_output': True,
                             'allow_image_output': False,
+                            'instruction_parts': None,
+                            'thinking': None,
                         },
                         'gen_ai.request.temperature': 1,
                         'logfire.msg': 'chat gpt-4o',
@@ -952,43 +963,20 @@ Fix the errors and try again.\
                                 'gen_ai.operation.name': 'chat',
                                 'gen_ai.request.model': 'gpt-4o',
                                 'gen_ai.response.model': 'gpt-4o-2024-11-20',
-                                'gen_ai.token.type': 'input',
                             },
                             'start_time_unix_nano': IsInt(),
                             'time_unix_nano': IsInt(),
                             'count': 1,
-                            'sum': 0.00018125,
+                            'sum': 0.00188125,
                             'scale': 20,
                             'zero_count': 0,
-                            'positive': {'offset': -13033519, 'bucket_counts': [1]},
+                            'positive': {'offset': -9493905, 'bucket_counts': [1]},
                             'negative': {'offset': 0, 'bucket_counts': [0]},
                             'flags': 0,
-                            'min': 0.00018125,
-                            'max': 0.00018125,
+                            'min': 0.00188125,
+                            'max': 0.00188125,
                             'exemplars': [],
-                        },
-                        {
-                            'attributes': {
-                                'gen_ai.provider.name': 'openai',
-                                'gen_ai.system': 'openai',
-                                'gen_ai.operation.name': 'chat',
-                                'gen_ai.request.model': 'gpt-4o',
-                                'gen_ai.response.model': 'gpt-4o-2024-11-20',
-                                'gen_ai.token.type': 'output',
-                            },
-                            'start_time_unix_nano': IsInt(),
-                            'time_unix_nano': IsInt(),
-                            'count': 1,
-                            'sum': 0.0017,
-                            'scale': 20,
-                            'zero_count': 0,
-                            'positive': {'offset': -9647161, 'bucket_counts': [1]},
-                            'negative': {'offset': 0, 'bucket_counts': [0]},
-                            'flags': 0,
-                            'min': 0.0017,
-                            'max': 0.0017,
-                            'exemplars': [],
-                        },
+                        }
                     ],
                     'aggregation_temporality': 1,
                 },
@@ -1497,6 +1485,75 @@ def test_messages_to_otel_events_without_binary_content(document_content: Binary
     )
 
 
+def test_messages_to_otel_events_with_text_content():
+    messages = [
+        ModelRequest(
+            instructions='instructions',
+            parts=[UserPromptPart(content=['user_prompt', TextContent('text content', metadata={'key': 'value'})])],
+            timestamp=IsDatetime(),
+        ),
+        ModelResponse(parts=[TextPart('text1')]),
+    ]
+    settings_with_content = InstrumentationSettings()
+    assert [
+        InstrumentedModel.event_to_dict(e) for e in settings_with_content.messages_to_otel_events(messages)
+    ] == snapshot(
+        [
+            {'content': 'instructions', 'role': 'system', 'event.name': 'gen_ai.system.message'},
+            {
+                'content': ['user_prompt', 'text content'],
+                'role': 'user',
+                'gen_ai.message.index': 0,
+                'event.name': 'gen_ai.user.message',
+            },
+            {
+                'role': 'assistant',
+                'content': 'text1',
+                'gen_ai.message.index': 1,
+                'event.name': 'gen_ai.assistant.message',
+            },
+        ]
+    )
+    assert settings_with_content.messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'user_prompt'},
+                    {'type': 'text', 'content': 'text content'},
+                ],
+            },
+            {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'text1'}]},
+        ]
+    )
+    settings_without_content = InstrumentationSettings(include_content=False)
+    assert [
+        InstrumentedModel.event_to_dict(e) for e in settings_without_content.messages_to_otel_events(messages)
+    ] == snapshot(
+        [
+            {'role': 'system', 'event.name': 'gen_ai.system.message'},
+            {
+                'content': [{'kind': 'text'}, {'kind': 'text'}],
+                'role': 'user',
+                'gen_ai.message.index': 0,
+                'event.name': 'gen_ai.user.message',
+            },
+            {
+                'role': 'assistant',
+                'content': [{'kind': 'text'}],
+                'gen_ai.message.index': 1,
+                'event.name': 'gen_ai.assistant.message',
+            },
+        ]
+    )
+    assert settings_without_content.messages_to_otel_messages(messages) == snapshot(
+        [
+            {'role': 'user', 'parts': [{'type': 'text'}, {'type': 'text'}]},
+            {'role': 'assistant', 'parts': [{'type': 'text'}]},
+        ]
+    )
+
+
 def test_messages_without_content(document_content: BinaryContent):
     messages: list[ModelMessage] = [
         ModelRequest(parts=[SystemPromptPart('system_prompt')], timestamp=IsDatetime()),
@@ -1733,6 +1790,8 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
+                        'thinking': None,
                     },
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat gpt-4o',

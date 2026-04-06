@@ -440,6 +440,32 @@ If a tool requires sequential/serial execution, you can pass the [`sequential`][
 
 Async functions are run on the event loop, while sync functions are offloaded to threads. To get the best performance, _always_ use an async function _unless_ you're doing blocking I/O (and there's no way to use a non-blocking library instead) or CPU-bound work (like `numpy` or `scikit-learn` operations), so that simple functions are not offloaded to threads unnecessarily.
 
+#### Thread executor for long-running servers
+
+By default, sync functions are offloaded to threads using [`anyio.to_thread.run_sync`][anyio.to_thread.run_sync], which creates ephemeral threads on demand. In long-running servers (e.g. FastAPI), these threads can accumulate under sustained traffic, leading to memory growth.
+
+To control thread lifecycle, provide a bounded [`ThreadPoolExecutor`][concurrent.futures.ThreadPoolExecutor] using the [`ThreadExecutor`][pydantic_ai.capabilities.ThreadExecutor] capability (per-agent) or the [`Agent.using_thread_executor()`][pydantic_ai.agent.AbstractAgent.using_thread_executor] context manager (global):
+
+```python {test="skip"}
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
+
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import ThreadExecutor
+
+# Per-agent: pass as a capability
+executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix='agent-worker')
+agent = Agent('openai:gpt-5.2', capabilities=[ThreadExecutor(executor)])
+
+# Global: wrap your server lifespan
+@asynccontextmanager
+async def lifespan(app):
+    executor = ThreadPoolExecutor(max_workers=16)
+    with Agent.using_thread_executor(executor):
+        yield
+    executor.shutdown(wait=True)
+```
+
 !!! note "Limiting tool executions"
     You can cap tool executions within a run using [`UsageLimits(tool_calls_limit=...)`](agent.md#usage-limits). The counter increments only after a successful tool invocation. Output tools (used for [structured output](output.md)) are not counted in the `tool_calls` metric.
 
@@ -449,6 +475,44 @@ When a model calls an [output tool](output.md#tool-output) in parallel with othe
 The `'exhaustive'` strategy ensures all tools are executed even after a final result is found, which is useful when tools have side effects (like logging, sending notifications, or updating metrics) that should always execute.
 
 For more information of how `end_strategy` works with both function tools and output tools, see the [Output Tool](output.md#parallel-output-tool-calls) docs.
+
+## Tool Search
+
+Agents with many tools (e.g. [MCP servers](mcp/client.md) exposing dozens of endpoints) can suffer from context bloat and degraded tool selection. Marking tools for deferred loading hides them from the model's initial context; a `search_tools` tool is automatically injected so the model can discover hidden tools by keyword when it needs them.
+
+This is inspired by Anthropic's [Tool Search Tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool#limits-and-best-practices) for managing large tool collections. Tool search is implemented on the Pydantic AI side and works with any model. Native provider support is planned in [#4167](https://github.com/pydantic/pydantic-ai/issues/4167).
+
+For individual tools, set `defer_loading=True` on [`Tool`][pydantic_ai.tools.Tool], [`@agent.tool`][pydantic_ai.agent.Agent.tool], or [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain]. For entire toolsets (including [MCP servers](mcp/client.md) and [`FastMCPToolset`][pydantic_ai.toolsets.fastmcp.FastMCPToolset]), use the [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] method — pass a list of tool names to hide only specific tools, or `None` to hide all.
+
+```python {title="tool_search.py"}
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+
+
+@agent.tool_plain(defer_loading=True)
+def mortgage_calculator(principal: float, rate: float, years: int) -> str:
+    """Calculate monthly mortgage payment for a home loan."""
+    monthly_rate = rate / 100 / 12
+    n_payments = years * 12
+    payment = principal * (monthly_rate * (1 + monthly_rate) ** n_payments) / ((1 + monthly_rate) ** n_payments - 1)
+    return f'${payment:.2f}/month'
+```
+
+For MCP servers, use [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] to hide all tools behind search:
+
+```python {title="tool_search_mcp.py" lint="skip" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerHTTP
+
+mcp = MCPServerHTTP('http://localhost:8000/mcp')
+agent = Agent('openai:gpt-5.2', toolsets=[mcp.defer_loading()])
+```
+
+!!! note "Tool discovery and message history"
+    Discovered tools are tracked via metadata in the [message history](message-history.md). If a [history processor](message-history.md#processing-message-history) truncates messages containing discovery metadata, previously discovered tools will require re-discovery.
+
+See [`ToolDefinition.defer_loading`][pydantic_ai.tools.ToolDefinition.defer_loading] and [Deferred Loading](toolsets.md#deferred-loading) for more details.
 
 ## See Also
 

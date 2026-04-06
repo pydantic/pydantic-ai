@@ -14,12 +14,15 @@ else:
 
 
 if TYPE_CHECKING:
-    from .messages import RetryPromptPart
+    from .messages import ModelResponse, RetryPromptPart
 
 __all__ = (
     'ModelRetry',
     'CallDeferred',
     'ApprovalRequired',
+    'SkipModelRequest',
+    'SkipToolValidation',
+    'SkipToolExecution',
     'UserError',
     'AgentRunError',
     'UnexpectedModelBehavior',
@@ -34,9 +37,11 @@ __all__ = (
 
 
 class ModelRetry(Exception):
-    """Exception to raise when a tool function should be retried.
+    """Exception to raise to request a model retry.
 
-    The agent will return the message to the model and ask it to try calling the function/tool again.
+    Can be raised from tool functions, output validators, and capability hooks
+    (such as `after_model_request`, `after_tool_execute`, etc.) to send
+    a retry prompt back to the model asking it to try again.
     """
 
     message: str
@@ -105,6 +110,49 @@ class ApprovalRequired(Exception):
 
     def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
         return self.__class__, (self.metadata,)
+
+
+class SkipModelRequest(Exception):
+    """Exception to raise in before/wrap model request hooks to skip the model call.
+
+    The provided response will be used instead of calling the model.
+
+    Note: when raised in `before_model_request`, any message history modifications
+    made by earlier capabilities in that hook will not be persisted to the agent's
+    message history, since the request preparation is aborted.
+    """
+
+    response: ModelResponse
+
+    def __init__(self, response: ModelResponse):
+        self.response = response
+        super().__init__()
+
+
+class SkipToolValidation(Exception):
+    """Exception to raise in before/wrap tool validate hooks to skip validation.
+
+    The provided args will be used as the validated arguments.
+    """
+
+    validated_args: dict[str, Any]
+
+    def __init__(self, validated_args: dict[str, Any]):
+        self.validated_args = validated_args
+        super().__init__()
+
+
+class SkipToolExecution(Exception):
+    """Exception to raise in before/wrap tool execute hooks to skip execution.
+
+    The provided result will be used as the tool result.
+    """
+
+    result: Any
+
+    def __init__(self, result: Any):
+        self.result = result
+        super().__init__()
 
 
 class UserError(RuntimeError):

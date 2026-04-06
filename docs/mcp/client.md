@@ -340,26 +340,15 @@ agent = Agent('openai:gpt-5.2', toolsets=[weather_server, calculator_server])
 
 ## Server Instructions
 
-MCP servers can provide instructions during initialization that give context about how to best interact with the server's tools. These instructions are accessible via the [`instructions`][pydantic_ai.mcp.MCPServer.instructions] property after the server connection is established.
+MCP servers can provide instructions during initialization that give context about how to best interact with the server's tools. These are accessible via the [`instructions`][pydantic_ai.mcp.MCPServer.instructions] property after the connection is established, and can be automatically injected into the agent's instructions by setting `include_instructions=True` when creating the server.
 
-```python {title="mcp_server_instructions.py"}
+```python {title="mcp_server_include_instructions.py" test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 
-server = MCPServerStreamableHTTP('http://localhost:8000/mcp')
+server = MCPServerStreamableHTTP('http://localhost:8000/mcp', include_instructions=True)
 agent = Agent('openai:gpt-5.2', toolsets=[server])
-
-@agent.instructions
-async def mcp_server_instructions():
-    return server.instructions  # (1)!
-
-async def main():
-    result = await agent.run('What is 7 plus 5?')
-    print(result.output)
-    #> The answer is 12.
 ```
-
-1. The server connection is guaranteed to be established by this point, so `server.instructions` is available.
 
 ## Tool metadata
 
@@ -469,7 +458,7 @@ async def main():
     #> There are 9,208 days between January 1, 2000, and March 18, 2025.
 ```
 
-1. When you supply `http_client`, Pydantic AI re-uses this client for every
+1. When you supply `http_client`, Pydantic AI reuses this client for every
    request. Anything supported by **httpx** (`verify`, `cert`, custom
    proxies, timeouts, etc.) therefore applies to all MCP traffic.
 

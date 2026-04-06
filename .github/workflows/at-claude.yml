@@ -10,12 +10,16 @@ on:
   pull_request_review:
     types: [submitted]
 
+permissions: {}
+
 env:
   UV_PYTHON: 3.13
   UV_FROZEN: "1"
 
 jobs:
   get-pr-info:
+    permissions:
+      contents: read
     if: |
       (
         (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
@@ -57,11 +61,12 @@ jobs:
       actions: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 1
+          persist-credentials: false
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
         with:
           enable-cache: true
           cache-suffix: claude-code
@@ -70,7 +75,7 @@ jobs:
 
       - run: make install
 
-      - uses: anthropics/claude-code-action@v1
+      - uses: anthropics/claude-code-action@2fb9ee77a029749082ac35126a09ecd05fe34cf0 # v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           additional_permissions: |
@@ -91,11 +96,12 @@ jobs:
       actions: read
     steps:
       - name: Checkout fork repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           repository: ${{ needs.get-pr-info.outputs.pr_head_repo }}
           ref: ${{ needs.get-pr-info.outputs.pr_head_ref }}
           fetch-depth: 1
+          persist-credentials: false
 
       - name: Check for modified config files
         run: |
@@ -108,7 +114,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: anthropics/claude-code-action@v1
+      - uses: anthropics/claude-code-action@2fb9ee77a029749082ac35126a09ecd05fe34cf0 # v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           additional_permissions: |
