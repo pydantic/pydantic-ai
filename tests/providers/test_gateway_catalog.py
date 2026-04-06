@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import os
 import warnings
 from typing import get_args
 
@@ -7,10 +8,12 @@ import pytest
 from typing_inspection.introspection import get_literal_values
 
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.models import KnownModelName
 from pydantic_ai.providers.gateway import ModelProvider as GatewayModelProvider
 
 from ..conftest import try_import
+from ..models.test_model_names import UNSUPPORTED_GATEWAY_MODEL_NAMES
 
 with try_import() as imports_successful:
     import anthropic as anthropic
@@ -30,7 +33,10 @@ def gateway_live_api_key(pytestconfig: pytest.Config, gateway_api_key: str | Non
     if not pytestconfig.getoption('--run-gateway-live'):
         pytest.skip('gateway catalog smoke tests require --run-gateway-live')
     if not gateway_api_key:
-        pytest.skip('gateway catalog smoke tests require `PYDANTIC_AI_GATEWAY_API_KEY` or `PAIG_API_KEY`')
+        message = 'gateway catalog smoke tests require `PYDANTIC_AI_GATEWAY_API_KEY` or `PAIG_API_KEY`'
+        if os.getenv('CI'):
+            pytest.fail(message)
+        pytest.skip(message)
     return gateway_api_key
 
 
@@ -46,6 +52,17 @@ def _gateway_supported_providers() -> set[str]:
     return {f'gateway/{provider}' for provider in get_args(GatewayModelProvider)}
 
 
+async def _run_gateway_smoke_test(model_name: str) -> str:
+    agent = Agent(model_name, model_settings={'max_tokens': 256}, retries=3)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', DeprecationWarning)
+        result = await agent.run('Reply with exactly OK.')
+    output = result.output
+    assert isinstance(output, str)
+    assert output.strip()
+    return output
+
+
 def test_gateway_known_model_names_only_use_supported_providers() -> None:
     known_gateway_providers = {model_name.split(':', maxsplit=1)[0] for model_name in _gateway_known_model_names()}
     assert known_gateway_providers <= _gateway_supported_providers()
@@ -55,10 +72,16 @@ def test_gateway_known_model_names_only_use_supported_providers() -> None:
 async def test_gateway_known_model_name_smoke_test(
     model_name: str, allow_model_requests: None, gateway_live_api_key: str
 ) -> None:
-    agent = Agent(model_name, model_settings={'max_tokens': 256}, retries=3)
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore', DeprecationWarning)
-        result = await agent.run('Reply with exactly OK.')
-    output = result.output
-    assert isinstance(output, str)
-    assert output.strip()
+    await _run_gateway_smoke_test(model_name)
+
+
+@pytest.mark.parametrize('model_name', sorted(UNSUPPORTED_GATEWAY_MODEL_NAMES), ids=str)
+@pytest.mark.xfail(
+    strict=True,
+    raises=(ModelAPIError, ModelHTTPError),
+    reason='Excluded gateway models should still fail; an XPASS means the literal can likely be restored.',
+)
+async def test_unsupported_gateway_known_model_name_smoke_test(
+    model_name: str, allow_model_requests: None, gateway_live_api_key: str
+) -> None:
+    await _run_gateway_smoke_test(model_name)

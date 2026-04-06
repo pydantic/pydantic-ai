@@ -79,7 +79,7 @@ _PROVIDER_DEPRECATED_MODELS: dict[str, frozenset[str]] = {
     'openai': DEPRECATED_OPENAI_MODELS,
 }
 
-_UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
+UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
     {
         'gateway/anthropic:claude-3-5-haiku-20241022',
         'gateway/anthropic:claude-3-5-haiku-latest',
@@ -225,7 +225,7 @@ def test_known_model_names():  # pragma: lax no cover
         f'gateway/{provider}:{model_name}'
         for provider in GatewayModelProvider.__args__
         for model_name in get_model_names(_PROVIDER_TO_MODEL_NAMES[provider])
-        if f'gateway/{provider}:{model_name}' not in _UNSUPPORTED_GATEWAY_MODEL_NAMES
+        if f'gateway/{provider}:{model_name}' not in UNSUPPORTED_GATEWAY_MODEL_NAMES
         if not is_deprecated(provider, model_name)
     ]
 
