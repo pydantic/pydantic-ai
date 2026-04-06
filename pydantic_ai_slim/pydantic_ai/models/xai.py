@@ -1045,12 +1045,11 @@ def _get_builtin_tools(model_request_parameters: ModelRequestParameters) -> list
     tools: list[chat_types.chat_pb2.Tool] = []
     for builtin_tool in model_request_parameters.builtin_tools:
         if isinstance(builtin_tool, WebSearchTool):
+            # Note: user_location and search_context_size are not supported by xAI
             tools.append(
                 web_search(
                     excluded_domains=builtin_tool.blocked_domains,
                     allowed_domains=builtin_tool.allowed_domains,
-                    # xAI supports image understanding but WebSearchTool doesn't expose that field.
-                    # TODO(david): add field to WebSearchTool
                     enable_image_understanding=False,
                 )
             )

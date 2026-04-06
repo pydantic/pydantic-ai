@@ -252,10 +252,6 @@ class XSearchTool(AbstractBuiltinTool):
             raise ValueError('allowed_x_handles cannot contain more than 10 handles')
         if self.excluded_x_handles and len(self.excluded_x_handles) > 10:
             raise ValueError('excluded_x_handles cannot contain more than 10 handles')
-        if self.from_date is not None and not isinstance(self.from_date, datetime):
-            raise TypeError('`from_date` must be a `datetime` object')
-        if self.to_date is not None and not isinstance(self.to_date, datetime):
-            raise TypeError('`to_date` must be a `datetime` object')
 
 
 @dataclass(kw_only=True)
@@ -535,6 +531,7 @@ class FileSearchTool(AbstractBuiltinTool):
 
     * OpenAI Responses
     * Google (Gemini)
+    * xAI (mapped to collections search)
     """
 
     file_store_ids: Sequence[str]
@@ -542,6 +539,7 @@ class FileSearchTool(AbstractBuiltinTool):
 
     For OpenAI, these are the IDs of vector stores created via the OpenAI API.
     For Google, these are file search store names that have been uploaded and processed via the Gemini Files API.
+    For xAI, these are collection IDs for the xAI collections search tool.
     """
 
     kind: str = 'file_search'
