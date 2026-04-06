@@ -3666,12 +3666,12 @@ def test_deferral_unexpected_exception_still_errors_v5(capfire: CaptureLogfire) 
     def my_tool(x: int) -> str:
         raise ValueError('something went wrong')
 
-    with pytest.raises(Exception):  # noqa: B017
+    with pytest.raises(ValueError, match='something went wrong'):
         agent.run_sync('Hello')
 
     tool_span = _get_tool_span(capfire)
 
-    # BaseException path should still record error regardless of instrumentation version
+    # ValueError path should still record error regardless of instrumentation version
     assert tool_span['attributes'].get('logfire.level_num') == 17
     # No deferral attributes should be set
     assert 'pydantic_ai.tool.deferral.name' not in tool_span['attributes']
