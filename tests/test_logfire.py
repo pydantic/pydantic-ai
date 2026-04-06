@@ -3623,6 +3623,61 @@ def test_deferral_non_serializable_metadata(capfire: CaptureLogfire) -> None:
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_deferral_model_retry_still_errors_v5(capfire: CaptureLogfire) -> None:
+    """Test that ModelRetry on v5 still records the span as an error.
+
+    The deferral fix (CallDeferred/ApprovalRequired → UNSET on v5) must not affect
+    ModelRetry, which wraps as ToolRetryError and should always be an error span.
+    """
+    agent = Agent(
+        TestModel(),
+        instrument=InstrumentationSettings(version=5),
+    )
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        raise ModelRetry('please try again with different input')
+
+    with pytest.raises(UnexpectedModelBehavior):
+        agent.run_sync('Hello')
+
+    tool_span = _get_tool_span(capfire)
+
+    # ToolRetryError should still be recorded as an error on v5 — only deferrals get UNSET
+    assert tool_span['attributes'].get('logfire.level_num') == 17
+    # No deferral attributes should be set — this is a retry, not a deferral
+    assert 'pydantic_ai.tool.deferral.name' not in tool_span['attributes']
+    assert 'pydantic_ai.tool.deferral.metadata' not in tool_span['attributes']
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_deferral_unexpected_exception_still_errors_v5(capfire: CaptureLogfire) -> None:
+    """Test that unexpected exceptions on v5 still record the span as an error.
+
+    The deferral fix must not affect general exception handling — only
+    CallDeferred and ApprovalRequired get UNSET status on v5.
+    """
+    agent = Agent(
+        TestModel(),
+        instrument=InstrumentationSettings(version=5),
+    )
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        raise ValueError('something went wrong')
+
+    with pytest.raises(Exception):  # noqa: B017
+        agent.run_sync('Hello')
+
+    tool_span = _get_tool_span(capfire)
+
+    # BaseException path should still record error regardless of instrumentation version
+    assert tool_span['attributes'].get('logfire.level_num') == 17
+    # No deferral attributes should be set
+    assert 'pydantic_ai.tool.deferral.name' not in tool_span['attributes']
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.anyio
 async def test_agent_description(capfire: CaptureLogfire) -> None:
     agent = Agent(
