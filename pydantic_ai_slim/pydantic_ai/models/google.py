@@ -346,18 +346,10 @@ class GoogleModel(Model):
         if model_request_parameters.builtin_tools and model_request_parameters.output_tools:
             if not google_profile.google_supports_tool_combination:
                 if model_request_parameters.output_mode == 'auto':
-                    output_mode = (
-                        'native' if google_profile.google_supports_native_output_with_builtin_tools else 'prompted'
-                    )
-                    model_request_parameters = replace(model_request_parameters, output_mode=output_mode)
+                    model_request_parameters = replace(model_request_parameters, output_mode='prompted')
                 else:
-                    output_mode = (
-                        'NativeOutput'
-                        if google_profile.google_supports_native_output_with_builtin_tools
-                        else 'PromptedOutput'
-                    )
                     raise UserError(
-                        f'This model does not support output tools and built-in tools at the same time. Use `output_type={output_mode}(...)` instead.'
+                        'This model does not support output tools and built-in tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
                     )
         return super().prepare_request(model_settings, model_request_parameters)
 
@@ -533,7 +525,6 @@ class GoogleModel(Model):
         self, model_request_parameters: ModelRequestParameters, tools: list[ToolDict] | None
     ) -> ToolConfigDict | None:
         has_builtin_tools = bool(model_request_parameters.builtin_tools)
-        supports_tool_combination = GoogleModelProfile.from_profile(self.profile).google_supports_tool_combination
         if not model_request_parameters.allow_text_output and tools:
             names: list[str] = []
             for tool in tools:
@@ -541,10 +532,10 @@ class GoogleModel(Model):
                     if name := function_declaration.get('name'):  # pragma: no branch
                         names.append(name)
             tool_config = _tool_config(names)
-            if has_builtin_tools and supports_tool_combination:
+            if has_builtin_tools:
                 tool_config['include_server_side_tool_invocations'] = True
             return tool_config
-        elif has_builtin_tools and supports_tool_combination:
+        elif has_builtin_tools:
             return ToolConfigDict(include_server_side_tool_invocations=True)
         else:
             return None
@@ -1025,6 +1016,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _file_search_tool_call_id: str | None = field(default=None, init=False)
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
     _has_content_filter: bool = field(default=False, init=False)
+    _has_tool_invocations: bool = field(default=False, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         if self._provider_timestamp is not None:
@@ -1091,12 +1083,13 @@ class GeminiStreamedResponse(StreamedResponse):
 
                 # URL context metadata (for WebFetchTool) is streamed in the first chunk, before the text,
                 # so we can safely yield it here
-                web_fetch_call, web_fetch_return = _map_url_context_metadata(
-                    candidate.url_context_metadata, self.provider_name
-                )
-                if web_fetch_call and web_fetch_return:
-                    yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_call)
-                    yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_return)
+                if not self._has_tool_invocations:
+                    web_fetch_call, web_fetch_return = _map_url_context_metadata(
+                        candidate.url_context_metadata, self.provider_name
+                    )
+                    if web_fetch_call and web_fetch_return:
+                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_call)
+                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_return)
 
                 if candidate.content is None or candidate.content.parts is None:
                     continue
@@ -1104,6 +1097,9 @@ class GeminiStreamedResponse(StreamedResponse):
                 parts = candidate.content.parts
                 if not parts:
                     continue  # pragma: no cover
+
+                if not self._has_tool_invocations:
+                    self._has_tool_invocations = any(p.tool_call or p.tool_response for p in parts)
 
                 for part in parts:
                     provider_details: dict[str, Any] | None = None
@@ -1185,9 +1181,12 @@ class GeminiStreamedResponse(StreamedResponse):
                 # Grounding metadata is attached to the final text chunk, so
                 # we emit the `BuiltinToolReturnPart` after the text delta so
                 # that the delta is properly added to the same `TextPart` as earlier chunks
-                file_search_part = self._handle_file_search_grounding_metadata_streaming(candidate.grounding_metadata)
-                if file_search_part is not None:
-                    yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=file_search_part)
+                if not self._has_tool_invocations:
+                    file_search_part = self._handle_file_search_grounding_metadata_streaming(
+                        candidate.grounding_metadata
+                    )
+                    if file_search_part is not None:
+                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=file_search_part)
         except errors.APIError as e:
             if (status_code := e.code) >= 400:
                 raise ModelHTTPError(
@@ -1327,13 +1326,15 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
             if item.provider_name == provider_name:
                 if item.tool_name == CodeExecutionTool.kind:
                     part['executable_code'] = cast(ExecutableCodeDict, item.args_as_dict())
-                elif tool_type := _BUILTIN_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name):  # pragma: no branch
+                elif tool_type := _BUILTIN_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name):
                     part['tool_call'] = {'id': item.tool_call_id, 'tool_type': tool_type, 'args': item.args_as_dict()}
+                else:
+                    raise UnexpectedModelBehavior(f'Unknown builtin tool name: {item.tool_name!r}')
         elif isinstance(item, BuiltinToolReturnPart):
             if item.provider_name == provider_name:
                 if item.tool_name == CodeExecutionTool.kind and isinstance(item.content, dict):
                     part['code_execution_result'] = cast(CodeExecutionResultDict, item.content)  # pyright: ignore[reportUnknownMemberType]
-                elif tool_type := _BUILTIN_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name):  # pragma: no branch
+                elif tool_type := _BUILTIN_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name):
                     tool_content: dict[str, Any] = (  # pyright: ignore[reportUnknownVariableType]
                         item.content if isinstance(item.content, dict) else {'result': item.content}  # pyright: ignore[reportUnknownMemberType]
                     )
@@ -1342,6 +1343,8 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
                         'tool_type': tool_type,
                         'response': tool_content,
                     }
+                else:
+                    raise UnexpectedModelBehavior(f'Unknown builtin tool name: {item.tool_name!r}')
         elif isinstance(item, FilePart):
             content = item.content
             inline_data_dict: BlobDict = {'data': content.data, 'mime_type': content.media_type}
@@ -1392,7 +1395,7 @@ def _process_part(
         assert part.function_call.name is not None
         item = ToolCallPart(tool_name=part.function_call.name, args=part.function_call.args)
         if part.function_call.id is not None:
-            item.tool_call_id = part.function_call.id  # pragma: no cover
+            item.tool_call_id = part.function_call.id
     elif part.tool_call:
         item = _map_tool_call(part.tool_call, provider_name)
     elif part.tool_response:
@@ -1427,19 +1430,23 @@ def _process_response_from_parts(
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
 
-    web_search_call, web_search_return = _map_grounding_metadata(grounding_metadata, provider_name)
-    if web_search_call and web_search_return:
-        items.append(web_search_call)
-        items.append(web_search_return)
+    # When include_server_side_tool_invocations is set, the API returns tool_call/tool_response
+    # parts directly. Skip metadata-based reconstruction to avoid duplicate builtin tool parts.
+    has_tool_invocations = any(p.tool_call or p.tool_response for p in parts)
+    if not has_tool_invocations:
+        web_search_call, web_search_return = _map_grounding_metadata(grounding_metadata, provider_name)
+        if web_search_call and web_search_return:
+            items.append(web_search_call)
+            items.append(web_search_return)
 
-    file_search_call, file_search_return = _map_file_search_grounding_metadata(grounding_metadata, provider_name)
-    if file_search_call and file_search_return:
-        items.append(file_search_call)
-        items.append(file_search_return)
-    web_fetch_call, web_fetch_return = _map_url_context_metadata(url_context_metadata, provider_name)
-    if web_fetch_call and web_fetch_return:
-        items.append(web_fetch_call)
-        items.append(web_fetch_return)
+        file_search_call, file_search_return = _map_file_search_grounding_metadata(grounding_metadata, provider_name)
+        if file_search_call and file_search_return:
+            items.append(file_search_call)
+            items.append(file_search_return)
+        web_fetch_call, web_fetch_return = _map_url_context_metadata(url_context_metadata, provider_name)
+        if web_fetch_call and web_fetch_return:
+            items.append(web_fetch_call)
+            items.append(web_fetch_return)
 
     item: ModelResponsePart | None = None
     code_execution_tool_call_id: str | None = None
@@ -1535,7 +1542,11 @@ def _map_code_execution_result(
 
 def _map_tool_call(tool_call: ToolCall, provider_name: str) -> BuiltinToolCallPart:
     tool_type = tool_call.tool_type
-    tool_name = _TOOL_TYPE_TO_BUILTIN_TOOL_NAME[tool_type] if tool_type else str(tool_type)
+    if tool_type is None:
+        raise UnexpectedModelBehavior(f'Unexpected tool type in tool_call: {tool_call!r}')
+    tool_name = _TOOL_TYPE_TO_BUILTIN_TOOL_NAME.get(tool_type)
+    if tool_name is None:
+        raise UnexpectedModelBehavior(f'Unknown tool type in tool_call: {tool_type!r}')
     return BuiltinToolCallPart(
         provider_name=provider_name,
         tool_name=tool_name,
@@ -1546,7 +1557,11 @@ def _map_tool_call(tool_call: ToolCall, provider_name: str) -> BuiltinToolCallPa
 
 def _map_tool_response(tool_response: ToolResponse, provider_name: str) -> BuiltinToolReturnPart:
     tool_type = tool_response.tool_type
-    tool_name = _TOOL_TYPE_TO_BUILTIN_TOOL_NAME[tool_type] if tool_type else str(tool_type)
+    if tool_type is None:
+        raise UnexpectedModelBehavior(f'Unexpected tool type in tool_response: {tool_response!r}')
+    tool_name = _TOOL_TYPE_TO_BUILTIN_TOOL_NAME.get(tool_type)
+    if tool_name is None:
+        raise UnexpectedModelBehavior(f'Unknown tool type in tool_response: {tool_type!r}')
     return BuiltinToolReturnPart(
         provider_name=provider_name,
         tool_name=tool_name,

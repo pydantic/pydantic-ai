@@ -484,30 +484,6 @@ async def test_function_tools_with_builtin_tools(allow_model_requests: None, goo
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='web_search',
-                        args={'queries': ['', 'current weather in Tokyo']},
-                        tool_call_id=IsStr(),
-                        provider_name='google-gla',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='web_search',
-                        content=[
-                            {
-                                'domain': None,
-                                'title': 'theweathernetwork.com',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEnkhgS9dHw7cQ5gIl8G8VtymyxgZYOgxedzQj8YBAzSjbcLbZPY-CjTN3qL8mM1H_iaZo56rw1V-pRT1Lw_9ZxXwhgBssj4H3dUjnEohVZi4rdYFFoY16APOV6PRqYfTjVYARmJ-OuTLWNXB-KhL8iQa77TUo6977ksRI=',
-                            },
-                            {
-                                'domain': None,
-                                'title': 'google.com',
-                                'uri': 'https://www.google.com/search?q=weather+in+Tokyo,+JP',
-                            },
-                        ],
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='google-gla',
-                    ),
-                    BuiltinToolCallPart(
-                        tool_name='web_search',
                         args={'queries': ['current weather in Tokyo']},
                         tool_call_id='xds2qnru',
                         provider_name='google-gla',
@@ -738,61 +714,6 @@ async def test_native_output_with_function_and_builtin_tools(
                         tool_name='web_search',
                         args={
                             'queries': [
-                                '',
-                                'largest city in Mexico by population 2026',
-                                'population of Mexico City vs other cities in Mexico 2026',
-                            ]
-                        },
-                        tool_call_id=IsStr(),
-                        provider_name='google-gla',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='web_search',
-                        content=[
-                            {
-                                'domain': None,
-                                'title': 'economictimes.com',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFkEWDxvuNxmOuIPk8RDNni40iD_ReP01auJVUWYVnVJSMPpnOM4bpBF6VSbpNugUSSg91JcXZO9IZkg-rMGN_UtTeYeh7BpQiSyLzdwGG43t3C3N3CX_RAJ181NmPApt3MtNg7XFn9SKe3t1J1x29-rk2rvNQxCetg5kjajAVCfpcyJjuDBmRysfZR_xorpPs5OeulZHdSsXy4UY3LXwQJ0r5a7CcJ4JmV2s0QKs4nGK4xnlML4H68EZRRRgycnF7oALfzTmBBGUjf6XBSy86w6ja1q5tebQeKtt1cuWbeCIiHZWg7gQT5HA==',
-                            },
-                            {
-                                'domain': None,
-                                'title': 'worldpopulationreview.com',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE_xEtkMyIQrKJ9r2U3YNfUytdSSNC_gplgPvI1L1WDbR7FXjI64k719XU7Taj-bstfimb71cCUe4qjd30hxz-REdx1wgt59YyGTYfwitq2pPCfGnXkZPtfb0zx4Ma4Y3gDEUiuev4YzCbEaVn3BfzqDAzVKj7F',
-                            },
-                            {
-                                'domain': None,
-                                'title': 'chislennost.com',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGDl3qZhcSRJfSjs5MXnj3vp0t0LMnAW66pZEgt65d-7Cs-QlfxyAHxtdn7vhybgkOzhdAJ3GlrKxs8P31JvYZ2_brvnqcRVxzZ2qiVJ-PCVi0TgtesKlaEldgUybDltvQ7JXJPGJ8ZBO6FCJHEozrBUSRsT8a2rbms3EreW3gRUX5VPj0=',
-                            },
-                            {
-                                'domain': None,
-                                'title': 'worldometers.info',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGc2Xi0yzfZZXu5w_01vhz5ZWmyxYOt9QH8e9GL_fl8eVjLUofkqwm8IIQ47Zrv-fzzGEzXEH8yWJnTXchru1wlFZStmfgie8HIj8huzP8cfWbYkjHqx-H-rWG0DDKv9rJNTvwMvJmxbOZeW6SczLp-Vp5t1yDiuDmy0CPn',
-                            },
-                            {
-                                'domain': None,
-                                'title': 'macrotrends.net',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGO1NmCwLQa-0c6k0xxLKsFraHnIf3tfduZwUg02PKVXeF4HOuLP1nVc1Qux50KZrE3Z6OBjXq-I42wzg5jdl2REYmoo68pDDEio9byY_9De_-_PDwzGnCyEEIAkDoFD-Vvy5LaZxrvPmYcfbdkvfN1wsQ9X2yozD7o3dZDUl10rOdKPC2YpsEe5g==',
-                            },
-                            {
-                                'domain': None,
-                                'title': 'statisticstimes.com',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFBhlW456B7oa2wHNGZEO1FM-V0rTCVGNly0M5odAdoMK_dijaoHqP_hJT5ZPjHPM12oiFIoZX0hjILWl3tbxgYAoC-A__htIeOMYdVP-lqnCLfq2smD4nig6Jug3tfMtSWgbp6xpQ9CiT3609aLVSC4JVUdsrtHh2kCqTmmfjKbBG3Q9eANvhf',
-                            },
-                            {
-                                'domain': None,
-                                'title': 'worldometers.info',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFCqrrAgIPMtDLChV4JjBqjfcYD023xn9ITH8d1dL_-FvBOfLkmEVek2fmBjzw_dWn29kFxY4qpTrTzPyfY4RRO-4OXiDDFiJJCwFYQC4FUmSA3MNqfcqlqg0ajKiLZRZ4InSMp4j1S2vofYwjUVxPfD7wJc2S7wXvsDg==',
-                            },
-                        ],
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='google-gla',
-                    ),
-                    BuiltinToolCallPart(
-                        tool_name='web_search',
-                        args={
-                            'queries': [
                                 'largest city in Mexico by population 2026',
                                 'population of Mexico City vs other cities in Mexico 2026',
                             ]
@@ -982,40 +903,6 @@ async def test_native_output_with_builtin_tools(allow_model_requests: None, goog
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
-                        tool_name='web_search',
-                        args={'queries': ['largest city in Mexico']},
-                        tool_call_id=IsStr(),
-                        provider_name='google-gla',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='web_search',
-                        content=[
-                            {
-                                'domain': None,
-                                'title': 'sa.gov',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGg97J9aTlqhFd2a0LN4W8tdaPYU32dpl6I-6HUzZx7Zp_aAOTXz6DaUtxWsnA_fJL3bpN4ywfpPrgdjFl9tyU0RH8t5QrR02DyQpO3AzU38ChE-MKpdwM_ZDowoz7NOiXQ56fYA0IYnv1MasIq_1pj4ilwjD74iOcEc4vq4imsvLsqbpp1tMeHnFRz18NpOQSTmNQ9YaiLkBaiBqY0QZr_Z9h6WerAR9c5H90ixDoT3Ds=',
-                            },
-                            {
-                                'domain': None,
-                                'title': 'chicagosistercities.com',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGd2HZezLhKHiISvr8SCWjI71O5DBWM8aK68o_XDohAtCk9mA4vx5BxUSV7BF20-lGztBnl8KdhB6_g7ZqCNY6vrKxxHIrUuDwJHNlzD9pErVlWHlkXH237HlDroHhhBWQst9hOQGWYKpklH8QObeCAWtNE2FHSzVrirTwz3bE=',
-                            },
-                            {
-                                'domain': None,
-                                'title': 'worldatlas.com',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQETiMFJxIzb4UmbPxiZMzWUyYlzMpENHv1UUTIb2x7Ils-79uDX4wrxxfykAzecK1hfg725C2ws6RbpQ2qGyxuRug8biZvWUapdIAd9Wzx4irMROUnr_FiQmXj8JvV1_8dwPNL5FOyfI5lvPilNyHCiHtux0IofSnG3skOCZkvp',
-                            },
-                            {
-                                'domain': None,
-                                'title': 'wikipedia.org',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE5GGhbtuuevqv6EjMoc7ro02Ih0iEpStmwKBso9zxHboT39uR0nTtn7xAeZy-ttFiEVszJIcuB8_o8elAgSw_SKZ-_fTAJfmnKJ94mLl-EJec3Kl-H5AQJjdk6sxeshAla0lE=',
-                            },
-                        ],
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='google-gla',
-                    ),
                     BuiltinToolCallPart(
                         tool_name='web_search',
                         args={'queries': ['largest city in Mexico']},
