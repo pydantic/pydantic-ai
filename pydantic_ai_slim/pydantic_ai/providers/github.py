@@ -100,8 +100,8 @@ class GitHubProvider(Provider[AsyncOpenAI]):
         api_key = api_key or os.getenv('GITHUB_API_KEY')
         if not api_key and openai_client is None:
             raise UserError(
-                'Set the `GITHUB_API_KEY` environment variable or pass it via `GitHubProvider(api_key=...)`'
-                ' to use the GitHub Models provider.'
+                'Set the `GITHUB_API_KEY` environment variable or pass it via `GitHubProvider(api_key=...)` '
+                'to use the GitHub Models provider.'
             )
 
         if openai_client is not None:

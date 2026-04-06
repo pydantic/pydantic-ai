@@ -87,7 +87,7 @@ class FireworksProvider(Provider[AsyncOpenAI]):
         api_key = api_key or os.getenv('FIREWORKS_API_KEY')
         if not api_key and openai_client is None:
             raise UserError(
-                'Set the `FIREWORKS_API_KEY` environment variable or pass it via `FireworksProvider(api_key=...)`'
+                'Set the `FIREWORKS_API_KEY` environment variable or pass it via `FireworksProvider(api_key=...)` '
                 'to use the Fireworks AI provider.'
             )
 

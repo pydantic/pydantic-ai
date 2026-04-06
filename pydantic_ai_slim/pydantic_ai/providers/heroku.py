@@ -69,7 +69,7 @@ class HerokuProvider(Provider[AsyncOpenAI]):
             api_key = api_key or os.getenv('HEROKU_INFERENCE_KEY')
             if not api_key:
                 raise UserError(
-                    'Set the `HEROKU_INFERENCE_KEY` environment variable or pass it via `HerokuProvider(api_key=...)`'
+                    'Set the `HEROKU_INFERENCE_KEY` environment variable or pass it via `HerokuProvider(api_key=...)` '
                     'to use the Heroku provider.'
                 )
 
