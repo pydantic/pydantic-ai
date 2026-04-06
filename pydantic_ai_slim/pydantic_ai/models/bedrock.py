@@ -1344,8 +1344,6 @@ class BedrockStreamedResponse(StreamedResponse):
                                     tool_call_id=tool_id,
                                     provider_details={'status': tool_result_start['status']}
                                     if 'status' in tool_result_start
-                                    else {}
-                                    if 'status' in tool_result_start
                                     else {},
                                 )
                                 builtin_tool_returns[index] = return_part
