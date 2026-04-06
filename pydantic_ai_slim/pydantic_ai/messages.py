@@ -1842,6 +1842,14 @@ class ModelResponse:
       or return background/async responses (e.g. OpenAI background mode).
     """
 
+    continuation_delay: float | None = None
+    """Seconds the graph should wait before sending the next continuation request.
+
+    Set by providers that return suspended (in-progress) responses, e.g. OpenAI background mode.
+    The agent graph reads this value in ``ContinueRequestNode`` so that durable execution
+    frameworks can intercept the sleep.
+    """
+
     run_id: str | None = None
     """The unique identifier of the agent run in which this message originated."""
 

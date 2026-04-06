@@ -59,6 +59,7 @@ __all__ = (
     'ContinueRequestNode',
     'build_run_context',
     'capture_run_messages',
+    'set_continuation_sleep',
     'HistoryProcessor',
 )
 
@@ -70,6 +71,48 @@ EndStrategy = Literal['early', 'graceful', 'exhaustive']
 
 _MAX_CONTINUATIONS = 50
 """Maximum number of continuations allowed for incomplete responses (e.g., Anthropic pause_turn)."""
+
+ContinuationSleepFunc = Callable[[float], Awaitable[None]]
+"""Type for async sleep functions used during continuation polling."""
+
+_CONTINUATION_SLEEP: ContextVar[ContinuationSleepFunc | None] = ContextVar(
+    'pydantic_ai.continuation_sleep',
+    default=None,
+)
+
+
+@contextmanager
+def set_continuation_sleep(sleep_func: ContinuationSleepFunc) -> Iterator[None]:
+    """Set a custom async sleep function for continuation polling delays.
+
+    By default, :class:`ContinueRequestNode` uses :func:`asyncio.sleep` when waiting between
+    continuation polls. Durable execution frameworks (Temporal, Prefect, DBOS, Restate, etc.)
+    should use this context manager to register their own durable sleep so that poll delays
+    survive workflow replays and don't waste activity time.
+
+    Example::
+
+        async def temporal_sleep(seconds: float) -> None:
+            await workflow.sleep(seconds)
+
+        with set_continuation_sleep(temporal_sleep):
+            result = await agent.run(prompt)
+    """
+    token = _CONTINUATION_SLEEP.set(sleep_func)
+    try:
+        yield
+    finally:
+        _CONTINUATION_SLEEP.reset(token)
+
+
+async def _continuation_sleep(delay: float) -> None:
+    """Sleep using the registered continuation sleep function, or asyncio.sleep."""
+    sleep_func = _CONTINUATION_SLEEP.get()
+    if sleep_func is not None:
+        await sleep_func(delay)
+    else:
+        await asyncio.sleep(delay)
+
 
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
@@ -1285,6 +1328,12 @@ class ContinueRequestNode(AgentNode[DepsT, NodeRunEndT]):
     to a new `ContinueRequestNode`; if complete, it transitions to `CallToolsNode`.
     This keeps each continuation visible as a discrete graph node transition.
 
+    Continuations are not real model requests — they are polling/retrieval operations.
+    Hooks (wrap_model_request, before_model_request, after_model_request) are intentionally
+    not run here because: the message history ends in a suspended ModelResponse (not a
+    ModelRequest), Anthropic requires the exact same history back, and OpenAI just calls
+    a retrieve endpoint.
+
     Note: `agent.run_stream()` advances this node via `run()` (non-streaming), not `stream()`.
     The `stream()` method is available for users who manually iterate the graph via `agent.iter()`
     and want streaming events from continuation requests.
@@ -1306,10 +1355,23 @@ class ContinueRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if self._did_stream:
             raise exceptions.AgentRunError('You must finish streaming before calling run()')  # pragma: no cover
 
-        # Note: self.model_response is already the last entry in ctx.state.message_history
-        # (appended by HandleResponseNode). We pass message_history to model.request() and the
-        # model reads the suspended response from there to know how to continue.
-        new_response = await self._request(ctx)
+        self._check_continuation_limit(ctx)
+        if delay := self.model_response.continuation_delay:
+            await _continuation_sleep(delay)
+
+        ctx.deps.usage_limits.check_before_request(ctx.state.usage)
+        model_request_parameters = await _prepare_request_parameters(ctx, instruction_parts=None)
+        model_settings = ctx.deps.get_model_settings(build_run_context(ctx)) or ModelSettings()
+
+        try:
+            with set_current_run_context(build_run_context(ctx)):
+                new_response = await ctx.deps.model.request(
+                    ctx.state.message_history, model_settings, model_request_parameters
+                )
+        except Exception:
+            self._rewind_suspended(ctx)
+            raise
+
         merged_response = self._process_response(ctx, new_response)
 
         if new_response.state == 'suspended':
@@ -1336,138 +1398,33 @@ class ContinueRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> AsyncIterator[_messages.AgentStreamEvent]:
         self._check_continuation_limit(ctx)
-        run_context, request_context = await self._prepare_continuation(ctx)
+        if delay := self.model_response.continuation_delay:
+            await _continuation_sleep(delay)
 
-        # Cooperative hand-off between this generator and the wrap_model_request task,
-        # following the same pattern as ModelRequestNode._run_stream:
-        # 1. The task runs capability middleware, then the handler opens the stream.
-        # 2. The handler signals stream_ready, then waits on stream_done.
-        # 3. This generator yields events to the caller, then signals stream_done.
-        # 4. The handler resumes, the stream closes, and the task completes.
-        stream_ready = asyncio.Event()
-        stream_done = asyncio.Event()
-        streamed_response_holder: list[models.StreamedResponse] = []
+        ctx.deps.usage_limits.check_before_request(ctx.state.usage)
+        model_request_parameters = await _prepare_request_parameters(ctx, instruction_parts=None)
+        run_context = build_run_context(ctx)
+        model_settings = ctx.deps.get_model_settings(run_context) or ModelSettings()
 
-        async def _streaming_handler(req_ctx: ModelRequestContext) -> _messages.ModelResponse:
+        try:
             with set_current_run_context(run_context):
                 async with ctx.deps.model.request_stream(
-                    req_ctx.messages, req_ctx.model_settings, req_ctx.model_request_parameters, run_context
+                    ctx.state.message_history, model_settings, model_request_parameters, run_context
                 ) as sr:
                     self._did_stream = True
-                    streamed_response_holder.append(sr)
-                    stream_ready.set()
-                    await stream_done.wait()
-            return sr.get()
+                    async for event in sr:
+                        yield event
+                    new_response = sr.get()
+        except Exception:
+            self._rewind_suspended(ctx)
+            raise
 
-        wrap_task = asyncio.create_task(
-            ctx.deps.root_capability.wrap_model_request(
-                run_context,
-                request_context=request_context,
-                handler=_streaming_handler,
-            )
-        )
-
-        ready_waiter = asyncio.create_task(stream_ready.wait())
-        await asyncio.wait({ready_waiter, wrap_task}, return_when=asyncio.FIRST_COMPLETED)
-        ready_waiter.cancel()
-
-        if wrap_task.done() and not stream_ready.is_set():  # pragma: lax no cover
-            # wrap_model_request completed without calling handler (short-circuited or error)
-            try:
-                new_response = wrap_task.result()
-            except exceptions.SkipModelRequest as e:
-                new_response = e.response
-            except Exception as e:
-                new_response = await ctx.deps.root_capability.on_model_request_error(
-                    run_context, request_context=request_context, error=e
-                )
-        else:
-            # Normal path: stream is ready, yield events
-            stream_error: BaseException | None = None
-            try:
-                async for event in streamed_response_holder[0]:
-                    yield event
-            except BaseException as exc:
-                stream_error = exc
-            finally:
-                stream_done.set()
-
-                if stream_error is not None:
-                    wrap_task.cancel()
-                    try:
-                        await wrap_task
-                    except (asyncio.CancelledError, BaseException):
-                        pass
-                    raise stream_error
-
-            try:
-                new_response = await wrap_task
-            except Exception as e:
-                new_response = await ctx.deps.root_capability.on_model_request_error(
-                    run_context, request_context=request_context, error=e
-                )
-
-        new_response = await ctx.deps.root_capability.after_model_request(
-            run_context, request_context=request_context, response=new_response
-        )
         merged_response = self._process_response(ctx, new_response)
 
         if new_response.state == 'suspended':
             self._result = ContinueRequestNode(merged_response)
         else:
             self._result = CallToolsNode(merged_response)
-
-    async def _request(
-        self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> _messages.ModelResponse:
-        """Make a single non-streaming continuation request."""
-        self._check_continuation_limit(ctx)
-        run_context, request_context = await self._prepare_continuation(ctx)
-
-        async def model_handler(req_ctx: ModelRequestContext) -> _messages.ModelResponse:
-            with set_current_run_context(run_context):
-                return await ctx.deps.model.request(
-                    req_ctx.messages, req_ctx.model_settings, req_ctx.model_request_parameters
-                )
-
-        try:
-            response = await ctx.deps.root_capability.wrap_model_request(
-                run_context,
-                request_context=request_context,
-                handler=model_handler,
-            )
-        except exceptions.SkipModelRequest as e:  # pragma: lax no cover
-            response = e.response
-        except Exception as e:
-            response = await ctx.deps.root_capability.on_model_request_error(
-                run_context, request_context=request_context, error=e
-            )
-
-        response = await ctx.deps.root_capability.after_model_request(
-            run_context, request_context=request_context, response=response
-        )
-        return response
-
-    async def _prepare_continuation(
-        self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> tuple[RunContext[DepsT], ModelRequestContext]:
-        """Prepare common state for a continuation request."""
-        ctx.deps.usage_limits.check_before_request(ctx.state.usage)
-
-        model_request_parameters = await _prepare_request_parameters(ctx, instruction_parts=None)
-        run_context = build_run_context(ctx)
-        model_settings = ctx.deps.get_model_settings(run_context) or ModelSettings()
-        run_context.model_settings = model_settings
-
-        request_context = ModelRequestContext(
-            model=ctx.deps.model,
-            messages=ctx.state.message_history,
-            model_settings=model_settings,
-            model_request_parameters=model_request_parameters,
-        )
-        request_context = await ctx.deps.root_capability.before_model_request(run_context, request_context)
-
-        return run_context, request_context
 
     def _check_continuation_limit(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -1477,6 +1434,16 @@ class ContinueRequestNode(AgentNode[DepsT, NodeRunEndT]):
             raise exceptions.UnexpectedModelBehavior(
                 f'Exceeded maximum continuations ({_MAX_CONTINUATIONS}) for incomplete responses'
             )
+
+    @staticmethod
+    def _rewind_suspended(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]) -> None:
+        """Remove the suspended response from history so it remains valid for reuse."""
+        if (  # pragma: no branch
+            ctx.state.message_history
+            and isinstance(ctx.state.message_history[-1], _messages.ModelResponse)
+            and ctx.state.message_history[-1].state == 'suspended'
+        ):
+            ctx.state.message_history.pop()
 
     def _process_response(
         self,

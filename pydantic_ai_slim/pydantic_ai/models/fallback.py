@@ -16,7 +16,7 @@ from pydantic_ai._utils import get_first_param_type, is_async_callable
 from pydantic_ai.models.instrumented import InstrumentedModel
 
 from ..exceptions import FallbackExceptionGroup, ModelAPIError, UserError
-from ..messages import ModelRequest, ModelResponse
+from ..messages import ModelResponse
 from ..profiles import ModelProfile
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
 
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from ..settings import ModelSettings
 
 _PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
-_FALLBACK_MODEL_NAME_KEY = 'fallback_model_name'
+_FALLBACK_MODEL_ID_KEY = 'fallback_model_id'
 
 ExceptionHandler = Callable[[Exception], Awaitable[bool]] | Callable[[Exception], bool]
 """A sync or async callable that decides whether an exception should trigger fallback."""
@@ -333,20 +333,15 @@ class FallbackModel(Model):
         return model_settings, model_request_parameters
 
     def _get_continuation_model(self, messages: list[ModelMessage]) -> Model | None:
-        """Find the model that should handle continuation from message history.
-
-        When a model returns `state='suspended'`, its `model_name` is stamped into
-        the response's `metadata` (under a `__pydantic_ai__` key). On the next request,
-        we extract that name and match it back to the correct model in `self.models`.
-        """
-        for message in reversed(messages):
-            if isinstance(message, ModelResponse):
-                if message.state != 'suspended':
-                    return None
-                pydantic_ai_meta = (message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY, {})
-                if name := pydantic_ai_meta.get(_FALLBACK_MODEL_NAME_KEY):
-                    return next((m for m in self.models if m.model_name == name), None)
-                return None
+        """Find the model that should handle continuation from message history."""
+        if not messages:  # pragma: lax no cover
+            return None
+        last = messages[-1]
+        if not isinstance(last, ModelResponse) or last.state != 'suspended':
+            return None
+        pydantic_ai_meta = (last.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY, {})
+        if model_id := pydantic_ai_meta.get(_FALLBACK_MODEL_ID_KEY):
+            return next((m for m in self.models if m.model_id == model_id), None)
         return None
 
     def _set_span_attributes(self, model: Model, model_request_parameters: ModelRequestParameters) -> None:
@@ -364,7 +359,7 @@ class FallbackModel(Model):
 
 
 def _stamp_continuation(response: ModelResponse | StreamedResponse, model: Model) -> None:
-    """Stamp the model's name into metadata for stateless continuation routing.
+    """Stamp the model's identifier into metadata for stateless continuation routing.
 
     Uses `metadata['__pydantic_ai__']` to avoid conflating framework-level routing state
     with provider-specific data in `provider_details`.
@@ -372,20 +367,18 @@ def _stamp_continuation(response: ModelResponse | StreamedResponse, model: Model
     if response.metadata is None:
         response.metadata = {}
     pydantic_ai_meta = response.metadata.setdefault(_PYDANTIC_AI_METADATA_KEY, {})
-    pydantic_ai_meta[_FALLBACK_MODEL_NAME_KEY] = model.model_name
+    pydantic_ai_meta[_FALLBACK_MODEL_ID_KEY] = model.model_id
 
 
 def _rewind_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
-    """Strip suspended response and trailing continuation request from message end.
+    """Strip the suspended response from the end of message history.
 
     When a pinned continuation model fails, the messages still contain the suspended
-    response and the continuation request that triggered the failure. Before falling
-    through to the normal chain, we need to remove these so models see a clean history.
+    response. Before falling through to the normal chain, we remove it so models see
+    clean history ending with the most recent ModelRequest.
     """
     rewound = list(messages)
-    if rewound and isinstance(rewound[-1], ModelRequest):
-        rewound.pop()
-    if rewound and isinstance(rewound[-1], ModelResponse) and rewound[-1].state == 'suspended':
+    if rewound and isinstance(rewound[-1], ModelResponse) and rewound[-1].state == 'suspended':  # pragma: no branch
         rewound.pop()
     return rewound
 
