@@ -290,7 +290,6 @@ class TestOpenAI:
                                     'gen_ai.operation.name': 'embeddings',
                                     'gen_ai.request.model': 'text-embedding-3-small',
                                     'gen_ai.response.model': 'text-embedding-3-small',
-                                    'gen_ai.token.type': 'input',
                                 },
                                 'start_time_unix_nano': IsInt(),
                                 'time_unix_nano': IsInt(),
@@ -1207,7 +1206,9 @@ class TestBedrock:
 class TestGoogle:
     @pytest.fixture
     def embedder(self, gemini_api_key: str) -> Embedder:
-        return Embedder(GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key=gemini_api_key)))
+        return Embedder(
+            GoogleEmbeddingModel('gemini-embedding-2-preview', provider=GoogleProvider(api_key=gemini_api_key))
+        )
 
     async def test_infer_model_gla(self, gemini_api_key: str):
         with patch.dict(os.environ, {'GOOGLE_API_KEY': gemini_api_key}):
@@ -1246,7 +1247,7 @@ class TestGoogle:
                 inputs=['Hello, world!'],
                 input_type='query',
                 usage=RequestUsage(),
-                model_name='gemini-embedding-001',
+                model_name='gemini-embedding-2-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
             )
@@ -1260,7 +1261,7 @@ class TestGoogle:
                 inputs=['hello', 'world'],
                 input_type='document',
                 usage=RequestUsage(),
-                model_name='gemini-embedding-001',
+                model_name='gemini-embedding-2-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
             )
@@ -1274,7 +1275,7 @@ class TestGoogle:
                 inputs=['Hello, world!'],
                 input_type='query',
                 usage=RequestUsage(),
-                model_name='gemini-embedding-001',
+                model_name='gemini-embedding-2-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
             )
@@ -1282,7 +1283,7 @@ class TestGoogle:
 
     async def test_max_input_tokens(self, embedder: Embedder):
         max_input_tokens = await embedder.max_input_tokens()
-        assert max_input_tokens == snapshot(2048)
+        assert max_input_tokens == snapshot(8192)
 
     async def test_count_tokens(self, embedder: Embedder):
         count = await embedder.count_tokens('Hello, world!')
@@ -1310,7 +1311,7 @@ class TestGoogle:
                 inputs=['Hello, world!'],
                 input_type='query',
                 usage=RequestUsage(),
-                model_name='gemini-embedding-001',
+                model_name='gemini-embedding-2-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
             )
@@ -1340,7 +1341,7 @@ class TestGoogle:
 
     @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
     async def test_instrumentation(self, gemini_api_key: str, capfire: CaptureLogfire):
-        model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key=gemini_api_key))
+        model = GoogleEmbeddingModel('gemini-embedding-2-preview', provider=GoogleProvider(api_key=gemini_api_key))
         embedder = Embedder(model, instrument=True)
         await embedder.embed_query('Hello, world!', settings={'dimensions': 768})
 
@@ -1349,7 +1350,7 @@ class TestGoogle:
 
         assert span == snapshot(
             {
-                'name': 'embeddings gemini-embedding-001',
+                'name': 'embeddings gemini-embedding-2-preview',
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
                 'start_time': IsInt(),
@@ -1357,7 +1358,7 @@ class TestGoogle:
                 'attributes': {
                     'gen_ai.operation.name': 'embeddings',
                     'gen_ai.provider.name': 'google-gla',
-                    'gen_ai.request.model': 'gemini-embedding-001',
+                    'gen_ai.request.model': 'gemini-embedding-2-preview',
                     'input_type': 'query',
                     'server.address': 'generativelanguage.googleapis.com',
                     'inputs_count': 1,
@@ -1374,9 +1375,8 @@ class TestGoogle:
                         },
                     },
                     'logfire.span_type': 'span',
-                    'logfire.msg': 'embeddings gemini-embedding-001',
-                    'gen_ai.response.model': 'gemini-embedding-001',
-                    'operation.cost': 0.0,
+                    'logfire.msg': 'embeddings gemini-embedding-2-preview',
+                    'gen_ai.response.model': 'gemini-embedding-2-preview',
                     'gen_ai.embeddings.dimension.count': 768,
                 },
             }

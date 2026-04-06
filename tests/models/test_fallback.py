@@ -25,7 +25,7 @@ from pydantic_ai import (
     ToolDefinition,
     UserPromptPart,
 )
-from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolReturnPart
+from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolReturnPart, InstructionPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel, ResponseRejected
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -169,9 +169,12 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
                         'thinking': None,
                     },
                     'logfire.span_type': 'span',
+                    'gen_ai.agent.name': 'agent',
+                    'gen_ai.agent.call.id': IsStr(),
                     'gen_ai.provider.name': 'function',
                     'logfire.msg': 'chat fallback:function:failure_response:,function:success_response:',
                     'gen_ai.system': 'function',
@@ -203,6 +206,8 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'model_name': 'fallback:function:failure_response:,function:success_response:',
                     'agent_name': 'agent',
                     'gen_ai.agent.name': 'agent',
+                    'gen_ai.agent.call.id': IsStr(),
+                    'gen_ai.operation.name': 'invoke_agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
                     'gen_ai.usage.input_tokens': 51,
@@ -280,9 +285,12 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
                         'thinking': None,
                     },
                     'logfire.span_type': 'span',
+                    'gen_ai.agent.name': 'agent',
+                    'gen_ai.agent.call.id': IsStr(),
                     'gen_ai.provider.name': 'function',
                     'logfire.msg': 'chat fallback:function::failure_response_stream,function::success_response_stream',
                     'gen_ai.system': 'function',
@@ -314,6 +322,8 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     'model_name': 'fallback:function::failure_response_stream,function::success_response_stream',
                     'agent_name': 'agent',
                     'gen_ai.agent.name': 'agent',
+                    'gen_ai.agent.call.id': IsStr(),
+                    'gen_ai.operation.name': 'invoke_agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
                     'final_result': 'hello world',
@@ -393,6 +403,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
                         'thinking': None,
                     },
                     'logfire.json_schema': {
@@ -401,6 +412,8 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                     },
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat fallback:function:failure_response:,function:failure_response:',
+                    'gen_ai.agent.name': 'agent',
+                    'gen_ai.agent.call.id': IsStr(),
                     'logfire.level_num': 17,
                     'gen_ai.response.model': 'fallback:function:failure_response:,function:failure_response:',
                 },
@@ -427,6 +440,8 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'model_name': 'fallback:function:failure_response:,function:failure_response:',
                     'agent_name': 'agent',
                     'gen_ai.agent.name': 'agent',
+                    'gen_ai.agent.call.id': IsStr(),
+                    'gen_ai.operation.name': 'invoke_agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
                     'logfire.exception.fingerprint': '0000000000000000000000000000000000000000000000000000000000000000',
@@ -742,6 +757,18 @@ Always respond with a JSON object that's compatible with this schema:
 
 Don't include any text or Markdown fencing before or after.
 """,
+                instruction_parts=[
+                    InstructionPart(
+                        content="""\
+
+Always respond with a JSON object that's compatible with this schema:
+
+{"properties": {"bar": {"type": "string"}}, "required": ["bar"], "title": "Foo", "type": "object"}
+
+Don't include any text or Markdown fencing before or after.
+"""
+                    )
+                ],
             )
         )
 
@@ -804,6 +831,19 @@ Always respond with a JSON object that's compatible with this schema:
 
 Don't include any text or Markdown fencing before or after.
 """,
+                instruction_parts=[
+                    InstructionPart(content='Be kind'),
+                    InstructionPart(
+                        content="""\
+
+Always respond with a JSON object that's compatible with this schema:
+
+{"properties": {"bar": {"type": "string"}}, "required": ["bar"], "title": "Foo", "type": "object"}
+
+Don't include any text or Markdown fencing before or after.
+"""
+                    ),
+                ],
             )
         )
 
@@ -891,9 +931,26 @@ Don't include any text or Markdown fencing before or after.
 """,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': [
+                            {'content': 'Be kind', 'dynamic': False, 'part_kind': 'instruction'},
+                            {
+                                'content': """\
+
+Always respond with a JSON object that's compatible with this schema:
+
+{"properties": {"bar": {"type": "string"}}, "required": ["bar"], "title": "Foo", "type": "object"}
+
+Don't include any text or Markdown fencing before or after.
+""",
+                                'dynamic': False,
+                                'part_kind': 'instruction',
+                            },
+                        ],
                         'thinking': None,
                     },
                     'logfire.span_type': 'span',
+                    'gen_ai.agent.name': 'agent',
+                    'gen_ai.agent.call.id': IsStr(),
                     'gen_ai.provider.name': 'function',
                     'logfire.msg': 'chat fallback:function:tool_output_func:,function:prompted_output_func:',
                     'gen_ai.system': 'function',
@@ -927,6 +984,8 @@ Don't include any text or Markdown fencing before or after.
                     'model_name': 'fallback:function:tool_output_func:,function:prompted_output_func:',
                     'agent_name': 'agent',
                     'gen_ai.agent.name': 'agent',
+                    'gen_ai.agent.call.id': IsStr(),
+                    'gen_ai.operation.name': 'invoke_agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
                     'gen_ai.usage.input_tokens': 51,

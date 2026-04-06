@@ -29,6 +29,7 @@ from ...messages import (
     ModelResponse,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -122,6 +123,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
     Setting `sdk_version=6` enables tool approval streaming for human-in-the-loop workflows.
     """
+    server_message_id: str | None = None
+    """Optional server-generated message ID to include in the `StartChunk`."""
 
     @classmethod
     def build_run_input(cls, body: bytes) -> RequestData:
@@ -135,10 +138,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         *,
         agent: AbstractAgent[AgentDepsT, OutputDataT],
         sdk_version: Literal[5, 6] = 5,
+        server_message_id: str | None = None,
         **kwargs: Any,
     ) -> VercelAIAdapter[AgentDepsT, OutputDataT]:
-        """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with the `sdk_version` parameter."""
-        return await super().from_request(request, agent=agent, sdk_version=sdk_version, **kwargs)
+        """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with the `sdk_version` and `server_message_id` parameters."""
+        return await super().from_request(
+            request, agent=agent, sdk_version=sdk_version, server_message_id=server_message_id, **kwargs
+        )
 
     @classmethod
     async def dispatch_request(
@@ -147,6 +153,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         *,
         agent: AbstractAgent[DispatchDepsT, DispatchOutputDataT],
         sdk_version: Literal[5, 6] = 5,
+        server_message_id: str | None = None,
         message_history: Sequence[ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: Model | KnownModelName | str | None = None,
@@ -163,11 +170,12 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         on_complete: OnCompleteFunc[BaseChunk] | None = None,
         **kwargs: Any,
     ) -> Response:
-        """Extends [`dispatch_request`][pydantic_ai.ui.UIAdapter.dispatch_request] with the `sdk_version` parameter."""
+        """Extends [`dispatch_request`][pydantic_ai.ui.UIAdapter.dispatch_request] with the `sdk_version` and `server_message_id` parameters."""
         return await super().dispatch_request(
             request,
             agent=agent,
             sdk_version=sdk_version,
+            server_message_id=server_message_id,
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
             model=model,
@@ -187,7 +195,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
     def build_event_stream(self) -> UIEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]:
         """Build a Vercel AI event stream transformer."""
-        return VercelAIEventStream(self.run_input, accept=self.accept, sdk_version=self.sdk_version)
+        return VercelAIEventStream(
+            self.run_input, accept=self.accept, sdk_version=self.sdk_version, server_message_id=self.server_message_id
+        )
 
     @cached_property
     def deferred_tool_results(self) -> DeferredToolResults | None:
@@ -254,6 +264,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     case _:
                                         file = DocumentUrl(url=part.url, media_type=part.media_type)
                         user_prompt_content.append(file)
+                    elif isinstance(part, DataUIPart):
+                        # Contains custom data that shouldn't be sent to the model
+                        pass
                     else:  # pragma: no cover
                         raise ValueError(f'Unsupported user message part type: {type(part)}')
 
@@ -747,6 +760,8 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
         for item in part.content:
             if isinstance(item, str):
                 ui_parts.append(TextUIPart(text=item, state='done'))
+            elif isinstance(item, TextContent):
+                ui_parts.append(TextUIPart(text=item.content, state='done'))
             elif isinstance(item, BinaryContent):
                 ui_parts.append(FileUIPart(url=item.data_uri, media_type=item.media_type))
             elif isinstance(item, ImageUrl | AudioUrl | VideoUrl | DocumentUrl):

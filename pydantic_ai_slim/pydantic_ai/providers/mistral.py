@@ -12,7 +12,7 @@ from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.providers import Provider
 
 try:
-    from mistralai import Mistral
+    from mistralai.client import Mistral
 except ImportError as e:  # pragma: no cover
     raise ImportError(
         'Please install the `mistral` package to use the Mistral provider, '

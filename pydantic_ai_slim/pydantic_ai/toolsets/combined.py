@@ -10,6 +10,7 @@ from typing_extensions import Self
 
 from .._run_context import AgentDepsT, RunContext
 from ..exceptions import UserError
+from ..messages import InstructionPart
 from .abstract import AbstractToolset, ToolsetTool
 
 
@@ -100,3 +101,14 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
         self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
     ) -> AbstractToolset[AgentDepsT]:
         return replace(self, toolsets=[toolset.visit_and_replace(visitor) for toolset in self.toolsets])
+
+    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> list[str | InstructionPart] | None:
+        results = await asyncio.gather(*(ts.get_instructions(ctx) for ts in self.toolsets))
+        parts: list[str | InstructionPart] = []
+        for r in results:
+            if r is not None:
+                if isinstance(r, (str, InstructionPart)):
+                    parts.append(r)
+                else:
+                    parts.extend(r)
+        return parts or None

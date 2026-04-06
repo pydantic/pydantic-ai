@@ -1,0 +1,159 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1436'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 1024
+      messages:
+      - content: What is the current exchange rate from USD to EUR?
+        role: user
+      model: claude-sonnet-4-5
+      tools:
+      - description: Get the current weather for a city.
+        input_schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        name: get_weather
+        type: custom
+      - defer_loading: true
+        description: Look up the current exchange rate between two currencies.
+        input_schema:
+          additionalProperties: false
+          properties:
+            from_currency:
+              type: string
+            to_currency:
+              type: string
+          required:
+          - from_currency
+          - to_currency
+          type: object
+        name: get_exchange_rate
+        type: custom
+      - defer_loading: true
+        description: Look up stock price by ticker symbol.
+        input_schema:
+          additionalProperties: false
+          properties:
+            symbol:
+              type: string
+          required:
+          - symbol
+          type: object
+        name: stock_lookup
+        type: custom
+      - defer_loading: true
+        description: Calculate monthly mortgage payment for a home loan.
+        input_schema:
+          additionalProperties: false
+          properties:
+            principal:
+              type: number
+            rate:
+              type: number
+            years:
+              type: integer
+          required:
+          - principal
+          - rate
+          - years
+          type: object
+        name: mortgage_calculator
+        type: custom
+      - name: tool_search_tool_bm25
+        type: tool_search_tool_bm25_20251119
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1681'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - proxy;dur=5018
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: |-
+          I don't have a tool available to check current exchange rates between currencies. The tools I have access to are:
+
+          1. **get_weather** - to check weather information for cities
+          2. **tool_search_tool_bm25** - to search for other available tools
+
+          Let me search to see if there's an exchange rate or currency conversion tool available:
+        type: text
+      - caller:
+          type: direct
+        id: srvtoolu_01AFqvRopGELemw8jFcntaRt
+        input:
+          query: exchange rate currency conversion USD EUR
+        name: tool_search_tool_bm25
+        type: server_tool_use
+      - content:
+          tool_references:
+          - tool_name: get_exchange_rate
+            type: tool_reference
+          - tool_name: mortgage_calculator
+            type: tool_reference
+          type: tool_search_tool_search_result
+        tool_use_id: srvtoolu_01AFqvRopGELemw8jFcntaRt
+        type: tool_search_tool_result
+      - text: 'Great! I found an exchange rate tool. Let me get the current exchange rate from USD to EUR for you:'
+        type: text
+      - caller:
+          type: direct
+        id: toolu_01WYuJPXi77h8uRRgi6F7owo
+        input:
+          from_currency: USD
+          to_currency: EUR
+        name: get_exchange_rate
+        type: tool_use
+      id: msg_016eKXYN586QCThmUJtvLppo
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 1867
+        output_tokens: 242
+        server_tool_use:
+          web_fetch_requests: 0
+          web_search_requests: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1
