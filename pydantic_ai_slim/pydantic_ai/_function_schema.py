@@ -58,7 +58,7 @@ class FunctionSchema:
     var_positional_field: str | None = None
     return_schema: ObjectJsonSchema = field(default_factory=dict[str, Any])
     """JSON schema for the function's return type. At minimum ``{}`` (equivalent to ``Any``)."""
-    function_signature: FunctionSignature = field(default=None)  # type: ignore[assignment]
+    function_signature: FunctionSignature | None = None
     """Pre-computed function signature shape for this function."""
 
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:

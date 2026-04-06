@@ -7,6 +7,7 @@ specific LLM being used.
 from __future__ import annotations as _annotations
 
 import base64
+import json
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
@@ -1501,15 +1502,15 @@ def _inject_return_schema_in_description(tool_def: ToolDefinition) -> ToolDefini
     if not tool_def.return_schema:
         return tool_def
 
-    import json
-
     parts: list[str] = []
     if tool_def.description:
         parts.append(tool_def.description)
     parts.append('Return schema:')
     parts.append(json.dumps(tool_def.return_schema, indent=2))
     description = '\n\n'.join(parts)
-    return replace(tool_def, description=description, return_schema=None)
+    return replace(
+        tool_def, description=description, return_schema=None, function_signature=tool_def.function_signature
+    )
 
 
 def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestParameters) -> FinalResultEvent | None:
