@@ -76,6 +76,7 @@ _PROVIDER_TO_MODEL_NAMES = {
 }
 
 _PROVIDER_DEPRECATED_MODELS: dict[str, frozenset[str]] = {
+    'anthropic': frozenset({'claude-3-5-haiku-20241022'}),
     'openai': DEPRECATED_OPENAI_MODELS,
 }
 
