@@ -798,7 +798,10 @@ class AnthropicModel(Model):
                     for file_id in code_execution_file_ids:
                         # container_upload is a beta feature for mounting files into the code execution sandbox.
                         # It is currently only supported in the content array of a user message.
-                        user_content_params.append({'type': 'container_upload', 'file_id': file_id})
+                        # Using cast since container_upload is a very new beta feature not yet in BetaContentBlockParam union
+                        user_content_params.append(
+                            cast(BetaContentBlockParam, {'type': 'container_upload', 'file_id': file_id})
+                        )
 
                 for request_part in m.parts:
                     if isinstance(request_part, SystemPromptPart):

@@ -8986,6 +8986,12 @@ Fix the errors and try again.\
     )
 
 
+# NOTE: This test uses MockAnthropic instead of pytest-vcr cassettes, which violates
+# tests/AGENTS.md rule:318 ("Use pytest-vcr cassettes (not mocks) in `tests/models/`").
+# This is temporary because:
+# 1. file_ids feature requires actual files uploaded via Anthropic Files API
+# 2. Re-recording cassettes requires live API access and file setup
+# TODO: Convert to cassette-based test once file upload infrastructure is in place
 async def test_anthropic_code_execution_tool_file_ids(allow_model_requests: None):
     c = completion_message(
         [BetaTextBlock(text='I have analyzed the file.', type='text')],
