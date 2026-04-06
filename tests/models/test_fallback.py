@@ -625,6 +625,7 @@ async def test_fallback_condition_tuple() -> None:
                 parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
@@ -632,6 +633,7 @@ async def test_fallback_condition_tuple() -> None:
                 model_name='function:success_response:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -653,6 +655,7 @@ async def test_fallback_connection_error() -> None:
                 parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
@@ -660,6 +663,7 @@ async def test_fallback_connection_error() -> None:
                 model_name='function:success_response:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1808,6 +1812,7 @@ def test_fallback_primary_continuation_then_succeeds() -> None:
                 model_name='primary',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1849,6 +1854,7 @@ def test_fallback_primary_continuation_multiple_pauses() -> None:
                 model_name='primary',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1909,6 +1915,7 @@ def test_fallback_secondary_continuation_back_to_primary() -> None:
                 model_name='fallback',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2092,7 +2099,7 @@ class _ContinuationModel(Model):
         return self._inner.model_name
 
     @property
-    def system(self) -> str:  # pragma: no cover
+    def system(self) -> str:
         return self._inner.system
 
 
@@ -2131,9 +2138,8 @@ async def test_fallback_streaming_continuation_pinning() -> None:
 
     resp1 = streamed_response.get()
     messages.append(resp1)
-    messages.append(ModelRequest(parts=[], run_id=run_id))
 
-    # Second call: goes through pinned continuation path (fallback.py lines 126-136)
+    # Second call: goes through pinned continuation path
     async with model.request_stream(messages, None, params) as streamed_response:
         async for _ in streamed_response:
             pass
@@ -2178,9 +2184,8 @@ async def test_fallback_streaming_pinned_continuation_still_continuing() -> None
 
     resp1 = streamed_response.get()
     messages.append(resp1)
-    messages.append(ModelRequest(parts=[], run_id=run_id))
 
-    # Second call: pinned, still state='suspended' → pin stays (87->89 branch)
+    # Second call: pinned, still state='suspended' → pin stays
     async with model.request_stream(messages, None, params) as streamed_response:
         async for _ in streamed_response:
             pass
@@ -2189,9 +2194,8 @@ async def test_fallback_streaming_pinned_continuation_still_continuing() -> None
 
     resp2 = streamed_response.get()
     messages.append(resp2)
-    messages.append(ModelRequest(parts=[], run_id=run_id))
 
-    # Third call: pinned, state=False → pin cleared
+    # Third call: pinned, state='complete' → pin cleared
     async with model.request_stream(messages, None, params) as streamed_response:
         async for _ in streamed_response:
             pass
@@ -2239,7 +2243,6 @@ async def test_fallback_streaming_pinned_continuation_fails_falls_back() -> None
 
     resp1 = streamed_response.get()
     messages.append(resp1)
-    messages.append(ModelRequest(parts=[], run_id=run_id))
 
     # Second call: pinned primary fails to open stream → rewind → fallback chain
     # (primary retried in chain and fails again, then fallback succeeds)
@@ -2287,7 +2290,6 @@ async def test_fallback_streaming_pinned_continuation_non_fallback_error_propaga
             pass
 
     messages.append(streamed_response.get())
-    messages.append(ModelRequest(parts=[], run_id=run_id))
 
     with pytest.raises(PotatoException, match='not a fallback error'):
         async with model.request_stream(messages, None, params) as streamed_response:
@@ -2299,7 +2301,7 @@ async def test_fallback_streaming_pinned_continuation_non_fallback_error_propaga
 
 
 async def test_fallback_streaming_rewind_without_trailing_request() -> None:
-    """Pinned fallback rewind works when history ends with a suspended response (no continuation request yet)."""
+    """Pinned fallback rewind works when history ends with a suspended response."""
     primary_calls = 0
     fallback_calls = 0
 
@@ -2325,7 +2327,7 @@ async def test_fallback_streaming_rewind_without_trailing_request() -> None:
         ModelResponse(
             parts=[TextPart('paused')],
             state='suspended',
-            metadata={'__pydantic_ai__': {'fallback_model_name': 'primary'}},
+            metadata={'__pydantic_ai__': {'fallback_model_id': 'function:primary'}},
         ),
     ]
 
@@ -2340,17 +2342,16 @@ async def test_fallback_streaming_rewind_without_trailing_request() -> None:
 
 
 async def test_fallback_streaming_rewind_with_extra_trailing_request() -> None:
-    """Pinned fallback rewind handles malformed history with multiple trailing continuation requests."""
+    """History ending with ModelRequest (not suspended ModelResponse) skips pinning entirely."""
     primary_calls = 0
     fallback_calls = 0
 
     async def primary_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
         nonlocal primary_calls
         primary_calls += 1
-        raise ModelHTTPError(status_code=500, model_name='primary', body='continuation error')
-        yield ''  # pragma: no cover
+        yield 'primary response'
 
-    async def fallback_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    async def fallback_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:  # pragma: no cover
         nonlocal fallback_calls
         fallback_calls += 1
         yield 'fallback response'
@@ -2366,24 +2367,25 @@ async def test_fallback_streaming_rewind_with_extra_trailing_request() -> None:
         ModelResponse(
             parts=[TextPart('paused')],
             state='suspended',
-            metadata={'__pydantic_ai__': {'fallback_model_name': 'primary'}},
+            metadata={'__pydantic_ai__': {'fallback_model_id': 'function:primary'}},
         ),
-        ModelRequest(parts=[]),
         ModelRequest(parts=[]),
     ]
 
+    # History ends with ModelRequest, not a suspended ModelResponse, so no pinning occurs.
+    # The normal fallback chain is used — primary succeeds.
     async with model.request_stream(messages, None, ModelRequestParameters()) as streamed_response:
         async for _ in streamed_response:
             pass
 
-    assert primary_calls == 2
-    assert fallback_calls == 1
+    assert primary_calls == 1
+    assert fallback_calls == 0
     response = streamed_response.get()
-    assert response.parts[0].content == 'fallback response'  # type: ignore[union-attr]
+    assert response.parts[0].content == 'primary response'  # type: ignore[union-attr]
 
 
 async def test_fallback_continuation_without_stamp_falls_through() -> None:
-    """When state='suspended' but metadata lacks fallback_model_name,
+    """When the last message is a suspended response without a fallback_model_id stamp,
     normal fallback chain is used (no pinning)."""
     call_count = 0
 
@@ -2395,11 +2397,9 @@ async def test_fallback_continuation_without_stamp_falls_through() -> None:
     primary_model = FunctionModel(primary, model_name='primary')
     model = FallbackModel(primary_model)
 
-    # Manually construct messages with state but no fallback_model_name in metadata
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='test')]),
         ModelResponse(parts=[TextPart('incomplete')], state='suspended'),
-        ModelRequest(parts=[]),
     ]
 
     result = await model.request(messages, None, ModelRequestParameters())
@@ -2408,7 +2408,7 @@ async def test_fallback_continuation_without_stamp_falls_through() -> None:
 
 
 async def test_fallback_continuation_with_unknown_model_falls_through() -> None:
-    """When fallback_model_name doesn't match any model in the FallbackModel,
+    """When fallback_model_id doesn't match any model in the FallbackModel,
     normal fallback chain is used (no pinning)."""
     call_count = 0
 
@@ -2420,15 +2420,13 @@ async def test_fallback_continuation_with_unknown_model_falls_through() -> None:
     primary_model = FunctionModel(primary, model_name='primary')
     model = FallbackModel(primary_model)
 
-    # Construct messages with a fallback_model_name that doesn't match any model
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='test')]),
         ModelResponse(
             parts=[TextPart('incomplete')],
             state='suspended',
-            metadata={'__pydantic_ai__': {'fallback_model_name': 'nonexistent-model'}},
+            metadata={'__pydantic_ai__': {'fallback_model_id': 'nonexistent-model'}},
         ),
-        ModelRequest(parts=[]),
     ]
 
     result = await model.request(messages, None, ModelRequestParameters())
@@ -2488,7 +2486,7 @@ async def test_fallback_stream_stamp_with_existing_metadata() -> None:
     assert streamed_response.state == 'suspended'
     # Fallback routing info goes in metadata, not provider_details
     assert streamed_response.provider_details == snapshot({'existing_key': 'existing_value'})
-    assert streamed_response.metadata == snapshot({'__pydantic_ai__': {'fallback_model_name': 'primary'}})
+    assert streamed_response.metadata == snapshot({'__pydantic_ai__': {'fallback_model_id': 'function:primary'}})
 
 
 async def test_fallback_stamp_continuation_with_existing_metadata() -> None:
@@ -2515,5 +2513,5 @@ async def test_fallback_stamp_continuation_with_existing_metadata() -> None:
     resp = await model.request(messages, None, params)
     assert resp.state == 'suspended'
     assert resp.metadata == snapshot(
-        {'provider_key': 'provider_value', '__pydantic_ai__': {'fallback_model_name': 'primary'}}
+        {'provider_key': 'provider_value', '__pydantic_ai__': {'fallback_model_id': 'function:primary'}}
     )
