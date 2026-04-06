@@ -2001,55 +2001,72 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
     )
 
 
-async def test_xai_builtin_x_search_tool(allow_model_requests: None):
-    """Test xAI's built-in x_search tool (X/Twitter search)."""
-    response = create_x_search_response(
-        query='@pydantic latest AI news',
-        content={'results': [{'text': 'PydanticAI 0.1 released!', 'author': '@pydantic'}]},
-        assistant_text='Found posts about PydanticAI.',
-    )
-    mock_client = MockXai.create_mock([response])
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+async def test_xai_builtin_x_search_tool(allow_model_requests: None, xai_provider: XaiProvider):
+    """Test xAI's built-in x_search tool (non-streaming, recorded via proto cassette)."""
+    m = XaiModel(XAI_REASONING_MODEL, provider=xai_provider)
     agent = Agent(
         m,
         builtin_tools=[XSearchTool()],
-        model_settings=XaiModelSettings(xai_include_x_search_output=True),
+        model_settings=XaiModelSettings(
+            xai_include_encrypted_content=True,
+            xai_include_x_search_output=True,
+        ),
     )
 
-    result = await agent.run('What are people saying about PydanticAI on X?')
-    assert result.output == 'Found posts about PydanticAI.'
+    result = await agent.run('What are the latest posts about PydanticAI on X? Reply with just the key topic.')
+    assert result.output == snapshot('Building AI agents and workflows with PydanticAI')
 
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='What are people saying about PydanticAI on X?',
-                        timestamp=IsNow(tz=timezone.utc),
+                        content='What are the latest posts about PydanticAI on X? Reply with just the key topic.',
+                        timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
+                    ThinkingPart(
+                        content='',
+                        signature=IsStr(),
+                        provider_name='xai',
+                    ),
                     BuiltinToolCallPart(
                         tool_name='x_search',
-                        args={'query': '@pydantic latest AI news'},
+                        args={'query': 'PydanticAI', 'mode': 'Latest'},
                         tool_call_id=IsStr(),
+                        provider_name='xai',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        signature=IsStr(),
                         provider_name='xai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='x_search',
-                        content={'results': [{'text': 'PydanticAI 0.1 released!', 'author': '@pydantic'}]},
+                        content=None,
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='xai',
                     ),
-                    TextPart(content='Found posts about PydanticAI.'),
+                    ThinkingPart(
+                        content='',
+                        signature=IsStr(),
+                        provider_name='xai',
+                    ),
+                    TextPart(content='Building AI agents and workflows with PydanticAI'),
                 ],
-                usage=RequestUsage(),
-                model_name=XAI_NON_REASONING_MODEL,
+                usage=RequestUsage(
+                    input_tokens=3774,
+                    cache_read_tokens=1639,
+                    output_tokens=50,
+                    details={'reasoning_tokens': 439, 'server_side_tools_x_search': 1},
+                ),
+                model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_url='https://api.x.ai/v1',
@@ -2062,7 +2079,7 @@ async def test_xai_builtin_x_search_tool(allow_model_requests: None):
 
 
 async def test_xai_builtin_x_search_tool_with_handles(allow_model_requests: None):
-    """Test xAI's built-in x_search tool with handle filtering."""
+    """Test that XSearchTool handle filtering params are sent to the xAI SDK."""
     response = create_x_search_response(
         query='AI updates',
         content={'results': [{'text': 'AI news from @OpenAI'}]},
@@ -2075,49 +2092,7 @@ async def test_xai_builtin_x_search_tool_with_handles(allow_model_requests: None
         builtin_tools=[XSearchTool(allowed_x_handles=['OpenAI', 'AnthropicAI'])],
     )
 
-    result = await agent.run('What are OpenAI and Anthropic tweeting about?')
-    assert result.output == 'Found filtered posts.'
-
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='What are OpenAI and Anthropic tweeting about?',
-                        timestamp=IsNow(tz=timezone.utc),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    BuiltinToolCallPart(
-                        tool_name='x_search',
-                        args={'query': 'AI updates'},
-                        tool_call_id=IsStr(),
-                        provider_name='xai',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='x_search',
-                        content={'results': [{'text': 'AI news from @OpenAI'}]},
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='xai',
-                    ),
-                    TextPart(content='Found filtered posts.'),
-                ],
-                usage=RequestUsage(),
-                model_name=XAI_NON_REASONING_MODEL,
-                timestamp=IsDatetime(),
-                provider_name='xai',
-                provider_url='https://api.x.ai/v1',
-                provider_response_id=IsStr(),
-                finish_reason='stop',
-                run_id=IsStr(),
-            ),
-        ]
-    )
+    await agent.run('What are OpenAI and Anthropic tweeting about?')
 
     assert get_mock_chat_create_kwargs(mock_client) == snapshot(
         [
@@ -2145,7 +2120,7 @@ async def test_xai_builtin_x_search_tool_with_handles(allow_model_requests: None
 
 
 async def test_xai_builtin_x_search_tool_with_date_range(allow_model_requests: None):
-    """Test xAI's built-in x_search tool with date filtering."""
+    """Test that XSearchTool date params are sent to the xAI SDK."""
     response = create_x_search_response(
         query='PydanticAI release',
         content={'results': []},
@@ -2163,49 +2138,7 @@ async def test_xai_builtin_x_search_tool_with_date_range(allow_model_requests: N
         ],
     )
 
-    result = await agent.run('Any PydanticAI posts in 2024?')
-    assert result.output == 'No posts found in date range.'
-
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='Any PydanticAI posts in 2024?',
-                        timestamp=IsNow(tz=timezone.utc),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    BuiltinToolCallPart(
-                        tool_name='x_search',
-                        args={'query': 'PydanticAI release'},
-                        tool_call_id=IsStr(),
-                        provider_name='xai',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='x_search',
-                        content={'results': []},
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='xai',
-                    ),
-                    TextPart(content='No posts found in date range.'),
-                ],
-                usage=RequestUsage(),
-                model_name=XAI_NON_REASONING_MODEL,
-                timestamp=IsDatetime(),
-                provider_name='xai',
-                provider_url='https://api.x.ai/v1',
-                provider_response_id=IsStr(),
-                finish_reason='stop',
-                run_id=IsStr(),
-            ),
-        ]
-    )
+    await agent.run('Any PydanticAI posts in 2024?')
 
     assert get_mock_chat_create_kwargs(mock_client) == snapshot(
         [
@@ -2272,75 +2205,77 @@ def test_x_search_tool_validation():
     assert tool.to_date == datetime(2024, 12, 31)
 
 
-async def test_xai_builtin_x_search_tool_stream(allow_model_requests: None):
-    """Test xAI's built-in x_search tool with streaming."""
-    server_tool_call = create_server_tool_call(
-        tool_name='x_search',
-        arguments={'query': 'pydantic updates'},
-        tool_call_id='x_search_stream_001',
-        tool_type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_X_SEARCH_TOOL,
+async def test_xai_builtin_x_search_tool_stream(allow_model_requests: None, xai_provider: XaiProvider):
+    """Test xAI's built-in x_search tool with streaming (recorded via proto cassette)."""
+    m = XaiModel(XAI_REASONING_MODEL, provider=xai_provider)
+    agent = Agent(
+        m,
+        builtin_tools=[XSearchTool()],
+        model_settings=XaiModelSettings(
+            xai_include_encrypted_content=True,
+            xai_include_x_search_output=True,
+        ),
     )
 
-    tool_output_json = json.dumps({'results': [{'text': 'PydanticAI v2 released!', 'author': '@pydantic'}]})
+    event_parts: list[Any] = []
+    async with agent.iter(
+        user_prompt='Search X for the latest PydanticAI updates. Reply with just the key topic.'
+    ) as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
 
-    stream: list[tuple[chat_types.Response, chat_types.Chunk]] = [
-        (
-            create_response(content='', tool_calls=[server_tool_call], finish_reason='stop'),
-            create_stream_chunk(role=chat_pb2.MessageRole.ROLE_ASSISTANT, tool_calls=[server_tool_call]),
-        ),
-        (
-            create_response(content=tool_output_json, tool_calls=[server_tool_call], finish_reason='stop'),
-            create_stream_chunk(
-                role=chat_pb2.MessageRole.ROLE_TOOL, tool_calls=[server_tool_call], content=tool_output_json
-            ),
-        ),
-        (
-            create_response(content='Found posts about PydanticAI.', finish_reason='stop'),
-            create_stream_chunk(role=chat_pb2.MessageRole.ROLE_ASSISTANT, content='Found posts about PydanticAI.'),
-        ),
-    ]
-
-    mock_client = MockXai.create_mock_stream([stream])
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, builtin_tools=[XSearchTool()])
-
-    async with agent.run_stream('Search for pydantic updates on X') as result:
-        final_response: ModelResponse | None = None
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
-                final_response = response
-
-    assert final_response is not None
-    assert result.all_messages() == snapshot(
+    assert agent_run.result is not None
+    messages = agent_run.result.all_messages()
+    assert messages == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Search for pydantic updates on X', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsDatetime(),
+                parts=[
+                    UserPromptPart(
+                        content='Search X for the latest PydanticAI updates. Reply with just the key topic.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
+                    ThinkingPart(
+                        content='',
+                        signature=IsStr(),
+                        provider_name='xai',
+                    ),
                     BuiltinToolCallPart(
                         tool_name='x_search',
-                        args={'query': 'pydantic updates'},
-                        tool_call_id='x_search_stream_001',
+                        args={'query': 'PydanticAI OR "Pydantic AI"', 'limit': 10, 'mode': 'Latest'},
+                        tool_call_id=IsStr(),
                         provider_name='xai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='x_search',
-                        content={'results': [{'text': 'PydanticAI v2 released!', 'author': '@pydantic'}]},
-                        tool_call_id='x_search_stream_001',
+                        content=None,
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='xai',
                     ),
-                    TextPart(content='Found posts about PydanticAI.'),
+                    TextPart(
+                        content='Pydantic sponsoring To The Americas hackathon with prizes for best Pydantic AI usage.'
+                    ),
                 ],
-                usage=RequestUsage(),
-                model_name=XAI_NON_REASONING_MODEL,
+                usage=RequestUsage(
+                    input_tokens=5991,
+                    cache_read_tokens=2720,
+                    output_tokens=74,
+                    details={'reasoning_tokens': 770, 'server_side_tools_x_search': 1},
+                ),
+                model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
                 provider_url='https://api.x.ai/v1',
-                provider_response_id='grok-123',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -4569,6 +4504,7 @@ async def test_xai_include_settings(allow_model_requests: None):
         'xai_include_web_search_output': True,
         'xai_include_inline_citations': True,
         'xai_include_x_search_output': True,
+        'xai_include_collections_search_output': True,
         'xai_include_mcp_output': True,
     }
     result = await agent.run('Hello', model_settings=settings)
@@ -4589,6 +4525,7 @@ async def test_xai_include_settings(allow_model_requests: None):
                     chat_pb2.IncludeOption.INCLUDE_OPTION_WEB_SEARCH_CALL_OUTPUT,
                     chat_pb2.IncludeOption.INCLUDE_OPTION_INLINE_CITATIONS,
                     chat_pb2.IncludeOption.INCLUDE_OPTION_X_SEARCH_CALL_OUTPUT,
+                    chat_pb2.IncludeOption.INCLUDE_OPTION_COLLECTIONS_SEARCH_CALL_OUTPUT,
                     chat_pb2.IncludeOption.INCLUDE_OPTION_MCP_CALL_OUTPUT,
                 ],
             }
@@ -5856,43 +5793,40 @@ async def test_xai_x_search_builtin_tool_call_in_history(allow_model_requests: N
 
 
 async def test_xai_unknown_tool_type_uses_function_name(allow_model_requests: None):
-    """Test handling of unknown tool types (like collections_search) uses the function name."""
-    # Create a server-side tool call with collections_search type (not handled explicitly)
-    collections_search_tool_call = chat_pb2.ToolCall(
-        id='collections_001',
-        type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_COLLECTIONS_SEARCH_TOOL,
+    """Test handling of unknown tool types uses the function name."""
+    attachment_search_tool_call = chat_pb2.ToolCall(
+        id='attachment_001',
+        type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_ATTACHMENT_SEARCH_TOOL,
         status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
         function=chat_pb2.FunctionCall(
-            name='collections_search',
-            arguments='{"query": "my documents"}',
+            name='attachment_search',
+            arguments='{"query": "my attachments"}',
         ),
     )
 
-    # Create response with collections_search tool
-    response = create_mixed_tools_response([collections_search_tool_call], text_content='Found your documents.')
+    response = create_mixed_tools_response([attachment_search_tool_call], text_content='Found your attachments.')
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
-    result = await agent.run('Search my collections')
+    result = await agent.run('Search my attachments')
 
-    # Verify the unknown tool type is handled using the function name
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Search my collections', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Search my attachments', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
                     BuiltinToolCallPart(
-                        tool_name='collections_search',
-                        args={'query': 'my documents'},
+                        tool_name='attachment_search',
+                        args={'query': 'my attachments'},
                         tool_call_id=IsStr(),
                         provider_name='xai',
                     ),
-                    TextPart(content='Found your documents.'),
+                    TextPart(content='Found your attachments.'),
                 ],
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),

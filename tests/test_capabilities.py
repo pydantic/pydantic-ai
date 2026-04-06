@@ -1175,6 +1175,43 @@ Supported by:
                     'title': 'WebSearchUserLocation',
                     'type': 'object',
                 },
+                'XSearchTool': {
+                    'properties': {
+                        'kind': {'default': 'x_search', 'title': 'Kind', 'type': 'string'},
+                        'allowed_x_handles': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Allowed X Handles',
+                        },
+                        'excluded_x_handles': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Excluded X Handles',
+                        },
+                        'from_date': {
+                            'anyOf': [{'format': 'date-time', 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'From Date',
+                        },
+                        'to_date': {
+                            'anyOf': [{'format': 'date-time', 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'To Date',
+                        },
+                        'enable_image_understanding': {
+                            'default': False,
+                            'title': 'Enable Image Understanding',
+                            'type': 'boolean',
+                        },
+                        'enable_video_understanding': {
+                            'default': False,
+                            'title': 'Enable Video Understanding',
+                            'type': 'boolean',
+                        },
+                    },
+                    'title': 'XSearchTool',
+                    'type': 'object',
+                },
                 'short_spec_BuiltinTool': {
                     'additionalProperties': False,
                     'properties': {
@@ -1183,6 +1220,7 @@ Supported by:
                                 {
                                     'oneOf': [
                                         {'$ref': '#/$defs/WebSearchTool'},
+                                        {'$ref': '#/$defs/XSearchTool'},
                                         {'$ref': '#/$defs/CodeExecutionTool'},
                                         {'$ref': '#/$defs/WebFetchTool'},
                                         {'$ref': '#/$defs/UrlContextTool'},

@@ -438,8 +438,9 @@ def _get_example_tool_output(
         ]
     elif tool_type == chat_pb2.ToolCallType.TOOL_CALL_TYPE_X_SEARCH_TOOL:
         return {'results': [{'text': 'Example X/Twitter post', 'author': '@example'}]}
+    elif tool_type == chat_pb2.ToolCallType.TOOL_CALL_TYPE_COLLECTIONS_SEARCH_TOOL:
+        return {'results': [{'chunk': 'Relevant document excerpt', 'score': 0.95}]}
     else:  # pragma: no cover
-        # Unknown tool type - return empty dict as fallback
         return {}
 
 
@@ -645,6 +646,37 @@ def create_x_search_response(
         initial_status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
     )
     # Add final assistant message (matching real API behavior)
+    outputs.append(
+        chat_pb2.CompletionOutput(
+            index=len(outputs),
+            finish_reason=sample_pb2.FinishReason.REASON_STOP,
+            message=chat_pb2.CompletionMessage(
+                role=chat_pb2.MessageRole.ROLE_ASSISTANT,
+                content=assistant_text,
+            ),
+        )
+    )
+    return _build_response_with_outputs(response_id=f'grok-{tool_call_id}', outputs=outputs)
+
+
+def create_collections_search_response(
+    query: str,
+    content: ToolCallOutputType | None = None,
+    *,
+    tool_call_id: str = 'collections_search_001',
+    assistant_text: str,
+) -> chat_types.Response:
+    """Create a Response with collections search tool outputs."""
+    tool_type = chat_pb2.ToolCallType.TOOL_CALL_TYPE_COLLECTIONS_SEARCH_TOOL
+    actual_content = _get_example_tool_output(tool_type, content)
+    outputs = _create_builtin_tool_outputs(
+        tool_name='collections_search',
+        arguments={'query': query},
+        content=actual_content,
+        tool_call_id=tool_call_id,
+        tool_type=tool_type,
+        initial_status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
+    )
     outputs.append(
         chat_pb2.CompletionOutput(
             index=len(outputs),

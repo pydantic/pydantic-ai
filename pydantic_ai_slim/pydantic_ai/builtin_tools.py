@@ -209,6 +209,8 @@ class XSearchTool(AbstractBuiltinTool):
     from_date: datetime | None = None
     """If provided, only posts created on or after this datetime will be included.
 
+    Naive datetimes are interpreted as UTC by the xAI API.
+
     Supported by:
 
     * xAI, see <https://docs.x.ai/developers/tools/x-search>
@@ -216,6 +218,8 @@ class XSearchTool(AbstractBuiltinTool):
 
     to_date: datetime | None = None
     """If provided, only posts created on or before this datetime will be included.
+
+    Naive datetimes are interpreted as UTC by the xAI API.
 
     Supported by:
 

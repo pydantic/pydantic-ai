@@ -13,7 +13,7 @@ from typing_extensions import assert_never
 from .. import ModelHTTPError, _utils
 from .._output import OutputObjectDefinition
 from .._run_context import RunContext
-from ..builtin_tools import CodeExecutionTool, MCPServerTool, WebSearchTool, XSearchTool
+from ..builtin_tools import CodeExecutionTool, FileSearchTool, MCPServerTool, WebSearchTool, XSearchTool
 from ..exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from ..messages import (
     AudioUrl,
@@ -72,7 +72,7 @@ try:
     from xai_sdk import AsyncClient
     from xai_sdk.chat import assistant, file, image, system, tool, tool_result, user
     from xai_sdk.proto import chat_pb2, sample_pb2, usage_pb2
-    from xai_sdk.tools import code_execution, get_tool_call_type, mcp, web_search, x_search
+    from xai_sdk.tools import code_execution, collections_search, get_tool_call_type, mcp, web_search, x_search
     from xai_sdk.types.model import ChatModel
 except ImportError as _import_error:
     raise ImportError(
@@ -181,6 +181,12 @@ class XaiModelSettings(ModelSettings, total=False):
     Corresponds to the `x_search_call.outputs` value of the `include` parameter in the Responses API.
     """
 
+    xai_include_collections_search_output: bool
+    """Whether to include the collections search results in the response.
+
+    Corresponds to the `collections_search_call.outputs` value of the `include` parameter in the Responses API.
+    """
+
     xai_reasoning_effort: Literal['low', 'high']
     """Reasoning effort level for Grok reasoning models.
 
@@ -251,7 +257,7 @@ class XaiModel(Model):
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type]:
         """Return the set of builtin tool types this model can handle."""
-        return frozenset({WebSearchTool, CodeExecutionTool, MCPServerTool, XSearchTool})
+        return frozenset({WebSearchTool, CodeExecutionTool, MCPServerTool, XSearchTool, FileSearchTool})
 
     async def _map_messages(
         self,
@@ -476,6 +482,16 @@ class XaiModel(Model):
                     arguments=json.dumps(tool_args),
                 ),
             )
+        elif item.tool_name == FileSearchTool.kind:
+            return chat_types.chat_pb2.ToolCall(
+                id=item.tool_call_id,
+                type=chat_types.chat_pb2.TOOL_CALL_TYPE_COLLECTIONS_SEARCH_TOOL,
+                status=chat_types.chat_pb2.TOOL_CALL_STATUS_COMPLETED,
+                function=chat_types.chat_pb2.FunctionCall(
+                    name=FileSearchTool.kind,
+                    arguments=item.args_as_json_str(),
+                ),
+            )
         return None
 
     async def _upload_file_to_xai(self, data: bytes, filename: str) -> str:
@@ -625,7 +641,8 @@ class XaiModel(Model):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_INLINE_CITATIONS)
         if model_settings.get('xai_include_x_search_output'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_X_SEARCH_CALL_OUTPUT)
-        # collections_search not yet supported (could be mapped to file search)
+        if model_settings.get('xai_include_collections_search_output'):
+            include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_COLLECTIONS_SEARCH_CALL_OUTPUT)
         if model_settings.get('xai_include_mcp_output'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_MCP_CALL_OUTPUT)
 
@@ -1028,24 +1045,16 @@ def _get_builtin_tools(model_request_parameters: ModelRequestParameters) -> list
     tools: list[chat_types.chat_pb2.Tool] = []
     for builtin_tool in model_request_parameters.builtin_tools:
         if isinstance(builtin_tool, WebSearchTool):
-            # xAI web_search supports:
-            # - excluded_domains (from blocked_domains)
-            # - allowed_domains
-            # Note: user_location and search_context_size are not supported by xAI SDK
             tools.append(
                 web_search(
                     excluded_domains=builtin_tool.blocked_domains,
                     allowed_domains=builtin_tool.allowed_domains,
-                    enable_image_understanding=False,  # Not supported by PydanticAI
+                    enable_image_understanding=False,
                 )
             )
         elif isinstance(builtin_tool, CodeExecutionTool):
-            # xAI code_execution takes no parameters
             tools.append(code_execution())
         elif isinstance(builtin_tool, MCPServerTool):
-            # xAI mcp supports:
-            # - server_url, server_label, server_description
-            # - allowed_tool_names, authorization, extra_headers
             tools.append(
                 mcp(
                     server_url=builtin_tool.url,
@@ -1067,11 +1076,13 @@ def _get_builtin_tools(model_request_parameters: ModelRequestParameters) -> list
                     enable_video_understanding=builtin_tool.enable_video_understanding,
                 )
             )
+        elif isinstance(builtin_tool, FileSearchTool):
+            tools.append(collections_search(collection_ids=list(builtin_tool.file_store_ids)))
         else:  # pragma: no cover
-            # Defensive fallback - validation in models/__init__.py catches unsupported tools earlier
+            supported = ', '.join(t.__name__ for t in XaiModel.supported_builtin_tools())
             raise UserError(
                 f'`{builtin_tool.__class__.__name__}` is not supported by `XaiModel`. '
-                f'Supported built-in tools: WebSearchTool, CodeExecutionTool, MCPServerTool, XSearchTool. '
+                f'Supported built-in tools: {supported}.'
             )
     return tools
 
@@ -1100,8 +1111,10 @@ def _get_builtin_tool_name(tool_call: chat_types.chat_pb2.ToolCall) -> str:
         return f'{MCPServerTool.kind}:{server_label}'
     elif tool_type == 'x_search_tool':
         return XSearchTool.kind
+    elif tool_type == 'collections_search_tool':
+        return FileSearchTool.kind
     else:
-        # collections_search or unknown - use function name
+        # Unknown tool type - use function name
         return tool_call.function.name
 
 
@@ -1119,7 +1132,7 @@ def _map_server_side_tools_used_to_name(server_side_tool: usage_pb2.ServerSideTo
         usage_pb2.SERVER_SIDE_TOOL_CODE_EXECUTION: CodeExecutionTool.kind,
         usage_pb2.SERVER_SIDE_TOOL_MCP: MCPServerTool.kind,
         usage_pb2.SERVER_SIDE_TOOL_X_SEARCH: XSearchTool.kind,
-        usage_pb2.SERVER_SIDE_TOOL_COLLECTIONS_SEARCH: 'collections_search',
+        usage_pb2.SERVER_SIDE_TOOL_COLLECTIONS_SEARCH: FileSearchTool.kind,
         usage_pb2.SERVER_SIDE_TOOL_VIEW_IMAGE: 'view_image',
         usage_pb2.SERVER_SIDE_TOOL_VIEW_X_VIDEO: 'view_x_video',
     }
