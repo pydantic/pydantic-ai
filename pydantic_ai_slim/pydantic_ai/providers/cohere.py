@@ -10,13 +10,11 @@ from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.providers import Provider
 
-try:
-    from cohere import AsyncClient, AsyncClientV2
-except ImportError as _import_error:  # pragma: no cover
-    raise ImportError(
-        'Please install the `cohere` package to use the Cohere provider, '
-        'you can use the `cohere` optional group — `pip install "pydantic-ai-slim[cohere]"`'
-    ) from _import_error
+from pydantic_ai.providers import check_package_installed
+
+check_package_installed('cohere', install_group='cohere')
+
+from cohere import AsyncClient, AsyncClientV2  # noqa: E402
 
 
 class CohereProvider(Provider[AsyncClientV2]):

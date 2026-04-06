@@ -14,13 +14,11 @@ from pydantic_ai.providers import Provider
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 
-try:
-    from anthropic import AsyncAnthropic, AsyncAnthropicBedrock, AsyncAnthropicFoundry, AsyncAnthropicVertex
-except ImportError as _import_error:
-    raise ImportError(
-        'Please install the `anthropic` package to use the Anthropic provider, '
-        'you can use the `anthropic` optional group — `pip install "pydantic-ai-slim[anthropic]"`'
-    ) from _import_error
+from pydantic_ai.providers import check_package_installed
+
+check_package_installed('anthropic', install_group='anthropic')
+
+from anthropic import AsyncAnthropic, AsyncAnthropicBedrock, AsyncAnthropicFoundry, AsyncAnthropicVertex  # noqa: E402
 
 
 AsyncAnthropicClient: TypeAlias = AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicFoundry | AsyncAnthropicVertex

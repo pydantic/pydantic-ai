@@ -5,10 +5,36 @@ The providers are in charge of providing an authenticated client to the API.
 
 from __future__ import annotations as _annotations
 
+import importlib.util
 from abc import ABC, abstractmethod
 from typing import Any, Generic, TypeVar
 
 from ..profiles import ModelProfile
+
+
+def check_package_installed(package_name: str, install_group: str | None = None) -> None:
+    """Verify that a package is installed before attempting to import from it.
+
+    This should be called before a ``from <package> import ...`` block so that
+    a missing *package* produces a clear "please install" message, while a
+    missing *name* inside an installed package still raises the real
+    ``ImportError`` with its original traceback.
+
+    Args:
+        package_name: Top-level package to check (e.g. ``"mistralai"``).
+        install_group: Optional pip install group hint shown in the error
+            message.  Defaults to ``package_name``.
+
+    Raises:
+        ImportError: If the package cannot be found by ``importlib``.
+    """
+    if importlib.util.find_spec(package_name) is None:
+        group = install_group or package_name
+        raise ImportError(
+            f'Please install the `{package_name}` package to use this provider, '
+            f'you can use the `{group}` optional group — '
+            f'`pip install "pydantic-ai-slim[{group}]"`'
+        )
 
 InterfaceClient = TypeVar('InterfaceClient')
 

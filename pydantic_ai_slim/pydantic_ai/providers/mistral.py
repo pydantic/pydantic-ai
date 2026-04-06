@@ -11,13 +11,11 @@ from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.providers import Provider
 
-try:
-    from mistralai.client import Mistral
-except ImportError as e:  # pragma: no cover
-    raise ImportError(
-        'Please install the `mistral` package to use the Mistral provider, '
-        'you can use the `mistral` optional group — `pip install "pydantic-ai-slim[mistral]"`'
-    ) from e
+from pydantic_ai.providers import check_package_installed
+
+check_package_installed('mistralai', install_group='mistral')
+
+from mistralai.client import Mistral  # noqa: E402
 
 
 class MistralProvider(Provider[Mistral]):

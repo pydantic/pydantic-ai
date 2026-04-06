@@ -11,15 +11,13 @@ from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, cached_async_http_client, g
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.providers import Provider
 
-try:
-    from google.auth.credentials import Credentials
-    from google.genai.client import Client
-    from google.genai.types import HttpOptions
-except ImportError as _import_error:
-    raise ImportError(
-        'Please install the `google-genai` package to use the Google provider, '
-        'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
-    ) from _import_error
+from pydantic_ai.providers import check_package_installed
+
+check_package_installed('google.genai', install_group='google')
+
+from google.auth.credentials import Credentials  # noqa: E402
+from google.genai.client import Client  # noqa: E402
+from google.genai.types import HttpOptions  # noqa: E402
 
 
 class GoogleProvider(Provider[Client]):

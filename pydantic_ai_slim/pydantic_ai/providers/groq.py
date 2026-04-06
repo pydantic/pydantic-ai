@@ -18,13 +18,11 @@ from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers import Provider
 
-try:
-    from groq import AsyncGroq
-except ImportError as _import_error:  # pragma: no cover
-    raise ImportError(
-        'Please install the `groq` package to use the Groq provider, '
-        'you can use the `groq` optional group — `pip install "pydantic-ai-slim[groq]"`'
-    ) from _import_error
+from pydantic_ai.providers import check_package_installed
+
+check_package_installed('groq', install_group='groq')
+
+from groq import AsyncGroq  # noqa: E402
 
 
 def groq_moonshotai_model_profile(model_name: str) -> ModelProfile | None:
