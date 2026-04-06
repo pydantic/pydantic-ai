@@ -524,6 +524,7 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
                         },
                         provider_response_id='resp_67e554a21aa88191b65876ac5e5bbe0406c52f0e511c76ed',
                         finish_reason='stop',
+                        continuation_delay=1.0,
                     )
                 )
 
@@ -1355,6 +1356,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                 },
                 provider_response_id='resp_00a60507bf41223d0068c9d2fbf93481a0ba2a7796ae2cab4c',
                 finish_reason='stop',
+                continuation_delay=1.0,
                 run_id=IsStr(),
             ),
         ]
@@ -3153,6 +3155,7 @@ async def test_openai_responses_thinking_part_iter(allow_model_requests: None, o
                 },
                 provider_response_id='resp_68c42d0fb418819dbfa579f69406b49508fbf9b1584184ff',
                 finish_reason='stop',
+                continuation_delay=1.0,
                 run_id=IsStr(),
             ),
         ]
@@ -3791,6 +3794,7 @@ async def test_openai_responses_thinking_with_code_execution_tool_stream(
                 },
                 provider_response_id='resp_68c35098e6fc819e80fb94b25b7d031b0f2d670b80edc507',
                 finish_reason='stop',
+                continuation_delay=1.0,
                 run_id=IsStr(),
             ),
         ]
@@ -5612,6 +5616,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                 },
                 provider_response_id='resp_06c1a26fd89d07f20068dd9367869c819788cb28e6f19eff9b',
                 finish_reason='stop',
+                continuation_delay=1.0,
                 run_id=IsStr(),
             ),
         ]
@@ -7254,6 +7259,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                continuation_delay=1.0,
                 run_id=IsStr(),
             ),
         ]
@@ -8679,6 +8685,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
                 },
                 provider_response_id='resp_00b9cc7a23d047270068faa0e25934819f9c3bfdec80065bc4',
                 finish_reason='stop',
+                continuation_delay=1.0,
                 run_id=IsStr(),
             ),
         ]
@@ -9371,6 +9378,7 @@ async def test_openai_responses_raw_cot_stream_openrouter(allow_model_requests: 
                 },
                 provider_response_id='gen-1764265411-Fu1iEX7h5MRWiL79lb94',
                 finish_reason='stop',
+                continuation_delay=1.0,
                 run_id=IsStr(),
             ),
         ]
@@ -9968,6 +9976,7 @@ async def test_openai_responses_model_file_search_tool_stream(
                     provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
+                    continuation_delay=1.0,
                     run_id=IsStr(),
                 ),
             ]
@@ -10623,6 +10632,7 @@ async def test_openai_responses_null_text_stream(allow_model_requests: None):
                 },
                 provider_response_id='resp_001',
                 finish_reason='stop',
+                continuation_delay=1.0,
                 run_id=IsStr(),
             ),
         ]
@@ -11443,6 +11453,7 @@ async def test_background_mode_streaming_vcr(allow_model_requests: None, openai_
                 provider_details={'timestamp': IsDatetime(), 'finish_reason': 'completed'},
                 provider_response_id='resp_0da443d9ee8333600069950a0635d88196b2d9243b08e8cc01',
                 finish_reason='stop',
+                continuation_delay=1.0,
                 run_id=IsStr(),
             ),
         ]
@@ -11790,6 +11801,7 @@ async def test_background_request_stream_uses_non_stream_retrieve_without_sequen
     initial_response = ModelResponse(
         parts=[],
         model_name='gpt-4o',
+        provider_name='openai',
         provider_response_id='resp_bg_123',
         state='suspended',
     )
@@ -11822,6 +11834,7 @@ async def test_background_streaming_passes_starting_after(allow_model_requests: 
     initial_response = ModelResponse(
         parts=[TextPart('partial')],
         model_name='gpt-4o-2024-08-06',
+        provider_name='openai',
         provider_response_id='resp_bg_456',
         state='suspended',
         provider_details={'last_sequence_number': 5},
@@ -11861,6 +11874,7 @@ async def test_background_streaming_continuation_without_created_event(allow_mod
     initial_response = ModelResponse(
         parts=[TextPart('The')],
         model_name='gpt-4o-2024-08-06',
+        provider_name='openai',
         provider_response_id='resp_bg_789',
         state='suspended',
         provider_details={'last_sequence_number': 5},

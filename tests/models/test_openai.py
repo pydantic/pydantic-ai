@@ -4457,6 +4457,7 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
                 'provider_response_id': None,
                 'finish_reason': 'content_filter',
                 'state': 'complete',
+                'continuation_delay': None,
                 'run_id': IsStr(),
                 'metadata': None,
             }

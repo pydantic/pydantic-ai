@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import asyncio
 import base64
 import itertools
 import json
@@ -14,7 +13,7 @@ from typing import Any, Literal, cast, overload
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import to_json
-from typing_extensions import Never, assert_never, deprecated
+from typing_extensions import Never, TypedDict, assert_never, deprecated
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
@@ -232,6 +231,12 @@ _RESPONSES_FINISH_REASON_MAP: dict[Literal['max_output_tokens', 'content_filter'
 
 def _response_status_to_state(status: ResponseStatus | None) -> ModelResponseState:
     return 'suspended' if status in ('queued', 'in_progress') else 'complete'
+
+
+class _OpenAIResponsesContinuationDetails(TypedDict, total=False):
+    """Provider details for OpenAI Responses API continuation."""
+
+    last_sequence_number: int
 
 
 _OPENAI_ASPECT_RATIO_TO_SIZE: dict[ImageAspectRatio, Literal['1024x1024', '1024x1536', '1536x1024']] = {
@@ -607,7 +612,6 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     Polling uses this fixed interval (it does not apply exponential backoff).
     Defaults to 1.0 second.
     """
-
 
 
 def _resolve_openai_service_tier(
@@ -1724,7 +1728,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         if info := self._get_continuation_info(messages, settings):
             response_id, _, _ = info
-            await asyncio.sleep(settings.get('openai_background_poll_interval', 1.0))
             response = await self._responses_retrieve(response_id, settings)
         else:
             response = await self._responses_create(messages, False, settings, model_request_parameters)
@@ -1732,7 +1735,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if isinstance(response, ModelResponse):
             return response
 
-        return self._process_response(response, settings, model_request_parameters)
+        result = self._process_response(response, settings, model_request_parameters)
+        if result.state == 'suspended':
+            result = replace(result, continuation_delay=settings.get('openai_background_poll_interval', 1.0))
+        return result
 
     @asynccontextmanager
     async def request_stream(
@@ -1751,16 +1757,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         if info := self._get_continuation_info(messages, settings):
             response_id, last_sequence_number, previous_model_name = info
-            await asyncio.sleep(settings.get('openai_background_poll_interval', 1.0))
             if last_sequence_number is None:
                 # Some background responses were not previously streamed and have no resumable
                 # sequence cursor. `retrieve(stream=True)` can block for a long time in this case,
                 # so fall back to non-stream retrieve and return a static streamed wrapper.
                 response = await self._responses_retrieve(response_id, settings)
-                yield _ModelResponseStreamedResponse(
+                sr: StreamedResponse = _ModelResponseStreamedResponse(
                     model_request_parameters=model_request_parameters,
                     _model_response=self._process_response(response, settings, model_request_parameters),
                 )
+                sr.continuation_delay = settings.get('openai_background_poll_interval', 1.0)
+                yield sr
                 return
             response = await self._responses_retrieve(
                 response_id, settings, stream=True, starting_after=last_sequence_number
@@ -1775,12 +1782,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             )
             return
         async with response:
-            yield await self._process_streamed_response(
+            sr = await self._process_streamed_response(
                 response,
                 settings,
                 model_request_parameters,
                 expected_model_name=previous_model_name,
             )
+            sr.continuation_delay = settings.get('openai_background_poll_interval', 1.0)
+            yield sr
 
     def _process_response(  # noqa: C901
         self,
@@ -2096,33 +2105,30 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             except APIStatusError as e:
                 if model_response := _check_azure_content_filter(e, self.system, self.model_name):
                     return model_response
+                raise
 
-                if (status_code := e.status_code) >= 400:
-                    raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-                raise  # pragma: lax no cover
-            except APIConnectionError as e:
-                raise ModelAPIError(model_name=self.model_name, message=e.message) from e
-
-    @staticmethod
     def _get_continuation_info(
-        messages: list[ModelMessage], model_settings: OpenAIResponsesModelSettings
+        self, messages: list[ModelMessage], model_settings: OpenAIResponsesModelSettings
     ) -> tuple[str, int | None, OpenAIModelName | None] | None:
-        """If background mode is active and the last response expects continuation, return continuation metadata."""
-        if not model_settings.get('openai_background'):
+        """If the last message is a suspended response from this provider, return continuation metadata."""
+        if not messages:  # pragma: lax no cover
             return None
-        for message in reversed(messages):
-            if isinstance(message, ModelResponse):
-                if not (message.state == 'suspended' and message.provider_response_id):
-                    return None
-                details = message.provider_details if isinstance(message.provider_details, dict) else {}
-                seq = details.get('last_sequence_number')
-                last_sequence_number = seq if isinstance(seq, int) else None
-                return (
-                    message.provider_response_id,
-                    last_sequence_number,
-                    cast(OpenAIModelName | None, message.model_name),
-                )
-        return None
+        last = messages[-1]
+        if not isinstance(last, ModelResponse):
+            return None
+        if last.provider_name != self.system:  # pragma: lax no cover
+            return None
+        if not (last.state == 'suspended' and last.provider_response_id):  # pragma: lax no cover
+            return None
+        details: _OpenAIResponsesContinuationDetails = cast(
+            _OpenAIResponsesContinuationDetails, last.provider_details or {}
+        )
+        last_sequence_number = details.get('last_sequence_number')
+        return (
+            last.provider_response_id,
+            last_sequence_number,
+            cast(OpenAIModelName | None, last.model_name),
+        )
 
     def _build_include(self, model_settings: OpenAIResponsesModelSettings) -> list[responses.ResponseIncludable]:
         """Build the include list for retrieve/create requests."""
@@ -2170,7 +2176,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent]:
         """Retrieve a background response by ID, optionally streaming."""
         include = self._build_include(model_settings)
-        try:
+        with _map_api_errors(self.model_name):
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
             retrieve_kwargs: dict[str, Any] = {}
@@ -2184,12 +2190,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 extra_headers=extra_headers,
                 **retrieve_kwargs,
             )
-        except APIStatusError as e:  # pragma: lax no cover
-            if (status_code := e.status_code) >= 400:
-                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise
-        except APIConnectionError as e:  # pragma: lax no cover
-            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
     def _translate_thinking(
         self,
@@ -3002,6 +3002,7 @@ class _ModelResponseStreamedResponse(StreamedResponse):
         self.provider_details = self._model_response.provider_details
         self.finish_reason = self._model_response.finish_reason
         self.state = self._model_response.state
+        self.continuation_delay = self._model_response.continuation_delay
         self.metadata = self._model_response.metadata
         for index, part in enumerate(self._model_response.parts):
             self._parts_manager.handle_part(vendor_part_id=index, part=part)
