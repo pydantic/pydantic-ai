@@ -503,7 +503,6 @@ def test_model_json_schema_with_capabilities():
                 },
                 'KnownModelName': {
                     'enum': [
-                        'anthropic:claude-3-5-haiku-20241022',
                         'anthropic:claude-3-5-haiku-latest',
                         'anthropic:claude-3-7-sonnet-20250219',
                         'anthropic:claude-3-7-sonnet-latest',
@@ -600,7 +599,6 @@ def test_model_json_schema_with_capabilities():
                         'cohere:command-r7b-12-2024',
                         'deepseek:deepseek-chat',
                         'deepseek:deepseek-reasoner',
-                        'gateway/anthropic:claude-3-5-haiku-20241022',
                         'gateway/anthropic:claude-3-5-haiku-latest',
                         'gateway/anthropic:claude-3-7-sonnet-20250219',
                         'gateway/anthropic:claude-3-7-sonnet-latest',

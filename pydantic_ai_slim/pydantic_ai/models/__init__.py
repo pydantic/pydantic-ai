@@ -63,7 +63,6 @@ See https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.p
 KnownModelName = TypeAliasType(
     'KnownModelName',
     Literal[
-        'anthropic:claude-3-5-haiku-20241022',
         'anthropic:claude-3-5-haiku-latest',
         'anthropic:claude-3-7-sonnet-20250219',
         'anthropic:claude-3-7-sonnet-latest',
@@ -160,7 +159,6 @@ KnownModelName = TypeAliasType(
         'cohere:command-r7b-12-2024',
         'deepseek:deepseek-chat',
         'deepseek:deepseek-reasoner',
-        'gateway/anthropic:claude-3-5-haiku-20241022',
         'gateway/anthropic:claude-3-5-haiku-latest',
         'gateway/anthropic:claude-3-7-sonnet-20250219',
         'gateway/anthropic:claude-3-7-sonnet-latest',
