@@ -13,6 +13,7 @@ __all__ = (
     'TypeSignature',
     'TypeFieldSignature',
     'TypeExpr',
+    'SimpleTypeName',
     'SimpleTypeExpr',
     'LiteralTypeExpr',
     'GenericTypeExpr',
@@ -24,26 +25,24 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypeAlias, cast
 
-# Set during rendering to provide the tool name for dedup prefix resolution.
-# TypeSignature.__str__ and render_definition() consult this to produce
-# prefixed names (e.g. `tool_a_User`) without mutating the object.
-_render_tool_name: ContextVar[str | None] = ContextVar('_render_tool_name', default=None)
-
-# Set during rendering to indicate which type names need tool-name prefixes.
-# Populated by callers (e.g. FunctionSignature.render()) from the result of
-# dedup_referenced_types(), consulted by TypeSignature.display_name.
-_prefixed_type_names: ContextVar[frozenset[str]] = ContextVar('_prefixed_type_names', default=frozenset())
+# Set during rendering to map original type names to prefixed names for
+# dedup conflict resolution (e.g. {'User': 'tool_a_User'}).
+# Populated by FunctionSignature.render(), consulted by TypeSignature.display_name.
+_type_name_overrides: ContextVar[dict[str, str]] = ContextVar('_type_name_overrides', default={})
 
 # =============================================================================
 # Type expression tree
 # =============================================================================
 
 
+SimpleTypeName = Literal['str', 'int', 'float', 'bool', 'Any', 'None']
+
+
 @dataclass
 class SimpleTypeExpr:
     """A simple named type like `str`, `int`, `Any`, `None`."""
 
-    name: str
+    name: SimpleTypeName
     kind: Literal['simple'] = 'simple'
 
     def __str__(self) -> str:
@@ -109,11 +108,11 @@ def _render_description(text: str, indent: str = '') -> list[str]:
 class TypeFieldSignature:
     """A single field in a TypedDict-style type definition."""
 
-    kind: Literal['field'] = 'field'
     name: str
     type: TypeExpr
     required: bool = False
     description: str | None = None
+    kind: Literal['field'] = 'field'
 
     def __str__(self) -> str:
         """Render this field as a line in a TypedDict class body."""
@@ -130,20 +129,17 @@ class TypeFieldSignature:
 class TypeSignature:
     """A TypedDict-style class definition with named fields."""
 
-    kind: Literal['type'] = 'type'
     name: str
 
     description: str | None = None
 
     fields: dict[str, TypeFieldSignature] = field(default_factory=dict[str, TypeFieldSignature])
+    kind: Literal['type'] = 'type'
 
     @property
     def display_name(self) -> str:
         """The type name, with tool-name prefix applied if rendering context is set."""
-        tool_name = _render_tool_name.get()
-        if tool_name is not None and self.name in _prefixed_type_names.get():
-            return f'{tool_name}_{self.name}'
-        return self.name
+        return _type_name_overrides.get().get(self.name, self.name)
 
     def __str__(self) -> str:
         """Return the type name (for use in type expressions like `def foo(x: User)`)."""
@@ -179,10 +175,10 @@ class TypeSignature:
 class FunctionParam:
     """A single parameter in a function signature."""
 
-    kind: Literal['param'] = 'param'
     name: str
     type: TypeExpr
     default: str | None = None
+    kind: Literal['param'] = 'param'
 
     def __str__(self) -> str:
         """Render this parameter as a function parameter string."""
@@ -201,8 +197,7 @@ class FunctionSignature:
     at render time (e.g. from a `ToolDefinition`).
     """
 
-    kind: Literal['function'] = 'function'
-    name: str = ''
+    name: str
     description: str | None = None
 
     params: dict[str, FunctionParam] = field(default_factory=dict[str, FunctionParam])
@@ -217,6 +212,8 @@ class FunctionSignature:
     is_async: bool = False
     """Whether the underlying function is async."""
 
+    kind: Literal['function'] = 'function'
+
     def render(
         self,
         body: str,
@@ -224,29 +221,28 @@ class FunctionSignature:
         name: str | None = None,
         description: str | None = None,
         is_async: bool | None = None,
-        prefixed_type_names: frozenset[str] = frozenset(),
+        conflicting_type_names: frozenset[str] = frozenset(),
     ) -> str:
         """Render the signature with a specific body.
 
-        Sets `_render_tool_name` and `_prefixed_type_names` so that
-        dedup-prefixed types resolve correctly during rendering.
+        Sets `_type_name_overrides` so that dedup-prefixed types resolve
+        correctly during rendering.
 
         Args:
             body: The function body (e.g. `'...'` or `'return await tool()'`).
             name: The function name (also used for dedup prefix resolution). Falls back to `self.name`.
             description: Optional docstring to include. Falls back to `self.description`.
             is_async: Override async rendering. If `None`, uses `self.is_async`.
-            prefixed_type_names: Set of type names that need tool-name prefixes (from `dedup_referenced_types`).
+            conflicting_type_names: Set of type names that need tool-name prefixes (from `dedup_referenced_types`).
         """
-        name = name or self.name
+        render_name = name or self.name
         description = description if description is not None else self.description
-        tool_token = _render_tool_name.set(name)
-        prefix_token = _prefixed_type_names.set(prefixed_type_names)
+        overrides = {n: f'{render_name}_{n}' for n in conflicting_type_names}
+        token = _type_name_overrides.set(overrides)
         try:
-            return self._render(body, name=name, description=description, is_async=is_async)
+            return self._render(body, name=render_name, description=description, is_async=is_async)
         finally:
-            _prefixed_type_names.reset(prefix_token)
-            _render_tool_name.reset(tool_token)
+            _type_name_overrides.reset(token)
 
     def _render(
         self,
@@ -334,7 +330,7 @@ class FunctionSignature:
 
         Returns the set of type names that have conflicts (same name, different
         structure) and need tool-name prefixes at render time. Pass this set to
-        `FunctionSignature.render(prefixed_type_names=...)`.
+        `FunctionSignature.render(conflicting_type_names=...)`.
 
         Use `collect_unique_referenced_types()` when rendering to emit each
         definition once.
@@ -383,12 +379,16 @@ _NONE = SimpleTypeExpr('None')
 # =============================================================================
 
 
-_JSON_TYPE_TO_PYTHON: dict[str, str] = {
+_JSON_SIMPLE_TYPE_TO_PYTHON: dict[str, SimpleTypeName] = {
     'string': 'str',
     'integer': 'int',
     'number': 'float',
     'boolean': 'bool',
     'null': 'None',
+}
+
+_JSON_TYPE_TO_PYTHON: dict[str, str] = {
+    **_JSON_SIMPLE_TYPE_TO_PYTHON,
     'array': 'list',
     'object': 'dict',
 }
@@ -396,7 +396,7 @@ _JSON_TYPE_TO_PYTHON: dict[str, str] = {
 
 def _json_type_to_python(json_type: str) -> SimpleTypeExpr:
     """Convert a JSON type string to a SimpleTypeExpr."""
-    return SimpleTypeExpr(_JSON_TYPE_TO_PYTHON.get(json_type, 'Any'))
+    return SimpleTypeExpr(_JSON_SIMPLE_TYPE_TO_PYTHON.get(json_type, 'Any'))
 
 
 _NON_ALNUM_RE = re.compile(r'[^a-zA-Z0-9]')
@@ -537,8 +537,8 @@ def _type_to_expr(
 ) -> TypeExpr:
     """Convert a schema type to a TypeExpr."""
     # Simple types — use shared mapping, skip compound types handled below
-    if isinstance(schema_type, str) and schema_type in _JSON_TYPE_TO_PYTHON and schema_type not in ('array', 'object'):
-        return SimpleTypeExpr(_JSON_TYPE_TO_PYTHON[schema_type])
+    if isinstance(schema_type, str) and schema_type in _JSON_SIMPLE_TYPE_TO_PYTHON:
+        return SimpleTypeExpr(_JSON_SIMPLE_TYPE_TO_PYTHON[schema_type])
 
     # Array type
     if schema_type == 'array':

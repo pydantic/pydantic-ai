@@ -44,7 +44,7 @@ class _SearchParams(typing_extensions.TypedDict):
 
 
 def test_render_function_signature_with_no_params():
-    sig = FunctionSignature(params={}, return_type=SimpleTypeExpr('None'))
+    sig = FunctionSignature(name='ping', params={}, return_type=SimpleTypeExpr('None'))
     assert sig.render('...', name='ping') == 'def ping() -> None:\n    ...'
     # render() can override is_async
     assert sig.render('...', name='ping', is_async=True) == 'async def ping() -> None:\n    ...'
@@ -72,11 +72,13 @@ def test_dedup_referenced_types_substring_names():
     )
 
     sig1 = FunctionSignature(
+        name='tool_a',
         params={'user': FunctionParam(name='user', type=user1, default=None)},
         return_type=SimpleTypeExpr('Any'),
         referenced_types=[user1],
     )
     sig2 = FunctionSignature(
+        name='tool_b',
         params={
             'user': FunctionParam(name='user', type=user2, default=None),
             'meta': FunctionParam(name='meta', type=user_meta, default=None),
@@ -90,7 +92,7 @@ def test_dedup_referenced_types_substring_names():
     assert prefixed == frozenset({'User'})
     assert user_meta.name == 'UserMeta'
     # render() sets the context — prefixed types resolve correctly
-    rendered = sig2.render('...', name='tool_b', prefixed_type_names=prefixed)
+    rendered = sig2.render('...', name='tool_b', conflicting_type_names=prefixed)
     assert 'user: tool_b_User' in rendered
     assert 'meta: UserMeta' in rendered
 
@@ -111,11 +113,13 @@ def test_dedup_identical_types_unified():
     )
 
     sig1 = FunctionSignature(
+        name='tool_a',
         params={'user': FunctionParam(name='user', type=user1, default=None)},
         return_type=SimpleTypeExpr('Any'),
         referenced_types=[user1],
     )
     sig2 = FunctionSignature(
+        name='tool_b',
         params={'user': FunctionParam(name='user', type=user2, default=None)},
         return_type=SimpleTypeExpr('Any'),
         referenced_types=[user2],
@@ -165,11 +169,13 @@ def test_dedup_replaces_nested_generic_and_union_refs_with_canonical():
     )
 
     sig1 = FunctionSignature(
+        name='tool_a',
         params={'user': FunctionParam(name='user', type=user1, default=None)},
         return_type=SimpleTypeExpr('Any'),
         referenced_types=[user1],
     )
     sig2 = FunctionSignature(
+        name='tool_b',
         params={
             'wrapper': FunctionParam(name='wrapper', type=wrapper, default=None),
             'tags': FunctionParam(
@@ -254,7 +260,7 @@ def test_dedup_mixed_identical_and_conflicting_from_schemas():
     # 'User' needs a prefix
     assert prefixed == frozenset({'User'})
     # render() sets the context — prefixed types resolve correctly
-    rendered = sig3.render('...', name='tool_c', prefixed_type_names=prefixed)
+    rendered = sig3.render('...', name='tool_c', conflicting_type_names=prefixed)
     assert 'user: tool_c_User' in rendered
 
     # collect_unique_referenced_types returns exactly 2 unique types
@@ -265,7 +271,7 @@ def test_dedup_mixed_identical_and_conflicting_from_schemas():
 class User(TypedDict):
     name: str""")
     # Second type needs prefix — render_definition() uses context from render()
-    assert 'tool_c_User' in sig3.render('...', name='tool_c', prefixed_type_names=prefixed)
+    assert 'tool_c_User' in sig3.render('...', name='tool_c', conflicting_type_names=prefixed)
 
 
 def test_dedup_composite_type_expr_rename_propagates():
@@ -284,12 +290,14 @@ def test_dedup_composite_type_expr_rename_propagates():
     )
 
     sig1 = FunctionSignature(
+        name='tool_a',
         params={'user': FunctionParam(name='user', type=user1, default=None)},
         return_type=SimpleTypeExpr('Any'),
         referenced_types=[user1],
     )
     # sig2 references user2 via list[User]
     sig2 = FunctionSignature(
+        name='tool_b',
         params={'users': FunctionParam(name='users', type=GenericTypeExpr(base='list', args=[user2]), default=None)},
         return_type=SimpleTypeExpr('Any'),
         referenced_types=[user2],
@@ -299,7 +307,7 @@ def test_dedup_composite_type_expr_rename_propagates():
     # 'User' needs a prefix
     assert prefixed == frozenset({'User'})
     # render() sets the context — prefixed types resolve correctly
-    rendered = sig2.render('...', name='tool_b', prefixed_type_names=prefixed)
+    rendered = sig2.render('...', name='tool_b', conflicting_type_names=prefixed)
     assert 'users: list[tool_b_User]' in rendered
 
 
@@ -643,7 +651,7 @@ def test_collect_unique_referenced_types_empty():
     """Empty input returns empty list."""
     assert FunctionSignature.collect_unique_referenced_types([]) == []
 
-    sig = FunctionSignature(params={}, return_type=SimpleTypeExpr('Any'), referenced_types=[])
+    sig = FunctionSignature(name='test', params={}, return_type=SimpleTypeExpr('Any'), referenced_types=[])
     assert FunctionSignature.collect_unique_referenced_types([sig]) == []
 
 

@@ -18,14 +18,14 @@ class IncludeToolReturnSchemas(AbstractCapability[AgentDepsT]):
 
     When added to an agent's capabilities, this sets
     [`include_return_schema`][pydantic_ai.tools.ToolDefinition.include_return_schema]
-    to ``True`` on matching tool definitions, causing the model to receive
+    to `True` on matching tool definitions, causing the model to receive
     return type information for those tools.
 
     For models that natively support return schemas (e.g. Google Gemini), the
     schema is passed as a structured field.  For other models, it is injected
     into the tool description as JSON text.
 
-    Per-tool overrides (``Tool(..., include_return_schema=False)``) take
+    Per-tool overrides (`Tool(..., include_return_schema=False)`) take
     precedence — this capability only sets the flag on tools that haven't
     explicitly opted out.
 
@@ -40,10 +40,10 @@ class IncludeToolReturnSchemas(AbstractCapability[AgentDepsT]):
     tools: ToolSelector[AgentDepsT] = 'all'
     """Which tools should have their return schemas included.
 
-    - ``'all'`` (default): every tool gets its return schema included.
-    - ``Sequence[str]``: only tools whose names are listed.
-    - ``dict[str, Any]``: matches tools whose metadata deeply includes the specified key-value pairs.
-    - Callable ``(ctx, tool_def) -> bool``: custom sync or async predicate.
+    - `'all'` (default): every tool gets its return schema included.
+    - `Sequence[str]`: only tools whose names are listed.
+    - `dict[str, Any]`: matches tools whose metadata deeply includes the specified key-value pairs.
+    - Callable `(ctx, tool_def) -> bool`: custom sync or async predicate.
     """
 
     @classmethod
