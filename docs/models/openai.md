@@ -395,6 +395,41 @@ print(result.usage())
 1. For Ollama Cloud, use the `base_url='https://ollama.com/v1'` and set the `OLLAMA_API_KEY` environment variable.
 
 
+### Rapid-MLX (Apple Silicon)
+
+[Rapid-MLX](https://github.com/raullenchai/Rapid-MLX) is an OpenAI-compatible
+inference server for Apple Silicon, built on Apple's MLX framework. It runs
+MLX-quantized models with streaming and tool calling, and ships day-0 support
+for recent open models such as Gemma 4 and Qwen3.5.
+
+```bash
+pip install rapid-mlx
+rapid-mlx serve mlx-community/Qwen3.5-4B-MLX-4bit
+```
+
+The server listens on `http://localhost:8000/v1` and implements the OpenAI
+chat completions API.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+rapid_mlx_model = OpenAIChatModel(
+    model_name='mlx-community/Qwen3.5-4B-MLX-4bit',
+    provider=OpenAIProvider(
+        base_url='http://localhost:8000/v1',
+        api_key='not-needed',
+    ),
+)
+agent = Agent(rapid_mlx_model)
+```
+
+Rapid-MLX includes 18 tool-call parsers (hermes, llama3, qwen, glm47,
+minimax, gemma4, ...), so structured tool use works with PydanticAI's
+typed tool API for the supported open-weight models.
+
+
 ### Azure AI Foundry
 
 To use [Azure AI Foundry](https://ai.azure.com/) as your provider, you can set the `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and `OPENAI_API_VERSION` environment variables and use [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] by name:
