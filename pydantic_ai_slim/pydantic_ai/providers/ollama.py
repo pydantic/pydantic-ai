@@ -98,7 +98,7 @@ class OllamaProvider(Provider[AsyncOpenAI]):
             base_url = base_url or os.getenv('OLLAMA_BASE_URL')
             if not base_url:
                 raise UserError(
-                    'Set the `OLLAMA_BASE_URL` environment variable or pass it via `OllamaProvider(base_url=...)`'
+                    'Set the `OLLAMA_BASE_URL` environment variable or pass it via `OllamaProvider(base_url=...)` '
                     'to use the Ollama provider.'
                 )
 

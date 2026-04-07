@@ -140,7 +140,7 @@ def gateway_provider(
     api_key = api_key or os.getenv('PYDANTIC_AI_GATEWAY_API_KEY', os.getenv('PAIG_API_KEY'))
     if not api_key:
         raise UserError(
-            'Set the `PYDANTIC_AI_GATEWAY_API_KEY` environment variable or pass it via `gateway_provider(..., api_key=...)`'
+            'Set the `PYDANTIC_AI_GATEWAY_API_KEY` environment variable or pass it via `gateway_provider(..., api_key=...)` '
             ' to use the Pydantic AI Gateway provider.'
         )
 

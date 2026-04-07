@@ -97,7 +97,7 @@ class XaiProvider(Provider[AsyncClient]):
             api_key = api_key or os.getenv('XAI_API_KEY')
             if not api_key:
                 raise UserError(
-                    'Set the `XAI_API_KEY` environment variable or pass it via `XaiProvider(api_key=...)`'
+                    'Set the `XAI_API_KEY` environment variable or pass it via `XaiProvider(api_key=...)` '
                     'to use the xAI provider.'
                 )
             self._lazy_client = _LazyAsyncClient(api_key=api_key)

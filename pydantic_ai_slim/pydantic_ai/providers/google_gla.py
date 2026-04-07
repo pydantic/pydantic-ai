@@ -43,7 +43,7 @@ class GoogleGLAProvider(Provider[httpx.AsyncClient]):
         api_key = api_key or os.getenv('GEMINI_API_KEY')
         if not api_key:
             raise UserError(
-                'Set the `GEMINI_API_KEY` environment variable or pass it via `GoogleGLAProvider(api_key=...)`'
+                'Set the `GEMINI_API_KEY` environment variable or pass it via `GoogleGLAProvider(api_key=...)` '
                 'to use the Google GLA provider.'
             )
 

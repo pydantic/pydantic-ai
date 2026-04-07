@@ -80,7 +80,7 @@ class DeepSeekProvider(Provider[AsyncOpenAI]):
         api_key = api_key or os.getenv('DEEPSEEK_API_KEY')
         if not api_key and openai_client is None:
             raise UserError(
-                'Set the `DEEPSEEK_API_KEY` environment variable or pass it via `DeepSeekProvider(api_key=...)`'
+                'Set the `DEEPSEEK_API_KEY` environment variable or pass it via `DeepSeekProvider(api_key=...)` '
                 'to use the DeepSeek provider.'
             )
 

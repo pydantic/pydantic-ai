@@ -95,7 +95,7 @@ class GrokProvider(Provider[AsyncOpenAI]):
         api_key = api_key or os.getenv('GROK_API_KEY')
         if not api_key and openai_client is None:
             raise UserError(
-                'Set the `GROK_API_KEY` environment variable or pass it via `GrokProvider(api_key=...)`'
+                'Set the `GROK_API_KEY` environment variable or pass it via `GrokProvider(api_key=...)` '
                 'to use the Grok provider.'
             )
 
