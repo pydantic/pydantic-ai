@@ -1131,6 +1131,7 @@ async def test_aggregated_usage_attribute_names(capfire: CaptureLogfire) -> None
             'final_result': 'Hello!',
             'gen_ai.aggregated_usage.input_tokens': 10,
             'gen_ai.aggregated_usage.output_tokens': 5,
+            'gen_ai.aggregated_usage.cache_read.input_tokens': 2,
             'gen_ai.aggregated_usage.details.cache_read_tokens': 2,
             'pydantic_ai.all_messages': [
                 {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]},
