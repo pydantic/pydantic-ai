@@ -12,7 +12,6 @@ from typing import Any
 import httpx
 import pytest
 from asgi_lifespan import LifespanManager
-from dirty_equals import IsStr
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -30,6 +29,7 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RequestUsage,
     SystemPromptPart,
     TextPart,
     TextPartDelta,
@@ -57,7 +57,7 @@ from pydantic_ai.output import OutputDataT
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsSameStr, try_import
+from .conftest import IsDatetime, IsInt, IsSameStr, IsStr, try_import
 
 with try_import() as imports_successful:
     from ag_ui.core import (
@@ -1534,11 +1534,63 @@ async def test_callback_sync() -> None:
     # Verify we can access messages
     messages = run_result.all_messages()
     assert len(messages) >= 1
+    assert isinstance(messages[0], ModelRequest)
+    assert messages[0].run_id == run_result.run_id
 
     # Verify events were still streamed normally
     assert len(events) > 0
     assert events[0]['type'] == 'RUN_STARTED'
     assert events[-1]['type'] == 'RUN_FINISHED'
+
+
+async def test_adapter_sets_current_run_id_on_trailing_mapped_request() -> None:
+    """The adapter sets `run_id` on the current run's mapped request, not older history."""
+    captured_results: list[AgentRunResult[Any]] = []
+
+    def sync_callback(run_result: AgentRunResult[Any]) -> None:
+        captured_results.append(run_result)
+
+    agent = Agent(TestModel())
+    run_input = create_input(
+        UserMessage(id='msg0', content='Previous question'),
+        AssistantMessage(id='msg1', content='Previous response'),
+        UserMessage(id='msg2', content='Hello!'),
+    )
+
+    await run_and_collect_events(agent, run_input, on_complete=sync_callback)
+
+    assert len(captured_results) == 1
+    run_result = captured_results[0]
+    messages = run_result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Previous question', timestamp=IsDatetime())],
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Previous response')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello!', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=(run_id := IsSameStr()),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt()),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=run_id,
+            ),
+        ]
+    )
+    assert messages[0].run_id is None
+    assert messages[1].run_id is None
+    assert messages[2].run_id == run_result.run_id
+    assert messages[3].run_id == run_result.run_id
+    assert run_result.new_messages() == messages[-2:]
 
 
 async def test_callback_async() -> None:
@@ -1756,7 +1808,11 @@ async def test_messages(image_content: BinaryContent, document_content: BinaryCo
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
-                        content='{"results": [{"title": "Hello, world!", "url": "https://en.wikipedia.org/wiki/Hello,_world!"}]}',
+                        content={
+                            'results': [
+                                {'title': 'Hello, world!', 'url': 'https://en.wikipedia.org/wiki/Hello,_world!'}
+                            ]
+                        },
                         tool_call_id='search_1',
                         timestamp=IsDatetime(),
                         provider_name='function',
@@ -1793,6 +1849,120 @@ async def test_messages(image_content: BinaryContent, document_content: BinaryCo
             ),
         ]
     )
+
+
+async def test_builtin_tool_return_json_string_content_parsed() -> None:
+    """Regression test for https://github.com/pydantic/pydantic-ai/issues/4623.
+
+    AG-UI ToolMessage.content is always a string. For built-in tools the original
+    dict content gets JSON-serialized on the way out. The adapter must parse it
+    back so downstream model code (which checks isinstance(content, dict)) doesn't
+    silently drop the tool result.
+    """
+    messages: list[Message] = [
+        AssistantMessage(
+            id='msg_1',
+            tool_calls=[
+                ToolCall(
+                    id='pyd_ai_builtin|anthropic|srvtoolu_abc123',
+                    function=FunctionCall(
+                        name='web_fetch',
+                        arguments='{"url": "https://example.com"}',
+                    ),
+                ),
+            ],
+        ),
+        ToolMessage(
+            id='msg_2',
+            content='{"type": "web_fetch_result", "url": "https://example.com", "page_content": "hello"}',
+            tool_call_id='pyd_ai_builtin|anthropic|srvtoolu_abc123',
+        ),
+    ]
+
+    result = AGUIAdapter.load_messages(messages)
+    response = result[0]
+    assert isinstance(response, ModelResponse)
+
+    return_part = response.parts[1]
+    assert isinstance(return_part, BuiltinToolReturnPart)
+    assert return_part.tool_name == 'web_fetch'
+    assert return_part.tool_call_id == 'srvtoolu_abc123'
+    assert return_part.provider_name == 'anthropic'
+    content = return_part.content
+    assert content == {'type': 'web_fetch_result', 'url': 'https://example.com', 'page_content': 'hello'}
+
+
+async def test_builtin_tool_return_plain_string_content_preserved() -> None:
+    """Plain string content that isn't valid JSON stays as-is."""
+    messages: list[Message] = [
+        AssistantMessage(
+            id='msg_1',
+            tool_calls=[
+                ToolCall(
+                    id='pyd_ai_builtin|anthropic|srvtoolu_abc456',
+                    function=FunctionCall(
+                        name='web_fetch',
+                        arguments='{"url": "https://example.com"}',
+                    ),
+                ),
+            ],
+        ),
+        ToolMessage(
+            id='msg_2',
+            content='just a plain string, not JSON',
+            tool_call_id='pyd_ai_builtin|anthropic|srvtoolu_abc456',
+        ),
+    ]
+
+    result = AGUIAdapter.load_messages(messages)
+    response = result[0]
+    assert isinstance(response, ModelResponse)
+
+    return_part = response.parts[1]
+    assert isinstance(return_part, BuiltinToolReturnPart)
+    assert return_part.content == 'just a plain string, not JSON'
+
+
+async def test_builtin_tool_return_non_string_content_passthrough() -> None:
+    """When ToolMessage.content is already a non-string (e.g. dict), it passes through without JSON parsing."""
+    tool_msg = ToolMessage.model_construct(
+        id='msg_2',
+        content={'type': 'web_fetch_result', 'url': 'https://example.com'},
+        tool_call_id='pyd_ai_builtin|anthropic|srvtoolu_abc789',
+    )
+    messages: list[Message] = [
+        AssistantMessage(
+            id='msg_1',
+            tool_calls=[
+                ToolCall(
+                    id='pyd_ai_builtin|anthropic|srvtoolu_abc789',
+                    function=FunctionCall(
+                        name='web_fetch',
+                        arguments='{"url": "https://example.com"}',
+                    ),
+                ),
+            ],
+        ),
+        tool_msg,
+    ]
+
+    result = AGUIAdapter.load_messages(messages)
+    response = result[0]
+    assert isinstance(response, ModelResponse)
+
+    return_part = response.parts[1]
+    assert isinstance(return_part, BuiltinToolReturnPart)
+    assert return_part.content == {'type': 'web_fetch_result', 'url': 'https://example.com'}
+
+
+async def test_user_message_empty_content_list_skipped() -> None:
+    """A UserMessage with an empty content list produces no UserPromptPart."""
+    messages: list[Message] = [
+        UserMessage(id='msg_1', content=[]),
+    ]
+
+    result = AGUIAdapter.load_messages(messages)
+    assert result == []
 
 
 async def test_builtin_tool_call() -> None:
@@ -2040,10 +2210,12 @@ async def test_event_stream_multiple_responses_with_tool_calls():
         )
 
         yield FunctionToolCallEvent(
-            part=ToolCallPart(tool_name='tool_call_1', args='{"query": "Hello world"}', tool_call_id='tool_call_1')
+            part=ToolCallPart(tool_name='tool_call_1', args='{"query": "Hello world"}', tool_call_id='tool_call_1'),
+            args_valid=True,
         )
         yield FunctionToolCallEvent(
-            part=ToolCallPart(tool_name='tool_call_2', args='{"query": "Goodbye world"}', tool_call_id='tool_call_2')
+            part=ToolCallPart(tool_name='tool_call_2', args='{"query": "Goodbye world"}', tool_call_id='tool_call_2'),
+            args_valid=True,
         )
 
         yield FunctionToolResultEvent(
@@ -2082,10 +2254,12 @@ async def test_event_stream_multiple_responses_with_tool_calls():
         )
 
         yield FunctionToolCallEvent(
-            part=ToolCallPart(tool_name='tool_call_3', args='{"query": "Hello world"}', tool_call_id='tool_call_3')
+            part=ToolCallPart(tool_name='tool_call_3', args='{"query": "Hello world"}', tool_call_id='tool_call_3'),
+            args_valid=True,
         )
         yield FunctionToolCallEvent(
-            part=ToolCallPart(tool_name='tool_call_4', args='{"query": "Goodbye world"}', tool_call_id='tool_call_4')
+            part=ToolCallPart(tool_name='tool_call_4', args='{"query": "Goodbye world"}', tool_call_id='tool_call_4'),
+            args_valid=True,
         )
 
         yield FunctionToolResultEvent(
@@ -2397,5 +2571,56 @@ async def test_handle_ag_ui_request():
                 'more_body': True,
             },
             {'type': 'http.response.body', 'body': b'', 'more_body': False},
+        ]
+    )
+
+
+async def test_tool_return_with_files():
+    """Test that tool returns with files include file descriptions in the output."""
+
+    async def event_generator():
+        # Content with text and file - files property extracts BinaryContent from the list
+        yield FunctionToolResultEvent(
+            result=ToolReturnPart(
+                tool_name='get_image',
+                content=['Image analysis result', BinaryContent(data=b'img', media_type='image/png')],
+                tool_call_id='call_1',
+            )
+        )
+        # Content with only a FileUrl - files property returns [ImageUrl]
+        yield FunctionToolResultEvent(
+            result=ToolReturnPart(
+                tool_name='get_url',
+                content=ImageUrl(url='https://example.com/image.jpg'),
+                tool_call_id='call_2',
+            )
+        )
+
+    run_input = create_input(UserMessage(id='msg_1', content='Analyze images'))
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    tool_results = [e for e in events if e.get('type') == 'TOOL_CALL_RESULT']
+    assert tool_results == snapshot(
+        [
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
+                'messageId': IsStr(),
+                'toolCallId': 'call_1',
+                'content': 'Image analysis result\n[File: image/png]',
+                'role': 'tool',
+            },
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
+                'messageId': IsStr(),
+                'toolCallId': 'call_2',
+                'content': '[File: https://example.com/image.jpg]',
+                'role': 'tool',
+            },
         ]
     )
