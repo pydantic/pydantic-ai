@@ -37,6 +37,11 @@ repos:
         args: ["--skip", "tests/models/cassettes/*"]
         additional_dependencies:
           - tomli
+  - repo: https://github.com/zizmorcore/zizmor-pre-commit
+    rev: v1.23.1
+    hooks:
+      - id: zizmor
+
   - repo: local
     hooks:
       - id: clai-help

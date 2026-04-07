@@ -20,6 +20,7 @@ from pydantic_ai import (
     ModelResponse,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -40,7 +41,7 @@ from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
     from mistralai.client import Mistral
-    from mistralai.client.errors.sdkerror import SDKError
+    from mistralai.client.errors import SDKError
     from mistralai.client.models import (
         AssistantMessage as MistralAssistantMessage,
         ChatCompletionChoice as MistralChatCompletionChoice,
@@ -53,9 +54,11 @@ with try_import() as imports_successful:
         DeltaMessage as MistralDeltaMessage,
         FunctionCall as MistralFunctionCall,
         ReferenceChunk as MistralReferenceChunk,
+        TextChunk,
         TextChunk as MistralTextChunk,
         ToolCall as MistralToolCall,
         UsageInfo as MistralUsageInfo,
+        UserMessage,
     )
     from mistralai.client.types.basemodel import Unset as MistralUnset
 
@@ -2049,14 +2052,14 @@ async def test_image_as_binary_content_tool_response(
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='jCmzrytwr')],
-                usage=RequestUsage(input_tokens=65, output_tokens=6),
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='FI5qQGzDE')],
+                usage=RequestUsage(input_tokens=65, output_tokens=16),
                 model_name='pixtral-12b-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={'finish_reason': 'tool_calls', 'timestamp': IsDatetime()},
-                provider_response_id='fca3166d00dd4ff89cd2de88256635c3',
+                provider_response_id='20c656d7c70e4362858160d9d241ce92',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -2065,7 +2068,7 @@ async def test_image_as_binary_content_tool_response(
                     ToolReturnPart(
                         tool_name='get_image',
                         content=IsInstance(BinaryImage),
-                        tool_call_id='jCmzrytwr',
+                        tool_call_id='FI5qQGzDE',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -2075,21 +2078,36 @@ async def test_image_as_binary_content_tool_response(
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='The fruit in the image is a **kiwi**. Specifically, it appears to be the inside of a **green kiwi**, showing its distinctive black seeds and bright green flesh.'
+                        content='The image shows a kiwi fruit that has been cut in half. Kiwis are small, oval-shaped fruits with a bright green flesh and tiny black seeds. They have a sweet and tangy flavor and are known for being rich in vitamin C and fiber.'
                     )
                 ],
-                usage=RequestUsage(input_tokens=580, output_tokens=37),
+                usage=RequestUsage(input_tokens=1540, output_tokens=54),
                 model_name='pixtral-12b-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
-                provider_response_id='3d023b4b1c0a4934b3cd0226136c12fd',
+                provider_response_id='b9df7d6167a74543aed6c27557ab0a29',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
         ]
     )
+
+
+async def test_text_content_input(allow_model_requests: None):
+    c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
+    mock_client = MockMistralAI.create_mock(c)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+
+    part = UserPromptPart(
+        content=[
+            'Hello',
+            TextContent(content='This is some text content.', metadata={'key': 'value'}),
+        ]
+    )
+    m = await model._map_user_prompt(part)  # pyright: ignore[reportPrivateUsage]
+    assert m == snapshot(UserMessage(content=[TextChunk(text='Hello'), TextChunk(text='This is some text content.')]))
 
 
 async def test_image_url_input(allow_model_requests: None):

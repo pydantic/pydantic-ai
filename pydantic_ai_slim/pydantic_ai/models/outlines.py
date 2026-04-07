@@ -31,6 +31,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -426,8 +427,9 @@ class OutlinesModel(Model):
         """Turn the model messages into an Outlines Chat instance."""
         chat = Chat()
 
-        if instructions := self._get_instructions(messages, model_request_parameters):
-            chat.add_system_message(instructions)
+        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
+            for part in instruction_parts:
+                chat.add_system_message(part.content)
 
         for message in messages:
             if isinstance(message, ModelRequest):
@@ -440,8 +442,9 @@ class OutlinesModel(Model):
                         elif isinstance(part.content, Sequence):
                             outlines_input: Sequence[str | Image] = []
                             for item in part.content:
-                                if isinstance(item, str):
-                                    outlines_input.append(item)
+                                if isinstance(item, str | TextContent):
+                                    text = item if isinstance(item, str) else item.content
+                                    outlines_input.append(text)
                                 elif isinstance(item, ImageUrl):
                                     image_content: DownloadedItem[bytes] = await download_item(
                                         item, data_format='bytes', type_format='mime'

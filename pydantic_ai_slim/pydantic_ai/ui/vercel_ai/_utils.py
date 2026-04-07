@@ -94,9 +94,9 @@ _DATA_CHUNK_TYPES = (DataChunk, SourceUrlChunk, SourceDocumentChunk, FileChunk)
 def iter_metadata_chunks(
     tool_result: ToolReturnPart,
 ) -> Iterator[DataChunk | SourceUrlChunk | SourceDocumentChunk | FileChunk]:
-    """Yield data-carrying chunks from ``tool_result.metadata`` (or ``.content``).
+    """Yield data-carrying chunks from `tool_result.metadata` (or `.content`).
 
-    Used by both the streaming and dump paths. Only ``_DATA_CHUNK_TYPES`` are
+    Used by both the streaming and dump paths. Only `_DATA_CHUNK_TYPES` are
     yielded; protocol-control chunks are filtered out.
     """
     possible = tool_result.metadata or tool_result.content
@@ -140,8 +140,8 @@ def iter_tool_approval_responses(
 ) -> Iterator[tuple[str, ToolApprovalResponded]]:
     """Yield `(tool_call_id, approval)` for each responded tool approval in assistant messages.
 
-    Only ``approval-responded`` parts are matched. ``output-denied`` parts have
-    already been materialized into the message history by ``load_messages()`` and
+    Only `approval-responded` parts are matched. `output-denied` parts have
+    already been materialized into the message history by `load_messages()` and
     must not be re-processed as deferred results.
     """
     for msg in messages:
