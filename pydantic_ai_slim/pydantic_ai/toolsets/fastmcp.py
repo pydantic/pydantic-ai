@@ -83,7 +83,8 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
     include_return_schema: bool | None
     """Whether to include return schemas in tool definitions sent to the model.
 
-    When `None` (default), the agent-level default is used.
+    When `None` (default), defaults to `False` unless the
+    [`IncludeReturnSchemas`][pydantic_ai.capabilities.IncludeReturnSchemas] capability is used.
     """
 
     _id: str | None

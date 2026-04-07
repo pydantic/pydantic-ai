@@ -19,6 +19,7 @@ from pydantic_ai.capabilities import (
     MCP,
     BuiltinTool,
     ImageGeneration,
+    IncludeReturnSchemas,
     PrefixTools,
     Thinking,
     Toolset,
@@ -74,6 +75,7 @@ def test_capability_types() -> None:
         {
             'BuiltinTool': BuiltinTool,
             'ImageGeneration': ImageGeneration,
+            'IncludeReturnSchemas': IncludeReturnSchemas,
             'MCP': MCP,
             'PrefixTools': PrefixTools,
             'Thinking': Thinking,
@@ -1197,6 +1199,21 @@ Supported by:
                     'title': 'short_spec_BuiltinTool',
                     'type': 'object',
                 },
+                'short_spec_IncludeReturnSchemas': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'IncludeReturnSchemas': {
+                            'anyOf': [
+                                {'const': 'all', 'type': 'string'},
+                                {'items': {'type': 'string'}, 'type': 'array'},
+                                {'additionalProperties': True, 'type': 'object'},
+                            ],
+                            'title': 'Includereturnschemas',
+                        }
+                    },
+                    'title': 'short_spec_IncludeReturnSchemas',
+                    'type': 'object',
+                },
                 'short_spec_MCP': {
                     'additionalProperties': False,
                     'properties': {'MCP': {'title': 'Mcp', 'type': 'string'}},
@@ -1354,6 +1371,8 @@ Supported by:
                                 {'$ref': '#/$defs/short_spec_BuiltinTool'},
                                 {'const': 'ImageGeneration', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_ImageGeneration'},
+                                {'const': 'IncludeReturnSchemas', 'type': 'string'},
+                                {'$ref': '#/$defs/short_spec_IncludeReturnSchemas'},
                                 {'$ref': '#/$defs/short_spec_MCP'},
                                 {'$ref': '#/$defs/spec_MCP'},
                                 {'$ref': '#/$defs/spec_PrefixTools'},
@@ -1492,6 +1511,8 @@ Supported by:
                             {'$ref': '#/$defs/short_spec_BuiltinTool'},
                             {'const': 'ImageGeneration', 'type': 'string'},
                             {'$ref': '#/$defs/spec_ImageGeneration'},
+                            {'const': 'IncludeReturnSchemas', 'type': 'string'},
+                            {'$ref': '#/$defs/short_spec_IncludeReturnSchemas'},
                             {'$ref': '#/$defs/short_spec_MCP'},
                             {'$ref': '#/$defs/spec_MCP'},
                             {'$ref': '#/$defs/spec_PrefixTools'},
