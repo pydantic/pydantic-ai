@@ -601,7 +601,7 @@ class ToolDefinition:
 
     For models that natively support return schemas (e.g. Google Gemini), this is passed as a
     structured field in the API request. For other models, it is injected into the tool's
-    description as JSON text. Only included when `include_return_schema` resolves to `True`.
+    description as JSON text. Only included when ``include_return_schema`` resolves to ``True``.
     """
 
     include_return_schema: bool | None = None

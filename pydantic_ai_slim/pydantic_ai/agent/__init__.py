@@ -2410,7 +2410,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             resolved: list[ToolDefinition] = []
             for td in tool_defs:
                 include = td.include_return_schema if td.include_return_schema is not None else agent_default
-                if not include and td.return_schema:
+                if not include and td.return_schema is not None:
                     td = dataclasses.replace(td, return_schema=None, function_signature=td.function_signature)
                 elif include and not td.return_schema:
                     warnings.warn(

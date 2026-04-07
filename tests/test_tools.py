@@ -1310,7 +1310,7 @@ def test_schema_generator():
                 'timeout': None,
                 'defer_loading': False,
                 'prefer_builtin': None,
-                'return_schema': {},
+                'return_schema': None,
                 'include_return_schema': None,
                 'function_signature': {
                     'params': {'x': {'name': 'x', 'type': {'name': 'str'}, 'default': 'None'}},
@@ -1335,7 +1335,7 @@ def test_schema_generator():
                 'timeout': None,
                 'defer_loading': False,
                 'prefer_builtin': None,
-                'return_schema': {},
+                'return_schema': None,
                 'include_return_schema': None,
                 'function_signature': {
                     'params': {'x': {'name': 'x', 'type': {'name': 'str'}, 'default': 'None'}},
