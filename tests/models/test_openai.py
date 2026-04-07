@@ -3733,20 +3733,101 @@ def test_deprecated_openai_model(openai_api_key: str):
         OpenAIModel('gpt-4o', provider=provider)  # type: ignore[reportDeprecated]
 
 
-async def test_cache_point_filtering(allow_model_requests: None):
-    """Test that CachePoint is filtered out in OpenAI Chat Completions requests."""
+async def test_cache_point_adds_cache_control(allow_model_requests: None):
+    """Test that CachePoint adds cache_control to the preceding content block."""
     c = completion_message(ChatCompletionMessage(content='response', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
 
-    # Test the instance method directly to trigger line 864
     msg = await m._map_user_prompt(UserPromptPart(content=['text before', CachePoint(), 'text after']))  # pyright: ignore[reportPrivateUsage]
 
-    # CachePoint should be filtered out, only text content should remain
+    # CachePoint should add cache_control to 'text before', then 'text after' follows normally
     assert msg['role'] == 'user'
     assert len(msg['content']) == 2  # type: ignore[reportUnknownArgumentType]
     assert msg['content'][0]['text'] == 'text before'  # type: ignore[reportUnknownArgumentType]
+    assert msg['content'][0]['cache_control'] == {'type': 'ephemeral', 'ttl': '5m'}  # type: ignore[reportUnknownArgumentType]
     assert msg['content'][1]['text'] == 'text after'  # type: ignore[reportUnknownArgumentType]
+    assert 'cache_control' not in msg['content'][1]  # type: ignore[reportUnknownArgumentType]
+
+
+async def test_cache_point_with_custom_ttl(allow_model_requests: None):
+    """Test that CachePoint respects the ttl parameter."""
+    c = completion_message(ChatCompletionMessage(content='response', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    msg = await m._map_user_prompt(UserPromptPart(content=['text', CachePoint(ttl='1h')]))  # pyright: ignore[reportPrivateUsage]
+
+    assert msg['content'][0]['cache_control'] == {'type': 'ephemeral', 'ttl': '1h'}  # type: ignore[reportUnknownArgumentType]
+
+
+async def test_cache_point_at_start_is_ignored(allow_model_requests: None):
+    """Test that CachePoint at the start (no preceding content) is silently skipped."""
+    c = completion_message(ChatCompletionMessage(content='response', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    msg = await m._map_user_prompt(UserPromptPart(content=[CachePoint(), 'text after']))  # pyright: ignore[reportPrivateUsage]
+
+    # CachePoint at start has nothing to attach to — ignored
+    assert len(msg['content']) == 1  # type: ignore[reportUnknownArgumentType]
+    assert msg['content'][0]['text'] == 'text after'  # type: ignore[reportUnknownArgumentType]
+    assert 'cache_control' not in msg['content'][0]  # type: ignore[reportUnknownArgumentType]
+
+
+async def test_cache_instructions_setting(allow_model_requests: None):
+    """Test openai_cache_instructions adds cache_control to system message."""
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+
+    messages: list[dict[str, Any]] = [
+        {'role': 'system', 'content': 'You are helpful.'},
+        {'role': 'user', 'content': 'Hello'},
+    ]
+    tools: list[dict[str, Any]] = []
+    settings: OpenAIChatModelSettings = {'openai_cache_instructions': True}
+
+    m._apply_cache_control(messages, tools, settings)  # pyright: ignore[reportPrivateUsage]
+
+    # System message content should be converted to content block array with cache_control
+    assert isinstance(messages[0]['content'], list)
+    assert messages[0]['content'][0]['text'] == 'You are helpful.'
+    assert messages[0]['content'][0]['cache_control'] == {'type': 'ephemeral', 'ttl': '5m'}
+
+
+async def test_cache_messages_setting(allow_model_requests: None):
+    """Test openai_cache_messages adds cache_control to last user message."""
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+
+    messages: list[dict[str, Any]] = [
+        {'role': 'system', 'content': 'System prompt'},
+        {'role': 'user', 'content': 'First message'},
+        {'role': 'assistant', 'content': 'Response'},
+        {'role': 'user', 'content': 'Second message'},
+    ]
+    settings: OpenAIChatModelSettings = {'openai_cache_messages': '1h'}
+
+    m._apply_cache_control(messages, [], settings)  # pyright: ignore[reportPrivateUsage]
+
+    # Only the LAST user message should get cache_control
+    assert isinstance(messages[1]['content'], str)  # first user message unchanged
+    assert isinstance(messages[3]['content'], list)  # last user message converted
+    assert messages[3]['content'][0]['cache_control'] == {'type': 'ephemeral', 'ttl': '1h'}
+
+
+async def test_cache_tool_definitions_setting(allow_model_requests: None):
+    """Test openai_cache_tool_definitions adds cache_control to last tool."""
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+
+    tools: list[dict[str, Any]] = [
+        {'type': 'function', 'function': {'name': 'tool1'}},
+        {'type': 'function', 'function': {'name': 'tool2'}},
+    ]
+    settings: OpenAIChatModelSettings = {'openai_cache_tool_definitions': True}
+
+    m._apply_cache_control([], tools, settings)  # pyright: ignore[reportPrivateUsage]
+
+    assert 'cache_control' not in tools[0]
+    assert tools[1]['cache_control'] == {'type': 'ephemeral', 'ttl': '5m'}
 
 
 async def test_cache_point_filtering_responses_model():

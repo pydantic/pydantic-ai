@@ -680,6 +680,7 @@ class CachePoint:
 
     - Anthropic
     - Amazon Bedrock (Converse API)
+    - OpenAI-compatible proxies (e.g. LiteLLM) routing to caching-capable providers
     """
 
     kind: Literal['cache-point'] = 'cache-point'

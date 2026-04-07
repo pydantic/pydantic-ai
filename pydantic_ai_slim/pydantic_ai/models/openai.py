@@ -448,6 +448,39 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     See [OpenAI's streaming documentation](https://platform.openai.com/docs/api-reference/chat/create#stream_options) for more information.
     """
 
+    openai_cache_instructions: bool | Literal['5m', '1h']
+    """Whether to add `cache_control` to the last system prompt message.
+
+    When using an OpenAI-compatible proxy (e.g. LiteLLM) that routes to a provider supporting
+    prompt caching (e.g. Anthropic), this enables caching of system instructions to reduce costs.
+    If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
+
+    Note: This has no effect when calling native OpenAI endpoints — use `openai_prompt_cache_key`
+    and `openai_prompt_cache_retention` for native OpenAI prompt caching instead.
+    """
+
+    openai_cache_messages: bool | Literal['5m', '1h']
+    """Whether to add `cache_control` to the last user message.
+
+    When using an OpenAI-compatible proxy (e.g. LiteLLM) that routes to a provider supporting
+    prompt caching (e.g. Anthropic), this enables caching of conversation history to reduce costs
+    in multi-turn conversations.
+    If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
+
+    Note: This has no effect when calling native OpenAI endpoints — use `openai_prompt_cache_key`
+    and `openai_prompt_cache_retention` for native OpenAI prompt caching instead.
+    """
+
+    openai_cache_tool_definitions: bool | Literal['5m', '1h']
+    """Whether to add `cache_control` to the last tool definition.
+
+    When using an OpenAI-compatible proxy (e.g. LiteLLM) that routes to a provider supporting
+    prompt caching (e.g. Anthropic), this enables caching of tool definitions to reduce costs.
+    If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
+
+    Note: This has no effect when calling native OpenAI endpoints.
+    """
+
 
 @deprecated('Use `OpenAIChatModelSettings` instead.')
 class OpenAIModelSettings(OpenAIChatModelSettings, total=False):
@@ -777,6 +810,9 @@ class OpenAIChatModel(Model):
             tool_choice = 'auto'
 
         openai_messages = await self._map_messages(messages, model_request_parameters)
+
+        # Apply cache_control settings for proxies routing to caching-capable providers
+        self._apply_cache_control(openai_messages, tools or [], model_settings)
 
         response_format: chat.completion_create_params.ResponseFormat | None = None
         if model_request_parameters.output_mode == 'native':
@@ -1416,10 +1452,72 @@ class OpenAIChatModel(Model):
         else:
             content = []
             for item in part.content:
+                if isinstance(item, CachePoint):
+                    # Add cache_control to the preceding content block.
+                    # Proxies like LiteLLM pass this through to providers that
+                    # support prompt caching (e.g. Anthropic).
+                    if content:
+                        last = cast(dict[str, Any], content[-1])
+                        last['cache_control'] = {'type': 'ephemeral', 'ttl': item.ttl}
+                    continue
                 mapped_item = await self._map_content_item(item)
                 if mapped_item is not None:
                     content.append(mapped_item)
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
+
+    @staticmethod
+    def _apply_cache_control(
+        openai_messages: list[chat.ChatCompletionMessageParam],
+        tools: list[chat.ChatCompletionToolParam],
+        model_settings: OpenAIChatModelSettings,
+    ) -> None:
+        """Apply cache_control markers to messages and tools based on model settings.
+
+        This enables prompt caching when using OpenAI-compatible proxies (e.g. LiteLLM)
+        that route to providers supporting prompt caching (e.g. Anthropic, Google).
+        Has no effect on native OpenAI endpoints which ignore unknown fields.
+
+        Args:
+            openai_messages: The mapped OpenAI messages (modified in-place).
+            tools: The mapped tool definitions (modified in-place).
+            model_settings: Settings that may contain cache control flags.
+        """
+        # Cache system/developer instructions
+        if cache_instructions := model_settings.get('openai_cache_instructions'):
+            ttl: Literal['5m', '1h'] = '5m' if cache_instructions is True else cache_instructions
+            # Find the last system/developer message
+            for msg in reversed(openai_messages):
+                if msg.get('role') in ('system', 'developer'):
+                    content = msg.get('content')
+                    if isinstance(content, str):
+                        msg['content'] = [  # type: ignore[typeddict-unknown-key]
+                            {'type': 'text', 'text': content, 'cache_control': {'type': 'ephemeral', 'ttl': ttl}}
+                        ]
+                    elif isinstance(content, list):
+                        last_block = cast(dict[str, Any], content[-1])
+                        last_block['cache_control'] = {'type': 'ephemeral', 'ttl': ttl}
+                    break
+
+        # Cache tool definitions
+        if cache_tools := model_settings.get('openai_cache_tool_definitions'):
+            ttl = '5m' if cache_tools is True else cache_tools
+            if tools:
+                cast(dict[str, Any], tools[-1])['cache_control'] = {'type': 'ephemeral', 'ttl': ttl}
+
+        # Cache the last user message
+        if cache_messages := model_settings.get('openai_cache_messages'):
+            ttl = '5m' if cache_messages is True else cache_messages
+            for msg in reversed(openai_messages):
+                if msg.get('role') == 'user':
+                    content = msg.get('content')
+                    if isinstance(content, str):
+                        msg['content'] = [  # type: ignore[typeddict-unknown-key]
+                            {'type': 'text', 'text': content, 'cache_control': {'type': 'ephemeral', 'ttl': ttl}}
+                        ]
+                    elif isinstance(content, list):
+                        last_block = cast(dict[str, Any], content[-1])
+                        last_block['cache_control'] = {'type': 'ephemeral', 'ttl': ttl}
+                    break
 
     @staticmethod
     def _inline_text_file_part(text: str, *, media_type: str, identifier: str) -> ChatCompletionContentPartTextParam:
