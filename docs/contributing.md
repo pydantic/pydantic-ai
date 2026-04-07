@@ -22,7 +22,9 @@ If the fix could reasonably be done more than one way, or if you're not sure the
 
 ### Features, new integrations, or public API changes
 
-Please don't start with code. Instead:
+Before opening anything, ask whether the change needs to live in core at all. Many additions can be built as a [capability](capabilities.md) on top of existing primitives, published as your own package, and used immediately without waiting on us. Capabilities are the primary extension point for Pydantic AI, and "add support for X" features are often a better fit there than in core. Once your capability has real users and a stable shape, come back and we can talk about upstreaming it.
+
+Otherwise, please don't start with code. Instead:
 
 1. Search existing issues and PRs first. If one already covers exactly what you want, comment on it rather than opening a new one. If the closest match is only related and not your specific case, open a new issue and link the one you found, rather than piggy-backing on an unrelated thread.
 2. Propose the shape of the solution before building it, as a comment on the relevant issue or as a draft PR containing only a `PLAN.md` file. For larger features we may ask a community "champion" (someone with real context on the problem and a genuine need for the solution) to drive the plan, rather than taking one cold from a drive-by contributor.
@@ -40,7 +42,7 @@ PRs on issues we have not pre-aligned on are not in our review queue by default,
 
 ### We may rewrite or supersede your code
 
-We treat contributed code as illustrative: a starting point that shows us the shape of the change and proves the approach works, not the final form we expect to merge. On any PR, not just the small ones, we may push commits directly to your branch, open a follow-up PR that supersedes yours, or rewrite the change from scratch. For security reasons in particular, we lean toward rewriting contributed code rather than merging it as-is, and we have been discussing whether to formalise that as a blanket policy. You will still be credited as the original author. If you would rather drive the iteration yourself, say so on the PR.
+We treat contributed code as illustrative: a starting point that shows us the shape of the change and proves the approach works, not the final form we expect to merge. The most useful artefact you can give us for a non-trivial feature is a plan plus a working example that demonstrates the approach, not a polished, merge-ready implementation. On any PR, not just the small ones, we may push commits directly to your branch, open a follow-up PR that supersedes yours, or rewrite the change from scratch. For security reasons in particular, we lean toward rewriting contributed code rather than merging it as-is, and we have been discussing whether to formalise that as a blanket policy. You will still be credited as the original author. If you would rather drive the iteration yourself, say so on the PR.
 
 ### Automated review is advisory, not a gate
 
@@ -50,9 +52,13 @@ PRs in this repo are automatically reviewed by Devin and by our own tooling. Tre
 * A bot finding does not mean you have to act on it. If you disagree, say so on the PR.
 * If automated review is generating noise rather than signal on your PR, please tell us. We use that to retune the tooling.
 
+Please don't spend effort chasing green CI, addressing every Devin comment, or rebasing for merge conflicts on a PR we have not pre-aligned on. If we end up taking the change forward, that polish gets thrown away when we rewrite. If we don't, it didn't change the outcome. Get the change to a state where the approach is demonstrable, then stop and ping us in `#pydantic-ai` on [Slack](https://logfire.pydantic.dev/docs/join-slack/) if you want to know what happens next.
+
 ### Priority
 
-When we work through the PR queue, we tend to prioritise in roughly this order: security and correctness fixes, regressions, changes that unblock roadmap work, contributions from people we've collaborated with before, then everything else.
+We receive more contributions than we have time to review and take forward, and we focus our time where it has the most impact. That means we cannot promise to get to every PR, even good ones, and we would rather say so up front than leave your work sitting open indefinitely with no signal.
+
+If your change is something that could live as a [capability](capabilities.md) or as a workaround in user code, shipping it yourself is often the fastest path to having it in front of real users. Once it has traction, come back and we can talk about whether upstreaming makes sense.
 
 ## If your PR or issue has gone quiet
 
