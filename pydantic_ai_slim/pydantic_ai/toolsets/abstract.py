@@ -15,9 +15,11 @@ if TYPE_CHECKING:
     from .approval_required import ApprovalRequiredToolset
     from .deferred_loading import DeferredLoadingToolset
     from .filtered import FilteredToolset
+    from .include_return_schemas import IncludeReturnSchemasToolset
     from .prefixed import PrefixedToolset
     from .prepared import PreparedToolset
     from .renamed import RenamedToolset
+    from .set_metadata import SetMetadataToolset
 
 
 class SchemaValidatorProt(Protocol):
@@ -245,7 +247,7 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
 
         return DeferredLoadingToolset(self, tool_names=frozenset(tool_names) if tool_names is not None else None)
 
-    def include_return_schemas(self) -> PreparedToolset[AgentDepsT]:
+    def include_return_schemas(self) -> IncludeReturnSchemasToolset[AgentDepsT]:
         """Returns a new toolset that sets ``include_return_schema=True`` on all tools.
 
         This causes the model to receive return type information for the tools
@@ -254,19 +256,17 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         models, it is injected into the tool description as JSON text.
 
         This is the toolset-level equivalent of the
-        [`IncludeReturnSchemas`][pydantic_ai.capabilities.IncludeReturnSchemas]
+        [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas]
         capability, which can be used to enable return schemas across all
         toolsets or a subset matched by a
         [`ToolSelector`][pydantic_ai.tools.ToolSelector].
         """
-        from dataclasses import replace as dc_replace
+        from .include_return_schemas import IncludeReturnSchemasToolset
 
-        from .prepared import PreparedToolset
+        return IncludeReturnSchemasToolset(self)
 
-        async def _include(ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-            return [
-                dc_replace(td, include_return_schema=True) if td.include_return_schema is None else td
-                for td in tool_defs
-            ]
+    def with_metadata(self, **metadata: Any) -> SetMetadataToolset[AgentDepsT]:
+        """Returns a new toolset that merges the given metadata onto all tools."""
+        from .set_metadata import SetMetadataToolset
 
-        return PreparedToolset(self, _include)
+        return SetMetadataToolset(self, metadata)

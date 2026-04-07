@@ -4189,7 +4189,7 @@ def test_return_schema_self_unbound():
 
 
 def test_include_return_schema_default_cleared():
-    """return_schema is cleared by default when no IncludeReturnSchemas capability is used."""
+    """return_schema is cleared by default when no IncludeToolReturnSchemas capability is used."""
 
     def my_tool(x: int) -> int:
         return x
@@ -4206,13 +4206,13 @@ def test_include_return_schema_default_cleared():
 
 
 def test_include_return_schema_via_capability():
-    """IncludeReturnSchemas capability preserves return_schema on tools."""
-    from pydantic_ai.capabilities import IncludeReturnSchemas
+    """IncludeToolReturnSchemas capability preserves return_schema on tools."""
+    from pydantic_ai.capabilities import IncludeToolReturnSchemas
 
     def my_tool(x: int) -> int:
         return x
 
-    agent = Agent('test', tools=[Tool(my_tool)], capabilities=[IncludeReturnSchemas()])
+    agent = Agent('test', tools=[Tool(my_tool)], capabilities=[IncludeToolReturnSchemas()])
     result = agent.run_sync('test')
     request = result.all_messages()[0]
     assert isinstance(request, ModelRequest)
@@ -4222,8 +4222,8 @@ def test_include_return_schema_via_capability():
 
 
 def test_include_return_schema_capability_with_tool_names():
-    """IncludeReturnSchemas with specific tool names only affects those tools."""
-    from pydantic_ai.capabilities import IncludeReturnSchemas
+    """IncludeToolReturnSchemas with specific tool names only affects those tools."""
+    from pydantic_ai.capabilities import IncludeToolReturnSchemas
     from pydantic_ai.models.test import TestModel
 
     def tool_a(x: int) -> int:
@@ -4236,7 +4236,7 @@ def test_include_return_schema_capability_with_tool_names():
     agent = Agent(
         test_model,
         tools=[Tool(tool_a), Tool(tool_b)],
-        capabilities=[IncludeReturnSchemas(tools=['tool_a'])],
+        capabilities=[IncludeToolReturnSchemas(tools=['tool_a'])],
     )
     agent.run_sync('test')
 
@@ -4252,8 +4252,8 @@ def test_include_return_schema_capability_with_tool_names():
 
 
 def test_include_return_schema_per_tool_override():
-    """Per-tool include_return_schema=False overrides IncludeReturnSchemas capability."""
-    from pydantic_ai.capabilities import IncludeReturnSchemas
+    """Per-tool include_return_schema=False overrides IncludeToolReturnSchemas capability."""
+    from pydantic_ai.capabilities import IncludeToolReturnSchemas
     from pydantic_ai.models.test import TestModel
 
     def tool_a(x: int) -> int:
@@ -4266,7 +4266,7 @@ def test_include_return_schema_per_tool_override():
     agent = Agent(
         test_model,
         tools=[Tool(tool_a, include_return_schema=False), Tool(tool_b)],
-        capabilities=[IncludeReturnSchemas()],
+        capabilities=[IncludeToolReturnSchemas()],
     )
     agent.run_sync('test')
 

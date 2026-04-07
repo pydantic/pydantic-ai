@@ -104,7 +104,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 Applies to all tools, unless overridden when adding a tool.
             include_return_schema: Whether to include return schemas in tool definitions sent to the model.
                 If `None`, defaults to `False` unless the
-                [`IncludeReturnSchemas`][pydantic_ai.capabilities.IncludeReturnSchemas] capability is used.
+                [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
                 Applies to all tools, unless overridden when adding a tool.
             id: An optional unique ID for the toolset. A toolset needs to have an ID in order to be used in a durable execution environment like Temporal,
                 in which case the ID will be used to identify the toolset's activities within the workflow.

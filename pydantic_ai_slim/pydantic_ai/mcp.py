@@ -369,7 +369,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     """Whether to include return schemas in tool definitions sent to the model.
 
     When `None` (default), defaults to `False` unless the
-    [`IncludeReturnSchemas`][pydantic_ai.capabilities.IncludeReturnSchemas] capability is used.
+    [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
     """
 
     _id: str | None

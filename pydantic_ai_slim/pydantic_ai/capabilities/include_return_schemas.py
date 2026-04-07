@@ -13,7 +13,7 @@ from .abstract import AbstractCapability
 
 
 @dataclass
-class IncludeReturnSchemas(AbstractCapability[AgentDepsT]):
+class IncludeToolReturnSchemas(AbstractCapability[AgentDepsT]):
     """Capability that includes return schemas for selected tools.
 
     When added to an agent's capabilities, this sets
@@ -31,9 +31,9 @@ class IncludeReturnSchemas(AbstractCapability[AgentDepsT]):
 
     ```python
     from pydantic_ai import Agent
-    from pydantic_ai.capabilities import IncludeReturnSchemas
+    from pydantic_ai.capabilities import IncludeToolReturnSchemas
 
-    agent = Agent('openai:gpt-5', capabilities=[IncludeReturnSchemas()])
+    agent = Agent('openai:gpt-5', capabilities=[IncludeToolReturnSchemas()])
     ```
     """
 
@@ -42,12 +42,13 @@ class IncludeReturnSchemas(AbstractCapability[AgentDepsT]):
 
     - ``'all'`` (default): every tool gets its return schema included.
     - ``Sequence[str]``: only tools whose names are listed.
+    - ``dict[str, Any]``: matches tools whose metadata deeply includes the specified key-value pairs.
     - Callable ``(ctx, tool_def) -> bool``: custom sync or async predicate.
     """
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
-        return 'IncludeReturnSchemas'
+        return 'IncludeToolReturnSchemas'
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         selector = self.tools

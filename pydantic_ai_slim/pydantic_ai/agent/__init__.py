@@ -2056,7 +2056,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             defer_loading: Whether to hide this tool until it's discovered via tool search. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
-                If `None`, defaults to `False` unless the [`IncludeReturnSchemas`][pydantic_ai.capabilities.IncludeReturnSchemas] capability is used.
+                If `None`, defaults to `False` unless the [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
         """
 
         def tool_decorator(
@@ -2192,7 +2192,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             defer_loading: Whether to hide this tool until it's discovered via tool search. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
-                If `None`, defaults to `False` unless the [`IncludeReturnSchemas`][pydantic_ai.capabilities.IncludeReturnSchemas] capability is used.
+                If `None`, defaults to `False` unless the [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
         """
 
         def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
@@ -2382,8 +2382,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if self._prepare_tools:
             toolset = PreparedToolset(toolset, self._prepare_tools)
 
-        # Let capabilities wrap the assembled non-output toolset (e.g. IncludeReturnSchemas
-        # sets include_return_schema=True on matching tools before resolution clears the rest).
         if run_capability is not None:
             wrapper = run_capability.get_wrapper_toolset(toolset)
             if wrapper is not None:

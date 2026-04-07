@@ -464,7 +464,7 @@ class Tool(Generic[ToolAgentDepsT]):
             defer_loading: Whether to hide this tool until it's discovered via tool search. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
-                If `None`, defaults to `False` unless the [`IncludeReturnSchemas`][pydantic_ai.capabilities.IncludeReturnSchemas] capability is used.
+                If `None`, defaults to `False` unless the [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
         """
         self.function = function
@@ -686,7 +686,7 @@ class ToolDefinition:
     When `True`, the `return_schema` will be preserved and sent to the model.
     When `False`, the `return_schema` will be cleared before sending.
     When `None` (default), defaults to `False` unless the
-    [`IncludeReturnSchemas`][pydantic_ai.capabilities.IncludeReturnSchemas] capability is used.
+    [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
     """
 
     function_signature: FunctionSignature | None = field(default=None, repr=False, compare=False)
