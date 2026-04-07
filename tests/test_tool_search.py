@@ -485,6 +485,62 @@ async def test_tool_search_toolset_search_matches_description():
     assert rv[0]['name'] == 'crypto_price'
 
 
+async def test_tool_search_toolset_prefers_specific_term_matches():
+    toolset: FunctionToolset[None] = FunctionToolset()
+
+    @toolset.tool_plain(defer_loading=True)
+    def github_get_me() -> str:  # pragma: no cover
+        """Get the authenticated GitHub profile."""
+        return 'me'
+
+    @toolset.tool_plain(defer_loading=True)
+    def github_create_gist() -> str:  # pragma: no cover
+        """Create a new GitHub gist."""
+        return 'gist'
+
+    searchable = ToolSearchToolset(wrapped=toolset)
+    ctx = _build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+    search_tool = tools[_SEARCH_TOOLS_NAME]
+
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'github profile'}, ctx, search_tool)
+    assert result == snapshot(
+        ToolReturn(
+            return_value=[{'name': 'github_get_me', 'description': 'Get the authenticated GitHub profile.'}],
+            metadata={'discovered_tools': ['github_get_me']},
+        )
+    )
+
+
+async def test_tool_search_toolset_does_not_match_substrings_inside_words():
+    toolset: FunctionToolset[None] = FunctionToolset()
+
+    @toolset.tool_plain(defer_loading=True)
+    def github_get_me() -> str:  # pragma: no cover
+        """Get my GitHub profile."""
+        return 'me'
+
+    @toolset.tool_plain(defer_loading=True)
+    def github_add_comment_to_pending_review() -> str:  # pragma: no cover
+        """Add a pending review comment on GitHub."""
+        return 'comment'
+
+    searchable = ToolSearchToolset(wrapped=toolset)
+    ctx = _build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+    search_tool = tools[_SEARCH_TOOLS_NAME]
+
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'get me'}, ctx, search_tool)
+    assert result == snapshot(
+        ToolReturn(
+            return_value=[{'name': 'github_get_me', 'description': 'Get my GitHub profile.'}],
+            metadata={'discovered_tools': ['github_get_me']},
+        )
+    )
+
+
 async def test_tool_search_toolset_search_returns_no_matches():
     """Test that search returns empty list when no matches."""
     toolset = _create_function_toolset()
