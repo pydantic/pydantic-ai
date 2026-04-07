@@ -206,23 +206,10 @@ agent = Agent(
 
 result = agent.run_sync('What have AI companies been posting about?')
 print(result.output)
-"""
-OpenAI announced their latest model updates, while Anthropic shared research on AI safety...
-"""
+#> OpenAI announced their latest model updates, while Anthropic shared research on AI safety...
 ```
 
 _(This example is complete, it can be run "as is")_
-
-#### Parameter Reference
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `allowed_x_handles` | `list[str] \| None` | Only include posts from these X handles (max 10). Cannot be used with `excluded_x_handles`. |
-| `excluded_x_handles` | `list[str] \| None` | Exclude posts from these X handles (max 10). Cannot be used with `allowed_x_handles`. |
-| `from_date` | `datetime \| None` | Start datetime filter. |
-| `to_date` | `datetime \| None` | End datetime filter. |
-| `enable_image_understanding` | `bool` | Enable image analysis from X posts (default: False). |
-| `enable_video_understanding` | `bool` | Enable video analysis from X content (default: False). |
 
 !!! note "Handle Filtering"
     You can only use one of `allowed_x_handles` or `excluded_x_handles`, not both. Each list is limited to 10 handles maximum.
