@@ -630,6 +630,66 @@ async def test_xai_file_search_include_option(allow_model_requests: None):
     assert kwargs[0]['include'] == [chat_pb2.IncludeOption.INCLUDE_OPTION_COLLECTIONS_SEARCH_CALL_OUTPUT]
 
 
+async def test_xai_file_search_builtin_tool_call_in_history(allow_model_requests: None):
+    """Test that FileSearchTool BuiltinToolCallPart in history is properly mapped back to xAI."""
+    response1 = create_collections_search_response(query='quarterly report', assistant_text='Found relevant documents.')
+    response2 = create_response(content='The report showed 15% revenue increase.')
+
+    mock_client = MockXai.create_mock([response1, response2])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, builtin_tools=[FileSearchTool(file_store_ids=['col-abc'])])
+
+    result1 = await agent.run('Search my documents for quarterly report')
+    result2 = await agent.run('What did it say?', message_history=result1.new_messages())
+
+    assert get_mock_chat_create_kwargs(mock_client) == snapshot(
+        [
+            {
+                'model': XAI_NON_REASONING_MODEL,
+                'messages': [{'content': [{'text': 'Search my documents for quarterly report'}], 'role': 'ROLE_USER'}],
+                'tools': [{'collections_search': {'collection_ids': ['col-abc']}}],
+                'tool_choice': 'auto',
+                'response_format': None,
+                'use_encrypted_content': False,
+                'include': [],
+            },
+            {
+                'model': XAI_NON_REASONING_MODEL,
+                'messages': [
+                    {'content': [{'text': 'Search my documents for quarterly report'}], 'role': 'ROLE_USER'},
+                    {
+                        'content': [{'text': ''}],
+                        'role': 'ROLE_ASSISTANT',
+                        'tool_calls': [
+                            {
+                                'id': 'collections_search_001',
+                                'type': 'TOOL_CALL_TYPE_COLLECTIONS_SEARCH_TOOL',
+                                'status': 'TOOL_CALL_STATUS_COMPLETED',
+                                'function': {
+                                    'name': 'file_search',
+                                    'arguments': '{"query":"quarterly report"}',
+                                },
+                            }
+                        ],
+                    },
+                    {
+                        'content': [{'text': 'Found relevant documents.'}],
+                        'role': 'ROLE_ASSISTANT',
+                    },
+                    {'content': [{'text': 'What did it say?'}], 'role': 'ROLE_USER'},
+                ],
+                'tools': [{'collections_search': {'collection_ids': ['col-abc']}}],
+                'tool_choice': 'auto',
+                'response_format': None,
+                'use_encrypted_content': False,
+                'include': [],
+            },
+        ]
+    )
+
+    assert result2.output == 'The report showed 15% revenue increase.'
+
+
 async def test_xai_file_search_usage_mapping(allow_model_requests: None):
     """Test that SERVER_SIDE_TOOL_COLLECTIONS_SEARCH maps to file_search in usage."""
     mock_usage = create_usage(

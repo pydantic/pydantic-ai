@@ -174,7 +174,7 @@ def test_docs_examples(
     mocker.patch('mcp.server.fastmcp.FastMCP')
     try:
         mocker.patch('sentence_transformers.SentenceTransformer')
-    except ImportError:
+    except ModuleNotFoundError:
         pass
 
     env.set('OPENAI_API_KEY', 'testing')
