@@ -20,7 +20,7 @@ from pydantic.fields import FieldInfo
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic.plugin._schema_validator import create_schema_validator
 from pydantic_core import SchemaValidator, core_schema
-from typing_extensions import ParamSpec, TypeIs, TypeVar, get_type_hints
+from typing_extensions import ParamSpec, Self, TypeIs, TypeVar, get_type_hints
 
 from ._griffe import doc_descriptions
 from ._run_context import RunContext
@@ -31,10 +31,10 @@ from ._utils import (
     run_in_executor,
     takes_run_context,
 )
+from .function_signature import FunctionSignature
 from .messages import ToolReturn
 
 if TYPE_CHECKING:
-    from .function_signature import FunctionSignature
     from .tools import DocstringFormat, ObjectJsonSchema
 
 
@@ -57,9 +57,9 @@ class FunctionSchema:
     positional_fields: list[str] = field(default_factory=list[str])
     var_positional_field: str | None = None
     return_schema: ObjectJsonSchema = field(default_factory=dict[str, Any])
-    """JSON schema for the function's return type. At minimum ``{}`` (equivalent to ``Any``)."""
+    """JSON schema for the function's return type. At minimum `{}` (equivalent to `Any`)."""
     function_signature: FunctionSignature | None = None
-    """Pre-computed function signature shape for this function."""
+    """Function signature shape for this function. `None` for output tools."""
 
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
         args, kwargs = self._call_args(args_dict, ctx)
@@ -247,9 +247,7 @@ def function_schema(  # noqa: C901
         return_schema = {}
 
     # Compute function signature eagerly alongside the other schemas
-    from .function_signature import FunctionSignature as _FunctionSignature
-
-    func_sig = _FunctionSignature.from_schema(
+    func_sig = FunctionSignature.from_schema(
         name=name,
         parameters_schema=checked_json_schema,
         return_schema=return_schema,
@@ -327,13 +325,13 @@ def _extract_return_schema_type(return_annotation: Any, function: Callable[..., 
     """Extract the type to generate a return schema for.
 
     Always returns a type — every function has a return schema:
-    - No annotation (``None`` from ``get()``) → ``Any`` (produces ``{}``)
-    - ``-> None`` (``type(None)``) → ``type(None)`` (produces ``{"type": "null"}``)
-    - ``-> Any`` → ``Any`` (produces ``{}``)
-    - ``-> Self`` → resolved to owning class for bound methods
-    - Bare ``ToolReturn`` → ``Any`` (pre-generic legacy form)
-    - ``ToolReturn[Any]`` → ``Any`` (produces ``{}``)
-    - ``ToolReturn[T]`` → ``T``
+    - No annotation (`None` from `get()`) → `Any` (produces `{}`)
+    - `-> None` (`type(None)`) → `type(None)` (produces `{"type": "null"}`)
+    - `-> Any` → `Any` (produces `{}`)
+    - `-> Self` → resolved to owning class for bound methods
+    - Bare `ToolReturn` → `Any` (pre-generic legacy form)
+    - `ToolReturn[Any]` → `Any` (produces `{}`)
+    - `ToolReturn[T]` → `T`
     - Other types → the type itself
     """
     if return_annotation is None:
@@ -345,15 +343,13 @@ def _extract_return_schema_type(return_annotation: Any, function: Callable[..., 
     # Only works when the function is already bound (e.g. instance.method);
     # unbound methods and classmethods fall back to Any since there's no
     # instance to infer the class from.
-    from typing_extensions import Self
-
     if return_annotation is Self:
         self_obj = getattr(function, '__self__', None)
         if self_obj is not None:
             return cast(type[Any], type(self_obj))
         return Any
+    # Bare ToolReturn without type parameter — pre-generic legacy form
     if return_annotation is ToolReturn:
-        # Bare ToolReturn without type parameter — pre-generic legacy form
         return Any
     if get_origin(return_annotation) is ToolReturn:
         type_args = get_args(return_annotation)

@@ -84,15 +84,13 @@ def test_dedup_referenced_types_substring_names():
         return_type=user_meta,
         referenced_types=[user2, user_meta],
     )
-    FunctionSignature.dedup_referenced_types([sig1, sig2])
+    prefixed = FunctionSignature.dedup_referenced_types([sig1, sig2])
 
-    # User in sig2 is marked for prefix, not renamed yet
-    assert user2.needs_prefix is True
-    # UserMeta must be untouched
-    assert user_meta.needs_prefix is False
+    # 'User' needs a prefix, 'UserMeta' does not
+    assert prefixed == frozenset({'User'})
     assert user_meta.name == 'UserMeta'
     # render() sets the context — prefixed types resolve correctly
-    rendered = sig2.render('...', name='tool_b')
+    rendered = sig2.render('...', name='tool_b', prefixed_type_names=prefixed)
     assert 'user: tool_b_User' in rendered
     assert 'meta: UserMeta' in rendered
 
@@ -245,7 +243,7 @@ def test_dedup_mixed_identical_and_conflicting_from_schemas():
         },
     )
 
-    FunctionSignature.dedup_referenced_types([sig1, sig2, sig3])
+    prefixed = FunctionSignature.dedup_referenced_types([sig1, sig2, sig3])
 
     # sig1 and sig2 share the same canonical User instance
     assert len(sig1.referenced_types) == 1
@@ -253,10 +251,10 @@ def test_dedup_mixed_identical_and_conflicting_from_schemas():
     assert sig2.referenced_types[0] is sig1.referenced_types[0]
     assert sig2.params['user'].type is sig1.referenced_types[0]
 
-    # sig3's User is marked for prefix, not renamed yet
-    assert sig3.referenced_types[0].needs_prefix is True
+    # 'User' needs a prefix
+    assert prefixed == frozenset({'User'})
     # render() sets the context — prefixed types resolve correctly
-    rendered = sig3.render('...', name='tool_c')
+    rendered = sig3.render('...', name='tool_c', prefixed_type_names=prefixed)
     assert 'user: tool_c_User' in rendered
 
     # collect_unique_referenced_types returns exactly 2 unique types
@@ -267,7 +265,7 @@ def test_dedup_mixed_identical_and_conflicting_from_schemas():
 class User(TypedDict):
     name: str""")
     # Second type needs prefix — render_definition() uses context from render()
-    assert 'tool_c_User' in sig3.render('...', name='tool_c')
+    assert 'tool_c_User' in sig3.render('...', name='tool_c', prefixed_type_names=prefixed)
 
 
 def test_dedup_composite_type_expr_rename_propagates():
@@ -296,12 +294,12 @@ def test_dedup_composite_type_expr_rename_propagates():
         return_type=SimpleTypeExpr('Any'),
         referenced_types=[user2],
     )
-    FunctionSignature.dedup_referenced_types([sig1, sig2])
+    prefixed = FunctionSignature.dedup_referenced_types([sig1, sig2])
 
-    # user2 is marked for prefix, not renamed yet
-    assert user2.needs_prefix is True
+    # 'User' needs a prefix
+    assert prefixed == frozenset({'User'})
     # render() sets the context — prefixed types resolve correctly
-    rendered = sig2.render('...', name='tool_b')
+    rendered = sig2.render('...', name='tool_b', prefixed_type_names=prefixed)
     assert 'users: list[tool_b_User]' in rendered
 
 

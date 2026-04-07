@@ -22,12 +22,17 @@ __all__ = (
 import re
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, TypeAlias, cast
+from typing import Any, Literal, TypeAlias, cast
 
 # Set during rendering to provide the tool name for dedup prefix resolution.
 # TypeSignature.__str__ and render_definition() consult this to produce
-# prefixed names (e.g. ``tool_a_User``) without mutating the object.
+# prefixed names (e.g. `tool_a_User`) without mutating the object.
 _render_tool_name: ContextVar[str | None] = ContextVar('_render_tool_name', default=None)
+
+# Set during rendering to indicate which type names need tool-name prefixes.
+# Populated by callers (e.g. FunctionSignature.render()) from the result of
+# dedup_referenced_types(), consulted by TypeSignature.display_name.
+_prefixed_type_names: ContextVar[frozenset[str]] = ContextVar('_prefixed_type_names', default=frozenset())
 
 # =============================================================================
 # Type expression tree
@@ -39,6 +44,7 @@ class SimpleTypeExpr:
     """A simple named type like `str`, `int`, `Any`, `None`."""
 
     name: str
+    kind: Literal['simple'] = 'simple'
 
     def __str__(self) -> str:
         return self.name
@@ -49,6 +55,7 @@ class LiteralTypeExpr:
     """A Literal type expression like `Literal['a', 'b']` or `Literal[42]`."""
 
     values: list[Any]
+    kind: Literal['literal'] = 'literal'
 
     def __str__(self) -> str:
         return f'Literal[{", ".join(repr(v) for v in self.values)}]'
@@ -60,6 +67,7 @@ class GenericTypeExpr:
 
     base: str
     args: list[TypeExpr]
+    kind: Literal['generic'] = 'generic'
 
     def __str__(self) -> str:
         return f'{self.base}[{", ".join(str(a) for a in self.args)}]'
@@ -70,6 +78,7 @@ class UnionTypeExpr:
     """A union type expression like `User | None`, `str | int`."""
 
     members: list[TypeExpr]
+    kind: Literal['union'] = 'union'
 
     def __str__(self) -> str:
         return ' | '.join(str(m) for m in self.members)
@@ -100,10 +109,11 @@ def _render_description(text: str, indent: str = '') -> list[str]:
 class TypeFieldSignature:
     """A single field in a TypedDict-style type definition."""
 
+    kind: Literal['field'] = 'field'
     name: str
     type: TypeExpr
-    required: bool
-    description: str | None
+    required: bool = False
+    description: str | None = None
 
     def __str__(self) -> str:
         """Render this field as a line in a TypedDict class body."""
@@ -120,25 +130,18 @@ class TypeFieldSignature:
 class TypeSignature:
     """A TypedDict-style class definition with named fields."""
 
+    kind: Literal['type'] = 'type'
     name: str
 
     description: str | None = None
 
     fields: dict[str, TypeFieldSignature] = field(default_factory=dict[str, TypeFieldSignature])
 
-    needs_prefix: bool = False
-    """Whether this type needs a tool-name prefix to disambiguate during rendering.
-
-    Set by ``dedup_referenced_types`` when two different tools define structurally
-    different types with the same name. The actual prefix is resolved at render time
-    from the ``_render_tool_name`` context variable — no mutation required.
-    """
-
     @property
     def display_name(self) -> str:
         """The type name, with tool-name prefix applied if rendering context is set."""
         tool_name = _render_tool_name.get()
-        if self.needs_prefix and tool_name is not None:
+        if tool_name is not None and self.name in _prefixed_type_names.get():
             return f'{tool_name}_{self.name}'
         return self.name
 
@@ -176,9 +179,10 @@ class TypeSignature:
 class FunctionParam:
     """A single parameter in a function signature."""
 
+    kind: Literal['param'] = 'param'
     name: str
     type: TypeExpr
-    default: str | None
+    default: str | None = None
 
     def __str__(self) -> str:
         """Render this parameter as a function parameter string."""
@@ -193,13 +197,16 @@ class FunctionSignature:
     """Function signature shape with referenced type definitions.
 
     This class holds the structural data (params, return type, referenced types)
-    needed to render a function signature. Name and description are not stored
-    here — they are provided at render time from the ``ToolDefinition``, so the
-    signature stays valid after ``dataclasses.replace(td, name=...)``.
+    needed to render a function signature. Name and description can be overridden
+    at render time (e.g. from a `ToolDefinition`).
     """
 
-    params: dict[str, FunctionParam]
-    """Function parameters."""
+    kind: Literal['function'] = 'function'
+    name: str = ''
+    description: str | None = None
+
+    params: dict[str, FunctionParam] = field(default_factory=dict[str, FunctionParam])
+    """Function parameters, all rendered as keyword-only (JSON schema doesn't distinguish positional/keyword)."""
 
     return_type: TypeExpr
     """The return type expression."""
@@ -214,26 +221,32 @@ class FunctionSignature:
         self,
         body: str,
         *,
-        name: str,
+        name: str | None = None,
         description: str | None = None,
         is_async: bool | None = None,
+        prefixed_type_names: frozenset[str] = frozenset(),
     ) -> str:
         """Render the signature with a specific body.
 
-        Sets ``_render_tool_name`` so that dedup-prefixed types resolve
-        correctly during rendering.
+        Sets `_render_tool_name` and `_prefixed_type_names` so that
+        dedup-prefixed types resolve correctly during rendering.
 
         Args:
             body: The function body (e.g. `'...'` or `'return await tool()'`).
-            name: The function name (also used for dedup prefix resolution).
-            description: Optional docstring to include.
-            is_async: Override async rendering. If ``None``, uses ``self.is_async``.
+            name: The function name (also used for dedup prefix resolution). Falls back to `self.name`.
+            description: Optional docstring to include. Falls back to `self.description`.
+            is_async: Override async rendering. If `None`, uses `self.is_async`.
+            prefixed_type_names: Set of type names that need tool-name prefixes (from `dedup_referenced_types`).
         """
-        token = _render_tool_name.set(name)
+        name = name or self.name
+        description = description if description is not None else self.description
+        tool_token = _render_tool_name.set(name)
+        prefix_token = _prefixed_type_names.set(prefixed_type_names)
         try:
             return self._render(body, name=name, description=description, is_async=is_async)
         finally:
-            _render_tool_name.reset(token)
+            _prefixed_type_names.reset(prefix_token)
+            _render_tool_name.reset(tool_token)
 
     def _render(
         self,
@@ -271,14 +284,13 @@ class FunctionSignature:
     ) -> FunctionSignature:
         """Build a FunctionSignature from JSON schemas.
 
-        ``name`` is used only for generating fallback type names (e.g.
-        ``GetUserAddress``) when the schema has no ``title``; it is **not** stored
-        on the resulting signature.
+        `name` is stored on the resulting signature and also used for generating
+        fallback type names (e.g. `GetUserAddress`) when the schema has no `title`.
 
         Parameter and return schemas are processed independently — each resolves
-        ``$ref``s against its own ``$defs``. Name collisions between parameter and return
-        types (e.g. both define a ``User`` ``$def`` with different structures) are handled
-        by ``dedup_referenced_types`` at a later stage.
+        `$ref`s against its own `$defs`. Name collisions between parameter and return
+        types (e.g. both define a `User` `$def` with different structures) are handled
+        by `dedup_referenced_types` at a later stage.
         """
         # Process parameter schema with its own $defs
         param_defs = parameters_schema.get('$defs', {})
@@ -292,7 +304,9 @@ class FunctionSignature:
         if return_schema is not None:
             return_defs = return_schema.get('$defs', {})
             _process_schema_defs(return_defs, return_referenced, name)
-            resolved_return_type = _schema_to_type_expr(return_schema, return_defs, return_referenced, name, 'Return')
+            resolved_return_type = _schema_to_type_expr(
+                return_schema, return_defs, return_referenced, name, path='Return'
+            )
 
         # Merge referenced types, deduplicating structurally identical types within this signature.
         # Cross-signature collisions are handled later by dedup_referenced_types.
@@ -304,25 +318,29 @@ class FunctionSignature:
             all_referenced.append(ret_type)
 
         return cls(
+            name=name,
             params=params,
             return_type=resolved_return_type,
             referenced_types=all_referenced,
         )
 
     @staticmethod
-    def dedup_referenced_types(signatures: list[FunctionSignature]) -> None:
+    def dedup_referenced_types(signatures: list[FunctionSignature]) -> frozenset[str]:
         """Resolve TypedDict name conflicts across multiple tool signatures in place.
 
         Each signature keeps all its referenced types (so it remains self-contained),
         but identical types (same name and structure) are unified to the same object
-        instance. Conflicting types (same name, different structure) are marked with
-        ``needs_prefix = True`` so that the caller can apply tool-name prefixes at
-        render time via ``TypeSignature.apply_prefix(tool_name)``.
+        instance.
 
-        Use ``collect_unique_referenced_types()`` when rendering to emit each
+        Returns the set of type names that have conflicts (same name, different
+        structure) and need tool-name prefixes at render time. Pass this set to
+        `FunctionSignature.render(prefixed_type_names=...)`.
+
+        Use `collect_unique_referenced_types()` when rendering to emit each
         definition once.
         """
         seen: dict[str, TypeSignature] = {}
+        prefixed: set[str] = set()
 
         for sig in signatures:
             deduped: list[TypeSignature] = []
@@ -336,9 +354,11 @@ class FunctionSignature:
                     _replace_type_refs(sig, type_sig, canonical)
                     deduped.append(canonical)
                 else:
-                    type_sig.needs_prefix = True
+                    prefixed.add(name)
                     deduped.append(type_sig)
             sig.referenced_types = deduped
+
+        return frozenset(prefixed)
 
     @staticmethod
     def collect_unique_referenced_types(signatures: list[FunctionSignature]) -> list[TypeSignature]:
