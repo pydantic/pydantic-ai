@@ -205,7 +205,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _max_result_retries: int = dataclasses.field(repr=False)
     _max_tool_retries: int = dataclasses.field(repr=False)
     _tool_timeout: float | None = dataclasses.field(repr=False)
-    _include_tool_return_schema: bool = dataclasses.field(repr=False)
     _validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = dataclasses.field(repr=False)
 
     _event_stream_handler: EventStreamHandler[AgentDepsT] | None = dataclasses.field(repr=False)
@@ -243,7 +242,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
-        include_tool_return_schema: bool = False,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
     ) -> None: ...
@@ -276,7 +274,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
-        include_tool_return_schema: bool = False,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
     ) -> None: ...
@@ -307,7 +304,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
-        include_tool_return_schema: bool = False,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
         **_deprecated_kwargs: Any,
@@ -382,11 +378,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             tool_timeout: Default timeout in seconds for tool execution. If a tool takes longer than this,
                 the tool is considered to have failed and a retry prompt is returned to the model (counting towards the retry limit).
                 Individual tools can override this with their own timeout. Defaults to None (no timeout).
-            include_tool_return_schema: Whether to include tool return schemas in the tool definitions sent to the model.
-                For models that natively support return schemas (e.g. Google Gemini), the schema is passed as a
-                structured field; for others, it's injected into the tool description as JSON text. Sets the default
-                for all tools; individual tools can override this via their own `include_return_schema` flag.
-                Defaults to False.
             max_concurrency: Optional limit on concurrent agent runs. Can be an integer for simple limiting,
                 a [`ConcurrencyLimit`][pydantic_ai.ConcurrencyLimit] for advanced configuration with backpressure,
                 a [`ConcurrencyLimiter`][pydantic_ai.ConcurrencyLimiter] for sharing limits across
@@ -443,7 +434,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._max_result_retries = output_retries if output_retries is not None else retries
         self._max_tool_retries = retries
         self._tool_timeout = tool_timeout
-        self._include_tool_return_schema = include_tool_return_schema
 
         self._validation_context = validation_context
 
@@ -536,7 +526,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[Any]] | None = None,
         event_stream_handler: EventStreamHandler[Any] | None = None,
         tool_timeout: float | None = None,
-        include_tool_return_schema: bool = False,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AbstractCapability[Any]] | None = None,
     ) -> Agent[None, str]: ...
@@ -571,7 +560,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[Any]] | None = None,
         event_stream_handler: EventStreamHandler[Any] | None = None,
         tool_timeout: float | None = None,
-        include_tool_return_schema: bool = False,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AbstractCapability[Any]] | None = None,
     ) -> Agent[T, str]: ...
@@ -605,7 +593,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[Any]] | None = None,
         event_stream_handler: EventStreamHandler[Any] | None = None,
         tool_timeout: float | None = None,
-        include_tool_return_schema: bool = False,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AbstractCapability[Any]] | None = None,
     ) -> Agent[Any, Any]:
@@ -645,7 +632,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             history_processors: Processors for message history.
             event_stream_handler: Handler for streaming events.
             tool_timeout: Default timeout for tool execution, overrides spec `tool_timeout` if provided.
-            include_tool_return_schema: Whether to include tool return schemas in tool definitions sent to the model.
+
             max_concurrency: Limit on concurrent agent runs.
             capabilities: Additional capabilities merged with those from the spec.
 
@@ -703,7 +690,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             history_processors=history_processors,
             event_stream_handler=event_stream_handler,
             tool_timeout=tool_timeout if tool_timeout is not None else validated_spec.tool_timeout,
-            include_tool_return_schema=include_tool_return_schema,
             max_concurrency=max_concurrency,
             capabilities=all_capabilities,
         )
@@ -738,7 +724,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[Any]] | None = None,
         event_stream_handler: EventStreamHandler[Any] | None = None,
         tool_timeout: float | None = None,
-        include_tool_return_schema: bool = False,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AbstractCapability[Any]] | None = None,
     ) -> Agent[None, str]: ...
@@ -774,7 +759,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[Any]] | None = None,
         event_stream_handler: EventStreamHandler[Any] | None = None,
         tool_timeout: float | None = None,
-        include_tool_return_schema: bool = False,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AbstractCapability[Any]] | None = None,
     ) -> Agent[T, str]: ...
@@ -809,7 +793,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[Any]] | None = None,
         event_stream_handler: EventStreamHandler[Any] | None = None,
         tool_timeout: float | None = None,
-        include_tool_return_schema: bool = False,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AbstractCapability[Any]] | None = None,
     ) -> Agent[Any, Any]:
@@ -850,7 +833,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             history_processors=history_processors,
             event_stream_handler=event_stream_handler,
             tool_timeout=tool_timeout,
-            include_tool_return_schema=include_tool_return_schema,
             max_concurrency=max_concurrency,
             capabilities=capabilities,
         )
@@ -2074,7 +2056,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             defer_loading: Whether to hide this tool until it's discovered via tool search. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
-                If `None`, the agent-level `include_tool_return_schema` default is used.
+                If `None`, defaults to `False` unless the [`IncludeReturnSchemas`][pydantic_ai.capabilities.IncludeReturnSchemas] capability is used.
         """
 
         def tool_decorator(
@@ -2210,7 +2192,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             defer_loading: Whether to hide this tool until it's discovered via tool search. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
-                If `None`, the agent-level `include_tool_return_schema` default is used.
+                If `None`, defaults to `False` unless the [`IncludeReturnSchemas`][pydantic_ai.capabilities.IncludeReturnSchemas] capability is used.
         """
 
         def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
@@ -2400,19 +2382,22 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if self._prepare_tools:
             toolset = PreparedToolset(toolset, self._prepare_tools)
 
-        # Resolve include_return_schema: apply agent-level default where tool doesn't specify,
-        # and clear return_schema when not opted in.
-        agent_default = self._include_tool_return_schema
+        # Let capabilities wrap the assembled non-output toolset (e.g. IncludeReturnSchemas
+        # sets include_return_schema=True on matching tools before resolution clears the rest).
+        if run_capability is not None:
+            wrapper = run_capability.get_wrapper_toolset(toolset)
+            if wrapper is not None:
+                toolset = wrapper
 
+        # Resolve include_return_schema: clear return_schema on tools that haven't opted in.
         async def _resolve_return_schema(
             ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
         ) -> list[ToolDefinition]:
             resolved: list[ToolDefinition] = []
             for td in tool_defs:
-                include = td.include_return_schema if td.include_return_schema is not None else agent_default
-                if not include and td.return_schema is not None:
+                if not td.include_return_schema and td.return_schema is not None:
                     td = dataclasses.replace(td, return_schema=None, function_signature=td.function_signature)
-                elif include and not td.return_schema:
+                elif td.include_return_schema and not td.return_schema:
                     warnings.warn(
                         f'Tool {td.name!r} has `include_return_schema` enabled but no meaningful return schema'
                         f' was generated. Set `include_return_schema=False` on this tool to suppress this warning.',
@@ -2423,12 +2408,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             return resolved
 
         toolset = PreparedToolset(toolset, _resolve_return_schema)
-
-        # Let capabilities wrap the assembled non-output toolset
-        if run_capability is not None:
-            wrapper = run_capability.get_wrapper_toolset(toolset)
-            if wrapper is not None:
-                toolset = wrapper
 
         # Always wraps; short-circuits when no deferred tools.
         # Wraps outside PreparedToolset and capability wrappers so search_tools is always available.

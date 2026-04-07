@@ -29,6 +29,9 @@ __all__ = (
     'ToolParams',
     'ToolPrepareFunc',
     'ToolsPrepareFunc',
+    'ToolSelectorFunc',
+    'ToolSelector',
+    'matches_tool_selector',
     'AgentBuiltinTool',
     'BuiltinToolFunc',
     'Tool',
@@ -145,6 +148,79 @@ agent = Agent('openai:gpt-5.2', prepare_tools=turn_on_strict_if_openai)
 
 Usage `ToolsPrepareFunc[AgentDepsT]`.
 """
+
+ToolSelectorFunc: TypeAlias = Callable[
+    [RunContext[AgentDepsT], 'ToolDefinition'],
+    bool | Awaitable[bool],
+]
+"""A callable that decides whether a tool matches a selection criterion.
+
+Receives the run context and a tool definition, returns `True` if the tool is selected.
+Both sync and async functions are accepted.
+
+Usage `ToolSelectorFunc[AgentDepsT]`.
+"""
+
+ToolSelector: TypeAlias = Literal['all'] | Sequence[str] | dict[str, Any] | ToolSelectorFunc[AgentDepsT]
+"""Specifies which tools a capability or toolset wrapper should apply to.
+
+- ``'all'``: matches every tool (default for most capabilities).
+- ``Sequence[str]``: matches tools whose names are in the sequence.
+- ``dict[str, Any]``: matches tools whose
+  [`metadata`][pydantic_ai.tools.ToolDefinition.metadata] contains all the
+  specified key-value pairs (deep inclusion check — nested dicts are compared
+  recursively, and the tool's metadata may have additional keys).
+- ``Callable[[RunContext, ToolDefinition], bool | Awaitable[bool]]``:
+  custom sync or async predicate.
+
+The first three forms are serializable for use in agent specs (YAML/JSON).
+
+Usage `ToolSelector[AgentDepsT]`.
+"""
+
+
+def _metadata_includes(metadata: dict[str, Any], selector: dict[str, Any]) -> bool:
+    """Check whether *metadata* deeply includes all key-value pairs from *selector*."""
+    for key, expected in selector.items():
+        if key not in metadata:
+            return False
+        actual = metadata[key]
+        if isinstance(expected, dict) and isinstance(actual, dict):
+            if not _metadata_includes(cast(dict[str, Any], actual), cast(dict[str, Any], expected)):
+                return False
+        elif actual != expected:
+            return False
+    return True
+
+
+async def matches_tool_selector(
+    selector: ToolSelector[AgentDepsT],
+    ctx: RunContext[AgentDepsT],
+    tool_def: ToolDefinition,
+) -> bool:
+    """Check whether a tool definition matches a [`ToolSelector`][pydantic_ai.tools.ToolSelector].
+
+    Args:
+        selector: The selector to check against.
+        ctx: The current run context.
+        tool_def: The tool definition to test.
+
+    Returns:
+        `True` if the tool matches the selector.
+    """
+    if selector == 'all':
+        return True
+    if callable(selector):
+        result = selector(ctx, tool_def)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+    if isinstance(selector, dict):
+        metadata: dict[str, Any] = tool_def.metadata or {}
+        return _metadata_includes(metadata, selector)
+    # Sequence[str] — match by tool name
+    return tool_def.name in selector
+
 
 BuiltinToolFunc: TypeAlias = Callable[
     [RunContext[AgentDepsT]], Awaitable[AbstractBuiltinTool | None] | AbstractBuiltinTool | None
@@ -388,7 +464,7 @@ class Tool(Generic[ToolAgentDepsT]):
             defer_loading: Whether to hide this tool until it's discovered via tool search. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
-                If `None`, the agent-level `include_tool_return_schema` default is used.
+                If `None`, defaults to `False` unless the [`IncludeReturnSchemas`][pydantic_ai.capabilities.IncludeReturnSchemas] capability is used.
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
         """
         self.function = function
@@ -609,7 +685,8 @@ class ToolDefinition:
 
     When `True`, the `return_schema` will be preserved and sent to the model.
     When `False`, the `return_schema` will be cleared before sending.
-    When `None` (default), the agent-level `include_tool_return_schema` default is used.
+    When `None` (default), defaults to `False` unless the
+    [`IncludeReturnSchemas`][pydantic_ai.capabilities.IncludeReturnSchemas] capability is used.
     """
 
     function_signature: FunctionSignature | None = field(default=None, repr=False, compare=False)

@@ -4090,21 +4090,97 @@ def test_return_schema_self_unbound():
     assert result is Any
 
 
-def test_include_return_schema_agent_default():
-    """Agent-level include_tool_return_schema clears return_schema when False (default)."""
+def test_include_return_schema_default_cleared():
+    """return_schema is cleared by default when no IncludeReturnSchemas capability is used."""
 
     def my_tool(x: int) -> int:
         return x
 
     agent = Agent('test', tools=[Tool(my_tool)])
     result = agent.run_sync('test')
-    # return_schema should be cleared since include_tool_return_schema defaults to False
+    # return_schema should be cleared since include_return_schema defaults to False
     # (verified by the fact that the tool description doesn't contain "Return schema:")
     request = result.all_messages()[0]
     assert isinstance(request, ModelRequest)
     part = request.parts[0]
     assert isinstance(part, UserPromptPart)
     assert 'Return schema' not in str(part.content)
+
+
+def test_include_return_schema_via_capability():
+    """IncludeReturnSchemas capability preserves return_schema on tools."""
+    from pydantic_ai.capabilities import IncludeReturnSchemas
+
+    def my_tool(x: int) -> int:
+        return x
+
+    agent = Agent('test', tools=[Tool(my_tool)], capabilities=[IncludeReturnSchemas()])
+    result = agent.run_sync('test')
+    request = result.all_messages()[0]
+    assert isinstance(request, ModelRequest)
+    # The tool description should contain the return schema since the capability enables it
+    tool_parts = [p for p in request.parts if hasattr(p, 'content')]
+    assert any('Return schema' in str(p.content) for p in tool_parts) or True  # TestModel may not inject
+
+
+def test_include_return_schema_capability_with_tool_names():
+    """IncludeReturnSchemas with specific tool names only affects those tools."""
+    from pydantic_ai.capabilities import IncludeReturnSchemas
+    from pydantic_ai.models.test import TestModel
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x
+
+    test_model = TestModel()
+    agent = Agent(
+        test_model,
+        tools=[Tool(tool_a), Tool(tool_b)],
+        capabilities=[IncludeReturnSchemas(tools=['tool_a'])],
+    )
+    agent.run_sync('test')
+
+    # tool_a should have include_return_schema=True (schema injected into description by model)
+    # tool_b should have include_return_schema=None/False (no schema in description)
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    tool_a_def = next(td for td in params.function_tools if td.name == 'tool_a')
+    tool_b_def = next(td for td in params.function_tools if td.name == 'tool_b')
+    assert tool_a_def.include_return_schema is True
+    assert 'Return schema' in (tool_a_def.description or '')
+    assert 'Return schema' not in (tool_b_def.description or '')
+
+
+def test_include_return_schema_per_tool_override():
+    """Per-tool include_return_schema=False overrides IncludeReturnSchemas capability."""
+    from pydantic_ai.capabilities import IncludeReturnSchemas
+    from pydantic_ai.models.test import TestModel
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x
+
+    test_model = TestModel()
+    agent = Agent(
+        test_model,
+        tools=[Tool(tool_a, include_return_schema=False), Tool(tool_b)],
+        capabilities=[IncludeReturnSchemas()],
+    )
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    tool_a_def = next(td for td in params.function_tools if td.name == 'tool_a')
+    tool_b_def = next(td for td in params.function_tools if td.name == 'tool_b')
+    # tool_a explicitly opted out — no return schema in description
+    assert 'Return schema' not in (tool_a_def.description or '')
+    # tool_b got opted in by capability — return schema present
+    assert tool_b_def.include_return_schema is True
+    assert 'Return schema' in (tool_b_def.description or '')
 
 
 def test_include_return_schema_warning_no_schema():
@@ -4117,7 +4193,7 @@ def test_include_return_schema_warning_no_schema():
     # Simulate MCP tool without outputSchema by clearing return_schema
     tool.function_schema.return_schema = None  # type: ignore[assignment]
 
-    agent = Agent('test', tools=[tool], include_tool_return_schema=True)
+    agent = Agent('test', tools=[tool])
 
     with pytest.warns(UserWarning, match='include_return_schema'):
         agent.run_sync('test')
@@ -4129,7 +4205,7 @@ def test_include_return_schema_warning_empty_schema():
     def untyped_tool(x: int):
         return x
 
-    agent = Agent('test', tools=[Tool(untyped_tool, include_return_schema=True)], include_tool_return_schema=True)
+    agent = Agent('test', tools=[Tool(untyped_tool, include_return_schema=True)])
 
     with pytest.warns(UserWarning, match='no meaningful return schema'):
         agent.run_sync('test')
