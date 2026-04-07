@@ -2,7 +2,7 @@ We'd love you to contribute to Pydantic AI!
 
 ## How review works here, and why this page exists
 
-Pydantic AI is maintained by a small team, and the volume of issues, PRs, and GitHub notifications this project generates has grown faster than we can keep up with. We read more than we respond to, and things do get lost when a thread is buried under newer notifications. We know that's been frustrating for some contributors, and we're sorry. This page is our attempt to be honest about how review actually works here and what you can do to get a change landed
+Pydantic AI is maintained by a small team, and the volume of issues, PRs, and GitHub notifications this project generates has grown faster than we can keep up with. We read more than we respond to, and things do get lost when a thread is buried under newer notifications. We know that's been frustrating for some contributors, and we're sorry. This page is our attempt to be honest about how review actually works here and what you can do to get a change landed.
 
 ## Before you write code
 
