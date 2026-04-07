@@ -1,7 +1,7 @@
 <!-- Thank you for contributing to Pydantic AI! -->
 
-<!-- Please add the issue number that should be closed when this PR is merged. -->
-<!-- If there is no issue, please create one first, even for simple bug fixes. -->
+<!-- For non-trivial changes, please link an issue. If no issue exists, create one first. -->
+<!-- Trivial fixes (typos, docs, obvious bug fixes) don't require an issue. -->
 
 - Closes #<issue>
 
