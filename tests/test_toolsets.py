@@ -1919,6 +1919,34 @@ def test_set_tool_metadata_capability_with_async_selector():
     assert td_b.metadata is None or 'tagged' not in td_b.metadata
 
 
+def test_set_tool_metadata_capability_with_bare_string_selector():
+    """SetToolMetadata with a bare string selector matches by exact name, not substring."""
+    from pydantic_ai.capabilities import SetToolMetadata
+
+    def my_tool(x: int) -> int:
+        return x
+
+    def my(x: str) -> str:
+        return x
+
+    test_model = TestModel()
+    agent = Agent(
+        test_model,
+        tools=[my_tool, my],
+        capabilities=[SetToolMetadata(tools='my_tool', tagged=True)],
+    )
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    td_my_tool = next(td for td in params.function_tools if td.name == 'my_tool')
+    td_my = next(td for td in params.function_tools if td.name == 'my')
+    assert td_my_tool.metadata is not None
+    assert td_my_tool.metadata['tagged'] is True
+    # 'my' should NOT match — bare string does exact match, not substring
+    assert td_my.metadata is None or 'tagged' not in td_my.metadata
+
+
 def test_set_tool_metadata_capability_with_sync_callable_selector():
     """SetToolMetadata with sync callable selector."""
     from pydantic_ai.capabilities import SetToolMetadata
