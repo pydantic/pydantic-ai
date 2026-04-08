@@ -4,7 +4,9 @@ import asyncio
 import contextvars
 import functools
 import os
+import threading
 from collections.abc import AsyncIterator
+from concurrent.futures import ThreadPoolExecutor
 from importlib.metadata import distributions
 
 import pytest
@@ -19,6 +21,7 @@ from pydantic_ai._utils import (
     merge_json_schema_defs,
     run_in_executor,
     strip_markdown_fences,
+    using_thread_executor,
     validate_empty_kwargs,
 )
 
@@ -186,6 +189,53 @@ async def test_run_in_executor_with_disable_threads() -> None:
         result = await run_in_executor(sync_func)
         assert result == 'result'
         assert calls == ['called']
+
+
+async def test_run_in_executor_with_custom_executor() -> None:
+    main_thread = threading.current_thread()
+
+    def sync_func() -> threading.Thread:
+        return threading.current_thread()
+
+    executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='custom-pool')
+    try:
+        with using_thread_executor(executor):
+            result = await run_in_executor(sync_func)
+            assert result is not main_thread
+            assert result.name.startswith('custom-pool')
+    finally:
+        executor.shutdown(wait=True)
+
+
+async def test_run_in_executor_custom_executor_preserves_context_vars() -> None:
+    ctx_var = contextvars.ContextVar('test_var', default='default')
+    ctx_var.set('custom_value')
+
+    executor = ThreadPoolExecutor(max_workers=2)
+    try:
+        with using_thread_executor(executor):
+            result = await run_in_executor(ctx_var.get)
+            assert result == 'custom_value'
+    finally:
+        executor.shutdown(wait=True)
+
+
+async def test_disable_threads_takes_priority_over_custom_executor() -> None:
+    from pydantic_ai._utils import disable_threads
+
+    main_thread = threading.current_thread()
+
+    def check_thread() -> threading.Thread:
+        return threading.current_thread()
+
+    executor = ThreadPoolExecutor(max_workers=2)
+    try:
+        with using_thread_executor(executor):
+            with disable_threads():
+                result = await run_in_executor(check_thread)
+                assert result is main_thread
+    finally:
+        executor.shutdown(wait=True)
 
 
 def test_is_async_callable():
@@ -527,6 +577,15 @@ def test_strip_markdown_fences():
         == '{"foo": "bar"}'
     )
     assert strip_markdown_fences('No JSON to be found') == 'No JSON to be found'
+    # Content after closing fence with braces should not be captured (issue #4397)
+    assert strip_markdown_fences('```json\n{"a": 1}\n```\nContext: {"b": 2}') == '{"a": 1}'
+    assert (
+        strip_markdown_fences('```json\n{"result": "pass"}\n```\nThis matches schema {"type": "object"}')
+        == '{"result": "pass"}'
+    )
+    # Nested JSON objects should still be fully captured
+    assert strip_markdown_fences('```json\n{"nested": {"key": "value"}}\n```') == '{"nested": {"key": "value"}}'
+    assert strip_markdown_fences('```json\n{"a": {"b": {"c": 1}}}\n```') == '{"a": {"b": {"c": 1}}}'
 
 
 def test_validate_empty_kwargs_empty():

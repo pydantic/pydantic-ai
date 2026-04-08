@@ -538,6 +538,7 @@ class _GraphTaskResult:
     source: GraphTask
     result: EndMarker[Any] | Sequence[GraphTask] | JoinItem
     source_is_finished: bool = True
+    error: BaseException | None = None
 
 
 @dataclass
@@ -575,6 +576,8 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                 async with self.iter_stream_receiver:
                     while self.active_tasks or self.active_reducers:
                         async for task_result in self.iter_stream_receiver:  # pragma: no branch
+                            if task_result.error is not None:
+                                raise task_result.error
                             if isinstance(task_result.result, JoinItem):
                                 maybe_overridden_result = task_result.result
                             else:
@@ -747,7 +750,17 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
     async def _run_tracked_task(self, t_: GraphTask):
         with CancelScope() as scope:
             self.cancel_scopes[t_.task_id] = scope
-            result = await self._run_task(t_)
+            try:
+                result = await self._run_task(t_)
+            except BaseException as exc:
+                # Send the error through the stream instead of letting it propagate
+                # into the task group, which would transform it (e.g. into CancelledError
+                # or ExceptionGroup). This preserves the original exception for the caller.
+                try:
+                    await self.iter_stream_sender.send(_GraphTaskResult(t_, [], error=exc))
+                except BrokenResourceError:
+                    pass  # pragma: no cover
+                return
             try:
                 if isinstance(result, _GraphTaskAsyncIterable):
                     async for new_tasks in result.iterable:

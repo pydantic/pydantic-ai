@@ -56,10 +56,11 @@ async def test_repeat_1_produces_identical_behavior():
         return inputs.upper()
 
     dataset = Dataset(
+        name='repeat_1',
         cases=[
             Case(name='case1', inputs='hello'),
             Case(name='case2', inputs='world'),
-        ]
+        ],
     )
     report = await dataset.evaluate(task, name='test', progress=False)
 
@@ -79,10 +80,11 @@ async def test_repeat_3_produces_3x_cases():
         return inputs.upper()
 
     dataset = Dataset(
+        name='repeat_3',
         cases=[
             Case(name='case1', inputs='hello'),
             Case(name='case2', inputs='world'),
-        ]
+        ],
     )
     report = await dataset.evaluate(task, name='test', progress=False, repeat=3)
 
@@ -117,10 +119,11 @@ async def test_repeat_with_unnamed_cases():
         return inputs.upper()
 
     dataset = Dataset(
+        name='unnamed_cases',
         cases=[
             Case(inputs='hello'),
             Case(inputs='world'),
-        ]
+        ],
     )
     report = await dataset.evaluate(task, name='test', progress=False, repeat=2)
 
@@ -143,7 +146,7 @@ async def test_repeat_invalid_value():
     async def task(inputs: str) -> str:
         return inputs  # pragma: no cover
 
-    dataset = Dataset(cases=[Case(inputs='hello')])
+    dataset = Dataset(name='invalid_repeat', cases=[Case(inputs='hello')])
     with pytest.raises(ValueError, match='repeat must be >= 1'):
         await dataset.evaluate(task, name='test', progress=False, repeat=0)
 
@@ -155,10 +158,11 @@ async def test_case_groups_correctly_groups():
         return inputs.upper()
 
     dataset = Dataset(
+        name='case_groups',
         cases=[
             Case(name='case1', inputs='hello'),
             Case(name='case2', inputs='world'),
-        ]
+        ],
     )
     report = await dataset.evaluate(task, name='test', progress=False, repeat=2)
 
@@ -183,7 +187,7 @@ async def test_case_groups_returns_none_for_single_run():
     async def task(inputs: str) -> str:
         return inputs.upper()
 
-    dataset = Dataset(cases=[Case(name='case1', inputs='hello')])
+    dataset = Dataset(name='single_run', cases=[Case(name='case1', inputs='hello')])
     report = await dataset.evaluate(task, name='test', progress=False, repeat=1)
 
     assert report.case_groups() is None
@@ -350,7 +354,7 @@ async def test_otel_spans_have_correct_attributes(capfire: CaptureLogfire):
     async def task(inputs: str) -> str:
         return inputs.upper()
 
-    dataset = Dataset(cases=[Case(name='case1', inputs='hello')])
+    dataset = Dataset(name='otel_test', cases=[Case(name='case1', inputs='hello')])
     await dataset.evaluate(task, name='test', progress=False, repeat=2)
 
     spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
@@ -374,6 +378,7 @@ async def test_repeat_with_evaluators():
         return inputs.upper()
 
     dataset = Dataset(
+        name='repeat_evaluators',
         cases=[Case(name='case1', inputs='hello')],
         evaluators=(AlwaysPass(),),
     )

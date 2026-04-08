@@ -21,6 +21,9 @@ These tools are passed to the agent via the `builtin_tools` parameter and are ex
 
     If a provider supports a built-in tool that is not currently supported by Pydantic AI, please file an issue.
 
+!!! tip "Provider-adaptive capabilities"
+    For a higher-level, model-agnostic approach, consider the [provider-adaptive tool capabilities](capabilities.md#provider-adaptive-tools): [`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], and [`MCP`][pydantic_ai.capabilities.MCP]. These automatically use the model's native tool when supported and fall back to a local implementation, so your agent works across providers without code changes.
+
 ## Dynamic Configuration
 
 Sometimes you need to configure a built-in tool dynamically based on the [run context][pydantic_ai.tools.RunContext] (e.g., user dependencies), or conditionally omit it. You can achieve this by passing a function to `builtin_tools` that takes [`RunContext`][pydantic_ai.tools.RunContext] as an argument and returns an [`AbstractBuiltinTool`][pydantic_ai.builtin_tools.AbstractBuiltinTool] or `None`.
@@ -64,6 +67,9 @@ print(result.output)
 
 ## Web Search Tool
 
+!!! tip
+    For a model-agnostic approach with automatic local fallback, see the [`WebSearch`][pydantic_ai.capabilities.WebSearch] [capability](capabilities.md#provider-adaptive-tools).
+
 The [`WebSearchTool`][pydantic_ai.builtin_tools.WebSearchTool] allows your agent to search the web,
 making it ideal for queries that require up-to-date data.
 
@@ -76,6 +82,7 @@ making it ideal for queries that require up-to-date data.
 | Google | ✅ | No parameter support. No [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] or [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] is generated when streaming. Using built-in tools and function tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
 | xAI | ✅ | Supports `blocked_domains` and `allowed_domains` parameters. |
 | Groq | ✅ | Limited parameter support. To use web search capabilities with Groq, you need to use the [compound models](https://console.groq.com/docs/compound). |
+| OpenRouter | ✅ | Web search via [plugins](https://openrouter.ai/docs/features/web-search). Supports `search_context_size`. Uses native search for supported providers (OpenAI, Anthropic, Perplexity, xAI), Exa for others. |
 | OpenAI Chat Completions | ❌ | Not supported |
 | Bedrock | ❌ | Not supported |
 | Mistral | ❌ | Not supported |
@@ -145,16 +152,17 @@ _(This example is complete, it can be run "as is")_
 
 #### Provider Support
 
-| Parameter | OpenAI | Anthropic | xAI | Groq |
-|-----------|--------|-----------|-----|------|
-| `search_context_size` | ✅ | ❌ | ❌ | ❌ |
-| `user_location` | ✅ | ✅ | ❌ | ❌ |
-| `blocked_domains` | ❌ | ✅ | ✅ | ✅ |
-| `allowed_domains` | ✅ | ✅ | ✅ | ✅ |
-| `max_uses` | ❌ | ✅ | ❌ | ❌ |
+| Parameter | OpenAI | Anthropic | xAI | Groq | OpenRouter |
+|-----------|--------|-----------|-----|------|------------|
+| `search_context_size` | ✅ | ❌ | ❌ | ❌ | ✅ |
+| `user_location` | ✅ | ✅ | ❌ | ❌ | ❌ |
+| `blocked_domains` | ❌ | ✅ | ✅ | ✅ | ❌ |
+| `allowed_domains` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `max_uses` | ❌ | ✅ | ❌ | ❌ | ❌ |
 
 !!! note "Anthropic Domain Filtering"
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
+
 
 ## Code Execution Tool
 
@@ -238,6 +246,9 @@ assert isinstance(result.output, BinaryImage)
 _(This example is complete, it can be run "as is")_
 
 ## Image Generation Tool
+
+!!! tip
+    For a model-agnostic approach with automatic local fallback, see the [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] [capability](capabilities.md#provider-adaptive-tools).
 
 The [`ImageGenerationTool`][pydantic_ai.builtin_tools.ImageGenerationTool] enables your agent to generate images.
 
@@ -387,7 +398,7 @@ For more details, check the [API documentation][pydantic_ai.builtin_tools.ImageG
 | `output_format` | ✅ | ✅ (Vertex AI only) |
 | `partial_images` | ✅ | ❌ |
 | `quality` | ✅ | ❌ |
-| `size` | ✅ (auto (default), 1024x1024, 1024x1536, 1536x1024) | ✅ (1K (default), 2K, 4K) |
+| `size` | ✅ (auto (default), 1024x1024, 1024x1536, 1536x1024) | ✅ (512, 1K (default), 2K, 4K) |
 | `aspect_ratio` | ✅ (1:1, 2:3, 3:2) | ✅ (1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9) |
 
 !!! note "Notes"
@@ -395,6 +406,9 @@ For more details, check the [API documentation][pydantic_ai.builtin_tools.ImageG
     - **Google (Vertex AI)**: Setting `output_compression` will default `output_format` to `jpeg` if not specified.
 
 ## Web Fetch Tool
+
+!!! tip
+    For a model-agnostic approach with automatic local fallback, see the [`WebFetch`][pydantic_ai.capabilities.WebFetch] [capability](capabilities.md#provider-adaptive-tools).
 
 The [`WebFetchTool`][pydantic_ai.builtin_tools.WebFetchTool] enables your agent to pull URL contents into its context,
 allowing it to pull up-to-date information from the web.
@@ -556,6 +570,9 @@ print(result.output)
 _(This example is complete, it can be run "as is")_
 
 ## MCP Server Tool
+
+!!! tip
+    For a model-agnostic approach with automatic local fallback, see the [`MCP`][pydantic_ai.capabilities.MCP] [capability](capabilities.md#provider-adaptive-tools).
 
 The [`MCPServerTool`][pydantic_ai.builtin_tools.MCPServerTool] allows your agent to use remote MCP servers with communication handled by the model provider.
 

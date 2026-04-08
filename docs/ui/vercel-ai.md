@@ -147,9 +147,12 @@ When `sdk_version=6`, the adapter will:
 
 On the frontend, AI SDK UI's [`useChat`](https://ai-sdk.dev/docs/reference/ai-sdk-ui/use-chat) hook handles the approval flow. You can use the [`Confirmation`](https://ai-sdk.dev/elements/components/confirmation) component from AI Elements for a pre-built approval UI, or build your own using the hook's `addToolApprovalResponse` function.
 
-## System Prompts
+## System Prompts and Instructions
 
-Agents configured with `system_prompt` or `@agent.system_prompt` work as expected with the Vercel AI adapter — the agent's system prompts are injected into the request sent to the model.
+Both [`system_prompt`](../agent.md#system-prompts) and [`instructions`](../agent.md#instructions) are included in the request sent to the model. The key difference is how they interact with the message history sent by the frontend:
+
+- **`instructions`** are always injected fresh on each request, regardless of message history. This is the recommended default.
+- **`system_prompt`** messages are preserved across turns in the message history. Since the Vercel AI frontend manages message history, system prompts from prior turns are already present in subsequent requests.
 
 By default, system prompts sent by the frontend are **stripped** for security, since a malicious client could inject arbitrary instructions via crafted API requests. A warning is emitted when this happens.
 

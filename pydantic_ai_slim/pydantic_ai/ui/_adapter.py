@@ -19,9 +19,9 @@ from typing import (
 from pydantic import BaseModel, ValidationError
 from typing_extensions import Self, TypeVar
 
-from pydantic_ai import DeferredToolRequests, DeferredToolResults
+from pydantic_ai import DeferredToolRequests, DeferredToolResults, _instructions
 from pydantic_ai.agent import AbstractAgent
-from pydantic_ai.agent.abstract import AgentMetadata, Instructions
+from pydantic_ai.agent.abstract import AgentMetadata
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
 from pydantic_ai.models import KnownModelName, Model
@@ -232,7 +232,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         message_history: Sequence[ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: Model | KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
@@ -334,7 +334,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         message_history: Sequence[ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: Model | KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
@@ -394,7 +394,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         message_history: Sequence[ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: Model | KnownModelName | str | None = None,
-        instructions: Instructions[DispatchDepsT] = None,
+        instructions: _instructions.AgentInstructions[DispatchDepsT] = None,
         deps: DispatchDepsT = None,
         output_type: OutputSpec[Any] | None = None,
         model_settings: ModelSettings | None = None,

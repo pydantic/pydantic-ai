@@ -19,7 +19,7 @@ with try_import() as imports_successful:
     import logfire
     from logfire.testing import CaptureLogfire
 
-    from pydantic_evals import Case, Dataset
+    from pydantic_evals import Case, Dataset, PydanticEvalsDeprecationWarning
     from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
     from pydantic_evals.evaluators import (
         EvaluationResult,
@@ -126,12 +126,30 @@ def simple_evaluator() -> type[Evaluator[TaskInput, TaskOutput, TaskMetadata]]:
     return SimpleEvaluator
 
 
+def test_dataset_name_deprecation_warning(
+    example_cases: list[Case[TaskInput, TaskOutput, TaskMetadata]],
+):
+    """Test that omitting the name parameter emits a deprecation warning."""
+    with pytest.warns(PydanticEvalsDeprecationWarning, match='Omitting the `name` parameter is deprecated'):
+        Dataset(cases=example_cases)
+
+
+def test_from_file_uses_filename_as_default_name(tmp_path: Path):
+    """Test that from_file uses filename stem as name and does not emit a deprecation warning."""
+    yaml_content = 'cases:\n- name: test\n  inputs:\n    query: hello\n'
+    yaml_path = tmp_path / 'my_dataset.yaml'
+    yaml_path.write_text(yaml_content)
+
+    dataset = Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(yaml_path)
+    assert dataset.name == 'my_dataset'
+
+
 async def test_dataset_init(
     example_cases: list[Case[TaskInput, TaskOutput, TaskMetadata]],
     simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
 ):
     """Test Dataset initialization."""
-    dataset = Dataset(cases=example_cases, evaluators=[simple_evaluator()])
+    dataset = Dataset(name='test_init', cases=example_cases, evaluators=[simple_evaluator()])
 
     assert len(dataset.cases) == 2
     assert dataset.cases[0].name == 'case1'
@@ -166,6 +184,7 @@ async def test_add_evaluator(
     assert len(example_dataset.evaluators) == 2
 
     dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](
+        name='add_evaluator_test',
         cases=[
             Case(
                 name='My Case 1',
@@ -175,7 +194,7 @@ async def test_add_evaluator(
                 name='My Case 2',
                 inputs=TaskInput(query='What is 2+2?'),
             ),
-        ]
+        ],
     )
     dataset.add_evaluator(Python('ctx.output > 0'))
     dataset.add_evaluator(Python('ctx.output == 2'), specific_case='My Case 1')
@@ -185,6 +204,7 @@ async def test_add_evaluator(
     assert str(exc_info.value) == snapshot("Case 'My Case 3' not found in the dataset")
 
     assert dataset.model_dump(mode='json', exclude_defaults=True, context={'use_short_form': True}) == {
+        'name': 'add_evaluator_test',
         'cases': [
             {
                 'evaluators': [{'Python': 'ctx.output == 2'}],
@@ -718,7 +738,7 @@ async def test_report_round_trip_serialization(example_dataset: Dataset[TaskInpu
                             name='output',
                             value='a',
                             reason=None,
-                            source=EvaluatorSpec(name='MockEvaluator', arguments=({'output': 'a'},)),
+                            source=EvaluatorSpec(name='MockEvaluator', arguments={'output': {'output': 'a'}}),
                         )
                     },
                     assertions={},
@@ -741,7 +761,7 @@ async def test_report_round_trip_serialization(example_dataset: Dataset[TaskInpu
                             name='output',
                             value='a',
                             reason=None,
-                            source=EvaluatorSpec(name='MockEvaluator', arguments=({'output': 'a'},)),
+                            source=EvaluatorSpec(name='MockEvaluator', arguments={'output': {'output': 'a'}}),
                         )
                     },
                     assertions={},
@@ -879,14 +899,14 @@ def test_serializing_parts_with_discriminators(tmp_path: Path):
 
     items = [Foo(foo='foo'), Bar(bar='bar')]
 
-    dataset = Dataset[list[Foo | Bar]](cases=[Case(inputs=items)])
+    dataset = Dataset[list[Foo | Bar]](name='discriminators', cases=[Case(inputs=items)])
     yaml_path = tmp_path / 'test_cases.yaml'
     dataset.to_file(yaml_path)
 
     loaded_dataset = Dataset[list[Foo | Bar]].from_file(yaml_path)
     assert loaded_dataset == snapshot(
         Dataset(
-            name='test_cases',
+            name='discriminators',
             cases=[
                 Case(
                     name=None,
@@ -1322,7 +1342,7 @@ async def test_dataset_evaluate_with_no_expected_output(example_dataset: Dataset
         inputs=TaskInput(query='hello'),
         metadata=TaskMetadata(difficulty='easy'),
     )
-    dataset = Dataset(cases=[case])
+    dataset = Dataset(name='no_expected_output', cases=[case])
 
     async def task(inputs: TaskInput) -> TaskOutput:
         return TaskOutput(answer=inputs.query.upper())
@@ -1339,7 +1359,7 @@ async def test_dataset_evaluate_with_no_metadata(example_dataset: Dataset[TaskIn
         inputs=TaskInput(query='hello'),
         expected_output=TaskOutput(answer='HELLO'),
     )
-    dataset = Dataset(cases=[case])
+    dataset = Dataset(name='no_metadata', cases=[case])
 
     async def task(inputs: TaskInput) -> TaskOutput:
         return TaskOutput(answer=inputs.query.upper())
@@ -1351,7 +1371,7 @@ async def test_dataset_evaluate_with_no_metadata(example_dataset: Dataset[TaskIn
 
 async def test_dataset_evaluate_with_empty_cases(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
     """Test evaluating a dataset with no cases."""
-    dataset = Dataset(cases=[])
+    dataset = Dataset(name='empty_cases', cases=[])
 
     async def task(inputs: TaskInput) -> TaskOutput:  # pragma: no cover
         return TaskOutput(answer=inputs.query.upper())
@@ -1385,6 +1405,7 @@ async def test_dataset_evaluate_with_multiple_evaluators(example_dataset: Datase
 @pytest.mark.anyio
 async def test_unnamed_cases():
     dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](
+        name='unnamed_cases',
         cases=[
             Case(
                 name=None,
@@ -1398,7 +1419,7 @@ async def test_unnamed_cases():
                 name=None,
                 inputs=TaskInput(query='What is 1+2?'),
             ),
-        ]
+        ],
     )
 
     async def task(inputs: TaskInput) -> TaskOutput:
@@ -1413,6 +1434,7 @@ async def test_unnamed_cases():
 async def test_duplicate_case_names():
     with pytest.raises(ValueError) as exc_info:
         Dataset[TaskInput, TaskOutput, TaskMetadata](
+            name='duplicate_test',
             cases=[
                 Case(
                     name='My Case',
@@ -1422,17 +1444,18 @@ async def test_duplicate_case_names():
                     name='My Case',
                     inputs=TaskInput(query='What is 2+2?'),
                 ),
-            ]
+            ],
         )
     assert str(exc_info.value) == "Duplicate case name: 'My Case'"
 
     dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](
+        name='duplicate_test',
         cases=[
             Case(
                 name='My Case',
                 inputs=TaskInput(query='What is 1+1?'),
             ),
-        ]
+        ],
     )
     dataset.add_case(
         name='My Other Case',
@@ -1455,7 +1478,7 @@ def test_add_invalid_evaluator():
         def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):  # pragma: no cover
             return False
 
-    dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](cases=[])
+    dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](name='invalid_evaluator', cases=[])
 
     with pytest.raises(ValueError) as exc_info:
         dataset.model_json_schema_with_evaluators((NotAnEvaluator,))  # type: ignore
@@ -1481,6 +1504,7 @@ def test_evaluate_non_serializable_inputs():
         output_type: type[str] | type[int]
 
     my_dataset = Dataset[MyInputs, Any, Any](
+        name='non_serializable',
         cases=[
             Case(
                 name='str',
@@ -1842,6 +1866,7 @@ async def test_from_text_with_report_evaluators():
     from pydantic_evals.evaluators import ConfusionMatrixEvaluator
 
     yaml_text = """\
+name: report_evaluators_test
 cases:
   - name: c1
     inputs:
@@ -1859,6 +1884,7 @@ async def test_from_text_with_report_evaluators_and_args():
     from pydantic_evals.evaluators import ConfusionMatrixEvaluator
 
     yaml_text = """\
+name: report_evaluators_args_test
 cases:
   - name: c1
     inputs:
@@ -1989,3 +2015,213 @@ async def test_duplicate_report_evaluator_class_name():
             {'cases': []},
             custom_report_evaluator_types=(DupeEvaluator, DupeEvaluator2),
         )
+
+
+async def test_lifecycle_prepare_context(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
+    """Test that lifecycle.prepare_context can enrich metrics before evaluators run."""
+    from pydantic_evals.lifecycle import CaseLifecycle
+
+    class EnrichMetrics(CaseLifecycle[TaskInput, TaskOutput, TaskMetadata]):
+        async def prepare_context(
+            self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]
+        ) -> EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]:
+            ctx.metrics['custom_metric'] = 42
+            ctx.metrics['input_length'] = len(self.case.inputs.query)
+            return ctx
+
+    async def task(inputs: TaskInput) -> TaskOutput:
+        return TaskOutput(answer='test')
+
+    report = await example_dataset.evaluate(task, lifecycle=EnrichMetrics)
+
+    assert len(report.cases) == 2
+    for case in report.cases:
+        assert case.metrics['custom_metric'] == 42
+        assert 'input_length' in case.metrics
+
+
+async def test_lifecycle_setup_and_teardown(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
+    """Test that lifecycle setup runs before task and teardown runs after evaluators."""
+    from pydantic_evals.lifecycle import CaseLifecycle
+
+    events: list[str] = []
+
+    class TrackingLifecycle(CaseLifecycle[TaskInput, TaskOutput, TaskMetadata]):
+        async def setup(self) -> None:
+            events.append(f'setup:{self.case.name}')
+
+        async def teardown(
+            self,
+            result: ReportCase[TaskInput, TaskOutput, TaskMetadata]
+            | ReportCaseFailure[TaskInput, TaskOutput, TaskMetadata],
+        ) -> None:
+            events.append(f'teardown:{self.case.name}:{type(result).__name__}')
+
+    async def task(inputs: TaskInput) -> TaskOutput:
+        return TaskOutput(answer='test')
+
+    await example_dataset.evaluate(task, max_concurrency=1, lifecycle=TrackingLifecycle)
+
+    assert events == snapshot(['setup:case1', 'teardown:case1:ReportCase', 'setup:case2', 'teardown:case2:ReportCase'])
+
+
+async def test_lifecycle_teardown_on_task_failure():
+    """Test that teardown runs even when the task fails, and receives ReportCaseFailure."""
+    from pydantic_evals.lifecycle import CaseLifecycle
+
+    teardown_results: list[ReportCase | ReportCaseFailure] = []
+
+    class TeardownTracker(CaseLifecycle[str, str, None]):
+        async def teardown(self, result: ReportCase[str, str, None] | ReportCaseFailure[str, str, None]) -> None:
+            teardown_results.append(result)
+
+    dataset = Dataset[str, str, None](
+        name='teardown_on_failure',
+        cases=[
+            Case(name='success', inputs='hello'),
+            Case(name='failure', inputs='fail'),
+        ],
+    )
+
+    async def task(inputs: str) -> str:
+        if inputs == 'fail':
+            raise ValueError('boom')
+        return inputs.upper()
+
+    report = await dataset.evaluate(task, max_concurrency=1, lifecycle=TeardownTracker)
+
+    assert len(report.cases) == 1
+    assert len(report.failures) == 1
+    assert len(teardown_results) == 2
+    result_types = {type(r).__name__ for r in teardown_results}
+    assert result_types == {'ReportCase', 'ReportCaseFailure'}
+
+
+async def test_lifecycle_per_case_state():
+    """Test that each case gets its own lifecycle instance with independent state."""
+    from pydantic_evals.lifecycle import CaseLifecycle
+
+    class StatefulLifecycle(CaseLifecycle[str, str, None]):
+        def __init__(self, case: Case[str, str, None]) -> None:
+            super().__init__(case)
+            self.setup_called = False
+
+        async def setup(self) -> None:
+            self.setup_called = True
+            assert 'StatefulLifecycle(case=' in repr(self)
+
+        async def prepare_context(self, ctx: EvaluatorContext[str, str, None]) -> EvaluatorContext[str, str, None]:
+            assert self.setup_called, 'setup should have been called before prepare_context'
+            ctx.metrics['case_name_length'] = len(self.case.name or '')
+            return ctx
+
+    dataset = Dataset[str, str, None](
+        name='per_case_state',
+        cases=[
+            Case(name='short', inputs='a'),
+            Case(name='much_longer_name', inputs='b'),
+        ],
+    )
+
+    async def task(inputs: str) -> str:
+        return inputs.upper()
+
+    report = await dataset.evaluate(task, lifecycle=StatefulLifecycle)
+
+    assert len(report.cases) == 2
+    metrics_by_name = {c.name: c.metrics for c in report.cases}
+    assert metrics_by_name['short']['case_name_length'] == 5
+    assert metrics_by_name['much_longer_name']['case_name_length'] == 16
+
+
+async def test_lifecycle_evaluator_sees_enriched_context():
+    """Test that evaluators see the context after prepare_context has modified it."""
+    from pydantic_evals.lifecycle import CaseLifecycle
+
+    @dataclass
+    class CheckMetric(Evaluator[str, str, None]):
+        def evaluate(self, ctx: EvaluatorContext[str, str, None]) -> bool:
+            return ctx.metrics.get('enriched') == 1
+
+    class Enricher(CaseLifecycle[str, str, None]):
+        async def prepare_context(self, ctx: EvaluatorContext[str, str, None]) -> EvaluatorContext[str, str, None]:
+            ctx.metrics['enriched'] = 1
+            return ctx
+
+    dataset = Dataset[str, str, None](
+        name='enriched_context',
+        cases=[Case(name='test', inputs='hello')],
+        evaluators=[CheckMetric()],
+    )
+
+    async def task(inputs: str) -> str:
+        return inputs.upper()
+
+    report = await dataset.evaluate(task, lifecycle=Enricher)
+
+    assert len(report.cases) == 1
+    assert report.cases[0].assertions['CheckMetric'].value is True
+
+
+async def test_lifecycle_with_object_types():
+    """Test that a lifecycle with object types works with any dataset."""
+    from pydantic_evals.lifecycle import CaseLifecycle
+
+    class GenericLifecycle(CaseLifecycle):
+        async def prepare_context(self, ctx: EvaluatorContext) -> EvaluatorContext:
+            ctx.metrics['generic'] = 1
+            return ctx
+
+    dataset = Dataset[str, str, None](name='object_types', cases=[Case(name='test', inputs='hello')])
+
+    async def task(inputs: str) -> str:
+        return inputs.upper()
+
+    report = await dataset.evaluate(task, lifecycle=GenericLifecycle)
+
+    assert report.cases[0].metrics['generic'] == 1
+
+
+async def test_lifecycle_teardown_exception_propagates():
+    """Test that a teardown exception propagates to the caller."""
+    from pydantic_evals.lifecycle import CaseLifecycle
+
+    class BrokenTeardown(CaseLifecycle[str, str, None]):
+        async def teardown(self, result: ReportCase[str, str, None] | ReportCaseFailure[str, str, None]) -> None:
+            raise RuntimeError('teardown exploded')
+
+    dataset = Dataset[str, str, None](name='teardown_exception', cases=[Case(name='case1', inputs='hello')])
+
+    async def task(inputs: str) -> str:
+        return inputs.upper()
+
+    with pytest.raises(ExceptionGroup, match='unhandled errors in a TaskGroup'):
+        await dataset.evaluate(task, lifecycle=BrokenTeardown)
+
+
+async def test_lifecycle_setup_failure_produces_case_failure_and_calls_teardown():
+    """Test that a setup failure produces ReportCaseFailure and teardown is still called."""
+    from pydantic_evals.lifecycle import CaseLifecycle
+
+    teardown_called = False
+
+    class BrokenSetup(CaseLifecycle[str, str, None]):
+        async def setup(self) -> None:
+            raise RuntimeError('setup failed')
+
+        async def teardown(self, result: ReportCase[str, str, None] | ReportCaseFailure[str, str, None]) -> None:
+            nonlocal teardown_called
+            teardown_called = True
+            assert isinstance(result, ReportCaseFailure)
+            assert 'setup failed' in result.error_message
+
+    dataset = Dataset[str, str, None](name='setup_failure', cases=[Case(name='case1', inputs='hello')])
+
+    async def task(inputs: str) -> str:
+        return inputs.upper()  # pragma: no cover
+
+    report = await dataset.evaluate(task, lifecycle=BrokenSetup)
+
+    assert len(report.failures) == 1
+    assert 'setup failed' in report.failures[0].error_message
+    assert teardown_called
