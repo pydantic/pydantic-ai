@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import threading
 from collections.abc import AsyncIterable, AsyncIterator, Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -19,8 +21,11 @@ from pydantic_ai.capabilities import (
     MCP,
     BuiltinTool,
     ImageGeneration,
+    IncludeToolReturnSchemas,
     PrefixTools,
+    SetToolMetadata,
     Thinking,
+    ThreadExecutor,
     Toolset,
     WebFetch,
     WebSearch,
@@ -62,7 +67,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsStr
+from .conftest import IsDatetime, IsInstance, IsStr
 
 pytestmark = [
     pytest.mark.anyio,
@@ -74,8 +79,10 @@ def test_capability_types() -> None:
         {
             'BuiltinTool': BuiltinTool,
             'ImageGeneration': ImageGeneration,
+            'IncludeToolReturnSchemas': IncludeToolReturnSchemas,
             'MCP': MCP,
             'PrefixTools': PrefixTools,
+            'SetToolMetadata': SetToolMetadata,
             'Thinking': Thinking,
             'WebFetch': WebFetch,
             'WebSearch': WebSearch,
@@ -498,6 +505,398 @@ def test_model_json_schema_with_capabilities():
                     'title': 'ImageGenerationTool',
                     'type': 'object',
                 },
+                'KnownModelName': {
+                    'enum': [
+                        'anthropic:claude-3-5-haiku-20241022',
+                        'anthropic:claude-3-5-haiku-latest',
+                        'anthropic:claude-3-7-sonnet-20250219',
+                        'anthropic:claude-3-7-sonnet-latest',
+                        'anthropic:claude-3-haiku-20240307',
+                        'anthropic:claude-3-opus-20240229',
+                        'anthropic:claude-3-opus-latest',
+                        'anthropic:claude-4-opus-20250514',
+                        'anthropic:claude-4-sonnet-20250514',
+                        'anthropic:claude-haiku-4-5-20251001',
+                        'anthropic:claude-haiku-4-5',
+                        'anthropic:claude-opus-4-0',
+                        'anthropic:claude-opus-4-1-20250805',
+                        'anthropic:claude-opus-4-20250514',
+                        'anthropic:claude-opus-4-5-20251101',
+                        'anthropic:claude-opus-4-5',
+                        'anthropic:claude-opus-4-6',
+                        'anthropic:claude-sonnet-4-0',
+                        'anthropic:claude-sonnet-4-20250514',
+                        'anthropic:claude-sonnet-4-5-20250929',
+                        'anthropic:claude-sonnet-4-5',
+                        'anthropic:claude-sonnet-4-6',
+                        'bedrock:amazon.titan-text-express-v1',
+                        'bedrock:amazon.titan-text-lite-v1',
+                        'bedrock:amazon.titan-tg1-large',
+                        'bedrock:anthropic.claude-3-5-haiku-20241022-v1:0',
+                        'bedrock:anthropic.claude-3-5-sonnet-20240620-v1:0',
+                        'bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0',
+                        'bedrock:anthropic.claude-3-7-sonnet-20250219-v1:0',
+                        'bedrock:anthropic.claude-3-haiku-20240307-v1:0',
+                        'bedrock:anthropic.claude-3-opus-20240229-v1:0',
+                        'bedrock:anthropic.claude-3-sonnet-20240229-v1:0',
+                        'bedrock:anthropic.claude-haiku-4-5-20251001-v1:0',
+                        'bedrock:anthropic.claude-instant-v1',
+                        'bedrock:anthropic.claude-opus-4-20250514-v1:0',
+                        'bedrock:anthropic.claude-sonnet-4-20250514-v1:0',
+                        'bedrock:anthropic.claude-sonnet-4-5-20250929-v1:0',
+                        'bedrock:anthropic.claude-sonnet-4-6',
+                        'bedrock:anthropic.claude-v2:1',
+                        'bedrock:anthropic.claude-v2',
+                        'bedrock:cohere.command-light-text-v14',
+                        'bedrock:cohere.command-r-plus-v1:0',
+                        'bedrock:cohere.command-r-v1:0',
+                        'bedrock:cohere.command-text-v14',
+                        'bedrock:eu.anthropic.claude-haiku-4-5-20251001-v1:0',
+                        'bedrock:eu.anthropic.claude-sonnet-4-20250514-v1:0',
+                        'bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                        'bedrock:eu.anthropic.claude-sonnet-4-6',
+                        'bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
+                        'bedrock:meta.llama3-1-405b-instruct-v1:0',
+                        'bedrock:meta.llama3-1-70b-instruct-v1:0',
+                        'bedrock:meta.llama3-1-8b-instruct-v1:0',
+                        'bedrock:meta.llama3-70b-instruct-v1:0',
+                        'bedrock:meta.llama3-8b-instruct-v1:0',
+                        'bedrock:mistral.mistral-7b-instruct-v0:2',
+                        'bedrock:mistral.mistral-large-2402-v1:0',
+                        'bedrock:mistral.mistral-large-2407-v1:0',
+                        'bedrock:mistral.mixtral-8x7b-instruct-v0:1',
+                        'bedrock:us.amazon.nova-2-lite-v1:0',
+                        'bedrock:us.amazon.nova-lite-v1:0',
+                        'bedrock:us.amazon.nova-micro-v1:0',
+                        'bedrock:us.amazon.nova-pro-v1:0',
+                        'bedrock:us.anthropic.claude-3-5-haiku-20241022-v1:0',
+                        'bedrock:us.anthropic.claude-3-5-sonnet-20240620-v1:0',
+                        'bedrock:us.anthropic.claude-3-5-sonnet-20241022-v2:0',
+                        'bedrock:us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+                        'bedrock:us.anthropic.claude-3-haiku-20240307-v1:0',
+                        'bedrock:us.anthropic.claude-3-opus-20240229-v1:0',
+                        'bedrock:us.anthropic.claude-3-sonnet-20240229-v1:0',
+                        'bedrock:us.anthropic.claude-haiku-4-5-20251001-v1:0',
+                        'bedrock:us.anthropic.claude-opus-4-20250514-v1:0',
+                        'bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
+                        'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                        'bedrock:us.anthropic.claude-sonnet-4-6',
+                        'bedrock:us.meta.llama3-1-70b-instruct-v1:0',
+                        'bedrock:us.meta.llama3-1-8b-instruct-v1:0',
+                        'bedrock:us.meta.llama3-2-11b-instruct-v1:0',
+                        'bedrock:us.meta.llama3-2-1b-instruct-v1:0',
+                        'bedrock:us.meta.llama3-2-3b-instruct-v1:0',
+                        'bedrock:us.meta.llama3-2-90b-instruct-v1:0',
+                        'bedrock:us.meta.llama3-3-70b-instruct-v1:0',
+                        'cerebras:gpt-oss-120b',
+                        'cerebras:llama-3.3-70b',
+                        'cerebras:llama3.1-8b',
+                        'cerebras:qwen-3-235b-a22b-instruct-2507',
+                        'cerebras:qwen-3-32b',
+                        'cerebras:qwen-3-coder-480b',
+                        'cerebras:zai-glm-4.6',
+                        'cerebras:zai-glm-4.7',
+                        'cohere:c4ai-aya-expanse-32b',
+                        'cohere:c4ai-aya-expanse-8b',
+                        'cohere:command-nightly',
+                        'cohere:command-r-08-2024',
+                        'cohere:command-r-plus-08-2024',
+                        'cohere:command-r7b-12-2024',
+                        'deepseek:deepseek-chat',
+                        'deepseek:deepseek-reasoner',
+                        'gateway/anthropic:claude-3-haiku-20240307',
+                        'gateway/anthropic:claude-4-opus-20250514',
+                        'gateway/anthropic:claude-4-sonnet-20250514',
+                        'gateway/anthropic:claude-haiku-4-5-20251001',
+                        'gateway/anthropic:claude-haiku-4-5',
+                        'gateway/anthropic:claude-opus-4-0',
+                        'gateway/anthropic:claude-opus-4-1-20250805',
+                        'gateway/anthropic:claude-opus-4-20250514',
+                        'gateway/anthropic:claude-opus-4-5-20251101',
+                        'gateway/anthropic:claude-opus-4-5',
+                        'gateway/anthropic:claude-opus-4-6',
+                        'gateway/anthropic:claude-sonnet-4-0',
+                        'gateway/anthropic:claude-sonnet-4-20250514',
+                        'gateway/anthropic:claude-sonnet-4-5-20250929',
+                        'gateway/anthropic:claude-sonnet-4-5',
+                        'gateway/anthropic:claude-sonnet-4-6',
+                        'gateway/bedrock:anthropic.claude-3-5-sonnet-20240620-v1:0',
+                        'gateway/bedrock:anthropic.claude-3-haiku-20240307-v1:0',
+                        'gateway/bedrock:eu.anthropic.claude-haiku-4-5-20251001-v1:0',
+                        'gateway/bedrock:eu.anthropic.claude-sonnet-4-20250514-v1:0',
+                        'gateway/bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                        'gateway/bedrock:eu.anthropic.claude-sonnet-4-6',
+                        'gateway/bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
+                        'gateway/google-vertex:gemini-2.5-flash-image',
+                        'gateway/google-vertex:gemini-2.5-flash-lite-preview-09-2025',
+                        'gateway/google-vertex:gemini-2.5-flash-lite',
+                        'gateway/google-vertex:gemini-2.5-flash',
+                        'gateway/google-vertex:gemini-2.5-pro',
+                        'gateway/google-vertex:gemini-3-flash-preview',
+                        'gateway/google-vertex:gemini-3-pro-image-preview',
+                        'gateway/google-vertex:gemini-3.1-flash-image-preview',
+                        'gateway/google-vertex:gemini-3.1-flash-lite-preview',
+                        'gateway/google-vertex:gemini-3.1-pro-preview',
+                        'gateway/groq:llama-3.1-8b-instant',
+                        'gateway/groq:llama-3.3-70b-versatile',
+                        'gateway/groq:meta-llama/llama-4-scout-17b-16e-instruct',
+                        'gateway/groq:moonshotai/kimi-k2-instruct-0905',
+                        'gateway/groq:openai/gpt-oss-120b',
+                        'gateway/groq:openai/gpt-oss-20b',
+                        'gateway/groq:openai/gpt-oss-safeguard-20b',
+                        'gateway/openai:gpt-3.5-turbo-0125',
+                        'gateway/openai:gpt-3.5-turbo-1106',
+                        'gateway/openai:gpt-3.5-turbo-16k',
+                        'gateway/openai:gpt-3.5-turbo',
+                        'gateway/openai:gpt-4-0613',
+                        'gateway/openai:gpt-4-turbo-2024-04-09',
+                        'gateway/openai:gpt-4-turbo',
+                        'gateway/openai:gpt-4.1-2025-04-14',
+                        'gateway/openai:gpt-4.1-mini-2025-04-14',
+                        'gateway/openai:gpt-4.1-mini',
+                        'gateway/openai:gpt-4.1-nano-2025-04-14',
+                        'gateway/openai:gpt-4.1-nano',
+                        'gateway/openai:gpt-4.1',
+                        'gateway/openai:gpt-4',
+                        'gateway/openai:gpt-4o-2024-05-13',
+                        'gateway/openai:gpt-4o-2024-08-06',
+                        'gateway/openai:gpt-4o-2024-11-20',
+                        'gateway/openai:gpt-4o-mini-2024-07-18',
+                        'gateway/openai:gpt-4o-mini-search-preview-2025-03-11',
+                        'gateway/openai:gpt-4o-mini-search-preview',
+                        'gateway/openai:gpt-4o-mini',
+                        'gateway/openai:gpt-4o-search-preview-2025-03-11',
+                        'gateway/openai:gpt-4o-search-preview',
+                        'gateway/openai:gpt-4o',
+                        'gateway/openai:gpt-5-2025-08-07',
+                        'gateway/openai:gpt-5-chat-latest',
+                        'gateway/openai:gpt-5-mini-2025-08-07',
+                        'gateway/openai:gpt-5-mini',
+                        'gateway/openai:gpt-5-nano-2025-08-07',
+                        'gateway/openai:gpt-5-nano',
+                        'gateway/openai:gpt-5.1-2025-11-13',
+                        'gateway/openai:gpt-5.1-chat-latest',
+                        'gateway/openai:gpt-5.1',
+                        'gateway/openai:gpt-5.2-2025-12-11',
+                        'gateway/openai:gpt-5.2-chat-latest',
+                        'gateway/openai:gpt-5.2',
+                        'gateway/openai:gpt-5.4-mini-2026-03-17',
+                        'gateway/openai:gpt-5.4-mini',
+                        'gateway/openai:gpt-5.4-nano-2026-03-17',
+                        'gateway/openai:gpt-5.4-nano',
+                        'gateway/openai:gpt-5.4',
+                        'gateway/openai:gpt-5',
+                        'gateway/openai:o1-2024-12-17',
+                        'gateway/openai:o1',
+                        'gateway/openai:o3-2025-04-16',
+                        'gateway/openai:o3-mini-2025-01-31',
+                        'gateway/openai:o3-mini',
+                        'gateway/openai:o3',
+                        'gateway/openai:o4-mini-2025-04-16',
+                        'gateway/openai:o4-mini',
+                        'google-gla:gemini-2.0-flash-lite',
+                        'google-gla:gemini-2.0-flash',
+                        'google-gla:gemini-2.5-flash-image',
+                        'google-gla:gemini-2.5-flash-lite-preview-09-2025',
+                        'google-gla:gemini-2.5-flash-lite',
+                        'google-gla:gemini-2.5-flash-preview-09-2025',
+                        'google-gla:gemini-2.5-flash',
+                        'google-gla:gemini-2.5-pro',
+                        'google-gla:gemini-3-flash-preview',
+                        'google-gla:gemini-3-pro-image-preview',
+                        'google-gla:gemini-3-pro-preview',
+                        'google-gla:gemini-3.1-flash-image-preview',
+                        'google-gla:gemini-3.1-flash-lite-preview',
+                        'google-gla:gemini-3.1-pro-preview',
+                        'google-gla:gemini-flash-latest',
+                        'google-gla:gemini-flash-lite-latest',
+                        'google-vertex:gemini-2.0-flash-lite',
+                        'google-vertex:gemini-2.0-flash',
+                        'google-vertex:gemini-2.5-flash-image',
+                        'google-vertex:gemini-2.5-flash-lite-preview-09-2025',
+                        'google-vertex:gemini-2.5-flash-lite',
+                        'google-vertex:gemini-2.5-flash-preview-09-2025',
+                        'google-vertex:gemini-2.5-flash',
+                        'google-vertex:gemini-2.5-pro',
+                        'google-vertex:gemini-3-flash-preview',
+                        'google-vertex:gemini-3-pro-image-preview',
+                        'google-vertex:gemini-3-pro-preview',
+                        'google-vertex:gemini-3.1-flash-image-preview',
+                        'google-vertex:gemini-3.1-flash-lite-preview',
+                        'google-vertex:gemini-3.1-pro-preview',
+                        'google-vertex:gemini-flash-latest',
+                        'google-vertex:gemini-flash-lite-latest',
+                        'grok:grok-2-image-1212',
+                        'grok:grok-2-vision-1212',
+                        'grok:grok-3-fast',
+                        'grok:grok-3-mini-fast',
+                        'grok:grok-3-mini',
+                        'grok:grok-3',
+                        'grok:grok-4-0709',
+                        'grok:grok-4-latest',
+                        'grok:grok-4-1-fast-non-reasoning',
+                        'grok:grok-4-1-fast-reasoning',
+                        'grok:grok-4-1-fast',
+                        'grok:grok-4-fast-non-reasoning',
+                        'grok:grok-4-fast-reasoning',
+                        'grok:grok-4-fast',
+                        'grok:grok-4',
+                        'grok:grok-code-fast-1',
+                        'xai:grok-3',
+                        'xai:grok-3-fast',
+                        'xai:grok-3-fast-latest',
+                        'xai:grok-3-latest',
+                        'xai:grok-3-mini',
+                        'xai:grok-3-mini-fast',
+                        'xai:grok-3-mini-fast-latest',
+                        'xai:grok-4',
+                        'xai:grok-4-0709',
+                        'xai:grok-4-1-fast',
+                        'xai:grok-4-1-fast-non-reasoning',
+                        'xai:grok-4-1-fast-non-reasoning-latest',
+                        'xai:grok-4-1-fast-reasoning',
+                        'xai:grok-4-1-fast-reasoning-latest',
+                        'xai:grok-4-fast',
+                        'xai:grok-4-fast-non-reasoning',
+                        'xai:grok-4-fast-non-reasoning-latest',
+                        'xai:grok-4-fast-reasoning',
+                        'xai:grok-4-fast-reasoning-latest',
+                        'xai:grok-4-latest',
+                        'xai:grok-code-fast-1',
+                        'groq:llama-3.1-8b-instant',
+                        'groq:llama-3.3-70b-versatile',
+                        'groq:meta-llama/llama-guard-4-12b',
+                        'groq:openai/gpt-oss-120b',
+                        'groq:openai/gpt-oss-20b',
+                        'groq:whisper-large-v3',
+                        'groq:whisper-large-v3-turbo',
+                        'groq:meta-llama/llama-4-maverick-17b-128e-instruct',
+                        'groq:meta-llama/llama-4-scout-17b-16e-instruct',
+                        'groq:meta-llama/llama-prompt-guard-2-22m',
+                        'groq:meta-llama/llama-prompt-guard-2-86m',
+                        'groq:moonshotai/kimi-k2-instruct-0905',
+                        'groq:openai/gpt-oss-safeguard-20b',
+                        'groq:playai-tts',
+                        'groq:playai-tts-arabic',
+                        'groq:qwen/qwen-3-32b',
+                        'heroku:claude-3-5-haiku',
+                        'heroku:claude-3-5-sonnet-latest',
+                        'heroku:claude-3-7-sonnet',
+                        'heroku:claude-3-haiku',
+                        'heroku:claude-4-5-haiku',
+                        'heroku:claude-4-5-sonnet',
+                        'heroku:claude-4-sonnet',
+                        'heroku:claude-opus-4-5',
+                        'heroku:gpt-oss-120b',
+                        'heroku:kimi-k2-thinking',
+                        'heroku:minimax-m2',
+                        'heroku:qwen3-235b',
+                        'heroku:qwen3-coder-480b',
+                        'heroku:nova-2-lite',
+                        'heroku:nova-lite',
+                        'heroku:nova-pro',
+                        'huggingface:deepseek-ai/DeepSeek-R1',
+                        'huggingface:meta-llama/Llama-3.3-70B-Instruct',
+                        'huggingface:meta-llama/Llama-4-Maverick-17B-128E-Instruct',
+                        'huggingface:meta-llama/Llama-4-Scout-17B-16E-Instruct',
+                        'huggingface:Qwen/Qwen2.5-72B-Instruct',
+                        'huggingface:Qwen/Qwen3-235B-A22B',
+                        'huggingface:Qwen/Qwen3-32B',
+                        'huggingface:Qwen/QwQ-32B',
+                        'mistral:codestral-latest',
+                        'mistral:mistral-large-latest',
+                        'mistral:mistral-moderation-latest',
+                        'mistral:mistral-small-latest',
+                        'moonshotai:kimi-k2-0711-preview',
+                        'moonshotai:kimi-latest',
+                        'moonshotai:kimi-thinking-preview',
+                        'moonshotai:moonshot-v1-128k-vision-preview',
+                        'moonshotai:moonshot-v1-128k',
+                        'moonshotai:moonshot-v1-32k-vision-preview',
+                        'moonshotai:moonshot-v1-32k',
+                        'moonshotai:moonshot-v1-8k-vision-preview',
+                        'moonshotai:moonshot-v1-8k',
+                        'openai:computer-use-preview-2025-03-11',
+                        'openai:computer-use-preview',
+                        'openai:gpt-3.5-turbo-0125',
+                        'openai:gpt-3.5-turbo-0301',
+                        'openai:gpt-3.5-turbo-0613',
+                        'openai:gpt-3.5-turbo-1106',
+                        'openai:gpt-3.5-turbo-16k-0613',
+                        'openai:gpt-3.5-turbo-16k',
+                        'openai:gpt-3.5-turbo',
+                        'openai:gpt-4-0314',
+                        'openai:gpt-4-0613',
+                        'openai:gpt-4-turbo-2024-04-09',
+                        'openai:gpt-4-turbo',
+                        'openai:gpt-4.1-2025-04-14',
+                        'openai:gpt-4.1-mini-2025-04-14',
+                        'openai:gpt-4.1-mini',
+                        'openai:gpt-4.1-nano-2025-04-14',
+                        'openai:gpt-4.1-nano',
+                        'openai:gpt-4.1',
+                        'openai:gpt-4',
+                        'openai:gpt-4o-2024-05-13',
+                        'openai:gpt-4o-2024-08-06',
+                        'openai:gpt-4o-2024-11-20',
+                        'openai:gpt-4o-audio-preview-2024-12-17',
+                        'openai:gpt-4o-audio-preview-2025-06-03',
+                        'openai:gpt-4o-audio-preview',
+                        'openai:gpt-4o-mini-2024-07-18',
+                        'openai:gpt-4o-mini-audio-preview-2024-12-17',
+                        'openai:gpt-4o-mini-audio-preview',
+                        'openai:gpt-4o-mini-search-preview-2025-03-11',
+                        'openai:gpt-4o-mini-search-preview',
+                        'openai:gpt-4o-mini',
+                        'openai:gpt-4o-search-preview-2025-03-11',
+                        'openai:gpt-4o-search-preview',
+                        'openai:gpt-4o',
+                        'openai:gpt-5-2025-08-07',
+                        'openai:gpt-5-chat-latest',
+                        'openai:gpt-5-codex',
+                        'openai:gpt-5-mini-2025-08-07',
+                        'openai:gpt-5-mini',
+                        'openai:gpt-5-nano-2025-08-07',
+                        'openai:gpt-5-nano',
+                        'openai:gpt-5-pro-2025-10-06',
+                        'openai:gpt-5-pro',
+                        'openai:gpt-5.1-2025-11-13',
+                        'openai:gpt-5.1-chat-latest',
+                        'openai:gpt-5.1-codex-max',
+                        'openai:gpt-5.1-codex',
+                        'openai:gpt-5.1',
+                        'openai:gpt-5.2-2025-12-11',
+                        'openai:gpt-5.2-chat-latest',
+                        'openai:gpt-5.2-pro-2025-12-11',
+                        'openai:gpt-5.2-pro',
+                        'openai:gpt-5.2',
+                        'openai:gpt-5.3-chat-latest',
+                        'openai:gpt-5.4-mini-2026-03-17',
+                        'openai:gpt-5.4-mini',
+                        'openai:gpt-5.4-nano-2026-03-17',
+                        'openai:gpt-5.4-nano',
+                        'openai:gpt-5.4',
+                        'openai:gpt-5',
+                        'openai:o1-2024-12-17',
+                        'openai:o1-pro-2025-03-19',
+                        'openai:o1-pro',
+                        'openai:o1',
+                        'openai:o3-2025-04-16',
+                        'openai:o3-deep-research-2025-06-26',
+                        'openai:o3-deep-research',
+                        'openai:o3-mini-2025-01-31',
+                        'openai:o3-mini',
+                        'openai:o3-pro-2025-06-10',
+                        'openai:o3-pro',
+                        'openai:o3',
+                        'openai:o4-mini-2025-04-16',
+                        'openai:o4-mini-deep-research-2025-06-26',
+                        'openai:o4-mini-deep-research',
+                        'openai:o4-mini',
+                        'test',
+                    ],
+                    'type': 'string',
+                },
                 'MCPServerTool': {
                     'properties': {
                         'kind': {'default': 'mcp_server', 'title': 'Kind', 'type': 'string'},
@@ -705,11 +1104,41 @@ Supported by:
                     'title': 'short_spec_BuiltinTool',
                     'type': 'object',
                 },
+                'short_spec_IncludeToolReturnSchemas': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'IncludeToolReturnSchemas': {
+                            'anyOf': [
+                                {'const': 'all', 'type': 'string'},
+                                {'items': {'type': 'string'}, 'type': 'array'},
+                                {'additionalProperties': True, 'type': 'object'},
+                            ],
+                            'title': 'Includetoolreturnschemas',
+                        }
+                    },
+                    'title': 'short_spec_IncludeToolReturnSchemas',
+                    'type': 'object',
+                },
                 'short_spec_MCP': {
                     'additionalProperties': False,
                     'properties': {'MCP': {'title': 'Mcp', 'type': 'string'}},
                     'required': ['MCP'],
                     'title': 'short_spec_MCP',
+                    'type': 'object',
+                },
+                'short_spec_SetToolMetadata': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'SetToolMetadata': {
+                            'anyOf': [
+                                {'const': 'all', 'type': 'string'},
+                                {'items': {'type': 'string'}, 'type': 'array'},
+                                {'additionalProperties': True, 'type': 'object'},
+                            ],
+                            'title': 'Settoolmetadata',
+                        }
+                    },
+                    'title': 'short_spec_SetToolMetadata',
                     'type': 'object',
                 },
                 'short_spec_Thinking': {
@@ -772,6 +1201,54 @@ Supported by:
                             'title': 'Builtin',
                         },
                         'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'fallback_model': {
+                            'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
+                            'title': 'Fallback Model',
+                        },
+                        'background': {
+                            'anyOf': [{'enum': ['transparent', 'opaque', 'auto'], 'type': 'string'}, {'type': 'null'}],
+                            'title': 'Background',
+                        },
+                        'input_fidelity': {
+                            'anyOf': [{'enum': ['high', 'low'], 'type': 'string'}, {'type': 'null'}],
+                            'title': 'Input Fidelity',
+                        },
+                        'moderation': {
+                            'anyOf': [{'enum': ['auto', 'low'], 'type': 'string'}, {'type': 'null'}],
+                            'title': 'Moderation',
+                        },
+                        'output_compression': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'title': 'Output Compression',
+                        },
+                        'output_format': {
+                            'anyOf': [{'enum': ['png', 'webp', 'jpeg'], 'type': 'string'}, {'type': 'null'}],
+                            'title': 'Output Format',
+                        },
+                        'quality': {
+                            'anyOf': [{'enum': ['low', 'medium', 'high', 'auto'], 'type': 'string'}, {'type': 'null'}],
+                            'title': 'Quality',
+                        },
+                        'size': {
+                            'anyOf': [
+                                {
+                                    'enum': ['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'],
+                                    'type': 'string',
+                                },
+                                {'type': 'null'},
+                            ],
+                            'title': 'Size',
+                        },
+                        'aspect_ratio': {
+                            'anyOf': [
+                                {
+                                    'enum': ['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '2:3', '5:4', '4:5'],
+                                    'type': 'string',
+                                },
+                                {'type': 'null'},
+                            ],
+                            'title': 'Aspect Ratio',
+                        },
                     },
                     'title': 'spec_params_ImageGeneration',
                     'type': 'object',
@@ -814,9 +1291,13 @@ Supported by:
                                 {'$ref': '#/$defs/short_spec_BuiltinTool'},
                                 {'const': 'ImageGeneration', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_ImageGeneration'},
+                                {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
+                                {'$ref': '#/$defs/short_spec_IncludeToolReturnSchemas'},
                                 {'$ref': '#/$defs/short_spec_MCP'},
                                 {'$ref': '#/$defs/spec_MCP'},
                                 {'$ref': '#/$defs/spec_PrefixTools'},
+                                {'const': 'SetToolMetadata', 'type': 'string'},
+                                {'$ref': '#/$defs/short_spec_SetToolMetadata'},
                                 {'const': 'Thinking', 'type': 'string'},
                                 {'$ref': '#/$defs/short_spec_Thinking'},
                                 {'const': 'WebFetch', 'type': 'string'},
@@ -952,9 +1433,13 @@ Supported by:
                             {'$ref': '#/$defs/short_spec_BuiltinTool'},
                             {'const': 'ImageGeneration', 'type': 'string'},
                             {'$ref': '#/$defs/spec_ImageGeneration'},
+                            {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
+                            {'$ref': '#/$defs/short_spec_IncludeToolReturnSchemas'},
                             {'$ref': '#/$defs/short_spec_MCP'},
                             {'$ref': '#/$defs/spec_MCP'},
                             {'$ref': '#/$defs/spec_PrefixTools'},
+                            {'const': 'SetToolMetadata', 'type': 'string'},
+                            {'$ref': '#/$defs/short_spec_SetToolMetadata'},
                             {'const': 'Thinking', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_Thinking'},
                             {'const': 'WebFetch', 'type': 'string'},
@@ -3212,24 +3697,169 @@ class TestWebSearchCapability:
 
 class TestWebFetchCapability:
     def test_webfetch_default(self):
-        """WebFetch() provides builtin, no default local fallback."""
+        """WebFetch() provides builtin and default local fallback."""
         cap = WebFetch()
         builtins = cap.get_builtin_tools()
         assert len(builtins) == 1
         assert isinstance(builtins[0], WebFetchTool)
-        # No default local fallback — user must provide their own
-        assert cap.local is None
-        assert cap.get_toolset() is None
+        # Default local fallback is auto-detected (markdownify-based)
+        assert cap.local is not None
+        assert cap.get_toolset() is not None
 
-    def test_webfetch_requires_builtin_with_constraints(self, allow_model_requests: None):
-        """WebFetch(blocked_domains=...) with non-supporting model → UserError."""
+    def test_webfetch_default_with_nonsupporting_model(self, allow_model_requests: None):
+        """WebFetch() with a model that doesn't support builtin → markdownify fallback used."""
+        from unittest.mock import AsyncMock, patch
+
+        import httpx
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return ModelResponse(parts=[TextPart(content=f'Tool result: {part.content}')])
+            if info.function_tools:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name=info.function_tools[0].name,
+                            args='{"url": "https://example.com"}',
+                            tool_call_id='c1',
+                        )
+                    ]
+                )
+            return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
+
+        mock_response = httpx.Response(
+            200,
+            text='<html><head><title>Test</title></head><body><p>Hello</p></body></html>',
+            headers={'content-type': 'text/html'},
+            request=httpx.Request('GET', 'https://example.com'),
+        )
+
+        model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        agent = Agent(model, capabilities=[WebFetch()])
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
+        ):
+            result = agent.run_sync('fetch something')
+        # Verify the web_fetch fallback tool was actually called
+        tool_calls = [
+            part
+            for msg in result.all_messages()
+            if isinstance(msg, ModelResponse)
+            for part in msg.parts
+            if isinstance(part, ToolCallPart)
+        ]
+        assert len(tool_calls) == 1
+        assert tool_calls[0].tool_name == 'web_fetch'
+
+    def test_webfetch_local_false_with_nonsupporting_model(self, allow_model_requests: None):
+        """WebFetch(local=False) with non-supporting model → UserError."""
         model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
-        agent = Agent(model, capabilities=[WebFetch(blocked_domains=['evil.com'])])
+        agent = Agent(model, capabilities=[WebFetch(local=False)])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
 
+    def test_webfetch_builtin_false(self):
+        """WebFetch(builtin=False) → only local, no builtin registered."""
+        cap = WebFetch(builtin=False)
+        assert cap.get_builtin_tools() == []
+        toolset = cap.get_toolset()
+        assert toolset is not None
+
+    def test_webfetch_max_uses_requires_builtin(self, allow_model_requests: None):
+        """WebFetch(max_uses=...) with non-supporting model → UserError."""
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
+        agent = Agent(model, capabilities=[WebFetch(max_uses=5)])
+        with pytest.raises(UserError, match='not supported'):
+            agent.run_sync('fetch')
+
+    def test_webfetch_domains_forwarded_to_local(self, allow_model_requests: None):
+        """WebFetch(allowed_domains=...) with non-supporting model → falls back to local with domain filtering."""
+        from unittest.mock import AsyncMock, patch
+
+        import httpx
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return ModelResponse(parts=[TextPart(content=f'Tool result: {part.content}')])
+            if info.function_tools:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name=info.function_tools[0].name,
+                            args='{"url": "https://example.com"}',
+                            tool_call_id='c1',
+                        )
+                    ]
+                )
+            return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
+
+        mock_response = httpx.Response(
+            200,
+            text='<html><body><p>Hello</p></body></html>',
+            headers={'content-type': 'text/html'},
+            request=httpx.Request('GET', 'https://example.com'),
+        )
+
+        model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        agent = Agent(model, capabilities=[WebFetch(allowed_domains=['example.com'])])
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
+        ):
+            result = agent.run_sync('fetch example.com')
+        # Verify the web_fetch fallback tool was actually called with domain filtering
+        tool_calls = [
+            part
+            for msg in result.all_messages()
+            if isinstance(msg, ModelResponse)
+            for part in msg.parts
+            if isinstance(part, ToolCallPart)
+        ]
+        assert len(tool_calls) == 1
+        assert tool_calls[0].tool_name == 'web_fetch'
+
+    def test_webfetch_both_false_raises(self):
+        """WebFetch(builtin=False, local=False) → UserError at construction."""
+        with pytest.raises(UserError, match='both builtin and local cannot be False'):
+            WebFetch(builtin=False, local=False)
+
+    def test_webfetch_builtin_false_with_max_uses_raises(self):
+        """WebFetch(builtin=False, max_uses=...) → UserError at construction."""
+        with pytest.raises(UserError, match='constraint fields require the builtin tool'):
+            WebFetch(builtin=False, max_uses=5)
+
+    def test_webfetch_local_callable(self):
+        """WebFetch(local=some_function) → bare callable wrapped in Tool."""
+        from pydantic_ai.tools import Tool
+
+        def my_fetch(url: str) -> str:
+            return f'fetched {url}'  # pragma: no cover
+
+        cap = WebFetch(local=my_fetch)
+        assert isinstance(cap.local, Tool)
+
 
 class TestImageGenerationCapability:
+    def test_image_gen_init_params_match_builtin_tool(self):
+        """ImageGeneration.__init__ accepts all ImageGenerationTool configurable fields."""
+        import dataclasses
+        import inspect
+
+        # partial_images is excluded — not useful for subagent fallback (no streaming)
+        builtin_fields = {
+            f.name for f in dataclasses.fields(ImageGenerationTool) if f.name not in ('kind', 'partial_images')
+        }
+        init_params = set(inspect.signature(ImageGeneration.__init__).parameters.keys()) - {
+            'self',
+            'builtin',
+            'local',
+            'fallback_model',
+        }
+        assert init_params == builtin_fields
+
     def test_image_generation_default(self):
         """ImageGeneration() provides only builtin, no local fallback."""
         cap = ImageGeneration()
@@ -3250,6 +3880,374 @@ class TestImageGenerationCapability:
         cap = ImageGeneration(local=my_gen)
         assert isinstance(cap.local, Tool)
         assert cap.get_toolset() is not None
+
+    def test_image_generation_with_fallback_model(self):
+        """ImageGeneration(fallback_model=...) creates a local fallback tool."""
+        from pydantic_ai.tools import Tool
+
+        cap = ImageGeneration(fallback_model='openai-responses:gpt-5.4')
+        assert isinstance(cap.local, Tool)
+        assert cap.get_toolset() is not None
+        builtins = cap.get_builtin_tools()
+        assert len(builtins) == 1
+        assert isinstance(builtins[0], ImageGenerationTool)
+
+    def test_image_generation_forwards_config_to_builtin(self):
+        """ImageGeneration config fields are forwarded to the ImageGenerationTool builtin."""
+        cap = ImageGeneration(
+            background='opaque',
+            input_fidelity='high',
+            moderation='low',
+            output_compression=80,
+            output_format='jpeg',
+            quality='high',
+            size='1024x1024',
+            aspect_ratio='16:9',
+        )
+        builtins = cap.get_builtin_tools()
+        assert len(builtins) == 1
+        tool = builtins[0]
+        assert isinstance(tool, ImageGenerationTool)
+        assert tool.background == 'opaque'
+        assert tool.input_fidelity == 'high'
+        assert tool.moderation == 'low'
+        assert tool.output_compression == 80
+        assert tool.output_format == 'jpeg'
+        assert tool.quality == 'high'
+        assert tool.size == '1024x1024'
+        assert tool.aspect_ratio == '16:9'
+
+    def test_image_generation_fallback_merges_custom_builtin_with_overrides(self):
+        """Custom builtin settings are merged with capability-level overrides for the fallback."""
+        from pydantic_ai.tools import Tool
+
+        custom_builtin = ImageGenerationTool(quality='high', size='1024x1024')
+        cap = ImageGeneration(
+            builtin=custom_builtin,
+            fallback_model='openai-responses:gpt-5.4',
+            output_format='jpeg',  # capability-level override
+        )
+        # The local fallback should exist and contain the merged config
+        assert isinstance(cap.local, Tool)
+        assert cap.get_toolset() is not None
+
+    def test_image_generation_callable_builtin_with_fallback(self):
+        """When builtin is a callable, the fallback local tool still gets created."""
+        from pydantic_ai.tools import Tool
+
+        cap = ImageGeneration(
+            builtin=lambda ctx: ImageGenerationTool(quality='high'),
+            fallback_model='openai-responses:gpt-5.4',
+        )
+        # Callable builtin can't be resolved at init time, but local fallback is still created
+        assert isinstance(cap.local, Tool)
+        assert cap.get_toolset() is not None
+
+    def test_image_generation_fallback_model_and_local_conflict(self):
+        """ImageGeneration(fallback_model=..., local=func) raises UserError."""
+
+        def my_gen(prompt: str) -> str:
+            return 'image_url'  # pragma: no cover
+
+        with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
+            ImageGeneration(fallback_model='openai-responses:gpt-5.4', local=my_gen)
+
+    def test_image_generation_fallback_model_with_local_false(self):
+        """ImageGeneration(fallback_model=..., local=False) raises UserError."""
+        with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
+            ImageGeneration(fallback_model='openai-responses:gpt-5.4', local=False)
+
+    async def test_image_generation_callable_fallback_model(self, allow_model_requests: None):
+        """ImageGeneration with async callable fallback_model resolves the model per-run."""
+        from pydantic_ai.messages import BinaryImage, FilePart
+
+        image_data = b'\x89PNG\r\n\x1a\n'  # minimal PNG header
+
+        def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[FilePart(content=BinaryImage(data=image_data, media_type='image/png'))])
+
+        inner_model = FunctionModel(inner_model_fn, profile=ModelProfile(supports_image_output=True))
+
+        async def model_factory(ctx: RunContext[None]) -> FunctionModel:
+            return inner_model
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
+
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=model_factory)])
+        result = await agent.run('Generate a test image')
+        assert result.output == 'done'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='Generate a test image', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='generate_image',
+                            args='{"prompt": "test"}',
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=54, output_tokens=5),
+                    model_name='function:outer_model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='generate_image',
+                            content=BinaryImage(data=b'\x89PNG\r\n\x1a\n', media_type='image/png'),
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='done')],
+                    usage=RequestUsage(input_tokens=54, output_tokens=6),
+                    model_name='function:outer_model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_image_generation_callable_returns_image_only_model(self, allow_model_requests: None):
+        """Callable fallback_model returning an image-only model name is caught at call time."""
+
+        def model_factory(ctx: RunContext[None]) -> str:
+            return 'openai-responses:gpt-image-1'
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
+
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=model_factory)])  # pyright: ignore[reportArgumentType]
+        with pytest.raises(UserError, match="'gpt-image-1' is a dedicated image generation model"):
+            await agent.run('Generate a test image')
+
+    async def test_image_generation_subagent_error_becomes_model_retry(self, allow_model_requests: None):
+        """UnexpectedModelBehavior from subagent becomes a retry prompt to the outer model."""
+
+        # FunctionModel that returns text but no image — triggers UnexpectedModelBehavior
+        def no_image_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='No image generated.')])
+
+        inner_model = FunctionModel(no_image_model_fn, profile=ModelProfile(supports_image_output=True))
+
+        call_count = 0
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
+            return ModelResponse(parts=[TextPart(content='gave up')])
+
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=inner_model)])
+        result = await agent.run('Generate a test image')
+        assert result.output == 'gave up'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='Generate a test image', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='generate_image',
+                            args='{"prompt": "test"}',
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=54, output_tokens=5),
+                    model_name='function:outer_model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Exceeded maximum retries (1) for output validation',
+                            tool_name='generate_image',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='gave up')],
+                    usage=RequestUsage(input_tokens=68, output_tokens=7),
+                    model_name='function:outer_model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    def test_image_generation_rejects_image_only_model(self):
+        """Using a dedicated image model like gpt-image-1 raises a clear error at construction."""
+        with pytest.raises(UserError, match="'gpt-image-1' is a dedicated image generation model"):
+            ImageGeneration(fallback_model='openai-responses:gpt-image-1')
+
+    @pytest.mark.vcr()
+    @pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
+    @pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
+    async def test_image_generation_local_fallback(self, allow_model_requests: None, openai_api_key: str):
+        """ImageGeneration(fallback_model=...) with non-supporting outer model uses subagent fallback."""
+        from pydantic_ai.messages import BinaryImage
+        from pydantic_ai.models.openai import OpenAIResponsesModel
+        from pydantic_ai.providers.openai import OpenAIProvider
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            # If we see a tool return, the image was generated — return final text
+            if any(
+                isinstance(part, ToolReturnPart)
+                for msg in messages
+                if isinstance(msg, ModelRequest)
+                for part in msg.parts
+            ):
+                return ModelResponse(parts=[TextPart(content='Here is the generated image.')])
+
+            # First call: invoke the generate_image tool
+            assert info.function_tools, 'Expected generate_image tool to be available'
+            tool = info.function_tools[0]
+            return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args='{"prompt": "A cute baby sea otter"}')])
+
+        inner_model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
+        outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        agent = Agent(
+            outer_model,
+            capabilities=[
+                ImageGeneration(fallback_model=inner_model),
+            ],
+        )
+        result = await agent.run('Generate an image of a cute baby sea otter')
+        assert result.output == 'Here is the generated image.'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(content='Generate an image of a cute baby sea otter', timestamp=IsDatetime())
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='generate_image',
+                            args='{"prompt": "A cute baby sea otter"}',
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=59, output_tokens=9),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='generate_image',
+                            content=IsInstance(BinaryImage),
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='Here is the generated image.')],
+                    usage=RequestUsage(input_tokens=59, output_tokens=15),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    @pytest.mark.vcr()
+    @pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
+    @pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
+    async def test_image_generation_local_fallback_google(self, allow_model_requests: None, gemini_api_key: str):
+        """ImageGeneration fallback with Google image model."""
+        pytest.importorskip('google.genai', reason='google extra not installed')
+        from pydantic_ai.messages import BinaryImage
+        from pydantic_ai.models.google import GoogleModel
+        from pydantic_ai.providers.google import GoogleProvider
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
+                return ModelResponse(parts=[TextPart(content='Here is the generated image.')])
+            assert info.function_tools, 'Expected generate_image tool to be available'
+            tool = info.function_tools[0]
+            return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args='{"prompt": "A cute baby sea otter"}')])
+
+        inner_model = GoogleModel('gemini-3-pro-image-preview', provider=GoogleProvider(api_key=gemini_api_key))
+        outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=inner_model)])
+        result = await agent.run('Generate an image of a cute baby sea otter')
+        assert result.output == 'Here is the generated image.'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(content='Generate an image of a cute baby sea otter', timestamp=IsDatetime())
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='generate_image',
+                            args='{"prompt": "A cute baby sea otter"}',
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=59, output_tokens=9),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='generate_image',
+                            content=IsInstance(BinaryImage),
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='Here is the generated image.')],
+                    usage=RequestUsage(input_tokens=59, output_tokens=15),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
 
 try:
@@ -4212,7 +5210,7 @@ def test_web_fetch_with_constraints():
     assert tool.max_uses == 5
     assert tool.enable_citations is True
     assert tool.max_content_tokens == 1000
-    # Constraint fields require builtin
+    # Only max_uses requires builtin (domains are handled locally)
     assert cap._requires_builtin() is True  # pyright: ignore[reportPrivateUsage]
 
 
@@ -4246,7 +5244,7 @@ def test_web_search_with_constraints():
 
 
 def test_web_search_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
-    """WebSearch._default_local() returns None when duckduckgo is not installed."""
+    """WebSearch._default_local() warns and returns None when duckduckgo is not installed."""
     import builtins
 
     original_import = builtins.__import__
@@ -4257,8 +5255,27 @@ def test_web_search_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
         return original_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, '__import__', mock_import)
-    cap = WebSearch(builtin=False)
+    with pytest.warns(UserWarning, match='duckduckgo'):
+        cap = WebSearch(builtin=False)
     # With builtin disabled and no duckduckgo, local is None
+    assert cap.local is None
+
+
+def test_web_fetch_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
+    """WebFetch._default_local() warns and returns None when markdownify is not installed."""
+    import builtins
+
+    original_import = builtins.__import__
+
+    def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == 'pydantic_ai.common_tools.web_fetch':
+            raise ImportError('mocked')
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', mock_import)
+    with pytest.warns(UserWarning, match='web-fetch'):
+        cap = WebFetch(builtin=False)
+    # With builtin disabled and no markdownify, local is None
     assert cap.local is None
 
 
@@ -4289,6 +5306,17 @@ def test_builtin_tool_from_spec_no_args():
 
     with pytest.raises(TypeError, match='requires either a `tool` argument'):
         BuiltinToolCapDirect.from_spec()
+
+
+@pytest.mark.filterwarnings('ignore::DeprecationWarning')
+def test_builtin_or_local_no_default_local():
+    """BuiltinOrLocalTool base class _default_local() returns None."""
+    from pydantic_ai.capabilities.builtin_or_local import BuiltinOrLocalTool
+
+    cap = BuiltinOrLocalTool(builtin=WebSearchTool())
+    # Base class _default_local() returns None — no local fallback
+    assert cap.local is None
+    assert cap.get_toolset() is None
 
 
 @pytest.mark.filterwarnings('ignore::DeprecationWarning')
@@ -7144,6 +8172,87 @@ class TestModelRetryFromHooks:
                 ),
             ]
         )
+
+
+class TestCtxAgentInCapability:
+    """Test that ctx.agent is available in capability hooks."""
+
+    async def test_ctx_agent_in_hooks(self):
+        hook_agent_names: list[str | None] = []
+
+        @dataclass
+        class AgentTrackingCap(AbstractCapability[Any]):
+            async def before_run(self, ctx: RunContext[Any]) -> None:
+                assert ctx.agent is not None
+                hook_agent_names.append(ctx.agent.name)
+
+            async def before_model_request(
+                self,
+                ctx: RunContext[Any],
+                request_context: ModelRequestContext,
+            ) -> ModelRequestContext:
+                assert ctx.agent is not None
+                hook_agent_names.append(ctx.agent.name)
+                return request_context
+
+        agent = Agent(FunctionModel(simple_model_function), name='hook_test_agent', capabilities=[AgentTrackingCap()])
+        await agent.run('hello')
+        assert hook_agent_names == ['hook_test_agent', 'hook_test_agent']
+
+
+def test_thread_executor_not_serializable() -> None:
+    assert ThreadExecutor.get_serialization_name() is None
+
+
+async def test_thread_executor_capability() -> None:
+    tool_threads: list[str] = []
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='check_thread', args='{}')])
+
+    executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='cap-pool')
+    try:
+        agent = Agent(FunctionModel(model_function), capabilities=[ThreadExecutor(executor)])
+
+        @agent.tool_plain
+        def check_thread() -> str:
+            tool_threads.append(threading.current_thread().name)
+            return 'ok'
+
+        result = await agent.run('test')
+        assert result.output == 'done'
+        assert len(tool_threads) == 1
+        assert tool_threads[0].startswith('cap-pool')
+    finally:
+        executor.shutdown(wait=True)
+
+
+async def test_thread_executor_static_method() -> None:
+    tool_threads: list[str] = []
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='check_thread', args='{}')])
+
+    agent = Agent(FunctionModel(model_function))
+
+    @agent.tool_plain
+    def check_thread() -> str:
+        tool_threads.append(threading.current_thread().name)
+        return 'ok'
+
+    executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='static-pool')
+    try:
+        with Agent.using_thread_executor(executor):
+            result = await agent.run('test')
+        assert result.output == 'done'
+        assert len(tool_threads) == 1
+        assert tool_threads[0].startswith('static-pool')
+    finally:
+        executor.shutdown(wait=True)
 
 
 # --- Hook recovery tests (after_node_run End→node, ErrorMarker in next_node) ---
