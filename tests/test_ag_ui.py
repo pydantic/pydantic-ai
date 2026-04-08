@@ -1559,27 +1559,52 @@ def test_dump_load_roundtrip_binary_content() -> None:
     assert reloaded == original
 
 
-def test_dump_load_roundtrip_file_part() -> None:
-    """Test round-trip for FilePart in model responses.
+@pytest.mark.parametrize(
+    'original',
+    [
+        pytest.param(
+            [
+                ModelRequest(parts=[UserPromptPart(content='Generate an image')]),
+                ModelResponse(
+                    parts=[
+                        FilePart(
+                            content=BinaryImage(data=b'generated file content', media_type='image/png'),
+                            id='file-001',
+                            provider_name='openai',
+                            provider_details={'model': 'gpt-image'},
+                        ),
+                        TextPart(content='Here is your generated image.'),
+                    ]
+                ),
+            ],
+            id='full-attrs',
+        ),
+        pytest.param(
+            [
+                ModelRequest(parts=[UserPromptPart(content='Generate')]),
+                ModelResponse(
+                    parts=[
+                        FilePart(content=BinaryImage(data=b'minimal file', media_type='image/png')),
+                        TextPart(content='Done'),
+                    ]
+                ),
+            ],
+            id='minimal-attrs',
+        ),
+        pytest.param(
+            [
+                ModelRequest(parts=[UserPromptPart(content='Generate image only')]),
+                ModelResponse(parts=[FilePart(content=BinaryImage(data=b'only file', media_type='image/png'))]),
+            ],
+            id='file-only',
+        ),
+    ],
+)
+def test_dump_load_roundtrip_file_part(original: list[ModelMessage]) -> None:
+    """Test round-trip for FilePart variants: full attributes, minimal, and file-only response.
 
     Note: BinaryImage is used because from_data_uri() returns BinaryImage for image/* media types.
     """
-    file_data = b'generated file content'
-    original: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='Generate an image')]),
-        ModelResponse(
-            parts=[
-                FilePart(
-                    content=BinaryImage(data=file_data, media_type='image/png'),
-                    id='file-001',
-                    provider_name='openai',
-                    provider_details={'model': 'gpt-image'},
-                ),
-                TextPart(content='Here is your generated image.'),
-            ]
-        ),
-    ]
-
     ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=True)
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs, preserve_file_data=True)
     _sync_timestamps(original, reloaded)
@@ -1746,43 +1771,8 @@ def test_dump_load_roundtrip_retry_prompt_without_tool() -> None:
     assert 'Please try again' in str(retry_part.content)
 
 
-def test_dump_load_roundtrip_file_part_minimal() -> None:
-    """Test round-trip for FilePart without optional attributes (id, provider_name, provider_details)."""
-    file_data = b'minimal file'
-    original: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='Generate')]),
-        ModelResponse(
-            parts=[
-                FilePart(content=BinaryImage(data=file_data, media_type='image/png')),
-                TextPart(content='Done'),
-            ]
-        ),
-    ]
-
-    ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=True)
-    reloaded = AGUIAdapter.load_messages(ag_ui_msgs, preserve_file_data=True)
-    _sync_timestamps(original, reloaded)
-
-    assert reloaded == original
-
-
-def test_dump_load_roundtrip_file_part_only() -> None:
-    """Test round-trip for response with only FilePart (no text, no tool calls)."""
-    file_data = b'only file'
-    original: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='Generate image only')]),
-        ModelResponse(parts=[FilePart(content=BinaryImage(data=file_data, media_type='image/png'))]),
-    ]
-
-    ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=True)
-    reloaded = AGUIAdapter.load_messages(ag_ui_msgs, preserve_file_data=True)
-    _sync_timestamps(original, reloaded)
-
-    assert reloaded == original
-
-
 def test_file_part_dropped_by_default() -> None:
-    """Test that FilePart is silently dropped when include_file_parts=False (default).
+    """Test that FilePart is silently dropped when preserve_file_data=False (default).
 
     dump_messages drops FilePart from output, and load_messages ignores
     ActivityMessage(pydantic_ai_file) — both without raising errors.
@@ -3430,8 +3420,21 @@ def test_dump_load_roundtrip_uploaded_file_preserved() -> None:
     assert uploaded.identifier == 'my-doc.pdf'
 
 
-def test_dump_messages_v010_drops_thinking() -> None:
-    """Test that dump_messages with ag_ui_version='0.1.10' drops ThinkingPart."""
+@pytest.mark.parametrize(
+    'version,expected_reasoning',
+    [
+        pytest.param('0.1.10', snapshot([]), id='v010-drops-thinking'),
+        pytest.param(
+            '0.1.13',
+            snapshot(
+                [{'content': 'Deep thoughts...', 'encrypted_value': '{"signature": "sig_xyz"}', 'role': 'reasoning'}]
+            ),
+            id='v013-includes-reasoning',
+        ),
+    ],
+)
+def test_dump_messages_thinking_version_gated(version: str, expected_reasoning: list[Any]) -> None:
+    """Test that dump_messages drops ThinkingPart at <0.1.13 and emits ReasoningMessage at >=0.1.13."""
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Think about this')]),
         ModelResponse(
@@ -3442,31 +3445,10 @@ def test_dump_messages_v010_drops_thinking() -> None:
         ),
     ]
 
-    ag_ui_msgs = AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.10')
-    # No ReasoningMessage in output
-    assert not any(isinstance(m, ReasoningMessage) for m in ag_ui_msgs)
-    # Text still present
-    assert any(isinstance(m, AssistantMessage) and m.content == 'Conclusion' for m in ag_ui_msgs)
-
-
-def test_dump_messages_v013_includes_reasoning() -> None:
-    """Test that dump_messages with ag_ui_version='0.1.13' includes ThinkingPart as ReasoningMessage."""
-    messages: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='Think about this')]),
-        ModelResponse(
-            parts=[
-                ThinkingPart(content='Deep thoughts...', signature='sig_xyz'),
-                TextPart(content='Conclusion'),
-            ]
-        ),
-    ]
-
-    ag_ui_msgs = AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.13')
+    ag_ui_msgs = AGUIAdapter.dump_messages(messages, ag_ui_version=version)
     reasoning_msgs = [m for m in ag_ui_msgs if isinstance(m, ReasoningMessage)]
-    assert len(reasoning_msgs) == 1
-    assert reasoning_msgs[0].content == 'Deep thoughts...'
-    assert reasoning_msgs[0].encrypted_value is not None
-    assert 'sig_xyz' in reasoning_msgs[0].encrypted_value
+    assert [m.model_dump(exclude={'id'}) for m in reasoning_msgs] == expected_reasoning
+    assert any(isinstance(m, AssistantMessage) and m.content == 'Conclusion' for m in ag_ui_msgs)
 
 
 async def test_tool_return_with_files():

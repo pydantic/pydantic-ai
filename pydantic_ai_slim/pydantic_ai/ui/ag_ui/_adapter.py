@@ -38,6 +38,7 @@ from ...messages import (
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
+    UserContent,
     UserPromptPart,
     VideoUrl,
 )
@@ -294,7 +295,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     if isinstance(content, str):
                         builder.add(UserPromptPart(content=content))
                     else:
-                        user_prompt_content: list[Any] = []
+                        user_prompt_content: list[UserContent] = []
                         for part in content:
                             match part:
                                 case TextInputContent(text=text):
