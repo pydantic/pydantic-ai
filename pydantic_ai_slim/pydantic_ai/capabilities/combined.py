@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Iterator, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
@@ -31,6 +31,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     """A capability that combines multiple capabilities."""
 
     capabilities: Sequence[AbstractCapability[AgentDepsT]]
+
+    def visit(self) -> Iterator[AbstractCapability[AgentDepsT]]:
+        for cap in self.capabilities:
+            yield from cap.visit()
 
     @property
     def has_wrap_node_run(self) -> bool:

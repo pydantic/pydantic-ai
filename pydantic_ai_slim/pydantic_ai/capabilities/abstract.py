@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC
-from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias
 
@@ -76,6 +76,15 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     YAML/JSON specs (via [`Agent.from_spec`][pydantic_ai.Agent.from_spec]); they have
     sensible defaults and typically don't need to be overridden.
     """
+
+    def visit(self) -> Iterator[AbstractCapability[AgentDepsT]]:
+        """Yield all capabilities in this tree.
+
+        For a single capability, yields just itself.
+        Overridden by [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability]
+        to recursively yield all child capabilities.
+        """
+        yield self
 
     @property
     def has_wrap_node_run(self) -> bool:
