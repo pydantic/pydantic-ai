@@ -857,7 +857,7 @@ class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
 
 @dataclass(init=False)
 class OutputToolset(AbstractToolset[AgentDepsT]):
-    """A toolset that contains contains output tools for agent output types."""
+    """A toolset that contains output tools for agent output types."""
 
     _tool_defs: list[ToolDefinition]
     """The tool definitions for the output tools in this toolset."""

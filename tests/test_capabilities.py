@@ -21,7 +21,9 @@ from pydantic_ai.capabilities import (
     MCP,
     BuiltinTool,
     ImageGeneration,
+    IncludeToolReturnSchemas,
     PrefixTools,
+    SetToolMetadata,
     Thinking,
     ThreadExecutor,
     Toolset,
@@ -77,8 +79,10 @@ def test_capability_types() -> None:
         {
             'BuiltinTool': BuiltinTool,
             'ImageGeneration': ImageGeneration,
+            'IncludeToolReturnSchemas': IncludeToolReturnSchemas,
             'MCP': MCP,
             'PrefixTools': PrefixTools,
+            'SetToolMetadata': SetToolMetadata,
             'Thinking': Thinking,
             'WebFetch': WebFetch,
             'WebSearch': WebSearch,
@@ -600,13 +604,7 @@ def test_model_json_schema_with_capabilities():
                         'cohere:command-r7b-12-2024',
                         'deepseek:deepseek-chat',
                         'deepseek:deepseek-reasoner',
-                        'gateway/anthropic:claude-3-5-haiku-20241022',
-                        'gateway/anthropic:claude-3-5-haiku-latest',
-                        'gateway/anthropic:claude-3-7-sonnet-20250219',
-                        'gateway/anthropic:claude-3-7-sonnet-latest',
                         'gateway/anthropic:claude-3-haiku-20240307',
-                        'gateway/anthropic:claude-3-opus-20240229',
-                        'gateway/anthropic:claude-3-opus-latest',
                         'gateway/anthropic:claude-4-opus-20250514',
                         'gateway/anthropic:claude-4-sonnet-20250514',
                         'gateway/anthropic:claude-haiku-4-5-20251001',
@@ -622,107 +620,34 @@ def test_model_json_schema_with_capabilities():
                         'gateway/anthropic:claude-sonnet-4-5-20250929',
                         'gateway/anthropic:claude-sonnet-4-5',
                         'gateway/anthropic:claude-sonnet-4-6',
-                        'gateway/bedrock:amazon.titan-text-express-v1',
-                        'gateway/bedrock:amazon.titan-text-lite-v1',
-                        'gateway/bedrock:amazon.titan-tg1-large',
-                        'gateway/bedrock:anthropic.claude-3-5-haiku-20241022-v1:0',
                         'gateway/bedrock:anthropic.claude-3-5-sonnet-20240620-v1:0',
-                        'gateway/bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0',
-                        'gateway/bedrock:anthropic.claude-3-7-sonnet-20250219-v1:0',
                         'gateway/bedrock:anthropic.claude-3-haiku-20240307-v1:0',
-                        'gateway/bedrock:anthropic.claude-3-opus-20240229-v1:0',
-                        'gateway/bedrock:anthropic.claude-3-sonnet-20240229-v1:0',
-                        'gateway/bedrock:anthropic.claude-haiku-4-5-20251001-v1:0',
-                        'gateway/bedrock:anthropic.claude-instant-v1',
-                        'gateway/bedrock:anthropic.claude-opus-4-20250514-v1:0',
-                        'gateway/bedrock:anthropic.claude-sonnet-4-20250514-v1:0',
-                        'gateway/bedrock:anthropic.claude-sonnet-4-5-20250929-v1:0',
-                        'gateway/bedrock:anthropic.claude-sonnet-4-6',
-                        'gateway/bedrock:anthropic.claude-v2:1',
-                        'gateway/bedrock:anthropic.claude-v2',
-                        'gateway/bedrock:cohere.command-light-text-v14',
-                        'gateway/bedrock:cohere.command-r-plus-v1:0',
-                        'gateway/bedrock:cohere.command-r-v1:0',
-                        'gateway/bedrock:cohere.command-text-v14',
                         'gateway/bedrock:eu.anthropic.claude-haiku-4-5-20251001-v1:0',
                         'gateway/bedrock:eu.anthropic.claude-sonnet-4-20250514-v1:0',
                         'gateway/bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
                         'gateway/bedrock:eu.anthropic.claude-sonnet-4-6',
                         'gateway/bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
-                        'gateway/bedrock:meta.llama3-1-405b-instruct-v1:0',
-                        'gateway/bedrock:meta.llama3-1-70b-instruct-v1:0',
-                        'gateway/bedrock:meta.llama3-1-8b-instruct-v1:0',
-                        'gateway/bedrock:meta.llama3-70b-instruct-v1:0',
-                        'gateway/bedrock:meta.llama3-8b-instruct-v1:0',
-                        'gateway/bedrock:mistral.mistral-7b-instruct-v0:2',
-                        'gateway/bedrock:mistral.mistral-large-2402-v1:0',
-                        'gateway/bedrock:mistral.mistral-large-2407-v1:0',
-                        'gateway/bedrock:mistral.mixtral-8x7b-instruct-v0:1',
-                        'gateway/bedrock:us.amazon.nova-2-lite-v1:0',
-                        'gateway/bedrock:us.amazon.nova-lite-v1:0',
-                        'gateway/bedrock:us.amazon.nova-micro-v1:0',
-                        'gateway/bedrock:us.amazon.nova-pro-v1:0',
-                        'gateway/bedrock:us.anthropic.claude-3-5-haiku-20241022-v1:0',
-                        'gateway/bedrock:us.anthropic.claude-3-5-sonnet-20240620-v1:0',
-                        'gateway/bedrock:us.anthropic.claude-3-5-sonnet-20241022-v2:0',
-                        'gateway/bedrock:us.anthropic.claude-3-7-sonnet-20250219-v1:0',
-                        'gateway/bedrock:us.anthropic.claude-3-haiku-20240307-v1:0',
-                        'gateway/bedrock:us.anthropic.claude-3-opus-20240229-v1:0',
-                        'gateway/bedrock:us.anthropic.claude-3-sonnet-20240229-v1:0',
-                        'gateway/bedrock:us.anthropic.claude-haiku-4-5-20251001-v1:0',
-                        'gateway/bedrock:us.anthropic.claude-opus-4-20250514-v1:0',
-                        'gateway/bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
-                        'gateway/bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
-                        'gateway/bedrock:us.anthropic.claude-sonnet-4-6',
-                        'gateway/bedrock:us.meta.llama3-1-70b-instruct-v1:0',
-                        'gateway/bedrock:us.meta.llama3-1-8b-instruct-v1:0',
-                        'gateway/bedrock:us.meta.llama3-2-11b-instruct-v1:0',
-                        'gateway/bedrock:us.meta.llama3-2-1b-instruct-v1:0',
-                        'gateway/bedrock:us.meta.llama3-2-3b-instruct-v1:0',
-                        'gateway/bedrock:us.meta.llama3-2-90b-instruct-v1:0',
-                        'gateway/bedrock:us.meta.llama3-3-70b-instruct-v1:0',
-                        'gateway/google-vertex:gemini-2.0-flash-lite',
-                        'gateway/google-vertex:gemini-2.0-flash',
                         'gateway/google-vertex:gemini-2.5-flash-image',
                         'gateway/google-vertex:gemini-2.5-flash-lite-preview-09-2025',
                         'gateway/google-vertex:gemini-2.5-flash-lite',
-                        'gateway/google-vertex:gemini-2.5-flash-preview-09-2025',
                         'gateway/google-vertex:gemini-2.5-flash',
                         'gateway/google-vertex:gemini-2.5-pro',
                         'gateway/google-vertex:gemini-3-flash-preview',
                         'gateway/google-vertex:gemini-3-pro-image-preview',
-                        'gateway/google-vertex:gemini-3-pro-preview',
                         'gateway/google-vertex:gemini-3.1-flash-image-preview',
                         'gateway/google-vertex:gemini-3.1-flash-lite-preview',
                         'gateway/google-vertex:gemini-3.1-pro-preview',
-                        'gateway/google-vertex:gemini-flash-latest',
-                        'gateway/google-vertex:gemini-flash-lite-latest',
                         'gateway/groq:llama-3.1-8b-instant',
                         'gateway/groq:llama-3.3-70b-versatile',
-                        'gateway/groq:meta-llama/llama-guard-4-12b',
+                        'gateway/groq:meta-llama/llama-4-scout-17b-16e-instruct',
+                        'gateway/groq:moonshotai/kimi-k2-instruct-0905',
                         'gateway/groq:openai/gpt-oss-120b',
                         'gateway/groq:openai/gpt-oss-20b',
-                        'gateway/groq:whisper-large-v3',
-                        'gateway/groq:whisper-large-v3-turbo',
-                        'gateway/groq:meta-llama/llama-4-maverick-17b-128e-instruct',
-                        'gateway/groq:meta-llama/llama-4-scout-17b-16e-instruct',
-                        'gateway/groq:meta-llama/llama-prompt-guard-2-22m',
-                        'gateway/groq:meta-llama/llama-prompt-guard-2-86m',
-                        'gateway/groq:moonshotai/kimi-k2-instruct-0905',
                         'gateway/groq:openai/gpt-oss-safeguard-20b',
-                        'gateway/groq:playai-tts',
-                        'gateway/groq:playai-tts-arabic',
-                        'gateway/groq:qwen/qwen-3-32b',
-                        'gateway/openai:computer-use-preview-2025-03-11',
-                        'gateway/openai:computer-use-preview',
                         'gateway/openai:gpt-3.5-turbo-0125',
-                        'gateway/openai:gpt-3.5-turbo-0301',
-                        'gateway/openai:gpt-3.5-turbo-0613',
                         'gateway/openai:gpt-3.5-turbo-1106',
-                        'gateway/openai:gpt-3.5-turbo-16k-0613',
                         'gateway/openai:gpt-3.5-turbo-16k',
                         'gateway/openai:gpt-3.5-turbo',
-                        'gateway/openai:gpt-4-0314',
                         'gateway/openai:gpt-4-0613',
                         'gateway/openai:gpt-4-turbo-2024-04-09',
                         'gateway/openai:gpt-4-turbo',
@@ -736,12 +661,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:gpt-4o-2024-05-13',
                         'gateway/openai:gpt-4o-2024-08-06',
                         'gateway/openai:gpt-4o-2024-11-20',
-                        'gateway/openai:gpt-4o-audio-preview-2024-12-17',
-                        'gateway/openai:gpt-4o-audio-preview-2025-06-03',
-                        'gateway/openai:gpt-4o-audio-preview',
                         'gateway/openai:gpt-4o-mini-2024-07-18',
-                        'gateway/openai:gpt-4o-mini-audio-preview-2024-12-17',
-                        'gateway/openai:gpt-4o-mini-audio-preview',
                         'gateway/openai:gpt-4o-mini-search-preview-2025-03-11',
                         'gateway/openai:gpt-4o-mini-search-preview',
                         'gateway/openai:gpt-4o-mini',
@@ -750,24 +670,16 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:gpt-4o',
                         'gateway/openai:gpt-5-2025-08-07',
                         'gateway/openai:gpt-5-chat-latest',
-                        'gateway/openai:gpt-5-codex',
                         'gateway/openai:gpt-5-mini-2025-08-07',
                         'gateway/openai:gpt-5-mini',
                         'gateway/openai:gpt-5-nano-2025-08-07',
                         'gateway/openai:gpt-5-nano',
-                        'gateway/openai:gpt-5-pro-2025-10-06',
-                        'gateway/openai:gpt-5-pro',
                         'gateway/openai:gpt-5.1-2025-11-13',
                         'gateway/openai:gpt-5.1-chat-latest',
-                        'gateway/openai:gpt-5.1-codex-max',
-                        'gateway/openai:gpt-5.1-codex',
                         'gateway/openai:gpt-5.1',
                         'gateway/openai:gpt-5.2-2025-12-11',
                         'gateway/openai:gpt-5.2-chat-latest',
-                        'gateway/openai:gpt-5.2-pro-2025-12-11',
-                        'gateway/openai:gpt-5.2-pro',
                         'gateway/openai:gpt-5.2',
-                        'gateway/openai:gpt-5.3-chat-latest',
                         'gateway/openai:gpt-5.4-mini-2026-03-17',
                         'gateway/openai:gpt-5.4-mini',
                         'gateway/openai:gpt-5.4-nano-2026-03-17',
@@ -775,20 +687,12 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:gpt-5.4',
                         'gateway/openai:gpt-5',
                         'gateway/openai:o1-2024-12-17',
-                        'gateway/openai:o1-pro-2025-03-19',
-                        'gateway/openai:o1-pro',
                         'gateway/openai:o1',
                         'gateway/openai:o3-2025-04-16',
-                        'gateway/openai:o3-deep-research-2025-06-26',
-                        'gateway/openai:o3-deep-research',
                         'gateway/openai:o3-mini-2025-01-31',
                         'gateway/openai:o3-mini',
-                        'gateway/openai:o3-pro-2025-06-10',
-                        'gateway/openai:o3-pro',
                         'gateway/openai:o3',
                         'gateway/openai:o4-mini-2025-04-16',
-                        'gateway/openai:o4-mini-deep-research-2025-06-26',
-                        'gateway/openai:o4-mini-deep-research',
                         'gateway/openai:o4-mini',
                         'google-gla:gemini-2.0-flash-lite',
                         'google-gla:gemini-2.0-flash',
@@ -1200,11 +1104,41 @@ Supported by:
                     'title': 'short_spec_BuiltinTool',
                     'type': 'object',
                 },
+                'short_spec_IncludeToolReturnSchemas': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'IncludeToolReturnSchemas': {
+                            'anyOf': [
+                                {'const': 'all', 'type': 'string'},
+                                {'items': {'type': 'string'}, 'type': 'array'},
+                                {'additionalProperties': True, 'type': 'object'},
+                            ],
+                            'title': 'Includetoolreturnschemas',
+                        }
+                    },
+                    'title': 'short_spec_IncludeToolReturnSchemas',
+                    'type': 'object',
+                },
                 'short_spec_MCP': {
                     'additionalProperties': False,
                     'properties': {'MCP': {'title': 'Mcp', 'type': 'string'}},
                     'required': ['MCP'],
                     'title': 'short_spec_MCP',
+                    'type': 'object',
+                },
+                'short_spec_SetToolMetadata': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'SetToolMetadata': {
+                            'anyOf': [
+                                {'const': 'all', 'type': 'string'},
+                                {'items': {'type': 'string'}, 'type': 'array'},
+                                {'additionalProperties': True, 'type': 'object'},
+                            ],
+                            'title': 'Settoolmetadata',
+                        }
+                    },
+                    'title': 'short_spec_SetToolMetadata',
                     'type': 'object',
                 },
                 'short_spec_Thinking': {
@@ -1357,9 +1291,13 @@ Supported by:
                                 {'$ref': '#/$defs/short_spec_BuiltinTool'},
                                 {'const': 'ImageGeneration', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_ImageGeneration'},
+                                {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
+                                {'$ref': '#/$defs/short_spec_IncludeToolReturnSchemas'},
                                 {'$ref': '#/$defs/short_spec_MCP'},
                                 {'$ref': '#/$defs/spec_MCP'},
                                 {'$ref': '#/$defs/spec_PrefixTools'},
+                                {'const': 'SetToolMetadata', 'type': 'string'},
+                                {'$ref': '#/$defs/short_spec_SetToolMetadata'},
                                 {'const': 'Thinking', 'type': 'string'},
                                 {'$ref': '#/$defs/short_spec_Thinking'},
                                 {'const': 'WebFetch', 'type': 'string'},
@@ -1495,9 +1433,13 @@ Supported by:
                             {'$ref': '#/$defs/short_spec_BuiltinTool'},
                             {'const': 'ImageGeneration', 'type': 'string'},
                             {'$ref': '#/$defs/spec_ImageGeneration'},
+                            {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
+                            {'$ref': '#/$defs/short_spec_IncludeToolReturnSchemas'},
                             {'$ref': '#/$defs/short_spec_MCP'},
                             {'$ref': '#/$defs/spec_MCP'},
                             {'$ref': '#/$defs/spec_PrefixTools'},
+                            {'const': 'SetToolMetadata', 'type': 'string'},
+                            {'$ref': '#/$defs/short_spec_SetToolMetadata'},
                             {'const': 'Thinking', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_Thinking'},
                             {'const': 'WebFetch', 'type': 'string'},
@@ -2033,6 +1975,121 @@ async def test_combined_capability_for_run_returns_new_when_child_changes():
     new_per_run = result.capabilities[1]
     assert isinstance(new_per_run, PerRunCap)
     assert new_per_run.run_id == 1
+
+
+def test_apply_single_capability():
+    """AbstractCapability.apply() visits just the capability itself."""
+
+    @dataclass
+    class MyCap(AbstractCapability[None]):
+        pass
+
+    cap = MyCap()
+    visited: list[AbstractCapability[None]] = []
+    cap.apply(visited.append)
+    assert visited == [cap]
+
+
+def test_apply_combined_capability():
+    """CombinedCapability.apply() recursively visits all leaf capabilities."""
+
+    @dataclass
+    class CapA(AbstractCapability[None]):
+        pass
+
+    @dataclass
+    class CapB(AbstractCapability[None]):
+        pass
+
+    cap_a = CapA()
+    cap_b = CapB()
+    combined = CombinedCapability([cap_a, cap_b])
+
+    visited: list[AbstractCapability[None]] = []
+    combined.apply(visited.append)
+    assert visited == [cap_a, cap_b]
+
+
+def test_apply_nested_combined_capability():
+    """CombinedCapability.apply() flattens nested CombinedCapabilities."""
+
+    @dataclass
+    class CapA(AbstractCapability[None]):
+        pass
+
+    @dataclass
+    class CapB(AbstractCapability[None]):
+        pass
+
+    @dataclass
+    class CapC(AbstractCapability[None]):
+        pass
+
+    cap_a = CapA()
+    cap_b = CapB()
+    cap_c = CapC()
+    inner = CombinedCapability([cap_a, cap_b])
+    outer = CombinedCapability([inner, cap_c])
+
+    visited: list[AbstractCapability[None]] = []
+    outer.apply(visited.append)
+    assert visited == [cap_a, cap_b, cap_c]
+
+
+def test_apply_wrapper_capability():
+    """WrapperCapability.apply() delegates to the wrapped capability."""
+    inner = Thinking()
+    wrapper = WrapperCapability(wrapped=inner)
+
+    visited: list[AbstractCapability[None]] = []
+    wrapper.apply(visited.append)
+    assert visited == [inner]
+
+
+def test_apply_prefix_tools():
+    """PrefixTools (a WrapperCapability) delegates apply() to the wrapped capability."""
+    thinking = Thinking()
+    prefixed = PrefixTools(wrapped=thinking, prefix='ns')
+
+    visited: list[AbstractCapability[None]] = []
+    prefixed.apply(visited.append)
+    assert visited == [thinking]
+
+
+def test_apply_finds_capability_by_type():
+    """Realistic usage: use apply() to check if a specific capability type is present."""
+    thinking = Thinking()
+    web_search = WebSearch()
+    combined = CombinedCapability([thinking, web_search])
+
+    visited: list[AbstractCapability[None]] = []
+    combined.apply(visited.append)
+
+    assert any(isinstance(c, Thinking) for c in visited)
+    assert any(isinstance(c, WebSearch) for c in visited)
+    assert not any(isinstance(c, WebFetch) for c in visited)
+
+
+def test_apply_finds_wrapped_capability_by_type():
+    """apply() traverses through wrappers, so wrapped capabilities are discoverable by type."""
+    thinking = Thinking()
+    prefixed = PrefixTools(wrapped=thinking, prefix='ns')
+    combined = CombinedCapability([prefixed, WebSearch()])
+
+    visited: list[AbstractCapability[None]] = []
+    combined.apply(visited.append)
+
+    assert any(isinstance(c, Thinking) for c in visited)
+    assert any(isinstance(c, WebSearch) for c in visited)
+    assert not any(isinstance(c, PrefixTools) for c in visited)
+
+
+def test_apply_empty_combined():
+    """CombinedCapability with no children visits nothing."""
+    combined = CombinedCapability[None]([])
+    visited: list[AbstractCapability[None]] = []
+    combined.apply(visited.append)
+    assert visited == []
 
 
 async def test_for_run_with_different_toolset():

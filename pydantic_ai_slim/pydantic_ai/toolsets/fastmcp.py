@@ -80,6 +80,13 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
     Defaults to `False` for backward compatibility.
     """
 
+    include_return_schema: bool | None
+    """Whether to include return schemas in tool definitions sent to the model.
+
+    When `None` (default), defaults to `False` unless the
+    [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
+    """
+
     _id: str | None
 
     _instructions: str | None
@@ -99,6 +106,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         max_retries: int = 1,
         tool_error_behavior: Literal['model_retry', 'error'] = 'model_retry',
         include_instructions: bool = False,
+        include_return_schema: bool | None = None,
         id: str | None = None,
     ) -> None:
         if isinstance(client, Client):
@@ -110,6 +118,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         self.max_retries = max_retries
         self.tool_error_behavior = tool_error_behavior
         self.include_instructions = include_instructions
+        self.include_return_schema = include_return_schema
 
         self._enter_lock: Lock = Lock()
         self._running_count: int = 0
@@ -190,6 +199,8 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
                             'annotations': mcp_tool.annotations.model_dump() if mcp_tool.annotations else None,
                             'output_schema': mcp_tool.outputSchema or None,
                         },
+                        return_schema=mcp_tool.outputSchema or None,
+                        include_return_schema=self.include_return_schema,
                     )
                 )
                 for mcp_tool in await self.client.list_tools()

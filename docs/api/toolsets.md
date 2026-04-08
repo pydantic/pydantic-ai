@@ -9,9 +9,11 @@
         - ApprovalRequiredToolset
         - FilteredToolset
         - FunctionToolset
+        - IncludeReturnSchemasToolset
         - DeferredLoadingToolset
         - PrefixedToolset
         - RenamedToolset
+        - SetMetadataToolset
         - PreparedToolset
         - WrapperToolset
         - ToolsetFunc
