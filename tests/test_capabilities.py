@@ -1977,20 +1977,21 @@ async def test_combined_capability_for_run_returns_new_when_child_changes():
     assert new_per_run.run_id == 1
 
 
-def test_visit_single_capability():
-    """AbstractCapability.visit() yields just the capability itself."""
+def test_apply_single_capability():
+    """AbstractCapability.apply() visits just the capability itself."""
 
     @dataclass
     class MyCap(AbstractCapability[None]):
         pass
 
     cap = MyCap()
-    visited = list(cap.visit())
+    visited: list[AbstractCapability[None]] = []
+    cap.apply(visited.append)
     assert visited == [cap]
 
 
-def test_visit_combined_capability():
-    """CombinedCapability.visit() recursively yields all leaf capabilities."""
+def test_apply_combined_capability():
+    """CombinedCapability.apply() recursively visits all leaf capabilities."""
 
     @dataclass
     class CapA(AbstractCapability[None]):
@@ -2004,12 +2005,13 @@ def test_visit_combined_capability():
     cap_b = CapB()
     combined = CombinedCapability([cap_a, cap_b])
 
-    visited = list(combined.visit())
+    visited: list[AbstractCapability[None]] = []
+    combined.apply(visited.append)
     assert visited == [cap_a, cap_b]
 
 
-def test_visit_nested_combined_capability():
-    """CombinedCapability.visit() flattens nested CombinedCapabilities."""
+def test_apply_nested_combined_capability():
+    """CombinedCapability.apply() flattens nested CombinedCapabilities."""
 
     @dataclass
     class CapA(AbstractCapability[None]):
@@ -2029,58 +2031,65 @@ def test_visit_nested_combined_capability():
     inner = CombinedCapability([cap_a, cap_b])
     outer = CombinedCapability([inner, cap_c])
 
-    visited = list(outer.visit())
+    visited: list[AbstractCapability[None]] = []
+    outer.apply(visited.append)
     assert visited == [cap_a, cap_b, cap_c]
 
 
-def test_visit_wrapper_capability():
-    """WrapperCapability.visit() delegates to the wrapped capability."""
+def test_apply_wrapper_capability():
+    """WrapperCapability.apply() delegates to the wrapped capability."""
     inner = Thinking()
     wrapper = WrapperCapability(wrapped=inner)
 
-    visited = list(wrapper.visit())
+    visited: list[AbstractCapability[None]] = []
+    wrapper.apply(visited.append)
     assert visited == [inner]
 
 
-def test_visit_prefix_tools():
-    """PrefixTools (a WrapperCapability) delegates visit() to the wrapped capability."""
+def test_apply_prefix_tools():
+    """PrefixTools (a WrapperCapability) delegates apply() to the wrapped capability."""
     thinking = Thinking()
     prefixed = PrefixTools(wrapped=thinking, prefix='ns')
 
-    visited = list(prefixed.visit())
+    visited: list[AbstractCapability[None]] = []
+    prefixed.apply(visited.append)
     assert visited == [thinking]
 
 
-def test_visit_finds_capability_by_type():
-    """Realistic usage: use visit() to check if a specific capability type is present."""
+def test_apply_finds_capability_by_type():
+    """Realistic usage: use apply() to check if a specific capability type is present."""
     thinking = Thinking()
     web_search = WebSearch()
     combined = CombinedCapability([thinking, web_search])
 
-    has_thinking = any(isinstance(c, Thinking) for c in combined.visit())
-    has_web_search = any(isinstance(c, WebSearch) for c in combined.visit())
-    has_web_fetch = any(isinstance(c, WebFetch) for c in combined.visit())
+    visited: list[AbstractCapability[None]] = []
+    combined.apply(visited.append)
 
-    assert has_thinking
-    assert has_web_search
-    assert not has_web_fetch
+    assert any(isinstance(c, Thinking) for c in visited)
+    assert any(isinstance(c, WebSearch) for c in visited)
+    assert not any(isinstance(c, WebFetch) for c in visited)
 
 
-def test_visit_finds_wrapped_capability_by_type():
-    """visit() traverses through wrappers, so wrapped capabilities are discoverable by type."""
+def test_apply_finds_wrapped_capability_by_type():
+    """apply() traverses through wrappers, so wrapped capabilities are discoverable by type."""
     thinking = Thinking()
     prefixed = PrefixTools(wrapped=thinking, prefix='ns')
     combined = CombinedCapability([prefixed, WebSearch()])
 
-    assert any(isinstance(c, Thinking) for c in combined.visit())
-    assert any(isinstance(c, WebSearch) for c in combined.visit())
-    assert not any(isinstance(c, PrefixTools) for c in combined.visit())
+    visited: list[AbstractCapability[None]] = []
+    combined.apply(visited.append)
+
+    assert any(isinstance(c, Thinking) for c in visited)
+    assert any(isinstance(c, WebSearch) for c in visited)
+    assert not any(isinstance(c, PrefixTools) for c in visited)
 
 
-def test_visit_empty_combined():
-    """CombinedCapability with no children yields nothing."""
-    combined = CombinedCapability([])
-    assert list(combined.visit()) == []
+def test_apply_empty_combined():
+    """CombinedCapability with no children visits nothing."""
+    combined = CombinedCapability[None]([])
+    visited: list[AbstractCapability[None]] = []
+    combined.apply(visited.append)
+    assert visited == []
 
 
 async def test_for_run_with_different_toolset():

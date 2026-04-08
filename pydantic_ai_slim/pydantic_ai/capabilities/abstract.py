@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC
-from collections.abc import AsyncIterable, Awaitable, Callable, Iterator, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias
 
@@ -77,16 +77,16 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     sensible defaults and typically don't need to be overridden.
     """
 
-    def visit(self) -> Iterator[AbstractCapability[AgentDepsT]]:
-        """Yield all leaf capabilities in this tree.
+    def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
+        """Run a visitor function on all leaf capabilities in this tree.
 
-        For a single capability, yields just itself.
+        For a single capability, calls the visitor on itself.
         Overridden by [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability]
-        to recursively yield all child capabilities, and by
+        to recursively visit all child capabilities, and by
         [`WrapperCapability`][pydantic_ai.capabilities.WrapperCapability]
         to delegate to the wrapped capability.
         """
-        yield self
+        visitor(self)
 
     @property
     def has_wrap_node_run(self) -> bool:

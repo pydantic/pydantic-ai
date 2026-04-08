@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, Iterator, Sequence
+from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
@@ -41,8 +41,8 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     wrapped: AbstractCapability[AgentDepsT]
 
-    def visit(self) -> Iterator[AbstractCapability[AgentDepsT]]:
-        yield from self.wrapped.visit()
+    def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
+        self.wrapped.apply(visitor)
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
