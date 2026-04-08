@@ -78,11 +78,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     """
 
     def visit(self) -> Iterator[AbstractCapability[AgentDepsT]]:
-        """Yield all capabilities in this tree.
+        """Yield all leaf capabilities in this tree.
 
         For a single capability, yields just itself.
         Overridden by [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability]
-        to recursively yield all child capabilities.
+        to recursively yield all child capabilities, and by
+        [`WrapperCapability`][pydantic_ai.capabilities.WrapperCapability]
+        to delegate to the wrapped capability.
         """
         yield self
 

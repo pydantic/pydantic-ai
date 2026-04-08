@@ -2034,12 +2034,21 @@ def test_visit_nested_combined_capability():
 
 
 def test_visit_wrapper_capability():
-    """WrapperCapability.visit() yields just the wrapper itself."""
+    """WrapperCapability.visit() delegates to the wrapped capability."""
     inner = Thinking()
     wrapper = WrapperCapability(wrapped=inner)
 
     visited = list(wrapper.visit())
-    assert visited == [wrapper]
+    assert visited == [inner]
+
+
+def test_visit_prefix_tools():
+    """PrefixTools (a WrapperCapability) delegates visit() to the wrapped capability."""
+    thinking = Thinking()
+    prefixed = PrefixTools(wrapped=thinking, prefix='ns')
+
+    visited = list(prefixed.visit())
+    assert visited == [thinking]
 
 
 def test_visit_finds_capability_by_type():
@@ -2055,6 +2064,17 @@ def test_visit_finds_capability_by_type():
     assert has_thinking
     assert has_web_search
     assert not has_web_fetch
+
+
+def test_visit_finds_wrapped_capability_by_type():
+    """visit() traverses through wrappers, so wrapped capabilities are discoverable by type."""
+    thinking = Thinking()
+    prefixed = PrefixTools(wrapped=thinking, prefix='ns')
+    combined = CombinedCapability([prefixed, WebSearch()])
+
+    assert any(isinstance(c, Thinking) for c in combined.visit())
+    assert any(isinstance(c, WebSearch) for c in combined.visit())
+    assert not any(isinstance(c, PrefixTools) for c in combined.visit())
 
 
 def test_visit_empty_combined():
