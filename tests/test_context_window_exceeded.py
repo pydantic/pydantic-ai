@@ -20,63 +20,6 @@ from .conftest import try_import
 
 pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
 
-with try_import() as openai_imports_successful:
-    from openai import APIStatusError as OpenAIAPIStatusError
-
-    from pydantic_ai.models.openai import (
-        OpenAIChatModel,
-        OpenAIResponsesModel,
-        _check_context_window_exceeded as openai_check,  # pyright: ignore[reportPrivateUsage]
-    )
-    from pydantic_ai.providers.openai import OpenAIProvider
-
-with try_import() as anthropic_imports_successful:
-    from anthropic import APIStatusError as AnthropicAPIStatusError
-
-    from pydantic_ai.models.anthropic import (
-        AnthropicModel,
-        _check_context_window_exceeded as anthropic_check,  # pyright: ignore[reportPrivateUsage]
-    )
-
-with try_import() as groq_imports_successful:
-    from groq import APIStatusError as GroqAPIStatusError
-
-    from pydantic_ai.models.groq import (
-        GroqModel,
-        _check_context_window_exceeded as groq_check,  # pyright: ignore[reportPrivateUsage]
-    )
-    from pydantic_ai.providers.groq import GroqProvider
-
-with try_import() as google_imports_successful:
-    from pydantic_ai.models.google import GoogleModel
-    from pydantic_ai.providers.google import GoogleProvider
-
-with try_import() as bedrock_imports_successful:
-    from botocore.exceptions import ClientError as BotoClientError
-
-    from pydantic_ai.models.bedrock import (
-        BedrockConverseModel,
-        _check_context_window_exceeded as bedrock_check,  # pyright: ignore[reportPrivateUsage]
-    )
-
-with try_import() as mistral_imports_successful:
-    from mistralai.client.errors import SDKError as MistralSDKError
-
-    from pydantic_ai.models.mistral import (
-        MistralModel,
-        _check_context_window_exceeded as mistral_check,  # pyright: ignore[reportPrivateUsage]
-    )
-    from pydantic_ai.providers.mistral import MistralProvider
-
-with try_import() as cohere_imports_successful:
-    from cohere.core.api_error import ApiError as CohereApiError
-
-    from pydantic_ai.models.cohere import (
-        CohereModel,
-        _check_context_window_exceeded as cohere_check,  # pyright: ignore[reportPrivateUsage]
-    )
-    from pydantic_ai.providers.cohere import CohereProvider
-
 HUGE_PROMPT = 'word ' * 150_000
 ANTHROPIC_HUGE_PROMPT = 'word ' * 250_000
 GOOGLE_HUGE_PROMPT = 'word ' * 1_100_000
@@ -107,7 +50,16 @@ class Case:
 
 _vcr_cases: list[Case] = []
 
-if openai_imports_successful():
+with try_import() as openai_imports_successful:
+    from openai import APIStatusError as OpenAIAPIStatusError
+
+    from pydantic_ai.models.openai import (
+        OpenAIChatModel,
+        OpenAIResponsesModel,
+        _check_context_window_exceeded as openai_check,  # pyright: ignore[reportPrivateUsage]
+    )
+    from pydantic_ai.providers.openai import OpenAIProvider
+
     _vcr_cases.extend(
         [
             Case(
@@ -125,7 +77,14 @@ if openai_imports_successful():
         ]
     )
 
-if anthropic_imports_successful():
+with try_import() as anthropic_imports_successful:
+    from anthropic import APIStatusError as AnthropicAPIStatusError
+
+    from pydantic_ai.models.anthropic import (
+        AnthropicModel,
+        _check_context_window_exceeded as anthropic_check,  # pyright: ignore[reportPrivateUsage]
+    )
+
     _vcr_cases.append(
         Case(
             id='anthropic',
@@ -138,7 +97,15 @@ if anthropic_imports_successful():
         ),
     )
 
-if groq_imports_successful():
+with try_import() as groq_imports_successful:
+    from groq import APIStatusError as GroqAPIStatusError
+
+    from pydantic_ai.models.groq import (
+        GroqModel,
+        _check_context_window_exceeded as groq_check,  # pyright: ignore[reportPrivateUsage]
+    )
+    from pydantic_ai.providers.groq import GroqProvider
+
     _vcr_cases.append(
         Case(
             id='groq',
@@ -148,7 +115,10 @@ if groq_imports_successful():
         ),
     )
 
-if google_imports_successful():
+with try_import() as google_imports_successful:
+    from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.providers.google import GoogleProvider
+
     _vcr_cases.append(
         Case(
             id='google',
@@ -159,7 +129,14 @@ if google_imports_successful():
         ),
     )
 
-if bedrock_imports_successful():
+with try_import() as bedrock_imports_successful:
+    from botocore.exceptions import ClientError as BotoClientError
+
+    from pydantic_ai.models.bedrock import (
+        BedrockConverseModel,
+        _check_context_window_exceeded as bedrock_check,  # pyright: ignore[reportPrivateUsage]
+    )
+
     _vcr_cases.append(
         Case(
             id='bedrock',
@@ -171,7 +148,15 @@ if bedrock_imports_successful():
         ),
     )
 
-if mistral_imports_successful():
+with try_import() as mistral_imports_successful:
+    from mistralai.client.errors import SDKError as MistralSDKError
+
+    from pydantic_ai.models.mistral import (
+        MistralModel,
+        _check_context_window_exceeded as mistral_check,  # pyright: ignore[reportPrivateUsage]
+    )
+    from pydantic_ai.providers.mistral import MistralProvider
+
     _vcr_cases.append(
         Case(
             id='mistral',
@@ -181,7 +166,15 @@ if mistral_imports_successful():
         ),
     )
 
-if cohere_imports_successful():
+with try_import() as cohere_imports_successful:
+    from cohere.core.api_error import ApiError as CohereApiError
+
+    from pydantic_ai.models.cohere import (
+        CohereModel,
+        _check_context_window_exceeded as cohere_check,  # pyright: ignore[reportPrivateUsage]
+    )
+    from pydantic_ai.providers.cohere import CohereProvider
+
     _vcr_cases.append(
         Case(
             id='cohere',
@@ -309,6 +302,10 @@ class TestMistralCheckContextWindow:
 
     def test_non_400_returns_none(self):
         exc = self._sdk_error(500, '{"code": 3051}')
+        assert mistral_check(exc, 'mistral-small-latest') is None
+
+    def test_none_body_returns_none(self):
+        exc = self._sdk_error(400, None)
         assert mistral_check(exc, 'mistral-small-latest') is None
 
     def test_dict_body(self):
