@@ -218,6 +218,8 @@ async def matches_tool_selector(
     if isinstance(selector, dict):
         metadata: dict[str, Any] = tool_def.metadata or {}
         return _metadata_includes(metadata, selector)
+    if isinstance(selector, str):
+        return tool_def.name == selector
     # Sequence[str] — match by tool name
     return tool_def.name in selector
 
