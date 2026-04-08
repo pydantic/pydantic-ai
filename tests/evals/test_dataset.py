@@ -227,6 +227,7 @@ async def test_add_evaluator(
     }
 
 
+@needs_logfire
 async def test_evaluate_async(
     example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
     simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
@@ -336,6 +337,7 @@ async def test_evaluate_sync(
     )
 
 
+@needs_logfire
 @pytest.mark.skipif(not tenacity_import_successful(), reason='tenacity not installed')
 async def test_evaluate_with_retried_task_and_evaluator(
     example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
