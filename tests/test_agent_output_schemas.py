@@ -1,5 +1,6 @@
+import dataclasses
+
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -12,6 +13,8 @@ from pydantic_ai import (
     TextOutput,
     ToolOutput,
 )
+
+from ._inline_snapshot import snapshot
 
 pytestmark = pytest.mark.anyio
 
@@ -401,7 +404,6 @@ async def test_deferred_output_json_schema():
             ],
             '$defs': {
                 'ToolCallPart': {
-                    'description': 'A tool call from a model.',
                     'properties': {
                         'tool_name': {'title': 'Tool Name', 'type': 'string'},
                         'args': {
@@ -526,7 +528,6 @@ distinguish multiple files.\
             ],
             '$defs': {
                 'ToolCallPart': {
-                    'description': 'A tool call from a model.',
                     'properties': {
                         'tool_name': {'title': 'Tool Name', 'type': 'string'},
                         'args': {
@@ -564,3 +565,140 @@ distinguish multiple files.\
             },
         }
     )
+
+
+# Pydantic suppresses stdlib dataclass docstrings from JSON schemas.
+# These tests document the current behavior; see https://github.com/pydantic/pydantic/issues/12812
+# regression test for https://github.com/pydantic/pydantic-ai/pull/4138#discussion_r2819140514
+
+
+class BMWithDoc(BaseModel):
+    """The result with name and score."""
+
+    name: str
+    score: int
+
+
+@dataclasses.dataclass
+class DCWithDoc:
+    """The result with name and score."""
+
+    name: str
+    score: int = 0
+
+
+class BMNested(BaseModel):
+    """Nested filter criteria."""
+
+    category: str = 'all'
+
+
+@dataclasses.dataclass
+class DCNested:
+    """Nested filter criteria."""
+
+    category: str = 'all'
+
+
+class BMWithNestedField(BaseModel):
+    """Output with nested model."""
+
+    filters: BMNested
+
+
+@dataclasses.dataclass
+class DCWithNestedField:
+    """Output with nested dataclass."""
+
+    filters: DCNested
+
+
+@pytest.mark.parametrize(
+    'output_type, expected_schema',
+    [
+        pytest.param(
+            BMWithDoc,
+            snapshot(
+                {
+                    'description': 'The result with name and score.',
+                    'properties': {
+                        'name': {'title': 'Name', 'type': 'string'},
+                        'score': {'title': 'Score', 'type': 'integer'},
+                    },
+                    'required': ['name', 'score'],
+                    'title': 'BMWithDoc',
+                    'type': 'object',
+                }
+            ),
+            id='basemodel',
+        ),
+        pytest.param(
+            DCWithDoc,
+            snapshot(
+                {
+                    'properties': {
+                        'name': {'title': 'Name', 'type': 'string'},
+                        'score': {'default': 0, 'title': 'Score', 'type': 'integer'},
+                    },
+                    'required': ['name'],
+                    'title': 'DCWithDoc',
+                    'type': 'object',
+                }
+            ),
+            id='dataclass',
+        ),
+    ],
+)
+async def test_output_type_description(output_type: type, expected_schema: dict[str, object]):
+    agent: Agent[None, str] = Agent('test', output_type=output_type)
+    assert agent.output_json_schema() == expected_schema
+
+
+@pytest.mark.parametrize(
+    'output_type, expected_schema',
+    [
+        pytest.param(
+            BMWithNestedField,
+            snapshot(
+                {
+                    '$defs': {
+                        'BMNested': {
+                            'description': 'Nested filter criteria.',
+                            'properties': {'category': {'default': 'all', 'title': 'Category', 'type': 'string'}},
+                            'title': 'BMNested',
+                            'type': 'object',
+                        }
+                    },
+                    'description': 'Output with nested model.',
+                    'properties': {'filters': {'$ref': '#/$defs/BMNested'}},
+                    'required': ['filters'],
+                    'title': 'BMWithNestedField',
+                    'type': 'object',
+                }
+            ),
+            id='basemodel_nested',
+        ),
+        pytest.param(
+            DCWithNestedField,
+            snapshot(
+                {
+                    '$defs': {
+                        'DCNested': {
+                            'properties': {'category': {'default': 'all', 'title': 'Category', 'type': 'string'}},
+                            'title': 'DCNested',
+                            'type': 'object',
+                        }
+                    },
+                    'properties': {'filters': {'$ref': '#/$defs/DCNested'}},
+                    'required': ['filters'],
+                    'title': 'DCWithNestedField',
+                    'type': 'object',
+                }
+            ),
+            id='dataclass_nested',
+        ),
+    ],
+)
+async def test_nested_output_type_description(output_type: type, expected_schema: dict[str, object]):
+    agent: Agent[None, str] = Agent('test', output_type=output_type)
+    assert agent.output_json_schema() == expected_schema

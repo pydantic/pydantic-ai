@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -56,7 +57,7 @@ with try_import() as bedrock_imports_successful:
     )
 
 with try_import() as mistral_imports_successful:
-    from mistralai.models import SDKError as MistralSDKError
+    from mistralai.client.errors import SDKError as MistralSDKError
 
     from pydantic_ai.models.mistral import (
         MistralModel,
@@ -304,7 +305,7 @@ class TestMistralCheckContextWindow:
         exc = MistralSDKError(
             message='error',
             raw_response=_mock_response(400),
-            body={'code': '3051', 'message': 'error'},  # pyright: ignore[reportArgumentType]
+            body=json.dumps({'code': '3051', 'message': 'error'}),
         )
         result = mistral_check(exc, 'mistral-small-latest')
         assert isinstance(result, ContextWindowExceeded)

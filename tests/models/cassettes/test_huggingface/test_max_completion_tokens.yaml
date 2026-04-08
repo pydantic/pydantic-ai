@@ -1,0 +1,77 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '125'
+      content-type:
+      - application/json
+      host:
+      - router.huggingface.co
+    method: POST
+    parsed_body:
+      max_tokens: 100
+      messages:
+      - content: hello
+        role: user
+      model: deepseek-ai/DeepSeek-R1
+      stream: false
+      tools: []
+    uri: https://router.huggingface.co/together/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      connection:
+      - keep-alive
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"3d6-xZqmbyjU+0Iao7wGadd1wZ2hUQY"
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      retry-after:
+      - '30'
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: length
+        index: 0
+        logprobs: null
+        message:
+          content: "<think>\nHmm, the user just said \"hello\". Such a simple greeting but it makes me smile. \n\nFirst thought:
+            This could be anyone - maybe someone testing the waters, or just being polite before asking something deeper.
+            The lack of context is interesting. \n\nI notice they didn't use any emojis or exclamation marks, so probably
+            neutral mood. But since they initiated, I should match their tone while keeping it warm. \n\nKey goals in response:
+            \n- Acknowledge"
+          role: assistant
+          tool_calls: []
+        seed: 14836394043272784000
+      created: 1771167110
+      id: oXUyQTv-28Eivz-9ce5a0296c7de93c
+      model: deepseek-ai/DeepSeek-R1
+      object: chat.completion
+      prompt: []
+      usage:
+        cached_tokens: 0
+        completion_tokens: 100
+        prompt_tokens: 4
+        total_tokens: 104
+    status:
+      code: 200
+      message: OK
+version: 1

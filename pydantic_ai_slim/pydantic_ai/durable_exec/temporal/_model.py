@@ -5,25 +5,27 @@ from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import ConfigDict, with_config
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
-from pydantic_ai import ModelMessage, ModelResponse, ModelResponseStreamEvent, models
+from pydantic_ai import ModelMessage, ModelResponse, models
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
-from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, infer_model_profile, parse_model_id
+from pydantic_ai.models.wrapper import CompletedStreamedResponse, WrapperModel
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers import Provider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.usage import RequestUsage
 
-from ._run_context import TemporalRunContext
+from ._run_context import TemporalRunContext, deserialize_run_context
+
+if TYPE_CHECKING:
+    from pydantic_ai.agent.abstract import AbstractAgent
 
 
 @dataclass
@@ -40,39 +42,6 @@ class _RequestParams:
 TemporalProviderFactory = Callable[[RunContext[AgentDepsT], str], Provider[Any]]
 
 
-class TemporalStreamedResponse(StreamedResponse):
-    def __init__(self, model_request_parameters: ModelRequestParameters, response: ModelResponse):
-        super().__init__(model_request_parameters)
-        self.response = response
-
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        return
-        # noinspection PyUnreachableCode
-        yield
-
-    def get(self) -> ModelResponse:
-        return self.response
-
-    def usage(self) -> RequestUsage:
-        return self.response.usage  # pragma: no cover
-
-    @property
-    def model_name(self) -> str:
-        return self.response.model_name or ''  # pragma: no cover
-
-    @property
-    def provider_name(self) -> str:
-        return self.response.provider_name or ''  # pragma: no cover
-
-    @property
-    def provider_url(self) -> str | None:
-        return self.response.provider_url  # pragma: no cover
-
-    @property
-    def timestamp(self) -> datetime:
-        return self.response.timestamp  # pragma: no cover
-
-
 class TemporalModel(WrapperModel):
     def __init__(
         self,
@@ -85,6 +54,7 @@ class TemporalModel(WrapperModel):
         event_stream_handler: EventStreamHandler[Any] | None = None,
         models: Mapping[str, Model] | None = None,
         provider_factory: TemporalProviderFactory | None = None,
+        agent: AbstractAgent[Any, Any] | None = None,
     ):
         # Build models_by_id registry from wrapped model and models parameter
         self._models_by_id: dict[str, Model] = {}
@@ -109,10 +79,13 @@ class TemporalModel(WrapperModel):
         self.event_stream_handler = event_stream_handler
         self._model_id_var: ContextVar[str | None] = ContextVar('_temporal_model_id', default=None)
         self._provider_factory = provider_factory
+        self._agent = agent
 
         @activity.defn(name=f'{activity_name_prefix}__model_request')
         async def request_activity(params: _RequestParams, deps: Any | None = None) -> ModelResponse:
-            run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
+            run_context = deserialize_run_context(
+                self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
+            )
             model_for_request = self._resolve_model_id(params.model_id, run_context)
             return await model_for_request.request(
                 params.messages,
@@ -127,7 +100,9 @@ class TemporalModel(WrapperModel):
         async def request_stream_activity(params: _RequestParams, deps: AgentDepsT) -> ModelResponse:
             # An error is raised in `request_stream` if no `event_stream_handler` is set.
             assert self.event_stream_handler is not None
-            run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
+            run_context = deserialize_run_context(
+                self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
+            )
             model_for_request = self._resolve_model_id(params.model_id, run_context)
             async with model_for_request.request_stream(
                 params.messages,
@@ -173,7 +148,7 @@ class TemporalModel(WrapperModel):
         serialized_run_context = self.run_context_type.serialize_run_context(run_context)
         deps = run_context.deps
 
-        model_name = model_id or f'{self.system}:{self.model_name}'
+        model_name = model_id or self.model_id
         activity_config: ActivityConfig = {'summary': f'request model: {model_name}', **self.activity_config}
         return await workflow.execute_activity(
             activity=self.request_activity,
@@ -218,7 +193,7 @@ class TemporalModel(WrapperModel):
 
         model_id = self._current_model_id()
         serialized_run_context = self.run_context_type.serialize_run_context(run_context)
-        model_name = model_id or f'{self.system}:{self.model_name}'
+        model_name = model_id or self.model_id
         activity_config: ActivityConfig = {'summary': f'request model: {model_name} (stream)', **self.activity_config}
         response = await workflow.execute_activity(
             activity=self.request_stream_activity,
@@ -234,7 +209,7 @@ class TemporalModel(WrapperModel):
             ],
             **activity_config,
         )
-        yield TemporalStreamedResponse(model_request_parameters, response)
+        yield CompletedStreamedResponse(model_request_parameters, response)
 
     def _validate_model_request_parameters(self, model_request_parameters: ModelRequestParameters) -> None:
         if model_request_parameters.allow_image_output:
@@ -298,6 +273,76 @@ class TemporalModel(WrapperModel):
 
     def _current_model_id(self) -> str | None:
         return self._model_id_var.get()
+
+    def _current_model(self) -> models.Model | str:
+        """Get the current model, or the unregistered model ID string."""
+        model_id = self._current_model_id()
+        if model_id is None:
+            return self.wrapped
+        if model_id in self._models_by_id:
+            return self._models_by_id[model_id]
+        return model_id
+
+    @property
+    def model_name(self) -> str:
+        """Get the model name, inferring from raw strings without provider construction."""
+        current = self._current_model()
+        if isinstance(current, str):
+            _, model_name = parse_model_id(current)
+            return model_name
+        return current.model_name
+
+    @property
+    def system(self) -> str:
+        """Get the system (provider) name, inferring from raw strings without provider construction."""
+        current = self._current_model()
+        if isinstance(current, str):
+            provider_name, _ = parse_model_id(current)
+            return provider_name or self.wrapped.system
+        return current.system
+
+    @property
+    def profile(self) -> ModelProfile:
+        """Get the model profile, inferring from raw strings without provider construction.
+
+        Note: This overrides a cached_property with a regular property because the profile
+        depends on _current_model_id() which can change dynamically via using_model().
+        """
+        current = self._current_model()
+        if isinstance(current, str):
+            # Unlike Model.profile, this returns the raw provider profile without intersecting
+            # supported_builtin_tools with the model class's supported_builtin_tools(). This is
+            # acceptable because TemporalModel delegates to the wrapped model for actual requests,
+            # and this profile is only used for capability checks, not request preparation.
+            return infer_model_profile(current)
+        return current.profile
+
+    def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
+        current = self._current_model()
+        if isinstance(current, str):
+            return Model.customize_request_parameters(self, model_request_parameters)
+        return current.customize_request_parameters(model_request_parameters)
+
+    def prepare_request(
+        self,
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        """Prepare request using the currently active model's profile.
+
+        This override ensures that when a different model is specified at runtime
+        via `using_model()`, we use that model's profile for validation and
+        parameter preparation, not the default wrapped model's profile.
+        """
+        current = self._current_model()
+
+        # For unregistered model strings, use Model.prepare_request (grandparent's method)
+        # with our overridden profile property. This allows validation to use the correct
+        # profile inferred from the model string, without constructing a full model instance.
+        if isinstance(current, str):
+            return Model.prepare_request(self, model_settings, model_request_parameters)
+
+        return current.prepare_request(model_settings, model_request_parameters)
 
     def _resolve_model_id(self, model_id: str | None, run_context: RunContext[Any] | None = None) -> Model:
         """Resolve a model ID to a Model instance.

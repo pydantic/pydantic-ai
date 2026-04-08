@@ -3,9 +3,9 @@ from __future__ import annotations as _annotations
 from typing import Any
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 
+from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
@@ -225,6 +225,7 @@ async def test_report_with_error(mock_evaluator: Evaluator[TaskInput, TaskOutput
             'output': None,
             'scores': {},
             'span_id': 'test-error-span-id',
+            'source_case_name': None,
             'task_duration': 0.05,
             'total_duration': 0.1,
             'trace_id': 'test-error-trace-id',

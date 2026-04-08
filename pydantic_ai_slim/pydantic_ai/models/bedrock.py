@@ -3,7 +3,7 @@ from __future__ import annotations
 import functools
 import typing
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import count
@@ -31,10 +31,12 @@ from pydantic_ai import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
     _utils,
@@ -43,17 +45,22 @@ from pydantic_ai import (
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.builtin_tools import AbstractBuiltinTool, CodeExecutionTool
 from pydantic_ai.exceptions import ContextWindowExceeded, ModelAPIError, ModelHTTPError, UserError
+from pydantic_ai.messages import is_multi_modal_content
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
+from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP
+from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.tools import ToolDefinition
 
 if TYPE_CHECKING:
     from botocore.client import BaseClient
     from botocore.eventstream import EventStream
     from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
-    from mypy_boto3_bedrock_runtime.literals import StopReasonType
+    from mypy_boto3_bedrock_runtime.literals import (
+        StopReasonType,
+    )
     from mypy_boto3_bedrock_runtime.type_defs import (
         ContentBlockOutputTypeDef,
         ContentBlockUnionTypeDef,
@@ -63,10 +70,8 @@ if TYPE_CHECKING:
         ConverseStreamOutputTypeDef,
         ConverseStreamResponseTypeDef,
         CountTokensRequestTypeDef,
-        DocumentBlockTypeDef,
         DocumentSourceTypeDef,
         GuardrailConfigurationTypeDef,
-        ImageBlockTypeDef,
         InferenceConfigurationTypeDef,
         MessageUnionTypeDef,
         PerformanceConfigurationTypeDef,
@@ -78,11 +83,47 @@ if TYPE_CHECKING:
         ToolChoiceTypeDef,
         ToolConfigurationTypeDef,
         ToolResultBlockOutputTypeDef,
+        ToolResultContentBlockOutputTypeDef,
         ToolSpecificationTypeDef,
         ToolTypeDef,
         ToolUseBlockOutputTypeDef,
-        VideoBlockTypeDef,
     )
+
+
+@contextmanager
+def _map_api_errors(model_name: str) -> Iterator[None]:
+    try:
+        yield
+    except ClientError as e:
+        if ctx_exc := _check_context_window_exceeded(e, model_name):
+            raise ctx_exc from e
+        status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
+        if isinstance(status_code, int):
+            raise ModelHTTPError(status_code=status_code, model_name=model_name, body=e.response) from e
+        raise ModelAPIError(model_name=model_name, message=str(e)) from e
+
+
+_SUPPORTED_IMAGE_FORMATS = ('jpeg', 'png', 'gif', 'webp')
+_SUPPORTED_VIDEO_FORMATS = ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp')
+_SUPPORTED_DOCUMENT_FORMATS = ('pdf', 'txt', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'html', 'md')
+
+
+def _make_image_block(format: str, source: DocumentSourceTypeDef) -> ContentBlockUnionTypeDef:
+    if format not in _SUPPORTED_IMAGE_FORMATS:
+        raise UserError(f'Unsupported image format: {format}')
+    return {'image': {'format': format, 'source': source}}
+
+
+def _make_video_block(format: str, source: DocumentSourceTypeDef) -> ContentBlockUnionTypeDef:
+    if format not in _SUPPORTED_VIDEO_FORMATS:
+        raise UserError(f'Unsupported video format: {format}')
+    return {'video': {'format': format, 'source': source}}
+
+
+def _make_document_block(name: str, format: str, source: DocumentSourceTypeDef) -> ContentBlockUnionTypeDef:
+    if format not in _SUPPORTED_DOCUMENT_FORMATS:
+        raise UserError(f'Unsupported document format: {format}')
+    return {'document': {'name': name, 'format': format, 'source': source}}
 
 
 LatestBedrockModelNames = Literal[
@@ -119,6 +160,9 @@ LatestBedrockModelNames = Literal[
     'anthropic.claude-sonnet-4-5-20250929-v1:0',
     'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
     'eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
+    'anthropic.claude-sonnet-4-6',
+    'us.anthropic.claude-sonnet-4-6',
+    'eu.anthropic.claude-sonnet-4-6',
     'anthropic.claude-haiku-4-5-20251001-v1:0',
     'us.anthropic.claude-haiku-4-5-20251001-v1:0',
     'eu.anthropic.claude-haiku-4-5-20251001-v1:0',
@@ -164,6 +208,15 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
     'stop_sequence': 'stop',
     'tool_use': 'tool_call',
 }
+
+
+def _parse_s3_source(url: str) -> DocumentSourceTypeDef:
+    """Parse an S3 URL into a Bedrock DocumentSourceTypeDef."""
+    parsed = urlparse(url)
+    s3_location: S3LocationTypeDef = {'uri': f'{parsed.scheme}://{parsed.netloc}{parsed.path}'}
+    if bucket_owner := parse_qs(parsed.query).get('bucketOwner', [None])[0]:
+        s3_location['bucketOwner'] = bucket_owner
+    return {'s3Location': s3_location}
 
 
 def _insert_cache_point_before_trailing_documents(
@@ -216,7 +269,7 @@ def _insert_cache_point_before_trailing_documents(
                 'due to Bedrock API restrictions. '
                 'Add text content before or after your document or video to enable caching.'
             )
-        return False
+        return False  # pragma: no cover
 
 
 class BedrockModelSettings(ModelSettings, total=False):
@@ -295,6 +348,15 @@ class BedrockModelSettings(ModelSettings, total=False):
     """Setting for optimizing performance and cost
 
     See more about it on <https://docs.aws.amazon.com/bedrock/latest/userguide/service-tiers-inference.html>.
+    """
+
+    bedrock_inference_profile: str
+    """An [inference profile](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles.html) ARN to use as the `modelId` in API requests.
+
+    When set, this value is used as the `modelId` in `converse` and `converse_stream` API calls instead of the
+    base `model_name`. This allows you to pass the base model name (e.g. `'anthropic.claude-sonnet-4-5-20250929-v1:0'`)
+    as `model_name` for detecting model capabilities and token counting, while routing requests through an inference profile
+    for cost tracking or cross-region inference.
     """
 
 
@@ -429,15 +491,8 @@ class BedrockConverseModel(Model):
                 },
             },
         }
-        try:
+        with _map_api_errors(self.model_name):
             response = await anyio.to_thread.run_sync(functools.partial(self.client.count_tokens, **params))
-        except ClientError as e:
-            if ctx_exc := _check_context_window_exceeded(e, self.model_name):
-                raise ctx_exc from e
-            status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
-            if isinstance(status_code, int):
-                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.response) from e
-            raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
         return usage.RequestUsage(input_tokens=response['inputTokens'])
 
     @asynccontextmanager
@@ -545,6 +600,43 @@ class BedrockConverseModel(Model):
             provider_details=provider_details,
         )
 
+    def _translate_thinking(
+        self,
+        model_settings: BedrockModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> dict[str, Any] | None:
+        """Build thinking-related additionalModelRequestFields, using unified thinking as fallback."""
+        existing = dict(model_settings.get('bedrock_additional_model_requests_fields') or {})
+        thinking = model_request_parameters.thinking
+        if thinking is None:
+            return existing or None
+
+        profile = BedrockModelProfile.from_profile(self.profile)
+        variant = profile.bedrock_thinking_variant
+
+        if variant == 'anthropic' and 'thinking' not in existing:
+            if thinking is False:
+                existing['thinking'] = {'type': 'disabled'}
+            else:
+                existing['thinking'] = {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
+        elif variant == 'openai' and 'reasoning_effort' not in existing:
+            if thinking is not False:  # Bedrock doesn't accept reasoning_effort='none'
+                existing['reasoning_effort'] = OPENAI_REASONING_EFFORT_MAP[thinking]
+        elif variant == 'qwen' and 'reasoning_config' not in existing:
+            if thinking is not False:
+                # Qwen only supports low/high; map others to closest
+                level_map: dict[ThinkingLevel, str] = {
+                    True: 'high',
+                    'minimal': 'low',
+                    'low': 'low',
+                    'medium': 'high',
+                    'high': 'high',
+                    'xhigh': 'high',
+                }
+                existing['reasoning_config'] = level_map[thinking]
+
+        return existing or None
+
     @overload
     async def _messages_create(
         self,
@@ -577,7 +669,7 @@ class BedrockConverseModel(Model):
         inference_config = self._map_inference_config(settings)
 
         params: ConverseRequestTypeDef = {
-            'modelId': self.model_name,
+            'modelId': settings.get('bedrock_inference_profile') or self.model_name,
             'messages': bedrock_messages,
             'system': system_prompt,
             'inferenceConfig': inference_config,
@@ -602,27 +694,21 @@ class BedrockConverseModel(Model):
                 'bedrock_additional_model_response_fields_paths', None
             ):
                 params['additionalModelResponseFieldPaths'] = additional_model_response_fields_paths
-            if additional_model_requests_fields := model_settings.get('bedrock_additional_model_requests_fields', None):
-                params['additionalModelRequestFields'] = additional_model_requests_fields
             if prompt_variables := model_settings.get('bedrock_prompt_variables', None):
                 params['promptVariables'] = prompt_variables
             if service_tier := model_settings.get('bedrock_service_tier', None):
                 params['serviceTier'] = service_tier
 
-        try:
+        if additional_model_requests_fields := self._translate_thinking(settings, model_request_parameters):
+            params['additionalModelRequestFields'] = additional_model_requests_fields
+
+        with _map_api_errors(self.model_name):
             if stream:
                 model_response = await anyio.to_thread.run_sync(
                     functools.partial(self.client.converse_stream, **params)
                 )
             else:
                 model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse, **params))
-        except ClientError as e:
-            if ctx_exc := _check_context_window_exceeded(e, self.model_name):
-                raise ctx_exc from e
-            status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
-            if isinstance(status_code, int):
-                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.response) from e
-            raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
         return model_response
 
     @staticmethod
@@ -707,24 +793,67 @@ class BedrockConverseModel(Model):
                         )
                     elif isinstance(part, ToolReturnPart):
                         assert part.tool_call_id is not None
-                        bedrock_messages.append(
-                            {
-                                'role': 'user',
-                                'content': [
-                                    {
-                                        'toolResult': {
-                                            'toolUseId': part.tool_call_id,
-                                            'content': [
-                                                {'text': part.model_response_str()}
-                                                if profile.bedrock_tool_result_format == 'text'
-                                                else {'json': part.model_response_object()}
-                                            ],
-                                            'status': 'success',
-                                        }
-                                    }
-                                ],
-                            }
+                        tool_result_content: list[Any] = []
+                        sibling_content: list[ContentBlockUnionTypeDef] = []
+
+                        content_mode: Literal['str', 'jsonable'] = (
+                            'str' if profile.bedrock_tool_result_format == 'text' else 'jsonable'
                         )
+                        for item in part.content_items(mode=content_mode):
+                            if isinstance(item, UploadedFile):
+                                if item.provider_name != self.system:
+                                    raise UserError(
+                                        f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with BedrockConverseModel. '
+                                        f'Expected `provider_name` to be `{self.system!r}`.'
+                                    )
+                                if not item.file_id.startswith('s3://'):
+                                    raise UserError(
+                                        f'UploadedFile for Bedrock must use an S3 URL (s3://bucket/key), got: {item.file_id}'
+                                    )
+                                uf_source = _parse_s3_source(item.file_id)
+                                try:
+                                    uf_format = item.format
+                                except ValueError as e:
+                                    raise UserError(
+                                        f'Unsupported media type for Bedrock UploadedFile: {item.media_type}'
+                                    ) from e
+                                if item.media_type.startswith('image/'):
+                                    tool_result_content.append(_make_image_block(uf_format, uf_source))
+                                elif item.media_type.startswith('video/'):
+                                    tool_result_content.append(_make_video_block(uf_format, uf_source))
+                                elif item.media_type.startswith('audio/'):
+                                    raise UserError('Audio files are not supported for Bedrock UploadedFile')
+                                else:
+                                    tool_result_content.append(
+                                        _make_document_block(f'Document {next(document_count)}', uf_format, uf_source)
+                                    )
+                            elif is_multi_modal_content(item):
+                                if isinstance(item, AudioUrl):
+                                    raise NotImplementedError('AudioUrl is not supported in Bedrock tool returns')
+                                file_block = await self._map_file_to_content_block(item, document_count)  # pyright: ignore[reportArgumentType]
+                                kind = next((k for k in ('image', 'document', 'video') if k in file_block), None)
+                                if kind in profile.bedrock_supported_media_kinds_in_tool_returns:
+                                    tool_result_content.append(file_block)
+                                else:
+                                    tool_result_content.append({'text': f'See file {item.identifier}.'})
+                                    sibling_content.append({'text': f'This is file {item.identifier}:'})
+                                    sibling_content.append(file_block)
+                            elif isinstance(item, str):
+                                tool_result_content.append({'text': item})
+                            else:
+                                tool_result_content.append({'json': item})
+
+                        user_content: list[ContentBlockUnionTypeDef] = [
+                            {
+                                'toolResult': {
+                                    'toolUseId': part.tool_call_id,
+                                    'content': tool_result_content,
+                                    'status': 'success',
+                                }
+                            }
+                        ]
+                        user_content.extend(sibling_content)
+                        bedrock_messages.append({'role': 'user', 'content': user_content})
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
                             bedrock_messages.append({'role': 'user', 'content': [{'text': part.model_response()}]})
@@ -757,12 +886,13 @@ class BedrockConverseModel(Model):
                             and item.signature
                             and BedrockModelProfile.from_profile(self.profile).bedrock_send_back_thinking_parts
                         ):
+                            reasoning_content: ReasoningContentBlockOutputTypeDef
                             if item.id == 'redacted_content':
-                                reasoning_content: ReasoningContentBlockOutputTypeDef = {
+                                reasoning_content = {
                                     'redactedContent': item.signature.encode('utf-8'),
                                 }
                             else:
-                                reasoning_content: ReasoningContentBlockOutputTypeDef = {
+                                reasoning_content = {
                                     'reasoningText': {
                                         'text': item.content,
                                         'signature': item.signature,
@@ -785,9 +915,12 @@ class BedrockConverseModel(Model):
                     elif isinstance(item, BuiltinToolReturnPart):
                         if item.provider_name == self.system:
                             if item.tool_name == CodeExecutionTool.kind:
+                                result_content: list[ToolResultContentBlockOutputTypeDef] = [
+                                    {'json': cast(dict[str, Any], item.content)}
+                                ]
                                 tool_result: ToolResultBlockOutputTypeDef = {
                                     'toolUseId': _utils.guard_tool_call_id(t=item),
-                                    'content': [{'json': cast(Any, item.content)}] if item.content else [],
+                                    'content': result_content,
                                     'type': 'nova_code_interpreter_result',
                                 }
                                 if item.provider_details and 'status' in item.provider_details:
@@ -820,17 +953,35 @@ class BedrockConverseModel(Model):
             processed_messages.append(current_message)
             last_message = cast(dict[str, Any], current_message)
 
-        if instructions := self._get_instructions(messages, model_request_parameters):
-            system_prompt.append({'text': instructions})
+        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
+            for part in instruction_parts:
+                system_prompt.append({'text': part.content})
 
         if system_prompt and settings.get('bedrock_cache_instructions') and profile.bedrock_supports_prompt_caching:
-            system_prompt.append({'cachePoint': {'type': 'default'}})
+            if instruction_parts and any(p.dynamic for p in instruction_parts):
+                # Insert cache point after the last static instruction (static parts are sorted first)
+                num_pre_instruction_blocks = len(system_prompt) - len(instruction_parts)
+                num_static = sum(1 for p in instruction_parts if not p.dynamic)
+                cache_idx = num_pre_instruction_blocks + num_static
+                if cache_idx > 0:
+                    system_prompt.insert(cache_idx, {'cachePoint': {'type': 'default'}})
+            else:
+                # All static or no instruction_parts: cache point at end (current behavior)
+                system_prompt.append({'cachePoint': {'type': 'default'}})
 
         if processed_messages and settings.get('bedrock_cache_messages') and profile.bedrock_supports_prompt_caching:
             last_user_content = self._get_last_user_message_content(processed_messages)
             if last_user_content is not None:
                 # Note: _get_last_user_message_content ensures content doesn't already end with a cachePoint.
                 _insert_cache_point_before_trailing_documents(last_user_content)
+
+        # Bedrock requires conversations to start with a user message.
+        # This can happen when there are no messages at all (only system prompt/instructions),
+        # or when message_history starts with an assistant response (e.g. from a previous
+        # system-prompt-only run). Prepend a synthetic user message in either case.
+        # Note: Anthropic models on Bedrock reject whitespace-only text, so we use a period.
+        if not processed_messages or processed_messages[0]['role'] != 'user':
+            processed_messages.insert(0, {'role': 'user', 'content': [{'text': '.'}]})
 
         return system_prompt, processed_messages
 
@@ -861,7 +1012,44 @@ class BedrockConverseModel(Model):
         return content
 
     @staticmethod
+    async def _map_file_to_content_block(
+        file: ImageUrl | DocumentUrl | VideoUrl | BinaryContent,
+        document_count: Iterator[int],
+    ) -> ContentBlockUnionTypeDef:
+        """Map a multimodal file directly to a Bedrock content block."""
+        source: DocumentSourceTypeDef
+
+        if isinstance(file, BinaryContent):
+            source = {'bytes': file.data}
+            if file.is_image:
+                return _make_image_block(file.format, source)
+            elif file.is_document:
+                return _make_document_block(f'Document {next(document_count)}', file.format, source)
+            elif file.is_video:
+                return _make_video_block(file.format, source)
+            else:
+                raise NotImplementedError(f'Unsupported binary content type for Bedrock: {file.media_type}')
+        else:
+            if file.url.startswith('s3://'):
+                source = _parse_s3_source(file.url)
+            else:
+                downloaded = await download_item(file, data_format='bytes', type_format='extension')
+                source = {'bytes': downloaded['data']}
+
+            try:
+                format = file.format
+            except (KeyError, ValueError):
+                format = file.media_type.split('/', 1)[1]
+
+            if isinstance(file, ImageUrl):
+                return _make_image_block(format, source)
+            elif isinstance(file, DocumentUrl):
+                return _make_document_block(f'Document {next(document_count)}', format, source)
+            else:
+                return _make_video_block(format, source)
+
     async def _map_user_prompt(  # noqa: C901
+        self,
         part: UserPromptPart,
         document_count: Iterator[int],
         supports_prompt_caching: bool,
@@ -871,66 +1059,38 @@ class BedrockConverseModel(Model):
             content.append({'text': part.content})
         else:
             for item in part.content:
-                if isinstance(item, str):
-                    content.append({'text': item})
-                elif isinstance(item, BinaryContent):
-                    format = item.format
-                    if item.is_document:
-                        name = f'Document {next(document_count)}'
-                        assert format in ('pdf', 'txt', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'html', 'md')
-                        content.append({'document': {'name': name, 'format': format, 'source': {'bytes': item.data}}})
-                    elif item.is_image:
-                        assert format in ('jpeg', 'png', 'gif', 'webp')
-                        content.append({'image': {'format': format, 'source': {'bytes': item.data}}})
-                    elif item.is_video:
-                        assert format in ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp')
-                        content.append({'video': {'format': format, 'source': {'bytes': item.data}}})
+                if isinstance(item, str | TextContent):
+                    text = item if isinstance(item, str) else item.content
+                    content.append({'text': text})
+                elif isinstance(item, (BinaryContent, ImageUrl, DocumentUrl, VideoUrl)):
+                    content.append(await BedrockConverseModel._map_file_to_content_block(item, document_count))
+                elif isinstance(item, AudioUrl):
+                    raise NotImplementedError('AudioUrl is not supported in Bedrock user prompts')
+                elif isinstance(item, UploadedFile):
+                    if item.provider_name != self.system:
+                        raise UserError(
+                            f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with BedrockConverseModel. '
+                            f'Expected `provider_name` to be `{self.system!r}`.'
+                        )
+                    if not item.file_id.startswith('s3://'):
+                        raise UserError(
+                            f'UploadedFile for Bedrock must use an S3 URL (s3://bucket/key), got: {item.file_id}'
+                        )
+                    source: DocumentSourceTypeDef = _parse_s3_source(item.file_id)
+
+                    try:
+                        format = item.format
+                    except ValueError as e:
+                        raise UserError(f'Unsupported media type for Bedrock UploadedFile: {item.media_type}') from e
+
+                    if item.media_type.startswith('image/'):
+                        content.append(_make_image_block(format, source))
+                    elif item.media_type.startswith('video/'):
+                        content.append(_make_video_block(format, source))
+                    elif item.media_type.startswith('audio/'):
+                        raise UserError('Audio files are not supported for Bedrock UploadedFile')
                     else:
-                        raise NotImplementedError('Binary content is not supported yet.')
-                elif isinstance(item, ImageUrl | DocumentUrl | VideoUrl):
-                    source: DocumentSourceTypeDef
-                    if item.url.startswith('s3://'):
-                        parsed = urlparse(item.url)
-                        s3_location: S3LocationTypeDef = {'uri': f'{parsed.scheme}://{parsed.netloc}{parsed.path}'}
-                        if bucket_owner := parse_qs(parsed.query).get('bucketOwner', [None])[0]:
-                            s3_location['bucketOwner'] = bucket_owner
-                        source = {'s3Location': s3_location}
-                    else:
-                        downloaded_item = await download_item(item, data_format='bytes', type_format='extension')
-                        source = {'bytes': downloaded_item['data']}
-
-                    if item.kind == 'image-url':
-                        format = item.media_type.split('/')[1]
-                        assert format in ('jpeg', 'png', 'gif', 'webp'), f'Unsupported image format: {format}'
-                        image: ImageBlockTypeDef = {'format': format, 'source': source}
-                        content.append({'image': image})
-
-                    elif item.kind == 'document-url':
-                        name = f'Document {next(document_count)}'
-                        document: DocumentBlockTypeDef = {
-                            'name': name,
-                            'format': item.format,
-                            'source': source,
-                        }
-                        content.append({'document': document})
-
-                    elif item.kind == 'video-url':  # pragma: no branch
-                        format = item.media_type.split('/')[1]
-                        assert format in (
-                            'mkv',
-                            'mov',
-                            'mp4',
-                            'webm',
-                            'flv',
-                            'mpeg',
-                            'mpg',
-                            'wmv',
-                            'three_gp',
-                        ), f'Unsupported video format: {format}'
-                        video: VideoBlockTypeDef = {'format': format, 'source': source}
-                        content.append({'video': video})
-                elif isinstance(item, AudioUrl):  # pragma: no cover
-                    raise NotImplementedError('Audio is not supported yet.')
+                        content.append(_make_document_block(f'Document {next(document_count)}', format, source))
                 elif isinstance(item, CachePoint):
                     if not supports_prompt_caching:
                         # Silently skip CachePoint for models that don't support prompt caching
@@ -943,12 +1103,22 @@ class BedrockConverseModel(Model):
                     _insert_cache_point_before_trailing_documents(content, raise_if_cannot_insert=True)
                 else:
                     assert_never(item)
+        # https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Message.html
+        # "If you include a ContentBlock with a document field, you must also include a ContentBlock with a text field."
+        has_document = any('document' in block for block in content)
+        has_text = any('text' in block for block in content)
+        if has_document and not has_text:
+            content.insert(0, {'text': 'See attached document(s).'})
         return [{'role': 'user', 'content': content}]
 
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ContentBlockOutputTypeDef:
         return {
-            'toolUse': {'toolUseId': _utils.guard_tool_call_id(t=t), 'name': t.tool_name, 'input': t.args_as_dict()}
+            'toolUse': {
+                'toolUseId': _utils.guard_tool_call_id(t=t),
+                'name': _utils.sanitize_tool_name(t.tool_name),
+                'input': t.args_as_dict(),
+            }
         }
 
     @staticmethod
@@ -1030,129 +1200,125 @@ class BedrockStreamedResponse(StreamedResponse):
     _provider_response_id: str | None = None
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
-        """Return an async iterator of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
+        with _map_api_errors(self._model_name):
+            if self._provider_response_id is not None:
+                self.provider_response_id = self._provider_response_id
 
-        This method should be implemented by subclasses to translate the vendor-specific stream of events into
-        pydantic_ai-format events.
-        """
-        if self._provider_response_id is not None:  # pragma: no cover
-            self.provider_response_id = self._provider_response_id
+            chunk: ConverseStreamOutputTypeDef
+            tool_ids: dict[int, str] = {}
 
-        chunk: ConverseStreamOutputTypeDef
-        tool_ids: dict[int, str] = {}
+            # Bedrock has deltas for built-in tool returns, which aren't supported by parts manager.
+            # We accumulate the deltas here and yield the complete return part once the content block ends
+            builtin_tool_returns: dict[int, BuiltinToolReturnPart] = {}
 
-        # Bedrock has deltas for built-in tool returns, which aren't supported by parts manager.
-        # We accumulate the deltas here and yield the complete return part once the content block ends
-        builtin_tool_returns: dict[int, BuiltinToolReturnPart] = {}
-
-        async for chunk in _AsyncIteratorWrapper(self._event_stream):
-            match chunk:
-                case {'messageStart': _}:
-                    continue
-                case {'messageStop': message_stop}:
-                    raw_finish_reason = message_stop['stopReason']
-                    self.provider_details = {'finish_reason': raw_finish_reason}
-                    self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
-                case {'metadata': metadata}:
-                    if 'usage' in metadata:  # pragma: no branch
-                        self._usage += self._map_usage(metadata)
-                case {'contentBlockStart': content_block_start}:
-                    index = content_block_start['contentBlockIndex']
-                    start = content_block_start['start']
-                    if 'toolUse' in start:
-                        tool_use_start = start['toolUse']
-                        tool_id = tool_use_start['toolUseId']
-                        tool_ids[index] = tool_id
-                        tool_name = tool_use_start['name']
-                        if tool_use_start.get('type') == 'server_tool_use':
-                            if tool_name == 'nova_code_interpreter':  # pragma: no branch
-                                part = BuiltinToolCallPart(
-                                    tool_name=CodeExecutionTool.kind,
-                                    tool_call_id=tool_id,
-                                    provider_name=self.provider_name,
-                                )
-                                yield self._parts_manager.handle_part(vendor_part_id=index, part=part)
-                        elif maybe_event := self._parts_manager.handle_tool_call_delta(
-                            vendor_part_id=index,
-                            tool_name=tool_name,
-                            args=None,
-                            tool_call_id=tool_id,
-                        ):  # pragma: no branch
-                            yield maybe_event
-                    elif 'toolResult' in start:  # pragma: no branch
-                        tool_result_start = start['toolResult']
-                        tool_id = tool_result_start['toolUseId']
-
-                        if tool_result_start.get('type') == 'nova_code_interpreter_result':  # pragma: no branch
-                            return_part = BuiltinToolReturnPart(
-                                provider_name=self.provider_name,
-                                tool_name=CodeExecutionTool.kind,
-                                content=None,
+            async for chunk in _AsyncIteratorWrapper(self._event_stream):
+                match chunk:
+                    case {'messageStart': _}:
+                        continue
+                    case {'messageStop': message_stop}:
+                        raw_finish_reason = message_stop['stopReason']
+                        self.provider_details = {'finish_reason': raw_finish_reason}
+                        self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+                    case {'metadata': metadata}:
+                        if 'usage' in metadata:  # pragma: no branch
+                            self._usage += self._map_usage(metadata)
+                    case {'contentBlockStart': content_block_start}:
+                        index = content_block_start['contentBlockIndex']
+                        start = content_block_start['start']
+                        if 'toolUse' in start:
+                            tool_use_start = start['toolUse']
+                            tool_id = tool_use_start['toolUseId']
+                            tool_ids[index] = tool_id
+                            tool_name = tool_use_start['name']
+                            if tool_use_start.get('type') == 'server_tool_use':
+                                if tool_name == 'nova_code_interpreter':  # pragma: no branch
+                                    part = BuiltinToolCallPart(
+                                        tool_name=CodeExecutionTool.kind,
+                                        tool_call_id=tool_id,
+                                        provider_name=self.provider_name,
+                                    )
+                                    yield self._parts_manager.handle_part(vendor_part_id=index, part=part)
+                            elif maybe_event := self._parts_manager.handle_tool_call_delta(
+                                vendor_part_id=index,
+                                tool_name=tool_name,
+                                args=None,
                                 tool_call_id=tool_id,
-                                provider_details={'status': tool_result_start['status']}
-                                if 'status' in tool_result_start
-                                else {},
+                            ):  # pragma: no branch
+                                yield maybe_event
+                        elif 'toolResult' in start:  # pragma: no branch
+                            tool_result_start = start['toolResult']
+                            tool_id = tool_result_start['toolUseId']
+
+                            if tool_result_start.get('type') == 'nova_code_interpreter_result':  # pragma: no branch
+                                return_part = BuiltinToolReturnPart(
+                                    provider_name=self.provider_name,
+                                    tool_name=CodeExecutionTool.kind,
+                                    content=None,
+                                    tool_call_id=tool_id,
+                                    provider_details={'status': tool_result_start['status']}
+                                    if 'status' in tool_result_start
+                                    else {},
+                                )
+                                builtin_tool_returns[index] = return_part
+                                # Don't yield anything yet - we wait for content block end
+
+                    case {'contentBlockDelta': content_block_delta}:
+                        index = content_block_delta['contentBlockIndex']
+                        delta = content_block_delta['delta']
+                        if 'reasoningContent' in delta:
+                            if redacted_content := delta['reasoningContent'].get('redactedContent'):
+                                for event in self._parts_manager.handle_thinking_delta(
+                                    vendor_part_id=index,
+                                    id='redacted_content',
+                                    signature=redacted_content.decode('utf-8'),
+                                    provider_name=self.provider_name,
+                                ):
+                                    yield event
+                            else:
+                                signature = delta['reasoningContent'].get('signature')
+                                for event in self._parts_manager.handle_thinking_delta(
+                                    vendor_part_id=index,
+                                    content=delta['reasoningContent'].get('text'),
+                                    signature=signature,
+                                    provider_name=self.provider_name if signature else None,
+                                ):
+                                    yield event
+                        if text := delta.get('text'):
+                            for event in self._parts_manager.handle_text_delta(vendor_part_id=index, content=text):
+                                yield event
+                        if 'toolUse' in delta:
+                            tool_use = delta['toolUse']
+                            maybe_event = self._parts_manager.handle_tool_call_delta(
+                                vendor_part_id=index,
+                                tool_name=tool_use.get('name'),
+                                args=tool_use.get('input'),
+                                tool_call_id=tool_ids[index],
                             )
-                            builtin_tool_returns[index] = return_part
-                            # Don't yield anything yet - we wait for content block end
+                            if maybe_event:  # pragma: no branch
+                                yield maybe_event
+                        if 'toolResult' in delta:  # pragma: no branch
+                            if (
+                                return_part := builtin_tool_returns.get(index)
+                            ) and return_part.tool_name == CodeExecutionTool.kind:  # pragma: no branch
+                                # For now, only process `contentBlockDelta.toolResult` for Code Exe tool.
 
-                case {'contentBlockDelta': content_block_delta}:
-                    index = content_block_delta['contentBlockIndex']
-                    delta = content_block_delta['delta']
-                    if 'reasoningContent' in delta:
-                        if redacted_content := delta['reasoningContent'].get('redactedContent'):
-                            for event in self._parts_manager.handle_thinking_delta(
-                                vendor_part_id=index,
-                                id='redacted_content',
-                                signature=redacted_content.decode('utf-8'),
-                                provider_name=self.provider_name,
-                            ):
-                                yield event
-                        else:
-                            signature = delta['reasoningContent'].get('signature')
-                            for event in self._parts_manager.handle_thinking_delta(
-                                vendor_part_id=index,
-                                content=delta['reasoningContent'].get('text'),
-                                signature=signature,
-                                provider_name=self.provider_name if signature else None,
-                            ):
-                                yield event
-                    if text := delta.get('text'):
-                        for event in self._parts_manager.handle_text_delta(vendor_part_id=index, content=text):
-                            yield event
-                    if 'toolUse' in delta:
-                        tool_use = delta['toolUse']
-                        maybe_event = self._parts_manager.handle_tool_call_delta(
-                            vendor_part_id=index,
-                            tool_name=tool_use.get('name'),
-                            args=tool_use.get('input'),
-                            tool_call_id=tool_ids[index],
-                        )
-                        if maybe_event:  # pragma: no branch
-                            yield maybe_event
-                    if 'toolResult' in delta:  # pragma: no branch
-                        if (
-                            return_part := builtin_tool_returns.get(index)
-                        ) and return_part.tool_name == CodeExecutionTool.kind:  # pragma: no branch
-                            # For now, only process `contentBlockDelta.toolResult` for Code Exe tool.
+                                if tr_content := delta['toolResult']:  # pragma: no branch
+                                    # Goal here is to convert to object form.
+                                    # This assumes the first item is the relevant one.
+                                    return_part.content = tr_content[0].get('json')
 
-                            if tr_content := delta['toolResult']:  # pragma: no branch
-                                # Goal here is to convert to object form.
-                                # This assumes the first item is the relevant one.
-                                return_part.content = tr_content[0].get('json')
+                                # Don't yield anything yet - we wait for content block end
 
-                            # Don't yield anything yet - we wait for content block end
+                    case {'contentBlockStop': content_block_stop}:
+                        index = content_block_stop['contentBlockIndex']
+                        if return_part := builtin_tool_returns.get(index):
+                            # Emit the complete built-in tool return only once when the block closes.
+                            yield self._parts_manager.handle_part(vendor_part_id=index, part=return_part)
+                        tool_ids.pop(index, None)
+                        builtin_tool_returns.pop(index, None)
 
-                case {'contentBlockStop': content_block_stop}:
-                    index = content_block_stop['contentBlockIndex']
-                    if return_part := builtin_tool_returns.get(index):
-                        # Emit the complete built-in tool return only once when the block closes.
-                        yield self._parts_manager.handle_part(vendor_part_id=index, part=return_part)
-                    tool_ids.pop(index, None)
-                    builtin_tool_returns.pop(index, None)
-
-                case _:  # pragma: no cover
-                    pass  # pyright wants match statements to be exhaustive
+                    case _:  # pragma: no cover
+                        pass  # pyright wants match statements to be exhaustive
 
     @property
     def model_name(self) -> str:

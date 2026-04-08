@@ -94,14 +94,24 @@ _import_string_adapter: TypeAdapter[Any] = TypeAdapter(ImportString)
 
 
 def load_agent(agent_path: str) -> Agent[Any, Any] | None:
-    """Load an agent from module path in uvicorn style.
+    """Load an agent from a module path or a YAML/JSON spec file.
+
+    Supports two formats:
+    - Module path in uvicorn style: `'module:variable'`, e.g. `'test_agent:my_agent'`
+    - File path to a YAML or JSON agent spec: e.g. `'agent.yml'`, `'agent.yaml'`, `'agent.json'`
 
     Args:
-        agent_path: Path in format 'module:variable', e.g. 'test_agent:my_agent'
+        agent_path: Module path or file path to load the agent from.
 
     Returns:
-        Agent instance or None if loading fails
+        Agent instance or None if loading fails.
     """
+    path = Path(agent_path)
+    if path.suffix in ('.yaml', '.yml', '.json'):  # pragma: no cover
+        if not path.is_file():
+            return None
+        return Agent.from_file(path)
+
     sys.path.insert(0, str(Path.cwd()))
     try:
         obj = _import_string_adapter.validate_python(agent_path)
@@ -152,7 +162,7 @@ def _cli_web(args_list: list[str], prog_name: str, default_model: str, qualified
     parser.add_argument(
         '--agent',
         '-a',
-        help='Agent to serve, in format "module:variable" (e.g., "mymodule:agent"). '
+        help='Agent to serve: a module path like "module:variable" or a YAML/JSON spec file like "agent.yml". '
         'If omitted, creates a generic agent with the first specified model as default.',
     )
     model_arg = parser.add_argument(
@@ -160,7 +170,7 @@ def _cli_web(args_list: list[str], prog_name: str, default_model: str, qualified
         '--model',
         action='append',
         dest='models',
-        help='Model to make available (can be repeated, e.g., -m openai:gpt-5 -m anthropic:claude-sonnet-4-5). '
+        help='Model to make available (can be repeated, e.g., -m openai:gpt-5 -m anthropic:claude-sonnet-4-6). '
         'Format: "provider:model_name". First model is preselected in UI; additional models appear as options.',
     )
     model_arg.completer = argcomplete.ChoicesCompleter(qualified_model_names)  # type: ignore[reportPrivateUsage]
@@ -233,13 +243,13 @@ subcommands:
     model_arg = parser.add_argument(
         '-m',
         '--model',
-        help=f'Model to use, in format "<provider>:<model>" e.g. "openai:gpt-5" or "anthropic:claude-sonnet-4-5". Defaults to "{default_model}".',
+        help=f'Model to use, in format "<provider>:<model>" e.g. "openai:gpt-5" or "anthropic:claude-sonnet-4-6". Defaults to "{default_model}".',
     )
     model_arg.completer = argcomplete.ChoicesCompleter(qualified_model_names)  # type: ignore[reportPrivateUsage]
     parser.add_argument(
         '-a',
         '--agent',
-        help='Custom Agent to use, in format "module:variable", e.g. "mymodule.submodule:my_agent"',
+        help='Custom Agent to use: a module path like "module:variable" or a YAML/JSON spec file like "agent.yml"',
     )
     parser.add_argument(
         '-t',
@@ -287,7 +297,7 @@ def _run_chat_command(
             console.print(f'Error initializing [magenta]{args.model}[/magenta]:\n[red]{e}[/red]')
             return 1
 
-    model_name = agent.model if isinstance(agent.model, str) else f'{agent.model.system}:{agent.model.model_name}'
+    model_name = agent.model if isinstance(agent.model, str) else agent.model.model_id
     if args.agent and model_arg_set:
         console.print(
             f'{name_version} using custom agent [magenta]{args.agent}[/magenta] with [magenta]{model_name}[/magenta]',

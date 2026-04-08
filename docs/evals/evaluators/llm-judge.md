@@ -30,6 +30,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import LLMJudge
 
 dataset = Dataset(
+    name='factual_accuracy',
     cases=[Case(inputs='test')],
     evaluators=[
         LLMJudge(rubric='Response is factually accurate'),
@@ -90,6 +91,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import LLMJudge
 
 dataset = Dataset(
+    name='math_check',
     cases=[
         Case(
             inputs='What is 2+2?',
@@ -120,7 +122,7 @@ LLMJudge(rubric='...')
 # Anthropic Claude (alternative default)
 LLMJudge(
     rubric='...',
-    model='anthropic:claude-sonnet-4-5',
+    model='anthropic:claude-sonnet-4-6',
 )
 
 # Cheaper option for simple checks
@@ -141,7 +143,7 @@ LLMJudge(
 Customize model behavior:
 
 ```python
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai import ModelSettings
 from pydantic_evals.evaluators import LLMJudge
 
 LLMJudge(
@@ -250,6 +252,7 @@ class RAGInput:
 
 
 dataset = Dataset(
+    name='rag_evaluation',
     cases=[
         Case(
             inputs=RAGInput(
@@ -314,6 +317,7 @@ async def transform_recipe(customer_order: CustomerOrder) -> Recipe:
 
 
 recipe_dataset = Dataset[CustomerOrder, Recipe, Any](
+    name='recipe_evaluation',
     cases=[
         Case(
             name='vegetarian_recipe',
@@ -347,7 +351,7 @@ recipe_dataset = Dataset[CustomerOrder, Recipe, Any](
         LLMJudge(
             rubric='Recipe should have clear steps and relevant ingredients',
             include_input=True,
-            model='anthropic:claude-sonnet-4-5',
+            model='anthropic:claude-sonnet-4-6',
         ),
     ],
 )
@@ -382,6 +386,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import LLMJudge
 
 dataset = Dataset(
+    name='multi_aspect',
     cases=[Case(inputs='test')],
     evaluators=[
         # Accuracy
@@ -423,6 +428,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import LLMJudge
 
 dataset = Dataset(
+    name='comparative_eval',
     cases=[
         Case(
             name='translation',
@@ -511,7 +517,7 @@ evaluators = [
 ### 4. Use Temperature 0 for Consistency
 
 ```python
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai import ModelSettings
 from pydantic_evals.evaluators import LLMJudge
 
 LLMJudge(
@@ -579,6 +585,7 @@ def my_task(inputs: str) -> str:
 
 
 dataset = Dataset(
+    name='debug_reasons',
     cases=[Case(inputs='test')],
     evaluators=[LLMJudge(rubric='Response is clear')],
 )
@@ -619,6 +626,7 @@ def my_task(inputs: str) -> str:
 
 
 dataset = Dataset(
+    name='programmatic_access',
     cases=[Case(inputs='test')],
     evaluators=[LLMJudge(rubric='Response is clear')],
 )
@@ -647,12 +655,12 @@ def my_task(inputs: str) -> str:
 
 judges = [
     LLMJudge(rubric='Response is clear', model='openai:gpt-5.2'),
-    LLMJudge(rubric='Response is clear', model='anthropic:claude-sonnet-4-5'),
+    LLMJudge(rubric='Response is clear', model='anthropic:claude-sonnet-4-6'),
     LLMJudge(rubric='Response is clear', model='openai:gpt-5-mini'),
 ]
 
 for judge in judges:
-    dataset = Dataset(cases=[Case(inputs='test')], evaluators=[judge])
+    dataset = Dataset(name='judge_comparison', cases=[Case(inputs='test')], evaluators=[judge])
     report = dataset.evaluate_sync(my_task)
     # Compare results
 ```
@@ -666,7 +674,7 @@ from pydantic_evals.evaluators import LLMJudge
 from pydantic_evals.evaluators.llm_as_a_judge import set_default_judge_model
 
 # Set default to Claude
-set_default_judge_model('anthropic:claude-sonnet-4-5')
+set_default_judge_model('anthropic:claude-sonnet-4-6')
 
 # Now all LLMJudge instances use Claude by default
 LLMJudge(rubric='...')  # Uses Claude

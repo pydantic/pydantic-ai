@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections import defaultdict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from io import StringIO
 from typing import Any, Generic, Literal, Protocol, cast
@@ -11,11 +11,21 @@ from rich.console import Console, Group, RenderableType
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
-from typing_extensions import TypedDict, TypeVar
+from typing_extensions import TypedDict, TypeVar, assert_never
 
 from pydantic_evals._utils import UNSET, Unset
 
 from ..evaluators import EvaluationResult
+from .analyses import (
+    ConfusionMatrix,
+    LinePlot,
+    PrecisionRecall,
+    PrecisionRecallCurve,
+    PrecisionRecallPoint,
+    ReportAnalysis,
+    ScalarResult,
+    TableResult,
+)
 from .render_numbers import (
     default_render_duration,
     default_render_duration_diff,
@@ -31,10 +41,19 @@ __all__ = (
     'ReportCaseAdapter',
     'ReportCaseFailure',
     'ReportCaseFailureAdapter',
+    'ReportCaseGroup',
     'EvaluationRenderer',
     'RenderValueConfig',
     'RenderNumberConfig',
     'ReportCaseAggregate',
+    'ReportAnalysis',
+    'ConfusionMatrix',
+    'LinePlot',
+    'PrecisionRecall',
+    'PrecisionRecallCurve',
+    'PrecisionRecallPoint',
+    'ScalarResult',
+    'TableResult',
 )
 
 from ..evaluators.evaluator import EvaluatorFailure
@@ -73,6 +92,10 @@ class ReportCase(Generic[InputsT, OutputT, MetadataT]):
     task_duration: float
     total_duration: float  # includes evaluator execution time
 
+    source_case_name: str | None = None
+    """The original case name before run-indexing. Serves as the aggregation key
+    for multi-run experiments. None when repeat == 1."""
+
     trace_id: str | None = None
     """The trace ID of the case span."""
     span_id: str | None = None
@@ -99,6 +122,10 @@ class ReportCaseFailure(Generic[InputsT, OutputT, MetadataT]):
     error_stacktrace: str
     """The stacktrace of the exception that caused the failure."""
 
+    source_case_name: str | None = None
+    """The original case name before run-indexing. Serves as the aggregation key
+    for multi-run experiments. None when repeat == 1."""
+
     trace_id: str | None = None
     """The trace ID of the case span."""
     span_id: str | None = None
@@ -107,6 +134,32 @@ class ReportCaseFailure(Generic[InputsT, OutputT, MetadataT]):
 
 ReportCaseAdapter = TypeAdapter(ReportCase[Any, Any, Any])
 ReportCaseFailureAdapter = TypeAdapter(ReportCaseFailure[Any, Any, Any])
+
+
+@dataclass(kw_only=True)
+class ReportCaseGroup(Generic[InputsT, OutputT, MetadataT]):
+    """Grouped results from running the same case multiple times.
+
+    This is a computed view, not stored data. Obtain via
+    `EvaluationReport.case_groups()`.
+    """
+
+    name: str
+    """The original case name (shared across all runs)."""
+    inputs: InputsT
+    """The inputs (same for all runs)."""
+    metadata: MetadataT | None
+    """The metadata (same for all runs)."""
+    expected_output: OutputT | None
+    """The expected output (same for all runs)."""
+
+    runs: Sequence[ReportCase[InputsT, OutputT, MetadataT]]
+    """Individual run results."""
+    failures: Sequence[ReportCaseFailure[InputsT, OutputT, MetadataT]]
+    """Runs that failed with exceptions."""
+
+    summary: ReportCaseAggregate
+    """Aggregated statistics across runs."""
 
 
 class ReportCaseAggregate(BaseModel):
@@ -185,6 +238,64 @@ class ReportCaseAggregate(BaseModel):
             total_duration=average_total_duration,
         )
 
+    @staticmethod
+    def average_from_aggregates(aggregates: list[ReportCaseAggregate]) -> ReportCaseAggregate:
+        """Average across multiple aggregates (used for multi-run experiment summaries)."""
+        if not aggregates:
+            return ReportCaseAggregate(
+                name='Averages',
+                scores={},
+                labels={},
+                metrics={},
+                assertions=None,
+                task_duration=0.0,
+                total_duration=0.0,
+            )
+
+        def _avg_numeric_dicts(dicts: list[dict[str, float | int]]) -> dict[str, float | int]:
+            all_keys: set[str] = set()
+            for d in dicts:
+                all_keys.update(d)
+            return {key: sum(vals) / len(vals) for key in all_keys if (vals := [d[key] for d in dicts if key in d])}
+
+        avg_scores = _avg_numeric_dicts([a.scores for a in aggregates])
+        avg_metrics = _avg_numeric_dicts([a.metrics for a in aggregates])
+
+        # Average labels (average the distribution dicts)
+        all_label_keys: set[str] = set()
+        for a in aggregates:
+            all_label_keys.update(a.labels)
+        avg_labels: dict[str, dict[str, float]] = {}
+        for key in all_label_keys:
+            combined: dict[str, float] = {}
+            count = 0
+            for a in aggregates:
+                if key in a.labels:
+                    count += 1
+                    for label_val, freq in a.labels[key].items():
+                        combined[label_val] = combined.get(label_val, 0.0) + freq
+            avg_labels[key] = {k: v / count for k, v in combined.items()}
+
+        # Average assertions
+        assertion_values = [a.assertions for a in aggregates if a.assertions is not None]
+        avg_assertions: float | None = None
+        if assertion_values:
+            avg_assertions = sum(assertion_values) / len(assertion_values)
+
+        # Average durations
+        task_durs = [a.task_duration for a in aggregates]
+        total_durs = [a.total_duration for a in aggregates]
+
+        return ReportCaseAggregate(
+            name='Averages',
+            scores=avg_scores,
+            labels=avg_labels,
+            metrics=avg_metrics,
+            assertions=avg_assertions,
+            task_duration=sum(task_durs) / len(task_durs),
+            total_duration=sum(total_durs) / len(total_durs),
+        )
+
 
 @dataclass(kw_only=True)
 class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
@@ -200,6 +311,12 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
     )
     """The failures in the report. These are cases where task execution raised an exception."""
 
+    analyses: list[ReportAnalysis] = field(default_factory=list[ReportAnalysis])
+    """Experiment-wide analyses produced by report evaluators."""
+
+    report_evaluator_failures: list[EvaluatorFailure] = field(default_factory=list[EvaluatorFailure])
+    """Failures from report evaluators that raised exceptions."""
+
     experiment_metadata: dict[str, Any] | None = None
     """Metadata associated with the specific experiment represented by this report."""
     trace_id: str | None = None
@@ -207,8 +324,49 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
     span_id: str | None = None
     """The span ID of the evaluation."""
 
+    def case_groups(self) -> list[ReportCaseGroup[InputsT, OutputT, MetadataT]] | None:
+        """Group cases by source_case_name and compute per-group aggregates.
+
+        Returns None if no cases have source_case_name set (i.e., single-run experiment).
+        """
+        if not any(c.source_case_name for c in self.cases) and not any(f.source_case_name for f in self.failures):
+            return None
+
+        groups: dict[
+            str,
+            tuple[list[ReportCase[InputsT, OutputT, MetadataT]], list[ReportCaseFailure[InputsT, OutputT, MetadataT]]],
+        ] = {}
+        for case in self.cases:
+            key = case.source_case_name or case.name
+            groups.setdefault(key, ([], []))[0].append(case)
+        for failure in self.failures:
+            key = failure.source_case_name or failure.name
+            groups.setdefault(key, ([], []))[1].append(failure)
+
+        result: list[ReportCaseGroup[InputsT, OutputT, MetadataT]] = []
+        for group_name, (runs, failures) in groups.items():
+            first: ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT] = (
+                runs[0] if runs else failures[0]
+            )
+            result.append(
+                ReportCaseGroup(
+                    name=group_name,
+                    inputs=first.inputs,
+                    metadata=first.metadata,
+                    expected_output=first.expected_output,
+                    runs=runs,
+                    failures=failures,
+                    summary=ReportCaseAggregate.average(list(runs)),
+                )
+            )
+        return result
+
     def averages(self) -> ReportCaseAggregate | None:
-        if self.cases:
+        groups = self.case_groups()
+        if groups is not None:
+            non_empty_summaries = [g.summary for g in groups if g.runs]
+            return ReportCaseAggregate.average_from_aggregates(non_empty_summaries) if non_empty_summaries else None
+        elif self.cases:
             return ReportCaseAggregate.average(self.cases)
         return None
 
@@ -228,6 +386,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         include_errors: bool = True,
         include_error_stacktrace: bool = False,
         include_evaluator_failures: bool = True,
+        include_analyses: bool = True,
         input_config: RenderValueConfig | None = None,
         metadata_config: RenderValueConfig | None = None,
         output_config: RenderValueConfig | None = None,
@@ -258,6 +417,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             include_errors=include_errors,
             include_error_stacktrace=include_error_stacktrace,
             include_evaluator_failures=include_evaluator_failures,
+            include_analyses=include_analyses,
             input_config=input_config,
             metadata_config=metadata_config,
             output_config=output_config,
@@ -286,6 +446,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         include_errors: bool = True,
         include_error_stacktrace: bool = False,
         include_evaluator_failures: bool = True,
+        include_analyses: bool = True,
         input_config: RenderValueConfig | None = None,
         metadata_config: RenderValueConfig | None = None,
         output_config: RenderValueConfig | None = None,
@@ -328,6 +489,16 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         if metadata_panel:
             renderable = Group(metadata_panel, renderable)
         console.print(renderable)
+        if include_analyses and self.analyses:
+            for analysis in self.analyses:
+                console.print(_render_analysis(analysis))
+        if include_evaluator_failures and self.report_evaluator_failures:
+            console.print(
+                Text('\nReport Evaluator Failures:', style='bold red'),
+            )
+            for failure in self.report_evaluator_failures:
+                msg = f'  {failure.name}: {failure.error_message}'
+                console.print(Text(msg, style='red'))
         if include_errors and self.failures:  # pragma: no cover
             failures_table = self.failures_table(
                 include_input=include_input,
@@ -1357,9 +1528,16 @@ class EvaluationRenderer:
             table.add_row(*row)
 
         if self.include_averages:  # pragma: no branch
-            report_average = ReportCaseAggregate.average(report_cases)
-            baseline_average = ReportCaseAggregate.average(baseline_cases)
-            table.add_row(*case_renderer.build_diff_aggregate_row(report_average, baseline_average))
+            # Use flat averaging for both sides to keep the diff symmetric.
+            # baseline_cases is already filtered to only cases matching the report.
+            # Note: for multi-run reports, this differs from build_table which uses two-level
+            # aggregation via report.averages(). In practice the results are identical when all
+            # runs succeed (equal group sizes), and only diverge with partial failures within a
+            # group — a rare edge case. We can revisit if users report confusing behavior.
+            report_average = ReportCaseAggregate.average(report_cases) if report_cases else None
+            baseline_average = ReportCaseAggregate.average(baseline_cases) if baseline_cases else None
+            if report_average and baseline_average:  # pragma: no branch
+                table.add_row(*case_renderer.build_diff_aggregate_row(report_average, baseline_average))
 
         return table
 
@@ -1430,3 +1608,43 @@ class EvaluationRenderer:
         if self.include_total_duration:
             all_durations += [x.total_duration for x in all_cases]
         return _NumberRenderer.infer_from_config(self.duration_config, 'duration', all_durations)
+
+
+def _render_analysis(
+    analysis: ConfusionMatrix | PrecisionRecall | ScalarResult | TableResult | LinePlot,
+) -> RenderableType:
+    """Render a single report analysis as a Rich renderable."""
+    if isinstance(analysis, ConfusionMatrix):
+        table = Table(title=analysis.title, show_lines=True)
+        table.add_column('Expected \\ Predicted', style='bold')
+        for label in analysis.class_labels:
+            table.add_column(label, justify='right')
+        for i, row_label in enumerate(analysis.class_labels):
+            row = [row_label] + [str(v) for v in analysis.matrix[i]]
+            table.add_row(*row)
+        return table
+    elif isinstance(analysis, ScalarResult):
+        value_str = str(analysis.value)
+        if analysis.unit:
+            value_str += f' {analysis.unit}'
+        return Text(f'{analysis.title}: {value_str}')
+    elif isinstance(analysis, PrecisionRecall):
+        lines: list[str] = [analysis.title]
+        for curve in analysis.curves:
+            auc_str = f', AUC={curve.auc:.4f}' if curve.auc is not None else ''
+            lines.append(f'  {curve.name}: {len(curve.points)} points{auc_str}')
+        return Text('\n'.join(lines))
+    elif isinstance(analysis, LinePlot):
+        lines: list[str] = [analysis.title]
+        for curve in analysis.curves:
+            lines.append(f'  {curve.name}: {len(curve.points)} points')
+        return Text('\n'.join(lines))
+    elif isinstance(analysis, TableResult):
+        table = Table(title=analysis.title, show_lines=True)
+        for col in analysis.columns:
+            table.add_column(col)
+        for row in analysis.rows:
+            table.add_row(*[str(v) if v is not None else '' for v in row])
+        return table
+    else:
+        assert_never(analysis)

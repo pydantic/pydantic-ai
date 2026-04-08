@@ -11,7 +11,6 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 from pydantic_core import ErrorDetails
 
@@ -45,17 +44,18 @@ from pydantic_ai import (
 )
 from pydantic_ai._agent_graph import GraphAgentState
 from pydantic_ai._output import TextOutputProcessor, TextOutputSchema
-from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai.agent import AgentRun
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel, TestStreamedResponse as ModelTestStreamedResponse
 from pydantic_ai.output import PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import AgentStream, FinalResult, RunUsage, StreamedRunResult, StreamedRunResultSync
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition
+from pydantic_ai.tool_manager import ToolManager
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
 from pydantic_graph import End
 
+from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInt, IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
@@ -790,6 +790,37 @@ async def test_call_tool_wrong_name():
             ),
         ]
     )
+
+
+async def test_invalid_output_tool_args_get_output():
+    """Regression test for https://github.com/pydantic/pydantic-ai/issues/3638."""
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        assert info.output_tools is not None and len(info.output_tools) == 1
+        yield {0: DeltaToolCall(name=info.output_tools[0].name)}
+        yield {0: DeltaToolCall(json_args='{"response": ["hello", "not_an_int"]}')}
+
+    agent = Agent(FunctionModel(stream_function=stream_fn), output_type=tuple[str, int])
+
+    with pytest.raises(UnexpectedModelBehavior, match='retries are not supported in `run_stream'):
+        async with agent.run_stream('hello') as result:
+            await result.get_output()
+
+
+async def test_invalid_output_tool_args_stream_output():
+    """Regression test for https://github.com/pydantic/pydantic-ai/issues/3638."""
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        assert info.output_tools is not None and len(info.output_tools) == 1
+        yield {0: DeltaToolCall(name=info.output_tools[0].name)}
+        yield {0: DeltaToolCall(json_args='{"response": ["hello", "not_an_int"]}')}
+
+    agent = Agent(FunctionModel(stream_function=stream_fn), output_type=tuple[str, int])
+
+    with pytest.raises(UnexpectedModelBehavior, match='retries are not supported in `run_stream'):
+        async with agent.run_stream('hello') as result:
+            async for _ in result.stream_output(debounce_by=None):
+                pass
 
 
 class TestPartialOutput:
@@ -2098,7 +2129,7 @@ class TestMultipleToolCalls:
                         ),
                         ToolReturnPart(
                             tool_name='second_output',
-                            content='Output tool not used - output failed validation.',
+                            content='Output tool not used - output function execution failed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
@@ -2571,7 +2602,8 @@ async def test_unknown_tool_call_events():
                     tool_name='known_tool',
                     args={'x': 5},
                     tool_call_id=IsStr(),
-                )
+                ),
+                args_valid=True,
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(
@@ -2579,6 +2611,7 @@ async def test_unknown_tool_call_events():
                     args={'arg': 'value'},
                     tool_call_id=IsStr(),
                 ),
+                args_valid=False,
             ),
             FunctionToolResultEvent(
                 result=RetryPromptPart(
@@ -2631,6 +2664,7 @@ async def test_output_tool_validation_failure_events():
                     args={'bad_value': 'invalid'},
                     tool_call_id=IsStr(),
                 ),
+                args_valid=False,
             ),
             FunctionToolResultEvent(
                 result=RetryPromptPart(
@@ -2647,6 +2681,8 @@ async def test_output_tool_validation_failure_events():
                     timestamp=IsNow(tz=timezone.utc),
                 )
             ),
+            # Note: No FunctionToolCallEvent for the successful output tool call
+            # Output tools only emit FunctionToolCallEvent on validation/execution failure
         ]
     )
 
@@ -2738,7 +2774,7 @@ def test_function_tool_event_tool_call_id_properties():
     """Ensure that the `tool_call_id` property on function tool events mirrors the underlying part's ID."""
     # Prepare a ToolCallPart with a fixed ID
     call_part = ToolCallPart(tool_name='sample_tool', args={'a': 1}, tool_call_id='call_id_123')
-    call_event = FunctionToolCallEvent(part=call_part)
+    call_event = FunctionToolCallEvent(part=call_part, args_valid=True)
 
     # The event should expose the same `tool_call_id` as the part
     assert call_event.tool_call_id == call_part.tool_call_id == 'call_id_123'
@@ -2897,7 +2933,15 @@ async def test_deferred_tool_iter():
             DeferredToolRequests(
                 calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
                 approvals=[ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr())],
-            )
+            ),
+            DeferredToolRequests(
+                calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')],
+                approvals=[
+                    ToolCallPart(
+                        tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
+                    )
+                ],
+            ),
         ]
     )
     assert events == snapshot(
@@ -2925,8 +2969,12 @@ async def test_deferred_tool_iter():
                     tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
                 ),
             ),
-            FunctionToolCallEvent(part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())),
-            FunctionToolCallEvent(part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr())),
+            FunctionToolCallEvent(
+                part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr()), args_valid=True
+            ),
+            FunctionToolCallEvent(
+                part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr()), args_valid=True
+            ),
         ]
     )
 
@@ -2979,8 +3027,12 @@ async def test_tool_raises_call_deferred_approval_required_iter():
                     tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
                 ),
             ),
-            FunctionToolCallEvent(part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())),
-            FunctionToolCallEvent(part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr())),
+            FunctionToolCallEvent(
+                part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr()), args_valid=True
+            ),
+            FunctionToolCallEvent(
+                part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr()), args_valid=True
+            ),
         ]
     )
 
@@ -3021,7 +3073,9 @@ async def test_run_event_stream_handler():
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
             ),
-            FunctionToolCallEvent(part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())),
+            FunctionToolCallEvent(
+                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
+            ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
                     tool_name='ret_a',
@@ -3067,7 +3121,9 @@ def test_run_sync_event_stream_handler():
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
             ),
-            FunctionToolCallEvent(part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())),
+            FunctionToolCallEvent(
+                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
+            ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
                     tool_name='ret_a',
@@ -3116,7 +3172,9 @@ async def test_run_stream_event_stream_handler():
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
             ),
-            FunctionToolCallEvent(part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())),
+            FunctionToolCallEvent(
+                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
+            ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
                     tool_name='ret_a',
@@ -3159,28 +3217,39 @@ async def test_stream_tool_returning_user_content():
                 index=0,
                 part=ToolCallPart(tool_name='get_image', args={}, tool_call_id='pyd_ai_tool_call_id__get_image'),
             ),
-            FunctionToolCallEvent(part=ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr())),
+            FunctionToolCallEvent(
+                part=ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr()), args_valid=True
+            ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
                     tool_name='get_image',
-                    content='See file bd38f5',
+                    content=ImageUrl(
+                        url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
+                    ),
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
-                ),
-                content=[
-                    'This is file bd38f5:',
-                    ImageUrl(
-                        url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg',
-                        identifier='bd38f5',
-                    ),
-                ],
+                )
             ),
             PartStartEvent(index=0, part=TextPart(content='')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"get_image":"See ')),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='file ')),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='bd38f5"}')),
-            PartEndEvent(index=0, part=TextPart(content='{"get_image":"See file bd38f5"}')),
+            PartDeltaEvent(
+                index=0,
+                delta=TextPartDelta(
+                    content_delta='{"get_image":{"url":"https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg","'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=TextPartDelta(
+                    content_delta='force_download":false,"vendor_metadata":null,"kind":"image-url","media_type":"image/jpeg","identifier":"bd38f5"}}'
+                ),
+            ),
+            PartEndEvent(
+                index=0,
+                part=TextPart(
+                    content='{"get_image":{"url":"https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg","force_download":false,"vendor_metadata":null,"kind":"image-url","media_type":"image/jpeg","identifier":"bd38f5"}}'
+                ),
+            ),
         ]
     )
 
@@ -3208,7 +3277,9 @@ async def test_run_stream_events():
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
             ),
-            FunctionToolCallEvent(part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())),
+            FunctionToolCallEvent(
+                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
+            ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
                     tool_name='ret_a',
@@ -3302,3 +3373,405 @@ async def test_get_output_after_stream_output():
             ),
         ]
     )
+
+
+@pytest.mark.parametrize('delta', [True, False])
+@pytest.mark.parametrize('debounce_by', [None, 0.1])
+async def test_stream_text_early_break_cleanup(delta: bool, debounce_by: float | None):
+    """Breaking out of `stream_text()` triggers proper async generator cleanup.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4204
+    The `aclosing` wrapper in `_stream_response_text` ensures `aclose()` propagates
+    through the nested generator chain so cleanup happens in the same async context,
+    preventing `RuntimeError: async generator raised StopAsyncIteration`.
+
+    Tests both `group_by_temporal` code paths:
+    - `debounce_by=None`: simple pass-through iterator
+    - `debounce_by=0.1`: asyncio.Task-based buffering with pending task cancellation
+    """
+    cleanup_called = False
+
+    async def sf(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal cleanup_called
+        try:
+            for chunk in ['Hello', ' ', 'world', '!', ' More', ' text']:
+                yield chunk
+        finally:
+            # Confirms aclose() propagated synchronously, not deferred to GC.
+            cleanup_called = True
+
+    agent = Agent(FunctionModel(stream_function=sf))
+
+    async with agent.run_stream('test') as result:
+        async for _text in result.stream_text(delta=delta, debounce_by=debounce_by):
+            break
+
+    assert cleanup_called, 'stream function cleanup should have been called by aclosing propagation'
+
+
+async def test_args_validator_failure_events():
+    """Test that failed validation emits args_valid=False, retries with error message, then succeeds."""
+    validator_calls = 0
+
+    def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        nonlocal validator_calls
+        validator_calls += 1
+        if validator_calls == 1:
+            raise ModelRetry('Validation failed: x must be positive')
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool(args_validator=my_validator, retries=2)
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    events: list[Any] = []
+    async for event in agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42):
+        events.append(event)
+
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
+            ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
+            ),
+            FunctionToolCallEvent(
+                part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
+                args_valid=False,
+            ),
+            FunctionToolResultEvent(
+                result=RetryPromptPart(
+                    content='Validation failed: x must be positive',
+                    tool_name='add_numbers',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+            ),
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
+            ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
+            ),
+            FunctionToolCallEvent(
+                part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
+                args_valid=True,
+            ),
+            FunctionToolResultEvent(
+                result=ToolReturnPart(
+                    tool_name='add_numbers',
+                    content=0,
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+            ),
+            PartStartEvent(index=0, part=TextPart(content='')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"add_nu')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='mbers":0}')),
+            PartEndEvent(index=0, part=TextPart(content='{"add_numbers":0}')),
+            AgentRunResultEvent(result=AgentRunResult(output='{"add_numbers":0}')),
+        ]
+    )
+
+
+async def test_args_validator_event_args_valid_field():
+    """Test that FunctionToolCallEvent has args_valid field set correctly."""
+
+    def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        pass  # Always succeeds
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool(args_validator=my_validator)
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    events: list[Any] = []
+    async for event in agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42):
+        events.append(event)
+
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(
+                    tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id='pyd_ai_tool_call_id__add_numbers'
+                ),
+            ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(
+                    tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id='pyd_ai_tool_call_id__add_numbers'
+                ),
+            ),
+            FunctionToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id='pyd_ai_tool_call_id__add_numbers'
+                ),
+                args_valid=True,
+            ),
+            FunctionToolResultEvent(
+                result=ToolReturnPart(
+                    tool_name='add_numbers',
+                    content=0,
+                    tool_call_id='pyd_ai_tool_call_id__add_numbers',
+                    timestamp=IsDatetime(),
+                )
+            ),
+            PartStartEvent(index=0, part=TextPart(content='')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"add_nu')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='mbers":0}')),
+            PartEndEvent(index=0, part=TextPart(content='{"add_numbers":0}')),
+            AgentRunResultEvent(result=AgentRunResult(output='{"add_numbers":0}')),
+        ]
+    )
+
+
+async def test_args_validator_event_args_valid_no_custom_validator():
+    """Test that args_valid=True when no custom validator but schema validation passes."""
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    events: list[Any] = []
+    async for event in agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42):
+        events.append(event)
+
+    tool_call_events: list[FunctionToolCallEvent] = [e for e in events if isinstance(e, FunctionToolCallEvent)]
+    assert len(tool_call_events) >= 1
+
+    add_number_events = [e for e in tool_call_events if e.part.tool_name == 'add_numbers']
+    assert add_number_events, 'Should have events for add_numbers'
+    for event in add_number_events:
+        assert event.args_valid is True
+
+
+async def test_schema_validation_failure_args_valid_false():
+    """Test that args_valid=False when Pydantic schema validation fails (no custom validator)."""
+
+    def return_invalid_args(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+        """Return a tool call with invalid arguments (wrong type)."""
+        return ModelResponse(parts=[ToolCallPart(tool_name='add_numbers', args={'x': 'not_an_int', 'y': 2})])
+
+    async def stream_invalid_args(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        """Stream a tool call with invalid arguments."""
+        yield {0: DeltaToolCall(name='add_numbers')}
+        yield {0: DeltaToolCall(json_args='{"x": "not_an_int", "y": 2}')}
+
+    agent = Agent(FunctionModel(return_invalid_args, stream_function=stream_invalid_args), deps_type=int)
+
+    @agent.tool
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:  # pragma: no cover
+        """Add two numbers."""
+        return x + y
+
+    events: list[Any] = []
+    try:
+        async for event in agent.run_stream_events('call add_numbers', deps=42):  # pragma: no branch
+            events.append(event)
+    except UnexpectedModelBehavior:
+        pass  # Expected when max retries exceeded
+
+    tool_call_events: list[FunctionToolCallEvent] = [e for e in events if isinstance(e, FunctionToolCallEvent)]
+    assert len(tool_call_events) >= 1
+
+    first_event = tool_call_events[0]
+    assert first_event.part.tool_name == 'add_numbers'
+    assert first_event.args_valid is False
+
+
+async def test_args_validator_run_stream_event_handler():
+    """Test that args_valid is correctly set on FunctionToolCallEvent when using run_stream()."""
+
+    def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        pass  # Always succeeds
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool(args_validator=my_validator)
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    events: list[AgentStreamEvent] = []
+
+    async def handler(ctx: RunContext[int], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events.append(event)
+
+    async with agent.run_stream('call add_numbers', deps=42, event_stream_handler=handler) as result:
+        await result.get_output()
+
+    tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent)]
+    assert tool_call_events
+    for event in tool_call_events:
+        assert event.args_valid is True
+
+
+async def test_event_ordering_call_before_result():
+    """Test that FunctionToolCallEvent is emitted before FunctionToolResultEvent for each tool call."""
+
+    def my_validator(ctx: RunContext[None], x: int) -> None:
+        pass
+
+    agent = Agent(TestModel(call_tools=['my_tool']))
+
+    @agent.tool(args_validator=my_validator)
+    def my_tool(ctx: RunContext[None], x: int) -> int:
+        """A tool."""
+        return x * 2
+
+    events: list[Any] = []
+    async for event in agent.run_stream_events('test'):
+        events.append(event)
+
+    call_ids_seen: set[str] = set()
+    result_ids_seen: set[str] = set()
+    for event in events:
+        if isinstance(event, FunctionToolCallEvent):
+            call_ids_seen.add(event.tool_call_id)
+            assert event.tool_call_id not in result_ids_seen, (
+                f'FunctionToolResultEvent for {event.tool_call_id} appeared before FunctionToolCallEvent'
+            )
+        elif isinstance(event, FunctionToolResultEvent):
+            result_id = event.result.tool_call_id
+            result_ids_seen.add(result_id)
+            assert result_id in call_ids_seen, (
+                f'FunctionToolResultEvent for {result_id} appeared without prior FunctionToolCallEvent'
+            )
+
+    assert call_ids_seen
+    assert result_ids_seen
+
+
+async def test_args_valid_true_for_presupplied_tool_approved():
+    """Test that args_valid=True when re-running with ToolApproved (validation runs upfront with approval context)."""
+
+    def my_validator(ctx: RunContext[int], x: int) -> None:
+        pass
+
+    agent = Agent(
+        TestModel(),
+        deps_type=int,
+        output_type=[str, DeferredToolRequests],
+    )
+
+    @agent.tool(args_validator=my_validator)
+    def my_tool(ctx: RunContext[int], x: int) -> int:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired()
+        return x * 42
+
+    # First run: tool requires approval
+    result = await agent.run('Hello', deps=42)
+    assert isinstance(result.output, DeferredToolRequests)
+    tool_call_id = result.output.approvals[0].tool_call_id
+
+    # Second run with ToolApproved: collect events
+    messages = result.all_messages()
+    events: list[Any] = []
+    async for event in agent.run_stream_events(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(approvals={tool_call_id: ToolApproved()}),
+        deps=42,
+    ):
+        events.append(event)
+
+    # The FunctionToolCallEvent for the pre-supplied result should have args_valid=True
+    tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool']
+    assert tool_call_events
+    assert tool_call_events[0].args_valid is True
+
+
+async def test_args_valid_none_for_tool_denied():
+    """Test that args_valid=None for ToolDenied and the denial message appears in the result event."""
+
+    def my_validator(ctx: RunContext[int], x: int) -> None:
+        pass
+
+    agent = Agent(
+        TestModel(),
+        deps_type=int,
+        output_type=[str, DeferredToolRequests],
+    )
+
+    @agent.tool(args_validator=my_validator)
+    def my_tool(ctx: RunContext[int], x: int) -> int:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired()
+        return x  # pragma: no cover
+
+    # First run: tool requires approval
+    result = await agent.run('Hello', deps=42)
+    assert isinstance(result.output, DeferredToolRequests)
+    tool_call_id = result.output.approvals[0].tool_call_id
+
+    # Second run with ToolDenied
+    messages = result.all_messages()
+    events: list[Any] = []
+    async for event in agent.run_stream_events(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(approvals={tool_call_id: ToolDenied('User denied this tool call')}),
+        deps=42,
+    ):
+        events.append(event)
+
+    # FunctionToolCallEvent should have args_valid=None (pre-supplied result, no upfront validation)
+    tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool']
+    assert tool_call_events
+    assert tool_call_events[0].args_valid is None
+
+    # FunctionToolResultEvent should contain the denial message
+    result_events = [e for e in events if isinstance(e, FunctionToolResultEvent) and e.result.tool_name == 'my_tool']
+    assert result_events
+    assert result_events[0].result.content == 'User denied this tool call'
+
+
+async def test_deferred_tool_validation_event_in_stream():
+    """Test that deferred (requires_approval) tools emit FunctionToolCallEvent with correct args_valid."""
+
+    def my_validator(ctx: RunContext[None], x: int) -> None:
+        pass
+
+    agent = Agent(
+        TestModel(),
+        output_type=[str, DeferredToolRequests],
+    )
+
+    @agent.tool(args_validator=my_validator)
+    def my_tool(ctx: RunContext[None], x: int) -> int:
+        raise ApprovalRequired()
+
+    events: list[Any] = []
+    async for event in agent.run_stream_events('test'):
+        events.append(event)
+
+    tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool']
+    assert tool_call_events
+    # TestModel generates valid args (x=0 by default), so validation passes
+    assert tool_call_events[0].args_valid is True
