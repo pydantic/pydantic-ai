@@ -558,12 +558,20 @@ def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, s
         for item in prefix_items:
             _update_mapped_json_schema_refs(item, name_mapping)
 
-    # Handle unions
-    for union_type in ['anyOf', 'oneOf']:
-        if union_type in s:
-            union_items: list[dict[str, Any]] = s[union_type]
-            for item in union_items:
+    # Handle additionalProperties
+    if 'additionalProperties' in s and isinstance(s['additionalProperties'], dict):
+        _update_mapped_json_schema_refs(s['additionalProperties'], name_mapping)
+
+    # Handle unions and composition keywords
+    for keyword in ['anyOf', 'oneOf', 'allOf']:
+        if keyword in s:
+            keyword_items: list[dict[str, Any]] = s[keyword]
+            for item in keyword_items:
                 _update_mapped_json_schema_refs(item, name_mapping)
+
+    # Handle negation
+    if 'not' in s and isinstance(s['not'], dict):
+        _update_mapped_json_schema_refs(s['not'], name_mapping)
 
 
 def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
@@ -602,6 +610,13 @@ def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str
 
                 all_defs[new_name] = def_schema
                 schema_name_mapping[name] = new_name
+
+        # Update refs inside renamed definitions so internal cross-references
+        # (e.g. Outer_1 still pointing to #/$defs/Inner instead of #/$defs/Inner_1)
+        # are corrected.
+        for name, new_name in schema_name_mapping.items():
+            if name != new_name:
+                _update_mapped_json_schema_refs(all_defs[new_name], schema_name_mapping)
 
         _update_mapped_json_schema_refs(schema, schema_name_mapping)
         rewritten_schemas.append(schema)
