@@ -154,7 +154,7 @@ class TypeSignature:
             owner_name: The owning tool name, used to build prefixed type names
                 for conflicting types (e.g. `get_user_Address`).
             conflicting_type_names: Set of type names that need tool-name prefixes
-                (from `dedup_referenced_types`). Only effective when `owner_name`
+                (from `get_conflicting_type_names`). Only effective when `owner_name`
                 is also provided.
         """
         if owner_name and conflicting_type_names:
@@ -254,7 +254,7 @@ class FunctionSignature:
             name: The function name (also used for dedup prefix resolution). Falls back to `self.name`.
             description: Optional docstring to include. Falls back to `self.description`.
             is_async: Override async rendering. If `None`, uses `self.is_async`.
-            conflicting_type_names: Set of type names that need tool-name prefixes (from `dedup_referenced_types`).
+            conflicting_type_names: Set of type names that need tool-name prefixes (from `get_conflicting_type_names`).
         """
         render_name = name or self.name
         description = description if description is not None else self.description
@@ -307,7 +307,7 @@ class FunctionSignature:
         Parameter and return schemas are processed independently — each resolves
         `$ref`s against its own `$defs`. Name collisions between parameter and return
         types (e.g. both define a `User` `$def` with different structures) are handled
-        by `dedup_referenced_types` at a later stage.
+        by `get_conflicting_type_names` at a later stage.
         """
         # Process parameter schema with its own $defs
         param_defs = parameters_schema.get('$defs', {})
@@ -326,7 +326,7 @@ class FunctionSignature:
             )
 
         # Merge referenced types, deduplicating structurally identical types within this signature.
-        # Cross-signature collisions are handled later by dedup_referenced_types.
+        # Cross-signature collisions are handled later by get_conflicting_type_names.
         all_referenced = list(param_referenced.values())
         for ret_type in return_referenced.values():
             existing = param_referenced.get(ret_type.name)
@@ -342,8 +342,8 @@ class FunctionSignature:
         )
 
     @staticmethod
-    def dedup_referenced_types(signatures: list[FunctionSignature]) -> frozenset[str]:
-        """Resolve TypedDict name conflicts across multiple tool signatures in place.
+    def get_conflicting_type_names(signatures: list[FunctionSignature]) -> frozenset[str]:
+        """Identify TypedDict name conflicts across multiple tool signatures.
 
         Each signature keeps all its referenced types (so it remains self-contained),
         but identical types (same name and structure) are unified to the same object
@@ -397,12 +397,12 @@ class FunctionSignature:
         """Render unique TypedDict definitions for a set of function signatures.
 
         For types whose names conflict across signatures (as identified by
-        `dedup_referenced_types`), each definition is rendered with a
+        `get_conflicting_type_names`), each definition is rendered with a
         tool-name prefix (e.g. `get_user_Address`).
 
         Args:
-            signatures: The function signatures (after `dedup_referenced_types`).
-            conflicting_type_names: The set returned by `dedup_referenced_types`.
+            signatures: The function signatures (after `get_conflicting_type_names`).
+            conflicting_type_names: The set returned by `get_conflicting_type_names`.
 
         Returns:
             A list of rendered TypedDict class definitions as strings.

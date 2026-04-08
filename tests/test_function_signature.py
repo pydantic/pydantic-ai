@@ -50,7 +50,7 @@ def test_render_function_signature_with_no_params():
     assert sig.render('...', name='ping', is_async=True) == 'async def ping() -> None:\n    ...'
 
 
-def test_dedup_referenced_types_substring_names():
+def test_get_conflicting_type_names_substring_names():
     """Marking 'User' for prefix must not affect 'UserMeta' in the same signature."""
     user1 = TypeSignature(
         name='User',
@@ -86,7 +86,7 @@ def test_dedup_referenced_types_substring_names():
         return_type=user_meta,
         referenced_types=[user2, user_meta],
     )
-    prefixed = FunctionSignature.dedup_referenced_types([sig1, sig2])
+    prefixed = FunctionSignature.get_conflicting_type_names([sig1, sig2])
 
     # 'User' needs a prefix, 'UserMeta' does not
     assert prefixed == frozenset({'User'})
@@ -141,7 +141,7 @@ def test_dedup_identical_types_unified():
         return_type=SimpleTypeExpr('Any'),
         referenced_types=[user2],
     )
-    FunctionSignature.dedup_referenced_types([sig1, sig2])
+    FunctionSignature.get_conflicting_type_names([sig1, sig2])
 
     # Both sigs keep the type, but unified to the same canonical instance
     assert len(sig2.referenced_types) == 1
@@ -206,7 +206,7 @@ def test_dedup_replaces_nested_generic_and_union_refs_with_canonical():
         referenced_types=[user2, wrapper],
     )
 
-    FunctionSignature.dedup_referenced_types([sig1, sig2])
+    FunctionSignature.get_conflicting_type_names([sig1, sig2])
 
     users_expr = wrapper.fields['users'].type
     maybe_user_expr = wrapper.fields['maybe_user'].type
@@ -266,7 +266,7 @@ def test_dedup_mixed_identical_and_conflicting_from_schemas():
         },
     )
 
-    prefixed = FunctionSignature.dedup_referenced_types([sig1, sig2, sig3])
+    prefixed = FunctionSignature.get_conflicting_type_names([sig1, sig2, sig3])
 
     # sig1 and sig2 share the same canonical User instance
     assert len(sig1.referenced_types) == 1
@@ -319,7 +319,7 @@ def test_dedup_composite_type_expr_rename_propagates():
         return_type=SimpleTypeExpr('Any'),
         referenced_types=[user2],
     )
-    prefixed = FunctionSignature.dedup_referenced_types([sig1, sig2])
+    prefixed = FunctionSignature.get_conflicting_type_names([sig1, sig2])
 
     # 'User' needs a prefix
     assert prefixed == frozenset({'User'})
