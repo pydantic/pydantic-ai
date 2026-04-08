@@ -2087,7 +2087,7 @@ class _ReplacingCapability(AbstractCapability[Any]):
     replaced: bool = field(default=False, init=False)
 
     async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
-        from pydantic_ai._agent_graph import ModelRequestNode
+        from pydantic_ai import ModelRequestNode
 
         if isinstance(node, ModelRequestNode) and not self.replaced:
             self.replaced = True
@@ -8260,7 +8260,7 @@ async def test_thread_executor_static_method() -> None:
 
 async def test_after_node_run_end_to_node_override():
     """after_node_run can convert an End result back to a node, continuing execution."""
-    from pydantic_ai._agent_graph import ModelRequestNode
+    from pydantic_ai import ModelRequestNode
 
     call_count = 0
 

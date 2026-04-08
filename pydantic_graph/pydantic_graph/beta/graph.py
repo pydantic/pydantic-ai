@@ -511,10 +511,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
             # if `next` is called before the `first_node` has run.
             await anext(self)
         if value is not None:
-            if isinstance(value, EndMarker):
-                self._next = value
-            else:
-                self._next = [GraphTask.from_request(gtr, self._get_next_task_id) for gtr in value]
+            self._set_next(value)
         return await anext(self)
 
     def override_next(self, value: Sequence[GraphTaskRequest] | EndMarker[OutputT]) -> None:
@@ -524,9 +521,14 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         the graph to a new node when the current step produced an `End` result or raised an error,
         or to signal early completion by passing an `EndMarker`.
 
+        Must only be called between iterations (not while an iteration is in flight).
+
         Args:
             value: New task requests to execute next, or an `EndMarker` to signal completion.
         """
+        self._set_next(value)
+
+    def _set_next(self, value: Sequence[GraphTaskRequest] | EndMarker[OutputT]) -> None:
         if isinstance(value, EndMarker):
             self._next = value
         else:

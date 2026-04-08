@@ -274,14 +274,16 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             result = await cap.wrap_node_run(run_context, node=node, handler=step_fn)
         except Exception as e:
             result = await cap.on_node_run_error(run_context, node=node, error=e)
-            # on_node_run_error recovered from the exception by returning a result.
-            # Update the graph runner so it can continue with the new node or End.
+            # on_node_run_error recovered by returning a result.
+            # The graph runner is in ErrorMarker state; update it to match.
             self._sync_graph_state(result)
+        pre_hook_result = result
         result = await cap.after_node_run(run_context, node=node, result=result)
 
-        # If after_node_run changed the result type (End↔node), sync the graph runner state
-        # so agent_run.result correctly reflects whether the run is finished.
-        self._sync_graph_state(result)
+        # If after_node_run changed the result, sync the graph runner state so
+        # agent_run.result correctly reflects whether the run is finished.
+        if result is not pre_hook_result:
+            self._sync_graph_state(result)
 
         return result
 
