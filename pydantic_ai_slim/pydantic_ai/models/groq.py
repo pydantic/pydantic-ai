@@ -544,6 +544,8 @@ class GroqModel(Model):
                         tool_call_id=_guard_tool_call_id(t=part),
                         content=part.model_response(),
                     )
+            else:
+                assert_never(part)
         if file_content:
             yield await self._map_user_prompt(UserPromptPart(content=file_content))
 
