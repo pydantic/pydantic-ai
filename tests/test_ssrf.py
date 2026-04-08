@@ -671,6 +671,96 @@ class TestSafeDownload:
 
             mock_client_fn.assert_called_once_with(timeout=_DEFAULT_TIMEOUT)
 
+    async def test_allowed_domains_permits(self) -> None:
+        """Test that allowed domain passes validation."""
+        mock_response = AsyncMock()
+        mock_response.is_redirect = False
+        mock_response.raise_for_status = lambda: None
+
+        with (
+            patch('pydantic_ai._ssrf.run_in_executor') as mock_executor,
+            patch('pydantic_ai._ssrf.cached_async_http_client') as mock_client_fn,
+        ):
+            mock_executor.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+            mock_client = AsyncMock()
+            mock_client.get.return_value = mock_response
+            mock_client_fn.return_value = mock_client
+
+            await safe_download('https://example.com/page', allowed_domains=['example.com'])
+
+    async def test_allowed_domains_blocks(self) -> None:
+        """Test that non-allowed domain is rejected."""
+        with patch('pydantic_ai._ssrf.run_in_executor') as mock_executor:
+            mock_executor.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+            with pytest.raises(ValueError, match='not in the allowed domains'):
+                await safe_download('https://evil.com/page', allowed_domains=['example.com'])
+
+    async def test_blocked_domains_blocks(self) -> None:
+        """Test that blocked domain is rejected."""
+        with patch('pydantic_ai._ssrf.run_in_executor') as mock_executor:
+            mock_executor.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+            with pytest.raises(ValueError, match='is blocked'):
+                await safe_download('https://evil.com/page', blocked_domains=['evil.com'])
+
+    async def test_blocked_domains_permits(self) -> None:
+        """Test that non-blocked domain passes validation."""
+        mock_response = AsyncMock()
+        mock_response.is_redirect = False
+        mock_response.raise_for_status = lambda: None
+
+        with (
+            patch('pydantic_ai._ssrf.run_in_executor') as mock_executor,
+            patch('pydantic_ai._ssrf.cached_async_http_client') as mock_client_fn,
+        ):
+            mock_executor.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+            mock_client = AsyncMock()
+            mock_client.get.return_value = mock_response
+            mock_client_fn.return_value = mock_client
+
+            await safe_download('https://example.com/page', blocked_domains=['evil.com'])
+
+    async def test_redirect_to_blocked_domain_rejected(self) -> None:
+        """Test that redirects to blocked domains are caught."""
+        redirect_response = AsyncMock()
+        redirect_response.is_redirect = True
+        redirect_response.headers = {'location': 'https://evil.com/payload'}
+
+        with (
+            patch('pydantic_ai._ssrf.run_in_executor') as mock_executor,
+            patch('pydantic_ai._ssrf.cached_async_http_client') as mock_client_fn,
+        ):
+            mock_executor.side_effect = [
+                [(2, 1, 6, '', ('93.184.215.14', 0))],
+                [(2, 1, 6, '', ('198.51.100.1', 0))],
+            ]
+            mock_client = AsyncMock()
+            mock_client.get.return_value = redirect_response
+            mock_client_fn.return_value = mock_client
+
+            with pytest.raises(ValueError, match='is blocked'):
+                await safe_download('https://example.com/page', blocked_domains=['evil.com'])
+
+    async def test_redirect_to_non_allowed_domain_rejected(self) -> None:
+        """Test that redirects to non-allowed domains are caught."""
+        redirect_response = AsyncMock()
+        redirect_response.is_redirect = True
+        redirect_response.headers = {'location': 'https://other.com/page'}
+
+        with (
+            patch('pydantic_ai._ssrf.run_in_executor') as mock_executor,
+            patch('pydantic_ai._ssrf.cached_async_http_client') as mock_client_fn,
+        ):
+            mock_executor.side_effect = [
+                [(2, 1, 6, '', ('93.184.215.14', 0))],
+                [(2, 1, 6, '', ('198.51.100.1', 0))],
+            ]
+            mock_client = AsyncMock()
+            mock_client.get.return_value = redirect_response
+            mock_client_fn.return_value = mock_client
+
+            with pytest.raises(ValueError, match='not in the allowed domains'):
+                await safe_download('https://example.com/page', allowed_domains=['example.com'])
+
 
 class TestDnsRebindingPrevention:
     """Tests specifically for DNS rebinding attack prevention."""

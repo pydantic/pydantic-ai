@@ -42,7 +42,7 @@ from pydantic_ai import (
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.builtin_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.exceptions import ContentFilterError
-from pydantic_ai.messages import SystemPromptPart, UploadedFile
+from pydantic_ai.messages import InstructionPart, SystemPromptPart, UploadedFile
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
@@ -4243,11 +4243,13 @@ async def test_openai_chat_instructions_after_system_prompts(allow_model_request
                 SystemPromptPart(content='System prompt 2'),
                 UserPromptPart(content='Hello'),
             ],
-            instructions='Instructions content',
         ),
     ]
+    model_request_parameters = ModelRequestParameters(
+        instruction_parts=[InstructionPart(content='Instructions content')],
+    )
 
-    openai_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    openai_messages = await model._map_messages(messages, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
 
     # Verify order: system1, system2, instructions, user
     assert len(openai_messages) == 4
@@ -4272,11 +4274,13 @@ async def test_openai_chat_instructions_after_only_system_prompts(allow_model_re
                 SystemPromptPart(content='System prompt 1'),
                 SystemPromptPart(content='System prompt 2'),
             ],
-            instructions='Instructions content',
         ),
     ]
+    model_request_parameters = ModelRequestParameters(
+        instruction_parts=[InstructionPart(content='Instructions content')],
+    )
 
-    openai_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    openai_messages = await model._map_messages(messages, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
 
     assert openai_messages == snapshot(
         [
@@ -4293,10 +4297,13 @@ async def test_openai_chat_instructions_with_no_mapped_messages(allow_model_requ
     model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
 
     messages: list[ModelRequest | ModelResponse] = [
-        ModelRequest(parts=[], instructions='Instructions content'),
+        ModelRequest(parts=[]),
     ]
+    model_request_parameters = ModelRequestParameters(
+        instruction_parts=[InstructionPart(content='Instructions content')],
+    )
 
-    openai_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    openai_messages = await model._map_messages(messages, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
 
     assert openai_messages == snapshot(
         [
@@ -4319,11 +4326,13 @@ async def test_openai_chat_instructions_do_not_split_tool_call_history(allow_mod
         ModelRequest(parts=[SystemPromptPart(content='CONVERSATION SUMMARY:\n...')]),
         ModelRequest(
             parts=[UserPromptPart(content='New user message')],
-            instructions='You are a helpful assistant.',
         ),
     ]
+    model_request_parameters = ModelRequestParameters(
+        instruction_parts=[InstructionPart(content='You are a helpful assistant.')],
+    )
 
-    openai_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    openai_messages = await model._map_messages(messages, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
 
     assert [message['role'] for message in openai_messages] == [
         'system',
@@ -4344,6 +4353,75 @@ async def test_openai_chat_instructions_do_not_split_tool_call_history(allow_mod
     assert first_tool_call['id'] == 'call_abc123'
     assert tool_message['tool_call_id'] == 'call_abc123'
     assert openai_messages[6] == {'role': 'system', 'content': 'CONVERSATION SUMMARY:\n...'}
+
+
+async def test_openai_chat_instructions_with_developer_role(allow_model_requests: None):
+    """Test that instruction parts use the developer role when configured."""
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+    model = OpenAIChatModel(
+        'gpt-4o',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(openai_system_prompt_role='developer'),
+    )
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+    ]
+    model_request_parameters = ModelRequestParameters(
+        instruction_parts=[InstructionPart(content='Be helpful')],
+    )
+
+    openai_messages = await model._map_messages(messages, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+    assert openai_messages == snapshot(
+        [
+            {'role': 'developer', 'content': 'Be helpful'},
+            {'role': 'user', 'content': 'Hello'},
+        ]
+    )
+
+
+async def test_openai_chat_instructions_with_user_role(allow_model_requests: None):
+    """Test that instruction parts use the user role when configured (e.g. o1-mini)."""
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+    model = OpenAIChatModel(
+        'o1-mini',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(openai_system_prompt_role='user'),
+    )
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+    ]
+    model_request_parameters = ModelRequestParameters(
+        instruction_parts=[InstructionPart(content='Be helpful')],
+    )
+
+    openai_messages = await model._map_messages(messages, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+    # When role is 'user', instruction parts are inserted after all leading 'user' messages
+    assert openai_messages == snapshot(
+        [
+            {'role': 'user', 'content': 'Hello'},
+            {'role': 'user', 'content': 'Be helpful'},
+        ]
+    )
+
+
+async def test_openai_chat_instructions_fallback_with_tool_return(allow_model_requests: None):
+    """When the last ModelRequest has only tool-return parts, instructions from the previous request are used."""
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')], instructions='Be helpful.'),
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call_1')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='my_tool', content='result', tool_call_id='call_1')]),
+    ]
+
+    # No instruction_parts on MRP — model should fall back to message history
+    openai_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    # Instructions from the first request should appear as a system message
+    assert openai_messages[0] == snapshot({'content': 'Be helpful.', 'role': 'system'})
 
 
 def test_openai_chat_audio_default_base64(allow_model_requests: None):

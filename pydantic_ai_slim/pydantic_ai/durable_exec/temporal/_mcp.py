@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, Literal
 
 from temporalio import activity, workflow
@@ -9,6 +9,7 @@ from temporalio.workflow import ActivityConfig
 
 from pydantic_ai import ToolsetTool
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import InstructionPart
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 
@@ -67,7 +68,9 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
             get_tools_activity
         )
 
-        async def get_instructions_activity(params: GetToolsParams, deps: AgentDepsT) -> str | list[str] | None:
+        async def get_instructions_activity(
+            params: GetToolsParams, deps: AgentDepsT
+        ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
             run_context = deserialize_run_context(
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
@@ -110,7 +113,9 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
     def temporal_activities(self) -> list[Callable[..., Any]]:
         return [self.get_instructions_activity, self.get_tools_activity, self.call_tool_activity]
 
-    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> str | list[str] | None:
+    async def get_instructions(
+        self, ctx: RunContext[AgentDepsT]
+    ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
         if not workflow.in_workflow():  # pragma: no cover
             return await super().get_instructions(ctx)
 

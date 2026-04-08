@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import threading
 from collections.abc import AsyncIterable, AsyncIterator, Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -19,8 +21,11 @@ from pydantic_ai.capabilities import (
     MCP,
     BuiltinTool,
     ImageGeneration,
+    IncludeToolReturnSchemas,
     PrefixTools,
+    SetToolMetadata,
     Thinking,
+    ThreadExecutor,
     Toolset,
     WebFetch,
     WebSearch,
@@ -74,8 +79,10 @@ def test_capability_types() -> None:
         {
             'BuiltinTool': BuiltinTool,
             'ImageGeneration': ImageGeneration,
+            'IncludeToolReturnSchemas': IncludeToolReturnSchemas,
             'MCP': MCP,
             'PrefixTools': PrefixTools,
+            'SetToolMetadata': SetToolMetadata,
             'Thinking': Thinking,
             'WebFetch': WebFetch,
             'WebSearch': WebSearch,
@@ -597,13 +604,7 @@ def test_model_json_schema_with_capabilities():
                         'cohere:command-r7b-12-2024',
                         'deepseek:deepseek-chat',
                         'deepseek:deepseek-reasoner',
-                        'gateway/anthropic:claude-3-5-haiku-20241022',
-                        'gateway/anthropic:claude-3-5-haiku-latest',
-                        'gateway/anthropic:claude-3-7-sonnet-20250219',
-                        'gateway/anthropic:claude-3-7-sonnet-latest',
                         'gateway/anthropic:claude-3-haiku-20240307',
-                        'gateway/anthropic:claude-3-opus-20240229',
-                        'gateway/anthropic:claude-3-opus-latest',
                         'gateway/anthropic:claude-4-opus-20250514',
                         'gateway/anthropic:claude-4-sonnet-20250514',
                         'gateway/anthropic:claude-haiku-4-5-20251001',
@@ -619,107 +620,34 @@ def test_model_json_schema_with_capabilities():
                         'gateway/anthropic:claude-sonnet-4-5-20250929',
                         'gateway/anthropic:claude-sonnet-4-5',
                         'gateway/anthropic:claude-sonnet-4-6',
-                        'gateway/bedrock:amazon.titan-text-express-v1',
-                        'gateway/bedrock:amazon.titan-text-lite-v1',
-                        'gateway/bedrock:amazon.titan-tg1-large',
-                        'gateway/bedrock:anthropic.claude-3-5-haiku-20241022-v1:0',
                         'gateway/bedrock:anthropic.claude-3-5-sonnet-20240620-v1:0',
-                        'gateway/bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0',
-                        'gateway/bedrock:anthropic.claude-3-7-sonnet-20250219-v1:0',
                         'gateway/bedrock:anthropic.claude-3-haiku-20240307-v1:0',
-                        'gateway/bedrock:anthropic.claude-3-opus-20240229-v1:0',
-                        'gateway/bedrock:anthropic.claude-3-sonnet-20240229-v1:0',
-                        'gateway/bedrock:anthropic.claude-haiku-4-5-20251001-v1:0',
-                        'gateway/bedrock:anthropic.claude-instant-v1',
-                        'gateway/bedrock:anthropic.claude-opus-4-20250514-v1:0',
-                        'gateway/bedrock:anthropic.claude-sonnet-4-20250514-v1:0',
-                        'gateway/bedrock:anthropic.claude-sonnet-4-5-20250929-v1:0',
-                        'gateway/bedrock:anthropic.claude-sonnet-4-6',
-                        'gateway/bedrock:anthropic.claude-v2:1',
-                        'gateway/bedrock:anthropic.claude-v2',
-                        'gateway/bedrock:cohere.command-light-text-v14',
-                        'gateway/bedrock:cohere.command-r-plus-v1:0',
-                        'gateway/bedrock:cohere.command-r-v1:0',
-                        'gateway/bedrock:cohere.command-text-v14',
                         'gateway/bedrock:eu.anthropic.claude-haiku-4-5-20251001-v1:0',
                         'gateway/bedrock:eu.anthropic.claude-sonnet-4-20250514-v1:0',
                         'gateway/bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
                         'gateway/bedrock:eu.anthropic.claude-sonnet-4-6',
                         'gateway/bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
-                        'gateway/bedrock:meta.llama3-1-405b-instruct-v1:0',
-                        'gateway/bedrock:meta.llama3-1-70b-instruct-v1:0',
-                        'gateway/bedrock:meta.llama3-1-8b-instruct-v1:0',
-                        'gateway/bedrock:meta.llama3-70b-instruct-v1:0',
-                        'gateway/bedrock:meta.llama3-8b-instruct-v1:0',
-                        'gateway/bedrock:mistral.mistral-7b-instruct-v0:2',
-                        'gateway/bedrock:mistral.mistral-large-2402-v1:0',
-                        'gateway/bedrock:mistral.mistral-large-2407-v1:0',
-                        'gateway/bedrock:mistral.mixtral-8x7b-instruct-v0:1',
-                        'gateway/bedrock:us.amazon.nova-2-lite-v1:0',
-                        'gateway/bedrock:us.amazon.nova-lite-v1:0',
-                        'gateway/bedrock:us.amazon.nova-micro-v1:0',
-                        'gateway/bedrock:us.amazon.nova-pro-v1:0',
-                        'gateway/bedrock:us.anthropic.claude-3-5-haiku-20241022-v1:0',
-                        'gateway/bedrock:us.anthropic.claude-3-5-sonnet-20240620-v1:0',
-                        'gateway/bedrock:us.anthropic.claude-3-5-sonnet-20241022-v2:0',
-                        'gateway/bedrock:us.anthropic.claude-3-7-sonnet-20250219-v1:0',
-                        'gateway/bedrock:us.anthropic.claude-3-haiku-20240307-v1:0',
-                        'gateway/bedrock:us.anthropic.claude-3-opus-20240229-v1:0',
-                        'gateway/bedrock:us.anthropic.claude-3-sonnet-20240229-v1:0',
-                        'gateway/bedrock:us.anthropic.claude-haiku-4-5-20251001-v1:0',
-                        'gateway/bedrock:us.anthropic.claude-opus-4-20250514-v1:0',
-                        'gateway/bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
-                        'gateway/bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
-                        'gateway/bedrock:us.anthropic.claude-sonnet-4-6',
-                        'gateway/bedrock:us.meta.llama3-1-70b-instruct-v1:0',
-                        'gateway/bedrock:us.meta.llama3-1-8b-instruct-v1:0',
-                        'gateway/bedrock:us.meta.llama3-2-11b-instruct-v1:0',
-                        'gateway/bedrock:us.meta.llama3-2-1b-instruct-v1:0',
-                        'gateway/bedrock:us.meta.llama3-2-3b-instruct-v1:0',
-                        'gateway/bedrock:us.meta.llama3-2-90b-instruct-v1:0',
-                        'gateway/bedrock:us.meta.llama3-3-70b-instruct-v1:0',
-                        'gateway/google-vertex:gemini-2.0-flash-lite',
-                        'gateway/google-vertex:gemini-2.0-flash',
                         'gateway/google-vertex:gemini-2.5-flash-image',
                         'gateway/google-vertex:gemini-2.5-flash-lite-preview-09-2025',
                         'gateway/google-vertex:gemini-2.5-flash-lite',
-                        'gateway/google-vertex:gemini-2.5-flash-preview-09-2025',
                         'gateway/google-vertex:gemini-2.5-flash',
                         'gateway/google-vertex:gemini-2.5-pro',
                         'gateway/google-vertex:gemini-3-flash-preview',
                         'gateway/google-vertex:gemini-3-pro-image-preview',
-                        'gateway/google-vertex:gemini-3-pro-preview',
                         'gateway/google-vertex:gemini-3.1-flash-image-preview',
                         'gateway/google-vertex:gemini-3.1-flash-lite-preview',
                         'gateway/google-vertex:gemini-3.1-pro-preview',
-                        'gateway/google-vertex:gemini-flash-latest',
-                        'gateway/google-vertex:gemini-flash-lite-latest',
                         'gateway/groq:llama-3.1-8b-instant',
                         'gateway/groq:llama-3.3-70b-versatile',
-                        'gateway/groq:meta-llama/llama-guard-4-12b',
+                        'gateway/groq:meta-llama/llama-4-scout-17b-16e-instruct',
+                        'gateway/groq:moonshotai/kimi-k2-instruct-0905',
                         'gateway/groq:openai/gpt-oss-120b',
                         'gateway/groq:openai/gpt-oss-20b',
-                        'gateway/groq:whisper-large-v3',
-                        'gateway/groq:whisper-large-v3-turbo',
-                        'gateway/groq:meta-llama/llama-4-maverick-17b-128e-instruct',
-                        'gateway/groq:meta-llama/llama-4-scout-17b-16e-instruct',
-                        'gateway/groq:meta-llama/llama-prompt-guard-2-22m',
-                        'gateway/groq:meta-llama/llama-prompt-guard-2-86m',
-                        'gateway/groq:moonshotai/kimi-k2-instruct-0905',
                         'gateway/groq:openai/gpt-oss-safeguard-20b',
-                        'gateway/groq:playai-tts',
-                        'gateway/groq:playai-tts-arabic',
-                        'gateway/groq:qwen/qwen-3-32b',
-                        'gateway/openai:computer-use-preview-2025-03-11',
-                        'gateway/openai:computer-use-preview',
                         'gateway/openai:gpt-3.5-turbo-0125',
-                        'gateway/openai:gpt-3.5-turbo-0301',
-                        'gateway/openai:gpt-3.5-turbo-0613',
                         'gateway/openai:gpt-3.5-turbo-1106',
-                        'gateway/openai:gpt-3.5-turbo-16k-0613',
                         'gateway/openai:gpt-3.5-turbo-16k',
                         'gateway/openai:gpt-3.5-turbo',
-                        'gateway/openai:gpt-4-0314',
                         'gateway/openai:gpt-4-0613',
                         'gateway/openai:gpt-4-turbo-2024-04-09',
                         'gateway/openai:gpt-4-turbo',
@@ -733,12 +661,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:gpt-4o-2024-05-13',
                         'gateway/openai:gpt-4o-2024-08-06',
                         'gateway/openai:gpt-4o-2024-11-20',
-                        'gateway/openai:gpt-4o-audio-preview-2024-12-17',
-                        'gateway/openai:gpt-4o-audio-preview-2025-06-03',
-                        'gateway/openai:gpt-4o-audio-preview',
                         'gateway/openai:gpt-4o-mini-2024-07-18',
-                        'gateway/openai:gpt-4o-mini-audio-preview-2024-12-17',
-                        'gateway/openai:gpt-4o-mini-audio-preview',
                         'gateway/openai:gpt-4o-mini-search-preview-2025-03-11',
                         'gateway/openai:gpt-4o-mini-search-preview',
                         'gateway/openai:gpt-4o-mini',
@@ -747,24 +670,16 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:gpt-4o',
                         'gateway/openai:gpt-5-2025-08-07',
                         'gateway/openai:gpt-5-chat-latest',
-                        'gateway/openai:gpt-5-codex',
                         'gateway/openai:gpt-5-mini-2025-08-07',
                         'gateway/openai:gpt-5-mini',
                         'gateway/openai:gpt-5-nano-2025-08-07',
                         'gateway/openai:gpt-5-nano',
-                        'gateway/openai:gpt-5-pro-2025-10-06',
-                        'gateway/openai:gpt-5-pro',
                         'gateway/openai:gpt-5.1-2025-11-13',
                         'gateway/openai:gpt-5.1-chat-latest',
-                        'gateway/openai:gpt-5.1-codex-max',
-                        'gateway/openai:gpt-5.1-codex',
                         'gateway/openai:gpt-5.1',
                         'gateway/openai:gpt-5.2-2025-12-11',
                         'gateway/openai:gpt-5.2-chat-latest',
-                        'gateway/openai:gpt-5.2-pro-2025-12-11',
-                        'gateway/openai:gpt-5.2-pro',
                         'gateway/openai:gpt-5.2',
-                        'gateway/openai:gpt-5.3-chat-latest',
                         'gateway/openai:gpt-5.4-mini-2026-03-17',
                         'gateway/openai:gpt-5.4-mini',
                         'gateway/openai:gpt-5.4-nano-2026-03-17',
@@ -772,20 +687,12 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:gpt-5.4',
                         'gateway/openai:gpt-5',
                         'gateway/openai:o1-2024-12-17',
-                        'gateway/openai:o1-pro-2025-03-19',
-                        'gateway/openai:o1-pro',
                         'gateway/openai:o1',
                         'gateway/openai:o3-2025-04-16',
-                        'gateway/openai:o3-deep-research-2025-06-26',
-                        'gateway/openai:o3-deep-research',
                         'gateway/openai:o3-mini-2025-01-31',
                         'gateway/openai:o3-mini',
-                        'gateway/openai:o3-pro-2025-06-10',
-                        'gateway/openai:o3-pro',
                         'gateway/openai:o3',
                         'gateway/openai:o4-mini-2025-04-16',
-                        'gateway/openai:o4-mini-deep-research-2025-06-26',
-                        'gateway/openai:o4-mini-deep-research',
                         'gateway/openai:o4-mini',
                         'google-gla:gemini-2.0-flash-lite',
                         'google-gla:gemini-2.0-flash',
@@ -1197,11 +1104,41 @@ Supported by:
                     'title': 'short_spec_BuiltinTool',
                     'type': 'object',
                 },
+                'short_spec_IncludeToolReturnSchemas': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'IncludeToolReturnSchemas': {
+                            'anyOf': [
+                                {'const': 'all', 'type': 'string'},
+                                {'items': {'type': 'string'}, 'type': 'array'},
+                                {'additionalProperties': True, 'type': 'object'},
+                            ],
+                            'title': 'Includetoolreturnschemas',
+                        }
+                    },
+                    'title': 'short_spec_IncludeToolReturnSchemas',
+                    'type': 'object',
+                },
                 'short_spec_MCP': {
                     'additionalProperties': False,
                     'properties': {'MCP': {'title': 'Mcp', 'type': 'string'}},
                     'required': ['MCP'],
                     'title': 'short_spec_MCP',
+                    'type': 'object',
+                },
+                'short_spec_SetToolMetadata': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'SetToolMetadata': {
+                            'anyOf': [
+                                {'const': 'all', 'type': 'string'},
+                                {'items': {'type': 'string'}, 'type': 'array'},
+                                {'additionalProperties': True, 'type': 'object'},
+                            ],
+                            'title': 'Settoolmetadata',
+                        }
+                    },
+                    'title': 'short_spec_SetToolMetadata',
                     'type': 'object',
                 },
                 'short_spec_Thinking': {
@@ -1354,9 +1291,13 @@ Supported by:
                                 {'$ref': '#/$defs/short_spec_BuiltinTool'},
                                 {'const': 'ImageGeneration', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_ImageGeneration'},
+                                {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
+                                {'$ref': '#/$defs/short_spec_IncludeToolReturnSchemas'},
                                 {'$ref': '#/$defs/short_spec_MCP'},
                                 {'$ref': '#/$defs/spec_MCP'},
                                 {'$ref': '#/$defs/spec_PrefixTools'},
+                                {'const': 'SetToolMetadata', 'type': 'string'},
+                                {'$ref': '#/$defs/short_spec_SetToolMetadata'},
                                 {'const': 'Thinking', 'type': 'string'},
                                 {'$ref': '#/$defs/short_spec_Thinking'},
                                 {'const': 'WebFetch', 'type': 'string'},
@@ -1492,9 +1433,13 @@ Supported by:
                             {'$ref': '#/$defs/short_spec_BuiltinTool'},
                             {'const': 'ImageGeneration', 'type': 'string'},
                             {'$ref': '#/$defs/spec_ImageGeneration'},
+                            {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
+                            {'$ref': '#/$defs/short_spec_IncludeToolReturnSchemas'},
                             {'$ref': '#/$defs/short_spec_MCP'},
                             {'$ref': '#/$defs/spec_MCP'},
                             {'$ref': '#/$defs/spec_PrefixTools'},
+                            {'const': 'SetToolMetadata', 'type': 'string'},
+                            {'$ref': '#/$defs/short_spec_SetToolMetadata'},
                             {'const': 'Thinking', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_Thinking'},
                             {'const': 'WebFetch', 'type': 'string'},
@@ -3752,21 +3697,149 @@ class TestWebSearchCapability:
 
 class TestWebFetchCapability:
     def test_webfetch_default(self):
-        """WebFetch() provides builtin, no default local fallback."""
+        """WebFetch() provides builtin and default local fallback."""
         cap = WebFetch()
         builtins = cap.get_builtin_tools()
         assert len(builtins) == 1
         assert isinstance(builtins[0], WebFetchTool)
-        # No default local fallback — user must provide their own
-        assert cap.local is None
-        assert cap.get_toolset() is None
+        # Default local fallback is auto-detected (markdownify-based)
+        assert cap.local is not None
+        assert cap.get_toolset() is not None
 
-    def test_webfetch_requires_builtin_with_constraints(self, allow_model_requests: None):
-        """WebFetch(blocked_domains=...) with non-supporting model → UserError."""
+    def test_webfetch_default_with_nonsupporting_model(self, allow_model_requests: None):
+        """WebFetch() with a model that doesn't support builtin → markdownify fallback used."""
+        from unittest.mock import AsyncMock, patch
+
+        import httpx
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return ModelResponse(parts=[TextPart(content=f'Tool result: {part.content}')])
+            if info.function_tools:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name=info.function_tools[0].name,
+                            args='{"url": "https://example.com"}',
+                            tool_call_id='c1',
+                        )
+                    ]
+                )
+            return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
+
+        mock_response = httpx.Response(
+            200,
+            text='<html><head><title>Test</title></head><body><p>Hello</p></body></html>',
+            headers={'content-type': 'text/html'},
+            request=httpx.Request('GET', 'https://example.com'),
+        )
+
+        model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        agent = Agent(model, capabilities=[WebFetch()])
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
+        ):
+            result = agent.run_sync('fetch something')
+        # Verify the web_fetch fallback tool was actually called
+        tool_calls = [
+            part
+            for msg in result.all_messages()
+            if isinstance(msg, ModelResponse)
+            for part in msg.parts
+            if isinstance(part, ToolCallPart)
+        ]
+        assert len(tool_calls) == 1
+        assert tool_calls[0].tool_name == 'web_fetch'
+
+    def test_webfetch_local_false_with_nonsupporting_model(self, allow_model_requests: None):
+        """WebFetch(local=False) with non-supporting model → UserError."""
         model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
-        agent = Agent(model, capabilities=[WebFetch(blocked_domains=['evil.com'])])
+        agent = Agent(model, capabilities=[WebFetch(local=False)])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
+
+    def test_webfetch_builtin_false(self):
+        """WebFetch(builtin=False) → only local, no builtin registered."""
+        cap = WebFetch(builtin=False)
+        assert cap.get_builtin_tools() == []
+        toolset = cap.get_toolset()
+        assert toolset is not None
+
+    def test_webfetch_max_uses_requires_builtin(self, allow_model_requests: None):
+        """WebFetch(max_uses=...) with non-supporting model → UserError."""
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
+        agent = Agent(model, capabilities=[WebFetch(max_uses=5)])
+        with pytest.raises(UserError, match='not supported'):
+            agent.run_sync('fetch')
+
+    def test_webfetch_domains_forwarded_to_local(self, allow_model_requests: None):
+        """WebFetch(allowed_domains=...) with non-supporting model → falls back to local with domain filtering."""
+        from unittest.mock import AsyncMock, patch
+
+        import httpx
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return ModelResponse(parts=[TextPart(content=f'Tool result: {part.content}')])
+            if info.function_tools:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name=info.function_tools[0].name,
+                            args='{"url": "https://example.com"}',
+                            tool_call_id='c1',
+                        )
+                    ]
+                )
+            return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
+
+        mock_response = httpx.Response(
+            200,
+            text='<html><body><p>Hello</p></body></html>',
+            headers={'content-type': 'text/html'},
+            request=httpx.Request('GET', 'https://example.com'),
+        )
+
+        model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        agent = Agent(model, capabilities=[WebFetch(allowed_domains=['example.com'])])
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
+        ):
+            result = agent.run_sync('fetch example.com')
+        # Verify the web_fetch fallback tool was actually called with domain filtering
+        tool_calls = [
+            part
+            for msg in result.all_messages()
+            if isinstance(msg, ModelResponse)
+            for part in msg.parts
+            if isinstance(part, ToolCallPart)
+        ]
+        assert len(tool_calls) == 1
+        assert tool_calls[0].tool_name == 'web_fetch'
+
+    def test_webfetch_both_false_raises(self):
+        """WebFetch(builtin=False, local=False) → UserError at construction."""
+        with pytest.raises(UserError, match='both builtin and local cannot be False'):
+            WebFetch(builtin=False, local=False)
+
+    def test_webfetch_builtin_false_with_max_uses_raises(self):
+        """WebFetch(builtin=False, max_uses=...) → UserError at construction."""
+        with pytest.raises(UserError, match='constraint fields require the builtin tool'):
+            WebFetch(builtin=False, max_uses=5)
+
+    def test_webfetch_local_callable(self):
+        """WebFetch(local=some_function) → bare callable wrapped in Tool."""
+        from pydantic_ai.tools import Tool
+
+        def my_fetch(url: str) -> str:
+            return f'fetched {url}'  # pragma: no cover
+
+        cap = WebFetch(local=my_fetch)
+        assert isinstance(cap.local, Tool)
 
 
 class TestImageGenerationCapability:
@@ -5137,7 +5210,7 @@ def test_web_fetch_with_constraints():
     assert tool.max_uses == 5
     assert tool.enable_citations is True
     assert tool.max_content_tokens == 1000
-    # Constraint fields require builtin
+    # Only max_uses requires builtin (domains are handled locally)
     assert cap._requires_builtin() is True  # pyright: ignore[reportPrivateUsage]
 
 
@@ -5171,7 +5244,7 @@ def test_web_search_with_constraints():
 
 
 def test_web_search_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
-    """WebSearch._default_local() returns None when duckduckgo is not installed."""
+    """WebSearch._default_local() warns and returns None when duckduckgo is not installed."""
     import builtins
 
     original_import = builtins.__import__
@@ -5182,8 +5255,27 @@ def test_web_search_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
         return original_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, '__import__', mock_import)
-    cap = WebSearch(builtin=False)
+    with pytest.warns(UserWarning, match='duckduckgo'):
+        cap = WebSearch(builtin=False)
     # With builtin disabled and no duckduckgo, local is None
+    assert cap.local is None
+
+
+def test_web_fetch_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
+    """WebFetch._default_local() warns and returns None when markdownify is not installed."""
+    import builtins
+
+    original_import = builtins.__import__
+
+    def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == 'pydantic_ai.common_tools.web_fetch':
+            raise ImportError('mocked')
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', mock_import)
+    with pytest.warns(UserWarning, match='web-fetch'):
+        cap = WebFetch(builtin=False)
+    # With builtin disabled and no markdownify, local is None
     assert cap.local is None
 
 
@@ -5214,6 +5306,17 @@ def test_builtin_tool_from_spec_no_args():
 
     with pytest.raises(TypeError, match='requires either a `tool` argument'):
         BuiltinToolCapDirect.from_spec()
+
+
+@pytest.mark.filterwarnings('ignore::DeprecationWarning')
+def test_builtin_or_local_no_default_local():
+    """BuiltinOrLocalTool base class _default_local() returns None."""
+    from pydantic_ai.capabilities.builtin_or_local import BuiltinOrLocalTool
+
+    cap = BuiltinOrLocalTool(builtin=WebSearchTool())
+    # Base class _default_local() returns None — no local fallback
+    assert cap.local is None
+    assert cap.get_toolset() is None
 
 
 @pytest.mark.filterwarnings('ignore::DeprecationWarning')
@@ -8095,3 +8198,58 @@ class TestCtxAgentInCapability:
         agent = Agent(FunctionModel(simple_model_function), name='hook_test_agent', capabilities=[AgentTrackingCap()])
         await agent.run('hello')
         assert hook_agent_names == ['hook_test_agent', 'hook_test_agent']
+
+
+def test_thread_executor_not_serializable() -> None:
+    assert ThreadExecutor.get_serialization_name() is None
+
+
+async def test_thread_executor_capability() -> None:
+    tool_threads: list[str] = []
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='check_thread', args='{}')])
+
+    executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='cap-pool')
+    try:
+        agent = Agent(FunctionModel(model_function), capabilities=[ThreadExecutor(executor)])
+
+        @agent.tool_plain
+        def check_thread() -> str:
+            tool_threads.append(threading.current_thread().name)
+            return 'ok'
+
+        result = await agent.run('test')
+        assert result.output == 'done'
+        assert len(tool_threads) == 1
+        assert tool_threads[0].startswith('cap-pool')
+    finally:
+        executor.shutdown(wait=True)
+
+
+async def test_thread_executor_static_method() -> None:
+    tool_threads: list[str] = []
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='check_thread', args='{}')])
+
+    agent = Agent(FunctionModel(model_function))
+
+    @agent.tool_plain
+    def check_thread() -> str:
+        tool_threads.append(threading.current_thread().name)
+        return 'ok'
+
+    executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='static-pool')
+    try:
+        with Agent.using_thread_executor(executor):
+            result = await agent.run('test')
+        assert result.output == 'done'
+        assert len(tool_threads) == 1
+        assert tool_threads[0].startswith('static-pool')
+    finally:
+        executor.shutdown(wait=True)
