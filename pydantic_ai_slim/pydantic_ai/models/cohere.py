@@ -98,7 +98,7 @@ class CohereModelSettings(ModelSettings, total=False):
 
 
 @dataclass(init=False)
-class CohereModel(Model):
+class CohereModel(Model[AsyncClientV2]):
     """A model that uses the Cohere API.
 
     Internally, this uses the [Cohere Python client](
@@ -154,11 +154,6 @@ class CohereModel(Model):
     def system(self) -> str:
         """The model provider."""
         return self._provider.name
-
-    @property
-    def provider(self) -> Provider[AsyncClientV2]:
-        """The provider for this model."""
-        return self._provider  # pragma: no cover
 
     async def request(
         self,

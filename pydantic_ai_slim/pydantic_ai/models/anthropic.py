@@ -265,7 +265,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
 
 
 @dataclass(init=False)
-class AnthropicModel(Model):
+class AnthropicModel(Model[AsyncAnthropicClient]):
     """A model that uses the Anthropic API.
 
     Internally, this uses the [Anthropic Python client](https://github.com/anthropics/anthropic-sdk-python) to interact with the API.
@@ -319,11 +319,6 @@ class AnthropicModel(Model):
     def system(self) -> str:
         """The model provider."""
         return self._provider.name
-
-    @property
-    def provider(self) -> Provider[AsyncAnthropicClient]:
-        """The provider for this model."""
-        return self._provider  # pragma: no cover
 
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:

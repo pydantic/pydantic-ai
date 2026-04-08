@@ -547,7 +547,7 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
 
 
 @dataclass(init=False)
-class OpenAIChatModel(Model):
+class OpenAIChatModel(Model[AsyncOpenAI]):
     """A model that uses the OpenAI API.
 
     Internally, this uses the [OpenAI Python client](https://github.com/openai/openai-python) to interact with the API.
@@ -646,11 +646,6 @@ class OpenAIChatModel(Model):
     def system(self) -> str:
         """The model provider."""
         return self._provider.name
-
-    @property
-    def provider(self) -> Provider[AsyncOpenAI]:
-        """The provider for this model."""
-        return self._provider
 
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
@@ -1452,7 +1447,7 @@ responses_output_text_annotations_ta = TypeAdapter(list[responses.response_outpu
 
 
 @dataclass(init=False)
-class OpenAIResponsesModel(Model):
+class OpenAIResponsesModel(Model[AsyncOpenAI]):
     """A model that uses the OpenAI Responses API.
 
     The [OpenAI Responses API](https://platform.openai.com/docs/api-reference/responses) is the
@@ -1510,11 +1505,6 @@ class OpenAIResponsesModel(Model):
     def system(self) -> str:
         """The model provider."""
         return self._provider.name
-
-    @property
-    def provider(self) -> Provider[AsyncOpenAI]:
-        """The provider for this model."""
-        return self._provider  # pragma: no cover
 
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:

@@ -359,7 +359,7 @@ class BedrockModelSettings(ModelSettings, total=False):
 
 
 @dataclass(init=False)
-class BedrockConverseModel(Model):
+class BedrockConverseModel(Model[BaseClient]):
     """A model that uses the Bedrock Converse API."""
 
     client: BedrockRuntimeClient
@@ -409,11 +409,6 @@ class BedrockConverseModel(Model):
     def system(self) -> str:
         """The model provider."""
         return self._provider.name
-
-    @property
-    def provider(self) -> Provider[BaseClient]:
-        """The provider for this model."""
-        return self._provider  # pragma: no cover
 
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:

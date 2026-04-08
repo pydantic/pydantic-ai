@@ -9,14 +9,14 @@ from abc import ABC, abstractmethod
 from asyncio import Lock
 from collections.abc import Callable
 from types import TracebackType
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic
 
 import httpx
-from typing_extensions import Self
+from typing_extensions import Self, TypeVar
 
 from ..profiles import ModelProfile
 
-InterfaceClient = TypeVar('InterfaceClient')
+InterfaceClient = TypeVar('InterfaceClient', default=Any)
 
 
 class Provider(ABC, Generic[InterfaceClient]):

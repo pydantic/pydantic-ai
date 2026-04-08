@@ -268,7 +268,7 @@ def _google_vertex_service_tier_headers(service_tier: GoogleServiceTier) -> dict
 
 
 @dataclass(init=False)
-class GoogleModel(Model):
+class GoogleModel(Model[Client]):
     """A model that uses Gemini via `generativelanguage.googleapis.com` API.
 
     This is implemented from scratch rather than using a dedicated SDK, good API documentation is
@@ -322,11 +322,6 @@ class GoogleModel(Model):
     def system(self) -> str:
         """The model provider."""
         return self._provider.name
-
-    @property
-    def provider(self) -> Provider[Client]:
-        """The provider for this model."""
-        return self._provider  # pragma: no cover
 
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:

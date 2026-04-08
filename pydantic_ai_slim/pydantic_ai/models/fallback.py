@@ -183,6 +183,10 @@ class FallbackModel(Model):
                 await self._exit_stack.aclose()
 
     @property
+    def provider(self) -> None:
+        return None
+
+    @property
     def model_name(self) -> str:
         """The model name."""
         return f'fallback:{",".join(model.model_name for model in self.models)}'

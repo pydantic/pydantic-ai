@@ -136,7 +136,7 @@ class MistralModelSettings(ModelSettings, total=False):
 
 
 @dataclass(init=False)
-class MistralModel(Model):
+class MistralModel(Model[Mistral]):
     """A model that uses Mistral.
 
     Internally, this uses the [Mistral Python client](https://github.com/mistralai/client-python) to interact with the API.
@@ -193,11 +193,6 @@ class MistralModel(Model):
     def system(self) -> str:
         """The model provider."""
         return self._provider.name
-
-    @property
-    def provider(self) -> Provider[Mistral]:
-        """The provider for this model."""
-        return self._provider  # pragma: no cover
 
     async def request(
         self,

@@ -49,7 +49,7 @@ from ..messages import (
 )
 from ..output import OutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
-from ..providers import Provider, infer_provider, infer_provider_class
+from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
 from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
@@ -659,9 +659,10 @@ class ModelRequestContext:
     model_request_parameters: ModelRequestParameters
 
 
-class Model(ABC):
+class Model(ABC, Generic[InterfaceClient]):
     """Abstract class for a model."""
 
+    _provider: Provider[InterfaceClient]
     _profile: ModelProfileSpec | None = None
     _settings: ModelSettings | None = None
 
@@ -681,12 +682,9 @@ class Model(ABC):
         self._profile = profile
 
     @property
-    def provider(self) -> Provider[Any] | None:
-        """The provider for this model, if any.
-
-        Override this property in subclasses that have a provider.
-        """
-        return None
+    def provider(self) -> Provider[InterfaceClient] | None:
+        """The provider for this model, if any."""
+        return self._provider
 
     async def __aenter__(self) -> Self:
         """Enter the model context, delegating to the provider to manage its HTTP client lifecycle."""

@@ -102,7 +102,7 @@ class GeminiModelSettings(ModelSettings, total=False):
 
 @deprecated('Use `GoogleModel` instead. See <https://ai.pydantic.dev/models/google/> for more details.')
 @dataclass(init=False)
-class GeminiModel(Model):
+class GeminiModel(Model[httpx.AsyncClient]):
     """A model that uses Gemini via `generativelanguage.googleapis.com` API.
 
     This is implemented from scratch rather than using a dedicated SDK, good API documentation is
@@ -167,11 +167,6 @@ class GeminiModel(Model):
     def system(self) -> str:
         """The model provider."""
         return self._provider.name
-
-    @property
-    def provider(self) -> Provider[httpx.AsyncClient]:
-        """The provider for this model."""
-        return self._provider
 
     async def request(
         self,

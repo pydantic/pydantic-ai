@@ -201,7 +201,7 @@ _XAI_MODEL_SETTINGS_MAPPING: dict[str, str] = {
 }
 
 
-class XaiModel(Model):
+class XaiModel(Model[AsyncClient]):
     """A model that uses the xAI SDK to interact with xAI models."""
 
     _model_name: str
@@ -241,11 +241,6 @@ class XaiModel(Model):
     def system(self) -> str:
         """The model provider."""
         return 'xai'
-
-    @property
-    def provider(self) -> Provider[AsyncClient]:
-        """The provider for this model."""
-        return self._provider  # pragma: no cover
 
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type]:

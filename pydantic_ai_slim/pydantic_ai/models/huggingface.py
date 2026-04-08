@@ -129,7 +129,7 @@ class HuggingFaceModelSettings(ModelSettings, total=False):
 
 
 @dataclass(init=False)
-class HuggingFaceModel(Model):
+class HuggingFaceModel(Model[AsyncInferenceClient]):
     """A model that uses Hugging Face Inference Providers.
 
     Internally, this uses the [HF Python client](https://github.com/huggingface/huggingface_hub) to interact with the API.
@@ -181,11 +181,6 @@ class HuggingFaceModel(Model):
     def system(self) -> str:
         """The system / model provider."""
         return self._provider.name
-
-    @property
-    def provider(self) -> Provider[AsyncInferenceClient]:
-        """The provider for this model."""
-        return self._provider  # pragma: no cover
 
     async def request(
         self,
