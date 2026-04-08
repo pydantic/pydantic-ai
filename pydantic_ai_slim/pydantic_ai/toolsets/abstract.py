@@ -248,7 +248,7 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         return DeferredLoadingToolset(self, tool_names=frozenset(tool_names) if tool_names is not None else None)
 
     def include_return_schemas(self) -> IncludeReturnSchemasToolset[AgentDepsT]:
-        """Returns a new toolset that sets ``include_return_schema=True`` on all tools.
+        """Returns a new toolset that sets `include_return_schema=True` on all tools.
 
         This causes the model to receive return type information for the tools
         in this toolset. For models that natively support return schemas (e.g.

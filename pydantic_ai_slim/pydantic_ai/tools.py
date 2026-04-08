@@ -164,13 +164,13 @@ Usage `ToolSelectorFunc[AgentDepsT]`.
 ToolSelector: TypeAlias = Literal['all'] | Sequence[str] | dict[str, Any] | ToolSelectorFunc[AgentDepsT]
 """Specifies which tools a capability or toolset wrapper should apply to.
 
-- ``'all'``: matches every tool (default for most capabilities).
-- ``Sequence[str]``: matches tools whose names are in the sequence.
-- ``dict[str, Any]``: matches tools whose
+- `'all'`: matches every tool (default for most capabilities).
+- `Sequence[str]`: matches tools whose names are in the sequence.
+- `dict[str, Any]`: matches tools whose
   [`metadata`][pydantic_ai.tools.ToolDefinition.metadata] contains all the
   specified key-value pairs (deep inclusion check — nested dicts are compared
   recursively, and the tool's metadata may have additional keys).
-- ``Callable[[RunContext, ToolDefinition], bool | Awaitable[bool]]``:
+- `Callable[[RunContext, ToolDefinition], bool | Awaitable[bool]]`:
   custom sync or async predicate.
 
 The first three forms are serializable for use in agent specs (YAML/JSON).
@@ -677,7 +677,7 @@ class ToolDefinition:
 
     For models that natively support return schemas (e.g. Google Gemini), this is passed as a
     structured field in the API request. For other models, it is injected into the tool's
-    description as JSON text. Only included when ``include_return_schema`` resolves to ``True``.
+    description as JSON text. Only included when `include_return_schema` resolves to `True`.
     """
 
     include_return_schema: bool | None = None
@@ -692,9 +692,9 @@ class ToolDefinition:
     function_signature: FunctionSignature | None = field(default=None, repr=False, compare=False)
     """The function signature shape for this tool.
 
-    If not provided, computed from the JSON schema in ``__post_init__``.
+    If not provided, computed from the JSON schema in `__post_init__`.
     Name and description are not stored on the signature — pass them at render time
-    via ``sig.render(body, name=td.name, description=td.description)``.
+    via `sig.render(body, name=td.name, description=td.description)`.
     """
 
     def __post_init__(self) -> None:
@@ -708,8 +708,8 @@ class ToolDefinition:
     def render_signature(self, body: str, **kwargs: Any) -> str:
         """Render the function signature with this tool's name and description.
 
-        Convenience wrapper around ``self.function_signature.render()`` that
-        supplies ``name`` and ``description`` from this tool definition.
+        Convenience wrapper around `self.function_signature.render()` that
+        supplies `name` and `description` from this tool definition.
         """
         assert self.function_signature is not None, 'function_signature is not available for output tools'
         return self.function_signature.render(body, name=self.name, description=self.description, **kwargs)

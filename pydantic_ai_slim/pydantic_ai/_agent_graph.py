@@ -1657,6 +1657,7 @@ async def _call_tool(
         validated = None
         call = tool_call
 
+    tool_result: Any
     try:
         if tool_call_result is None or isinstance(tool_call_result, ToolApproved):
             if validated is not None:
@@ -1687,14 +1688,16 @@ async def _call_tool(
         return e.tool_retry, None
 
     if isinstance(tool_result, _messages.ToolReturn):
-        tool_return = tool_result  # pyright: ignore[reportUnknownVariableType]
-    elif isinstance(tool_result, list) and any(isinstance(i, _messages.ToolReturn) for i in tool_result):  # pyright: ignore[reportUnknownVariableType]
+        tool_return = cast(_messages.ToolReturn[Any], tool_result)
+    elif isinstance(tool_result, list) and any(
+        isinstance(i, _messages.ToolReturn) for i in cast(list[Any], tool_result)
+    ):
         raise exceptions.UserError(
             f'The return value of tool {call.tool_name!r} contains invalid nested `ToolReturn` objects. '
             f'`ToolReturn` should be used directly.'
         )
     else:
-        tool_return = _messages.ToolReturn(return_value=tool_result)  # pyright: ignore[reportUnknownArgumentType]
+        tool_return = _messages.ToolReturn[Any](return_value=cast(Any, tool_result))
 
     return_part = _messages.ToolReturnPart(
         tool_name=call.tool_name,

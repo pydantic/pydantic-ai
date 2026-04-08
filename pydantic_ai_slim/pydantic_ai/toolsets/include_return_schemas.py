@@ -10,7 +10,7 @@ from .prepared import PreparedToolset
 
 @dataclass(init=False)
 class IncludeReturnSchemasToolset(PreparedToolset[AgentDepsT]):
-    """A toolset that sets ``include_return_schema=True`` on all its tools.
+    """A toolset that sets `include_return_schema=True` on all its tools.
 
     See [toolset docs](../toolsets.md) for more information.
     """

@@ -1477,7 +1477,7 @@ def _map_executable_code(executable_code: ExecutableCode, provider_name: str, to
     return BuiltinToolCallPart(
         provider_name=provider_name,
         tool_name=CodeExecutionTool.kind,
-        args=executable_code.model_dump(mode='json', exclude_none=True),
+        args=executable_code.model_dump(mode='json'),
         tool_call_id=tool_call_id,
     )
 
@@ -1488,7 +1488,7 @@ def _map_code_execution_result(
     return BuiltinToolReturnPart(
         provider_name=provider_name,
         tool_name=CodeExecutionTool.kind,
-        content=code_execution_result.model_dump(mode='json', exclude_none=True),
+        content=code_execution_result.model_dump(mode='json'),
         tool_call_id=tool_call_id,
     )
 

@@ -841,7 +841,7 @@ def is_multi_modal_content(obj: Any) -> TypeGuard[MultiModalContent]:
 UserContent: TypeAlias = str | TextContent | MultiModalContent | CachePoint
 
 
-ToolReturnValueT = TypeVar('ToolReturnValueT', default=Any)
+_ToolReturnValueT = TypeVar('_ToolReturnValueT', default=Any)
 """Type variable for the return value type in `ToolReturn[T]`.
 
 When `ToolReturn` is used without a type parameter (bare `ToolReturn`), this defaults to `Any`,
@@ -851,7 +851,7 @@ schema is generated from the inner type.
 
 
 @dataclass(repr=False)
-class ToolReturn(Generic[ToolReturnValueT]):
+class ToolReturn(Generic[_ToolReturnValueT]):
     """A structured tool return that separates the tool result from additional content sent to the model.
 
     Can be parameterized with a type to enable return schema generation:

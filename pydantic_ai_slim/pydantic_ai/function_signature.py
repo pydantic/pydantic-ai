@@ -152,9 +152,9 @@ class TypeSignature:
 
         Args:
             owner_name: The owning tool name, used to build prefixed type names
-                for conflicting types (e.g. ``get_user_Address``).
+                for conflicting types (e.g. `get_user_Address`).
             conflicting_type_names: Set of type names that need tool-name prefixes
-                (from ``dedup_referenced_types``). Only effective when ``owner_name``
+                (from `dedup_referenced_types`). Only effective when `owner_name`
                 is also provided.
         """
         if owner_name and conflicting_type_names:
@@ -521,7 +521,7 @@ def _schema_to_type_expr(
         # Return the TypeSignature object if available, otherwise the name
         if ref_name in referenced_types:
             return referenced_types[ref_name]
-        return SimpleTypeExpr(ref_name)
+        return TypeSignature(name=ref_name)
 
     # Handle anyOf/oneOf (union types)
     if 'anyOf' in schema:
