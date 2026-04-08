@@ -8334,27 +8334,61 @@ async def test_on_node_run_error_returns_end():
     assert result.output == 'recovered output'
 
 
+async def test_on_node_run_error_returns_node():
+    """on_node_run_error can recover by returning a retry node, continuing execution."""
+    from pydantic_ai import ModelRequestNode
+
+    call_count = 0
+
+    def fails_then_succeeds(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise ValueError('transient failure')
+        return ModelResponse(parts=[TextPart('recovered')])
+
+    @dataclass
+    class RetryOnError(AbstractCapability[Any]):
+        async def on_node_run_error(self, ctx: RunContext[Any], *, node: Any, error: Exception) -> Any:
+            # Retry by returning a new ModelRequestNode with the same request
+            return ModelRequestNode(request=node.request)  # pyright: ignore[reportUnknownVariableType]
+
+    agent = Agent(FunctionModel(fails_then_succeeds), capabilities=[RetryOnError()])
+    result = await agent.run('hello')
+    assert call_count == 2
+    assert result.output == 'recovered'
+
+
 async def test_after_node_run_node_to_end():
     """after_node_run can short-circuit a run by converting a continuation node to End."""
     from pydantic_ai.result import FinalResult
 
-    call_count = 0
+    model_call_count = 0
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        nonlocal call_count
-        call_count += 1
-        return ModelResponse(parts=[TextPart('first answer')])
+        nonlocal model_call_count
+        model_call_count += 1
+        # Always request a tool call, producing a CallToolsNode (not End)
+        return ModelResponse(parts=[ToolCallPart(tool_name='my_tool', args='{}')])
 
     @dataclass
-    class ShortCircuitOnFirstEnd(AbstractCapability[Any]):
-        """Convert the first End result to an early exit with custom output."""
+    class ShortCircuitAfterModelRequest(AbstractCapability[Any]):
+        """Short-circuit after the first model request node by converting the continuation to End."""
 
         async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
-            if isinstance(result, End) and call_count == 1:
+            from pydantic_ai import ModelRequestNode
+
+            # The ModelRequestNode produces a CallToolsNode (not End); convert it to End.
+            if isinstance(node, ModelRequestNode) and not isinstance(result, End):
                 return End(FinalResult('short-circuited'))
             return result  # pyright: ignore[reportUnknownVariableType]
 
-    agent = Agent(FunctionModel(model_fn), capabilities=[ShortCircuitOnFirstEnd()])
+    agent = Agent(FunctionModel(model_fn), capabilities=[ShortCircuitAfterModelRequest()])
+
+    @agent.tool_plain
+    def my_tool() -> str:
+        return 'tool result'  # pragma: no cover
+
     result = await agent.run('hello')
     assert result.output == 'short-circuited'
-    assert call_count == 1
+    assert model_call_count == 1
