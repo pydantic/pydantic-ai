@@ -246,6 +246,8 @@ filterwarnings = [
     # boto3
     "ignore::DeprecationWarning:botocore.*",
     "ignore::RuntimeWarning:pydantic_ai.mcp",
+    # ag-ui-protocol >= 0.1.15 deprecated BinaryInputContent
+    "ignore:BinaryInputContent is deprecated:DeprecationWarning",
     # uvicorn (mcp server)
     "ignore:websockets.legacy is deprecated.*:DeprecationWarning:websockets.legacy",
     "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning",
