@@ -7,8 +7,9 @@ import re
 import time
 import uuid
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator
+from concurrent.futures import Executor
 from contextlib import asynccontextmanager, contextmanager, suppress
-from contextvars import ContextVar
+from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime, timezone
 from functools import partial
@@ -54,6 +55,7 @@ _P = ParamSpec('_P')
 _R = TypeVar('_R')
 
 _disable_threads: ContextVar[bool] = ContextVar('_disable_threads', default=False)
+_thread_executor: ContextVar[Executor | None] = ContextVar('_thread_executor', default=None)
 
 
 @contextmanager
@@ -76,11 +78,43 @@ def disable_threads() -> Iterator[None]:
         _disable_threads.reset(token)
 
 
+@contextmanager
+def using_thread_executor(executor: Executor) -> Iterator[None]:
+    """Context manager to use a custom executor for running sync functions in threads.
+
+    Inside this context, sync functions will be executed using the provided executor
+    via [`asyncio.get_running_loop().run_in_executor()`][asyncio.loop.run_in_executor]
+    instead of the default [`anyio.to_thread.run_sync`][anyio.to_thread.run_sync].
+
+    This is useful in long-running servers (e.g. FastAPI) where thread accumulation
+    from ephemeral anyio worker threads can be a problem, and you want to use a bounded
+    `ThreadPoolExecutor` instead.
+
+    Args:
+        executor: The executor to use for running sync functions.
+
+    Yields:
+        None
+    """
+    token = _thread_executor.set(executor)
+    try:
+        yield
+    finally:
+        _thread_executor.reset(token)
+
+
 async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs) -> _R:
     if _disable_threads.get():
         return func(*args, **kwargs)
 
     wrapped_func = partial(func, *args, **kwargs)
+
+    executor = _thread_executor.get()
+    if executor is not None:
+        loop = asyncio.get_running_loop()
+        ctx = copy_context()
+        return await loop.run_in_executor(executor, ctx.run, wrapped_func)
+
     return await run_sync(wrapped_func)
 
 

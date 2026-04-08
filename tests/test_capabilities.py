@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import threading
 from collections.abc import AsyncIterable, AsyncIterator, Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -23,6 +25,7 @@ from pydantic_ai.capabilities import (
     PrefixTools,
     SetToolMetadata,
     Thinking,
+    ThreadExecutor,
     Toolset,
     WebFetch,
     WebSearch,
@@ -8295,3 +8298,58 @@ class TestCtxAgentInCapability:
         agent = Agent(FunctionModel(simple_model_function), name='hook_test_agent', capabilities=[AgentTrackingCap()])
         await agent.run('hello')
         assert hook_agent_names == ['hook_test_agent', 'hook_test_agent']
+
+
+def test_thread_executor_not_serializable() -> None:
+    assert ThreadExecutor.get_serialization_name() is None
+
+
+async def test_thread_executor_capability() -> None:
+    tool_threads: list[str] = []
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='check_thread', args='{}')])
+
+    executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='cap-pool')
+    try:
+        agent = Agent(FunctionModel(model_function), capabilities=[ThreadExecutor(executor)])
+
+        @agent.tool_plain
+        def check_thread() -> str:
+            tool_threads.append(threading.current_thread().name)
+            return 'ok'
+
+        result = await agent.run('test')
+        assert result.output == 'done'
+        assert len(tool_threads) == 1
+        assert tool_threads[0].startswith('cap-pool')
+    finally:
+        executor.shutdown(wait=True)
+
+
+async def test_thread_executor_static_method() -> None:
+    tool_threads: list[str] = []
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='check_thread', args='{}')])
+
+    agent = Agent(FunctionModel(model_function))
+
+    @agent.tool_plain
+    def check_thread() -> str:
+        tool_threads.append(threading.current_thread().name)
+        return 'ok'
+
+    executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='static-pool')
+    try:
+        with Agent.using_thread_executor(executor):
+            result = await agent.run('test')
+        assert result.output == 'done'
+        assert len(tool_threads) == 1
+        assert tool_threads[0].startswith('static-pool')
+    finally:
+        executor.shutdown(wait=True)

@@ -546,6 +546,7 @@ def test_logfire(
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
                         'thinking': None,
                     }
                 )
@@ -1042,6 +1043,9 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                         'prompted_output_template': None,
                         'allow_text_output': False,
                         'allow_image_output': False,
+                        'instruction_parts': [
+                            {'content': 'Here are some instructions', 'dynamic': False, 'part_kind': 'instruction'}
+                        ],
                         'thinking': None,
                     }
                 )
@@ -1148,6 +1152,7 @@ async def test_aggregated_usage_attribute_names(capfire: CaptureLogfire) -> None
             'final_result': 'Hello!',
             'gen_ai.aggregated_usage.input_tokens': 10,
             'gen_ai.aggregated_usage.output_tokens': 5,
+            'gen_ai.aggregated_usage.cache_read.input_tokens': 2,
             'gen_ai.aggregated_usage.details.cache_read_tokens': 2,
             'pydantic_ai.all_messages': [
                 {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]},
@@ -1205,6 +1210,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
                         'thinking': None,
                     },
                     'logfire.span_type': 'span',
