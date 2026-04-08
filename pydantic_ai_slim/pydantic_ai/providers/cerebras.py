@@ -39,13 +39,17 @@ class CerebrasProvider(Provider[AsyncOpenAI]):
     def client(self) -> AsyncOpenAI:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         prefix_to_profile = {
             'llama': meta_model_profile,
             'qwen': qwen_model_profile,
             'gpt-oss': harmony_model_profile,
             'zai': zai_model_profile,
         }
+
+        # Reasoning models that support the cerebras_disable_reasoning setting
+        reasoning_prefixes = ('zai', 'gpt-oss')
 
         profile = None
         model_name_lower = model_name.lower()
@@ -64,9 +68,11 @@ class CerebrasProvider(Provider[AsyncOpenAI]):
             'parallel_tool_calls',
             'service_tier',
         )
+        is_reasoning = model_name_lower.startswith(reasoning_prefixes)
         return OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_unsupported_model_settings=unsupported_model_settings,
+            supports_thinking=is_reasoning,
         ).update(profile)
 
     @overload

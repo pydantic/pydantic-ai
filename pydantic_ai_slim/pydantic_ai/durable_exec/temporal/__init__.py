@@ -108,8 +108,8 @@ class PydanticAIPlugin(SimplePlugin):
         workflows = list(config.get('workflows', []))  # type: ignore[reportUnknownMemberType]
         activities = list(config.get('activities', []))  # type: ignore[reportUnknownMemberType]
 
-        for workflow_class in workflows:  # type: ignore[reportUnknownMemberType]
-            agents = getattr(workflow_class, '__pydantic_ai_agents__', None)  # type: ignore[reportUnknownMemberType]
+        for workflow_class in workflows:
+            agents = getattr(workflow_class, '__pydantic_ai_agents__', None)
             if agents is None:
                 continue
             if not isinstance(agents, Sequence):

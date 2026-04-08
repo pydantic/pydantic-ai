@@ -11,7 +11,7 @@ from datetime import datetime
 from mimetypes import MimeTypes
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, TypeAlias, TypeGuard, cast, overload
 from urllib.parse import urlparse
 
 import pydantic
@@ -20,7 +20,7 @@ from genai_prices import calc_price, types as genai_types
 from opentelemetry._logs import LogRecord
 from opentelemetry.util.types import AnyValue
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from typing_extensions import TypeAliasType, deprecated
+from typing_extensions import TypeAliasType, TypeVar, deprecated
 
 from . import _otel_messages, _utils
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
@@ -29,6 +29,12 @@ from .usage import RequestUsage
 
 if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
+
+# Key used to wrap malformed tool-call arguments so they can still be round-tripped
+# through a model API without crashing.  The specific string 'INVALID_JSON' is the
+# value recommended by the Anthropic docs for this situation:
+# https://docs.anthropic.com/en/docs/build-with-claude/tool-use/overview#handling-tool-use-errors
+INVALID_JSON_KEY = 'INVALID_JSON'
 
 _mime_types = MimeTypes()
 # Replicate what is being done in `mimetypes.init()`
@@ -456,6 +462,27 @@ class DocumentUrl(FileUrl):
             raise ValueError(f'Unknown document media type: {media_type}') from e
 
 
+@dataclass(repr=False)
+class TextContent:
+    """String content that is tagged with additional metadata.
+
+    This is useful for including metadata that can be accessed programmatically by the application, but is not sent to the LLM.
+    """
+
+    content: str
+    """The content that is sent to the LLM."""
+
+    _: KW_ONLY
+
+    metadata: Any = None
+    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+
+    kind: Literal['text-content'] = 'text-content'
+    """Type identifier, this is available on all parts as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 @pydantic_dataclass(
     repr=False,
     config=pydantic.ConfigDict(
@@ -663,28 +690,173 @@ class CachePoint:
 
     Supported by:
 
-    * Anthropic (automatically omitted for Bedrock, as it does not support explicit TTL). See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information."""
+    * Anthropic. See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information."""
 
 
-MULTI_MODAL_CONTENT_TYPES = (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent)
-"""Tuple of multi-modal content types for use with isinstance() checks."""
+UploadedFileProviderName: TypeAlias = Literal['anthropic', 'openai', 'google-gla', 'google-vertex', 'bedrock', 'xai']
+"""Provider names supported by [`UploadedFile`][pydantic_ai.messages.UploadedFile]."""
+
+
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
+class UploadedFile:
+    """A reference to a file uploaded to a provider's file storage by ID.
+
+    This allows referencing files that have been uploaded via provider-specific file APIs
+    rather than providing the file content directly.
+
+    Supported by:
+
+    - [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel]
+    - [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]
+    - [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]
+    - [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel]
+    - [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (GLA: [Files API](https://ai.google.dev/gemini-api/docs/files) URIs, Vertex: GCS `gs://` URIs)
+    - [`XaiModel`][pydantic_ai.models.xai.XaiModel]
+    """
+
+    file_id: str
+    """The provider-specific file identifier.
+
+    For most providers, this is the file ID returned by the provider's upload API.
+    For GoogleModel (Vertex), this must be a GCS URI (`gs://bucket/path`).
+    For GoogleModel (GLA), this must be a Google Files API URI (`https://generativelanguage.googleapis.com/...`).
+    For BedrockConverseModel, this must be an S3 URI (`s3://bucket/key`).
+    """
+
+    provider_name: UploadedFileProviderName
+    """The provider this file belongs to.
+
+    This is required because file IDs are not portable across providers, and using a file ID
+    with the wrong provider will always result in an error.
+
+    Tip: Use `model.system` to get the provider name dynamically.
+    """
+
+    _: KW_ONLY
+
+    vendor_metadata: dict[str, Any] | None = None
+    """Vendor-specific metadata for the file.
+
+    The expected shape of this dictionary depends on the provider:
+
+    Supported by:
+    - `GoogleModel`: used as `video_metadata` for video files
+    """
+
+    _media_type: Annotated[str | None, pydantic.Field(alias='media_type', default=None, exclude=True)] = field(
+        compare=False, default=None
+    )
+
+    _identifier: Annotated[str | None, pydantic.Field(alias='identifier', default=None, exclude=True)] = field(
+        compare=False, default=None
+    )
+
+    kind: Literal['uploaded-file'] = 'uploaded-file'
+    """Type identifier, this is available on all parts as a discriminator."""
+
+    # `pydantic_dataclass` replaces `__init__` so this method is never used.
+    # The signature is kept so that pyright/IDE hints recognize the `media_type` and `identifier` aliases.
+    def __init__(
+        self,
+        file_id: str,
+        provider_name: UploadedFileProviderName,
+        *,
+        media_type: str | None = None,
+        vendor_metadata: dict[str, Any] | None = None,
+        identifier: str | None = None,
+        kind: Literal['uploaded-file'] = 'uploaded-file',
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _media_type: str | None = None,
+        _identifier: str | None = None,
+    ) -> None: ...  # pragma: no cover
+
+    @pydantic.computed_field
+    @property
+    def media_type(self) -> str:
+        """Return the media type of the file, inferred from `file_id` if not explicitly provided.
+
+        Note: Inference relies on the file extension in `file_id`.
+        For opaque file IDs (e.g., `'file-abc123'`), the media type will default to `'application/octet-stream'`.
+        Inference relies on Python's `mimetypes` module, whose results may vary across platforms.
+
+        Required by some providers (e.g., Bedrock) for certain file types.
+        """
+        if self._media_type is not None:
+            return self._media_type
+        parsed = urlparse(self.file_id)
+        mime_type, _ = _mime_types.guess_type(parsed.path)
+        return mime_type or 'application/octet-stream'
+
+    @pydantic.computed_field
+    @property
+    def identifier(self) -> str:
+        """The identifier of the file, such as a unique ID.
+
+        This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
+        and the tool can look up the file in question by iterating over the message history and finding the matching `UploadedFile`.
+
+        This identifier is only automatically passed to the model when the `UploadedFile` is returned by a tool.
+        If you're passing the `UploadedFile` as a user message, it's up to you to include a separate text part with the identifier,
+        e.g. "This is file <identifier>:" preceding the `UploadedFile`.
+        """
+        return self._identifier or _multi_modal_content_identifier(self.file_id)
+
+    @property
+    def format(self) -> str:
+        """A general-purpose media-type-to-format mapping.
+
+        Maps media types to format strings (e.g. `'image/png'` -> `'png'`). Covers image, video,
+        audio, and document types. Currently used by Bedrock, which requires explicit format strings.
+        """
+        media_type = self.media_type
+        try:
+            if media_type.startswith('image/'):
+                return _image_format_lookup[media_type]
+            elif media_type.startswith('video/'):
+                return _video_format_lookup[media_type]
+            elif media_type.startswith('audio/'):
+                return _audio_format_lookup[media_type]
+            else:
+                return _document_format_lookup[media_type]
+        except KeyError as e:
+            raise ValueError(f'Unknown media type: {media_type}') from e
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
 
 MultiModalContent = Annotated[
-    ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent, pydantic.Discriminator('kind')
+    ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent | UploadedFile, pydantic.Discriminator('kind')
 ]
 """Union of all multi-modal content types with a discriminator for Pydantic validation."""
 
-UserContent: TypeAlias = str | MultiModalContent | CachePoint
+# Explicit tuple for readability; validated against MultiModalContent in tests
+MULTI_MODAL_CONTENT_TYPES: tuple[type, ...] = (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent, UploadedFile)
+
+
+def is_multi_modal_content(obj: Any) -> TypeGuard[MultiModalContent]:
+    """Check if obj is a MultiModalContent type, enabling type narrowing."""
+    return isinstance(obj, MULTI_MODAL_CONTENT_TYPES)
+
+
+UserContent: TypeAlias = str | TextContent | MultiModalContent | CachePoint
+
+
+_ToolReturnValueT = TypeVar('_ToolReturnValueT', default=Any)
+"""Type variable for the return value type in `ToolReturn[T]`.
+
+When `ToolReturn` is used without a type parameter (bare `ToolReturn`), this defaults to `Any`,
+meaning no return schema is generated. When specified (e.g. `ToolReturn[User]`), the return
+schema is generated from the inner type.
+"""
 
 
 @dataclass(repr=False)
-class ToolReturn:
-    """A structured return value for tools that need to provide both a return value and custom content to the model.
+class ToolReturn(Generic[_ToolReturnValueT]):
+    """A structured tool return that separates the tool result from additional content sent to the model.
 
-    This class allows tools to return complex responses that include:
-    - A return value for actual tool return
-    - Custom content (including multi-modal content) to be sent to the model as a UserPromptPart
-    - Optional metadata for application use
+    Can be parameterized with a type to enable return schema generation:
+    - `ToolReturn[User]` — generates a return schema for `User`
+    - `ToolReturn` (bare) — no return schema generated
     """
 
     return_value: ToolReturnContent
@@ -693,10 +865,15 @@ class ToolReturn:
     _: KW_ONLY
 
     content: str | Sequence[UserContent] | None = None
-    """The content to be sent to the model as a UserPromptPart."""
+    """Content sent to the model as a separate `UserPromptPart`.
+
+    Use this when you want content to appear outside the tool result message.
+    For multimodal content that should be sent natively in the tool result,
+    return it directly from the tool function or include it in `return_value`.
+    """
 
     metadata: Any = None
-    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+    """Additional data accessible by the application but not sent to the LLM."""
 
     kind: Literal['tool-return'] = 'tool-return'
 
@@ -803,6 +980,7 @@ class UserPromptPart:
         content = [
             part['content'] if part == {'kind': 'text', 'content': part.get('content')} else part for part in content
         ]
+
         if content in ([{'kind': 'text'}], [self.content]):
             content = content[0]
         return LogRecord(attributes={'event.name': 'gen_ai.user.message'}, body={'content': content, 'role': 'user'})
@@ -811,9 +989,12 @@ class UserPromptPart:
         parts: list[_otel_messages.MessagePart] = []
         content: Sequence[UserContent] = [self.content] if isinstance(self.content, str) else self.content
         for part in content:
-            if isinstance(part, str):
+            if isinstance(part, str | TextContent):
+                content_str = part if isinstance(part, str) else part.content
                 parts.append(
-                    _otel_messages.TextPart(type='text', **({'content': part} if settings.include_content else {}))
+                    _otel_messages.TextPart(
+                        type='text', **({'content': content_str} if settings.include_content else {})
+                    )
                 )
             elif isinstance(part, ImageUrl | AudioUrl | DocumentUrl | VideoUrl):
                 if settings.version >= 4:
@@ -837,6 +1018,18 @@ class UserPromptPart:
                     )
             elif isinstance(part, BinaryContent):
                 parts.append(_convert_binary_to_otel_part(part.media_type, lambda p=part: p.base64, settings))
+            elif isinstance(part, UploadedFile):
+                # UploadedFile references provider-hosted files by file_id (OTel GenAI spec FilePart)
+                # Infer modality from media_type - OTel spec defines: image, video, audio (or any string)
+                category = part.media_type.split('/', 1)[0]
+                if category in ('image', 'audio', 'video'):
+                    modality = category
+                else:
+                    modality = 'document'  # default for PDFs, text, etc.
+                file_part = _otel_messages.FilePart(type='file', modality=modality, mime_type=part.media_type)
+                if settings.include_content:
+                    file_part['file_id'] = part.file_id
+                parts.append(file_part)
             elif isinstance(part, CachePoint):
                 # CachePoint is a marker, not actual content - skip it for otel
                 pass
@@ -846,6 +1039,9 @@ class UserPromptPart:
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
+
+RETURN_VALUE_KEY = 'return_value'
+"""Key used to wrap non-dict tool return values in `model_response_object()`."""
 
 tool_return_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(
     Any, config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
@@ -868,10 +1064,10 @@ class BaseToolReturnPart:
     """Base class for tool return parts."""
 
     tool_name: str
-    """The name of the "tool" was called."""
+    """The name of the tool that was called."""
 
     content: ToolReturnContent
-    """The return value."""
+    """The tool return content, which may include multimodal files."""
 
     tool_call_id: str = field(default_factory=_generate_tool_call_id)
     """The tool call identifier, this is used by some models including OpenAI.
@@ -882,26 +1078,159 @@ class BaseToolReturnPart:
     _: KW_ONLY
 
     metadata: Any = None
-    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+    """Additional data accessible by the application but not sent to the LLM."""
 
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
 
-    def model_response_str(self) -> str:
-        """Return a string representation of the content for the model."""
-        if isinstance(self.content, str):
-            return self.content
+    outcome: Literal['success', 'failed', 'denied'] = 'success'
+    """The outcome of the tool call.
+
+    - `'success'`: The tool executed successfully.
+    - `'failed'`: The tool raised an error during execution.
+    - `'denied'`: The tool call was denied by the approval mechanism.
+    """
+
+    def _split_content(self) -> tuple[list[Any], list[MultiModalContent], bool]:
+        """Split content into non-file and file parts.
+
+        Returns:
+            A 3-tuple of (`data_parts`, `file_parts`, `was_list`) where `was_list` indicates
+            whether the original content was a list.
+        """
+        if is_multi_modal_content(self.content):
+            return [], [self.content], False
+        elif isinstance(self.content, list):
+            non_files: list[Any] = []
+            files: list[MultiModalContent] = []
+            # ToolReturnContent uses a recursive TypeAliasType at runtime (for Pydantic validation)
+            # but a simpler union at type-check time, so pyright can't infer `p`'s type from the list.
+            for p in self.content:  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+                if is_multi_modal_content(p):
+                    files.append(p)
+                else:
+                    non_files.append(p)
+            return non_files, files, True
+        return [self.content], [], False
+
+    def _unwrap_data(self) -> tuple[Any, list[MultiModalContent]]:
+        """Split content and unwrap single-item data lists.
+
+        Returns the unwrapped data value (or None if empty) and the file parts.
+        Single-item lists are unwrapped when content was scalar or when files were filtered out.
+        """
+        data, files, was_list = self._split_content()
+        if not data:
+            return None, files
+        # Unwrap single-item data: either content was originally scalar (!was_list)
+        # or extracting files reduced a multi-item list to one element.
+        if len(data) == 1 and (not was_list or bool(files)):
+            return data[0], files
+        return data, files
+
+    @property
+    def files(self) -> list[MultiModalContent]:
+        """The multimodal file parts from `content` (`ImageUrl`, `AudioUrl`, `DocumentUrl`, `VideoUrl`, `BinaryContent`)."""
+        _, files, _ = self._split_content()
+        return files
+
+    @overload
+    def content_items(self, *, mode: Literal['raw'] = 'raw') -> list[ToolReturnContent]: ...
+
+    @overload
+    def content_items(self, *, mode: Literal['str']) -> list[str | MultiModalContent]: ...
+
+    @overload
+    def content_items(self, *, mode: Literal['jsonable']) -> list[Any | MultiModalContent]: ...
+
+    def content_items(
+        self, *, mode: Literal['raw', 'str', 'jsonable'] = 'raw'
+    ) -> list[ToolReturnContent] | list[str | MultiModalContent] | list[Any | MultiModalContent]:
+        """Return content as a flat list for iteration, with optional serialization.
+
+        Args:
+            mode: Controls serialization of non-file items:
+                - `'raw'`: No serialization. Returns items as-is.
+                - `'str'`: Non-file items are serialized to strings via `tool_return_ta`.
+                  File items (`MultiModalContent`) pass through unchanged.
+                - `'jsonable'`: Non-file items are serialized to JSON-compatible Python objects
+                  via `tool_return_ta`. File items pass through unchanged.
+        """
+        items: list[ToolReturnContent]
+        if isinstance(self.content, list):
+            items = self.content  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
         else:
-            return tool_return_ta.dump_json(self.content).decode()
+            items = [self.content]
+
+        if mode == 'raw':
+            return items
+
+        result: list[str | MultiModalContent] | list[Any | MultiModalContent] = []
+        for item in items:
+            if is_multi_modal_content(item):
+                result.append(item)
+            elif isinstance(item, str):
+                result.append(item)
+            elif mode == 'str':
+                result.append(tool_return_ta.dump_json(item).decode())
+            else:
+                result.append(tool_return_ta.dump_python(item, mode='json'))
+        return result
+
+    def model_response_str(self) -> str:
+        """Return a string representation of the data content for the model.
+
+        This excludes multimodal files - use `.files` to get those separately.
+        """
+        value, _ = self._unwrap_data()
+        if value is None:
+            return ''
+        if isinstance(value, str):
+            return value
+        return tool_return_ta.dump_json(value).decode()
 
     def model_response_object(self) -> dict[str, Any]:
-        """Return a dictionary representation of the content, wrapping non-dict types appropriately."""
-        # gemini supports JSON dict return values, but no other JSON types, hence we wrap anything else in a dict
-        json_content = tool_return_ta.dump_python(self.content, mode='json')
-        if isinstance(json_content, dict):
-            return json_content  # type: ignore[reportUnknownReturn]
+        """Return a dictionary representation of the data content, wrapping non-dict types appropriately.
+
+        This excludes multimodal files - use `.files` to get those separately.
+        Gemini supports JSON dict return values, but no other JSON types, hence we wrap anything else in a dict.
+        """
+        value, _ = self._unwrap_data()
+        if value is None:
+            return {}
+        json_content = tool_return_ta.dump_python(value, mode='json')
+        if _utils.is_str_dict(json_content):
+            return json_content
         else:
-            return {'return_value': json_content}
+            return {RETURN_VALUE_KEY: json_content}
+
+    def model_response_str_and_user_content(self) -> tuple[str, list[UserContent]]:
+        """Build a text-only tool result with multimodal files extracted for a trailing user message.
+
+        For providers whose tool result API only accepts text. Multimodal files are referenced
+        by identifier in the tool result text ('See file {id}.') and included in full in the
+        returned file content list ('This is file {id}:' followed by the file).
+        """
+        _, files, was_list = self._split_content()
+        if not files:
+            return self.model_response_str(), []
+
+        tool_content_parts: list[str] = []
+        file_content: list[UserContent] = []
+
+        for item in self.content_items(mode='str'):
+            if is_multi_modal_content(item):
+                tool_content_parts.append(f'See file {item.identifier}.')
+                file_content.append(f'This is file {item.identifier}:')
+                file_content.append(item)
+            elif isinstance(item, str):  # pragma: no branch
+                tool_content_parts.append(item)
+
+        if was_list:
+            return tool_return_ta.dump_json(tool_content_parts).decode(), file_content
+        # Safe: when was_list is False, content is either scalar data (→ str item) or a single
+        # MultiModalContent (→ 'See file ...' placeholder), so tool_content_parts always has one entry.
+        return tool_content_parts[0], file_content
 
     def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
         body: AnyValue = {
@@ -1070,6 +1399,45 @@ ModelRequestPart = Annotated[
 
 
 @dataclass(repr=False)
+class InstructionPart:
+    """A single instruction block with metadata about its origin.
+
+    Instructions are composed of one or more parts, each of which can be static (from a literal string)
+    or dynamic (from a function, template, or toolset). This distinction allows model implementations
+    to make intelligent caching decisions — e.g. Anthropic's prompt caching can cache the static prefix
+    while leaving dynamic instructions uncached.
+    """
+
+    content: str
+    """The text content of this instruction block."""
+
+    _: KW_ONLY
+
+    dynamic: bool = False
+    """Whether this instruction came from a dynamic source (function, template, or toolset).
+
+    Static instructions (`dynamic=False`) come from literal strings passed to `Agent(instructions=...)`.
+    Dynamic instructions (`dynamic=True`) come from `@agent.instructions` functions, `TemplateStr`,
+    or toolset `get_instructions()` methods.
+    """
+
+    part_kind: Literal['instruction'] = 'instruction'
+    """Part type identifier, used as a discriminator for deserialization."""
+
+    @staticmethod
+    def join(parts: Sequence[InstructionPart]) -> str | None:
+        """Join instruction parts into a single string, separated by double newlines."""
+        return '\n\n'.join(p.content for p in parts).strip() or None
+
+    @staticmethod
+    def sorted(parts: Sequence[InstructionPart]) -> list[InstructionPart]:
+        """Sort instruction parts with static (`dynamic=False`) before dynamic, preserving relative order."""
+        return sorted(parts, key=lambda p: p.dynamic)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
 class ModelRequest:
     """A request generated by Pydantic AI and sent to a model, e.g. a message from the Pydantic AI app to the model."""
 
@@ -1084,7 +1452,7 @@ class ModelRequest:
     """The timestamp when the request was sent to the model."""
 
     instructions: str | None = None
-    """The instructions for the model."""
+    """The instructions string for this request, rendered from structured instruction parts."""
 
     kind: Literal['request'] = 'request'
     """Message type identifier, this is available on all parts as a discriminator."""
@@ -1273,18 +1641,31 @@ class BaseToolCallPart:
     When this field is set, `provider_name` is required to identify the provider that generated this data.
     """
 
-    def args_as_dict(self) -> dict[str, Any]:
+    def args_as_dict(self, *, raise_if_invalid: bool = False) -> dict[str, Any]:
         """Return the arguments as a Python dictionary.
 
         This is just for convenience with models that require dicts as input.
+
+        Args:
+            raise_if_invalid: If `True`, a `ValueError` or `AssertionError`
+                caused by malformed JSON in `args` will be re-raised.  When
+                `False` (the default), malformed JSON is handled gracefully by
+                returning `{'INVALID_JSON': '<raw args>'}` so that the value
+                can still be sent to a model API (e.g. during a retry flow)
+                without crashing.
         """
         if not self.args:
             return {}
         if isinstance(self.args, dict):
             return self.args
-        args = pydantic_core.from_json(self.args)
-        assert isinstance(args, dict), 'args should be a dict'
-        return cast(dict[str, Any], args)
+        try:
+            args = pydantic_core.from_json(self.args)
+            assert isinstance(args, dict), 'args should be a dict'
+            return cast(dict[str, Any], args)
+        except (ValueError, AssertionError):
+            if raise_if_invalid:
+                raise
+            return {INVALID_JSON_KEY: self.args}
 
     def args_as_json_str(self) -> str:
         """Return the arguments as a JSON string.
@@ -1298,13 +1679,8 @@ class BaseToolCallPart:
         return pydantic_core.to_json(self.args).decode()
 
     def has_content(self) -> bool:
-        """Return `True` if the arguments contain any data."""
-        if isinstance(self.args, dict):
-            # TODO: This should probably return True if you have the value False, or 0, etc.
-            #   It makes sense to me to ignore empty strings, but not sure about empty lists or dicts
-            return any(self.args.values())
-        else:
-            return bool(self.args)
+        """Return `True` if the tool call has content."""
+        return self.args not in ('', {}, None)
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -1316,7 +1692,7 @@ class ToolCallPart(BaseToolCallPart):
     _: KW_ONLY
 
     part_kind: Literal['tool-call'] = 'tool-call'
-    """Part type identifier, this is available on all parts as a discriminator."""
+    """Part type identifier, this is available on all parts as a discriminator. Note that this is different from `ToolCallPartDelta.part_delta_kind`."""
 
 
 @dataclass(repr=False)
@@ -1525,6 +1901,8 @@ class ModelResponse:
         return result
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        from .models.instrumented import InstrumentedModel
+
         parts: list[_otel_messages.MessagePart] = []
         for part in self.parts:
             if isinstance(part, TextPart):
@@ -1550,8 +1928,6 @@ class ModelResponse:
                 if isinstance(part, BuiltinToolCallPart):
                     call_part['builtin'] = True
                 if settings.include_content and part.args is not None:
-                    from .models.instrumented import InstrumentedModel
-
                     if isinstance(part.args, str):
                         call_part['arguments'] = part.args
                     else:
@@ -1566,8 +1942,6 @@ class ModelResponse:
                     builtin=True,
                 )
                 if settings.include_content and part.content is not None:  # pragma: no branch
-                    from .models.instrumented import InstrumentedModel
-
                     return_part['result'] = InstrumentedModel.serialize_any(part.content)
 
                 parts.append(return_part)
@@ -1794,7 +2168,7 @@ class ToolCallPartDelta:
     """
 
     part_delta_kind: Literal['tool_call'] = 'tool_call'
-    """Part delta type identifier, used as a discriminator."""
+    """Part delta type identifier, used as a discriminator. Note that this is different from `ToolCallPart.part_kind`."""
 
     def as_part(self) -> ToolCallPart | None:
         """Convert this delta to a fully formed `ToolCallPart` if possible, otherwise return `None`.
