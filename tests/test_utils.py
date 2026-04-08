@@ -564,6 +564,164 @@ def test_merge_json_schema_defs():
     )
 
 
+def test_merge_json_schema_defs_internal_refs_in_renamed_defs():
+    """When defs are renamed due to collisions, internal $refs within those defs must also be updated."""
+    schema_a = {
+        '$defs': {
+            'Inner': {'type': 'object', 'properties': {'x': {'type': 'string'}}},
+            'Outer': {
+                'type': 'object',
+                'properties': {'inner': {'$ref': '#/$defs/Inner'}, 'extra_a': {'type': 'string'}},
+            },
+        },
+        'properties': {'outer': {'$ref': '#/$defs/Outer'}},
+        'type': 'object',
+        'title': 'SchemaA',
+    }
+    schema_b = {
+        '$defs': {
+            'Inner': {'type': 'object', 'properties': {'x': {'type': 'integer'}}},
+            'Outer': {
+                'type': 'object',
+                'properties': {'inner': {'$ref': '#/$defs/Inner'}, 'extra_b': {'type': 'number'}},
+            },
+        },
+        'properties': {'outer': {'$ref': '#/$defs/Outer'}},
+        'type': 'object',
+        'title': 'SchemaB',
+    }
+
+    rewritten_schemas, all_defs = merge_json_schema_defs([schema_a, schema_b])
+
+    # SchemaB's Outer was renamed to SchemaB_Outer_1, and its internal $ref to Inner
+    # must now point to SchemaB_Inner_1 (not the original Inner from SchemaA)
+    assert all_defs == snapshot(
+        {
+            'Inner': {'type': 'object', 'properties': {'x': {'type': 'string'}}},
+            'Outer': {
+                'type': 'object',
+                'properties': {'inner': {'$ref': '#/$defs/Inner'}, 'extra_a': {'type': 'string'}},
+            },
+            'SchemaB_Inner_1': {'type': 'object', 'properties': {'x': {'type': 'integer'}}},
+            'SchemaB_Outer_1': {
+                'type': 'object',
+                'properties': {'inner': {'$ref': '#/$defs/SchemaB_Inner_1'}, 'extra_b': {'type': 'number'}},
+            },
+        }
+    )
+    assert rewritten_schemas == snapshot(
+        [
+            {
+                'properties': {'outer': {'$ref': '#/$defs/Outer'}},
+                'type': 'object',
+                'title': 'SchemaA',
+            },
+            {
+                'properties': {'outer': {'$ref': '#/$defs/SchemaB_Outer_1'}},
+                'type': 'object',
+                'title': 'SchemaB',
+            },
+        ]
+    )
+
+
+def test_merge_json_schema_defs_non_renamed_def_refs_renamed_def():
+    """A non-renamed def that references a renamed def must also have its $refs updated."""
+    schema_a = {
+        '$defs': {
+            'Inner': {'type': 'object', 'properties': {'x': {'type': 'string'}}},
+        },
+        'properties': {'inner': {'$ref': '#/$defs/Inner'}},
+        'type': 'object',
+        'title': 'SchemaA',
+    }
+    schema_b = {
+        '$defs': {
+            'Inner': {'type': 'object', 'properties': {'x': {'type': 'integer'}}},
+            'Wrapper': {'type': 'object', 'properties': {'inner': {'$ref': '#/$defs/Inner'}}},
+        },
+        'properties': {'wrapper': {'$ref': '#/$defs/Wrapper'}},
+        'type': 'object',
+        'title': 'SchemaB',
+    }
+
+    rewritten_schemas, all_defs = merge_json_schema_defs([schema_a, schema_b])
+
+    # Wrapper is new (no collision), but its $ref to Inner must be rewritten
+    # to SchemaB_Inner_1 because SchemaB's Inner was renamed
+    assert all_defs == snapshot(
+        {
+            'Inner': {'type': 'object', 'properties': {'x': {'type': 'string'}}},
+            'SchemaB_Inner_1': {'type': 'object', 'properties': {'x': {'type': 'integer'}}},
+            'Wrapper': {
+                'type': 'object',
+                'properties': {'inner': {'$ref': '#/$defs/SchemaB_Inner_1'}},
+            },
+        }
+    )
+    assert rewritten_schemas == snapshot(
+        [
+            {
+                'properties': {'inner': {'$ref': '#/$defs/Inner'}},
+                'type': 'object',
+                'title': 'SchemaA',
+            },
+            {
+                'properties': {'wrapper': {'$ref': '#/$defs/Wrapper'}},
+                'type': 'object',
+                'title': 'SchemaB',
+            },
+        ]
+    )
+
+
+def test_merge_json_schema_defs_additional_properties_allof_not():
+    """$refs under additionalProperties, allOf, and not must be rewritten during merge."""
+    schema_a = {
+        '$defs': {
+            'Value': {'type': 'object', 'properties': {'v': {'type': 'string'}}},
+            'Base': {'type': 'object', 'properties': {'b': {'type': 'string'}}},
+            'Excluded': {'type': 'object', 'properties': {'e': {'type': 'string'}}},
+        },
+        'properties': {
+            'map': {'type': 'object', 'additionalProperties': {'$ref': '#/$defs/Value'}},
+            'composed': {'allOf': [{'$ref': '#/$defs/Base'}, {'$ref': '#/$defs/Value'}]},
+            'excluded': {'not': {'$ref': '#/$defs/Excluded'}},
+        },
+        'type': 'object',
+        'title': 'SchemaA',
+    }
+    schema_b = {
+        '$defs': {
+            'Value': {'type': 'object', 'properties': {'v': {'type': 'integer'}}},
+            'Base': {'type': 'object', 'properties': {'b': {'type': 'integer'}}},
+            'Excluded': {'type': 'object', 'properties': {'e': {'type': 'integer'}}},
+        },
+        'properties': {
+            'map': {'type': 'object', 'additionalProperties': {'$ref': '#/$defs/Value'}},
+            'composed': {'allOf': [{'$ref': '#/$defs/Base'}, {'$ref': '#/$defs/Value'}]},
+            'excluded': {'not': {'$ref': '#/$defs/Excluded'}},
+        },
+        'type': 'object',
+        'title': 'SchemaB',
+    }
+
+    rewritten_schemas, _ = merge_json_schema_defs([schema_a, schema_b])
+
+    # SchemaB's refs should all be rewritten to the renamed defs
+    assert rewritten_schemas[1] == snapshot(
+        {
+            'properties': {
+                'map': {'type': 'object', 'additionalProperties': {'$ref': '#/$defs/SchemaB_Value_1'}},
+                'composed': {'allOf': [{'$ref': '#/$defs/SchemaB_Base_1'}, {'$ref': '#/$defs/SchemaB_Value_1'}]},
+                'excluded': {'not': {'$ref': '#/$defs/SchemaB_Excluded_1'}},
+            },
+            'type': 'object',
+            'title': 'SchemaB',
+        }
+    )
+
+
 def test_strip_markdown_fences():
     assert strip_markdown_fences('{"foo": "bar"}') == '{"foo": "bar"}'
     assert strip_markdown_fences('```json\n{"foo": "bar"}\n```') == '{"foo": "bar"}'
