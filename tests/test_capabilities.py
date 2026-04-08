@@ -48,6 +48,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    PartStartEvent,
     RetryPromptPart,
     TextPart,
     ToolCallPart,
@@ -3389,6 +3390,32 @@ class TestWrapRunEventStream:
             await stream.get_output()
         assert len(observed_events) > 0
 
+    async def test_wrap_run_event_stream_fires_in_run_without_handler(self):
+        """wrap_run_event_stream fires in run() even without an event_stream_handler."""
+        observed_events: list[AgentStreamEvent] = []
+
+        @dataclass
+        class ObserverCap(AbstractCapability[Any]):
+            async def wrap_run_event_stream(
+                self,
+                ctx: RunContext[Any],
+                *,
+                stream: AsyncIterable[AgentStreamEvent],
+            ) -> AsyncIterable[AgentStreamEvent]:
+                async for event in stream:
+                    observed_events.append(event)
+                    yield event
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[ObserverCap()],
+        )
+
+        # No event_stream_handler — hook should still fire via forced streaming
+        result = await agent.run('hello')
+        assert result.output is not None
+        assert any(isinstance(e, PartStartEvent) for e in observed_events)
+
 
 class TestWrapRunShortCircuit:
     """Test short-circuiting wrap_run via iter() and run_stream()."""
@@ -6315,6 +6342,45 @@ class TestHooksCapability:
         async with agent.run_stream('hello') as stream:
             await stream.get_output()
         assert len(events_seen) > 0
+
+    async def test_on_event_hook_fires_in_run(self):
+        """on.event fires in run() even without an event_stream_handler."""
+        hooks = Hooks()
+        events_seen: list[str] = []
+
+        @hooks.on.event
+        async def observe(ctx: RunContext[Any], event: AgentStreamEvent) -> AgentStreamEvent:
+            events_seen.append(type(event).__name__)
+            return event
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[hooks],
+        )
+        result = await agent.run('hello')
+        assert result.output is not None
+        assert 'PartStartEvent' in events_seen
+
+    async def test_wrap_run_event_stream_fires_in_run(self):
+        """on.run_event_stream fires in run() even without an event_stream_handler."""
+        hooks = Hooks()
+        events_seen: list[str] = []
+
+        @hooks.on.run_event_stream
+        async def observe_stream(
+            ctx: RunContext[Any], *, stream: AsyncIterable[AgentStreamEvent]
+        ) -> AsyncIterable[AgentStreamEvent]:
+            async for event in stream:
+                events_seen.append(type(event).__name__)
+                yield event
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[hooks],
+        )
+        result = await agent.run('hello')
+        assert result.output is not None
+        assert 'PartStartEvent' in events_seen
 
     async def test_on_event_with_run_event_stream(self):
         """on.event and on.run_event_stream can be used together."""

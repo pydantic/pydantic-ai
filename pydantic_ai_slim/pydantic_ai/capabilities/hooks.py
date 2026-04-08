@@ -653,6 +653,10 @@ class Hooks(AbstractCapability[AgentDepsT]):
     def has_wrap_node_run(self) -> bool:
         return bool(self._get('wrap_node_run'))
 
+    @property
+    def has_wrap_run_event_stream(self) -> bool:
+        return bool(self._get('wrap_run_event_stream') or self._get('_on_event'))
+
     @classmethod
     def get_serialization_name(cls) -> str | None:
         return None

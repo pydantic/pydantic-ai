@@ -93,6 +93,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Whether this capability (or any sub-capability) overrides wrap_node_run."""
         return type(self).wrap_node_run is not AbstractCapability.wrap_node_run
 
+    @property
+    def has_wrap_run_event_stream(self) -> bool:
+        """Whether this capability (or any sub-capability) overrides wrap_run_event_stream."""
+        return type(self).wrap_run_event_stream is not AbstractCapability.wrap_run_event_stream
+
     @classmethod
     def get_serialization_name(cls) -> str | None:
         """Return the name used for spec serialization (CamelCase class name by default).
@@ -327,7 +332,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         *,
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
-        """Wraps the event stream for a streamed node. Can observe or transform events."""
+        """Wraps the event stream for a streamed node. Can observe or transform events.
+
+        Note: when this method is overridden (or [`Hooks.on.event`][pydantic_ai.capabilities.hooks.Hooks.on]
+        / [`Hooks.on.run_event_stream`][pydantic_ai.capabilities.hooks.Hooks.on] are registered),
+        [`agent.run()`][pydantic_ai.Agent.run] automatically enables streaming mode so this hook
+        fires even without an explicit `event_stream_handler`.
+        """
         async for event in stream:
             yield event
 
