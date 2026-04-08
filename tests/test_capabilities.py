@@ -48,6 +48,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    PartStartEvent,
     RetryPromptPart,
     TextPart,
     ToolCallPart,
@@ -3298,7 +3299,7 @@ class TestWrapRunEventStream:
         # No event_stream_handler — hook should still fire via forced streaming
         result = await agent.run('hello')
         assert result.output is not None
-        assert len(observed_events) > 0
+        assert any(isinstance(e, PartStartEvent) for e in observed_events)
 
 
 class TestWrapRunShortCircuit:
@@ -6243,7 +6244,7 @@ class TestHooksCapability:
         )
         result = await agent.run('hello')
         assert result.output is not None
-        assert len(events_seen) > 0
+        assert 'PartStartEvent' in events_seen
 
     async def test_wrap_run_event_stream_fires_in_run(self):
         """on.run_event_stream fires in run() even without an event_stream_handler."""
@@ -6264,7 +6265,7 @@ class TestHooksCapability:
         )
         result = await agent.run('hello')
         assert result.output is not None
-        assert len(events_seen) > 0
+        assert 'PartStartEvent' in events_seen
 
     async def test_on_event_with_run_event_stream(self):
         """on.event and on.run_event_stream can be used together."""
