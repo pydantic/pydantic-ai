@@ -32,8 +32,7 @@ class ToolOrOutput:
     in an agent run while still allowing the agent to complete with structured output,
     text, or images.
 
-    See the [Tool Choice guide](TODO fill this out in https://github.com/dsfaccini/pydantic-ai/pull/2 i.e. prepare_model_settings hook PR)
-    for examples.
+    See the [Tool Choice guide](../tools-advanced.md#tool-choice) for examples.
     """
 
     function_tools: list[str]
@@ -138,7 +137,7 @@ class ModelSettings(TypedDict, total=False):
     tool_choice: ToolChoice
     """Control which function tools the model can use.
 
-    See the [Tool Choice guide](tool-choice.md) for detailed documentation
+    See the [Tool Choice guide](../tools-advanced.md#tool-choice) for detailed documentation
     and examples.
 
     * `None` (default): Defaults to `'auto'` behavior
@@ -150,10 +149,7 @@ class ModelSettings(TypedDict, total=False):
 
     Note: `'required'` and `list[str]` raise an error in `agent.run()` because they prevent the agent from
     producing a final response. Use [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput] to combine specific
-    function tools with output capability, or use [direct model requests](direct.md) for single API calls.
-
-    TODO(prepare_model_settings): Update this to note that the hook CAN return 'required' or list[str]
-    for per-step control since the hook applies to individual model requests, not the entire run.
+    function tools with output capability, or use [direct model requests](../direct.md) for single API calls.
 
     Supported by:
 

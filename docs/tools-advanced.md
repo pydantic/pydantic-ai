@@ -351,7 +351,7 @@ The `tool_choice` setting in [`ModelSettings`][pydantic_ai.settings.ModelSetting
     - `'required'` forces a tool call at every step, not just the first
     - `['tool_a']` restricts to that tool for the entire run, preventing completion if the agent needs output tools
 
-    If you want to use it for per-request control, use [direct model requests](direct.md) or the `prepare_tools` function above.
+    For per-request control, use [direct model requests](direct.md) or [`prepare_tools`](tools-advanced.md#tool-prepare).
 
 Pydantic AI distinguishes between **[function tools](tools.md)** (tools you register via `@agent.tool`, [toolsets](toolsets.md), or [MCP](mcp/client.md)), and **output tools** (internal tools used for [structured output](output.md#tool-output)).
 
