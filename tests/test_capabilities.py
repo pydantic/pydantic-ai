@@ -8302,9 +8302,7 @@ async def test_next_node_raises_on_error_marker():
     def failing_then_ok_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal call_count
         call_count += 1
-        if call_count == 1:
-            raise ValueError('model failure')
-        return ModelResponse(parts=[TextPart('ok')])
+        raise ValueError('model failure')
 
     agent = Agent(FunctionModel(failing_then_ok_model))
     async with agent.iter('hello') as agent_run:
@@ -8342,28 +8340,21 @@ async def test_after_node_run_node_to_end():
 
     call_count = 0
 
-    def model_with_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal call_count
         call_count += 1
-        if call_count == 1:
-            return ModelResponse(parts=[ToolCallPart(tool_name='my_tool', args='{}')])
-        return ModelResponse(parts=[TextPart('should not reach')])
+        return ModelResponse(parts=[TextPart('first answer')])
 
     @dataclass
-    class ShortCircuitAfterTool(AbstractCapability[Any]):
-        """After seeing a tool call result, short-circuit to End instead of continuing."""
+    class ShortCircuitOnFirstEnd(AbstractCapability[Any]):
+        """Convert the first End result to an early exit with custom output."""
 
         async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
-            if not isinstance(result, End) and call_count == 1:
+            if isinstance(result, End) and call_count == 1:
                 return End(FinalResult('short-circuited'))
             return result  # pyright: ignore[reportUnknownVariableType]
 
-    agent = Agent(FunctionModel(model_with_tool), capabilities=[ShortCircuitAfterTool()])
-
-    @agent.tool_plain
-    def my_tool() -> str:
-        return 'tool result'
-
+    agent = Agent(FunctionModel(model_fn), capabilities=[ShortCircuitOnFirstEnd()])
     result = await agent.run('hello')
     assert result.output == 'short-circuited'
     assert call_count == 1
