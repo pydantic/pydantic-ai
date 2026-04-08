@@ -425,6 +425,7 @@ async def test_dataset_with_report_evaluators():
             return True  # pragma: no cover
 
     dataset = Dataset[TaskInput, str, None](
+        name='test',
         cases=[
             Case(name='c1', inputs=TaskInput(text='meow'), expected_output='cat'),
             Case(name='c2', inputs=TaskInput(text='woof'), expected_output='dog'),
@@ -468,6 +469,7 @@ async def test_dataset_report_evaluator_returns_list():
             ]
 
     dataset = Dataset[TaskInput, str, None](
+        name='test',
         cases=[
             Case(name='c1', inputs=TaskInput(text='a')),
             Case(name='c2', inputs=TaskInput(text='b')),
@@ -615,6 +617,7 @@ def test_report_evaluator_build_serialization_arguments_excludes_defaults():
 def test_report_evaluator_serializes_in_model_dump():
     """Dataset with report evaluators includes them in model_dump output."""
     dataset = Dataset[str, str, None](
+        name='test',
         cases=[Case(inputs='hello', expected_output='world')],
         report_evaluators=[ConfusionMatrixEvaluator()],
     )
@@ -626,6 +629,7 @@ def test_report_evaluator_serializes_in_model_dump():
 def test_report_evaluator_serializes_with_args_in_model_dump():
     """Dataset with report evaluators with args includes them in model_dump output."""
     dataset = Dataset[str, str, None](
+        name='test',
         cases=[Case(inputs='hello', expected_output='world')],
         report_evaluators=[ConfusionMatrixEvaluator(title='Custom')],
     )
@@ -880,6 +884,7 @@ async def test_report_evaluator_exception_during_evaluate():
             raise RuntimeError('evaluator broke')
 
     dataset = Dataset[str, str, None](
+        name='test',
         cases=[Case(inputs='hello', expected_output='world')],
         report_evaluators=[BrokenEvaluator()],
     )
@@ -906,6 +911,7 @@ async def test_report_evaluator_failure_does_not_block_others():
             return ScalarResult(title='Count', value=len(ctx.report.cases))
 
     dataset = Dataset[str, str, None](
+        name='test',
         cases=[Case(inputs='hello', expected_output='world')],
         report_evaluators=[BrokenEvaluator(), WorkingEvaluator()],
     )
@@ -932,6 +938,7 @@ async def test_report_evaluator_failures_set_on_span(capfire: CaptureLogfire):
             raise RuntimeError('evaluator broke')
 
     dataset = Dataset[str, str, None](
+        name='test',
         cases=[Case(inputs='hello', expected_output='world')],
         report_evaluators=[BrokenEvaluator()],
     )

@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '151'
+      - '135'
       content-type:
       - application/json
       host:
@@ -19,7 +19,6 @@ interactions:
       - content:
           parts:
           - text: Hello, world!
-          role: user
         model: models/nonexistent-model
         taskType: RETRIEVAL_QUERY
     uri: https://generativelanguage.googleapis.com/v1beta/models/nonexistent-model:batchEmbedContents
@@ -28,11 +27,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '263'
+      - '242'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=69
+      - gfet4t7; dur=77
       transfer-encoding:
       - chunked
       vary:

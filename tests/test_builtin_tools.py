@@ -146,3 +146,105 @@ def test_url_context_discriminated_union():
     assert isinstance(results[1], WebFetchTool)
     assert results[1].kind == 'web_fetch'
     assert results[1].max_uses == 2
+
+
+# --- prefer_builtin swap tests ---
+
+
+def test_prefer_builtin_model_supports_builtin():
+    """When model supports the builtin, the fallback function tool is removed."""
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.function import FunctionModel
+    from pydantic_ai.tools import ToolDefinition
+
+    model = FunctionModel(lambda m, i: None)  # type: ignore  # supports all builtins
+    fallback_tool = ToolDefinition(name='my_search', description='Search', prefer_builtin='web_search')
+    params = ModelRequestParameters(
+        function_tools=[fallback_tool],
+        builtin_tools=[WebSearchTool()],
+    )
+    _, result = model.prepare_request(None, params)
+    # Builtin is supported → fallback removed, builtin kept
+    assert len(result.builtin_tools) == 1
+    assert isinstance(result.builtin_tools[0], WebSearchTool)
+    assert len(result.function_tools) == 0
+
+
+def test_prefer_builtin_model_does_not_support():
+    """When model doesn't support the builtin, the builtin is removed and fallback stays."""
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.function import FunctionModel
+    from pydantic_ai.profiles import ModelProfile
+    from pydantic_ai.tools import ToolDefinition
+
+    model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
+    fallback_tool = ToolDefinition(name='my_search', description='Search', prefer_builtin='web_search')
+    params = ModelRequestParameters(
+        function_tools=[fallback_tool],
+        builtin_tools=[WebSearchTool()],
+    )
+    _, result = model.prepare_request(None, params)
+    # Builtin not supported → builtin removed, fallback kept
+    assert len(result.builtin_tools) == 0
+    assert len(result.function_tools) == 1
+    assert result.function_tools[0].name == 'my_search'
+
+
+def test_prefer_builtin_no_fallback_raises_error():
+    """Unsupported builtin without fallback still raises UserError."""
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.function import FunctionModel
+    from pydantic_ai.profiles import ModelProfile
+
+    model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
+    params = ModelRequestParameters(builtin_tools=[WebSearchTool()])
+    with pytest.raises(UserError, match='not supported by this model'):
+        model.prepare_request(None, params)
+
+
+def test_prefer_builtin_multiple_fallbacks_for_same_builtin():
+    """Multiple fallback tools for the same builtin are all removed when builtin is supported."""
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.function import FunctionModel
+    from pydantic_ai.tools import ToolDefinition
+
+    model = FunctionModel(lambda m, i: None)  # type: ignore  # supports all builtins
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='search_a', description='A', prefer_builtin='web_search'),
+            ToolDefinition(name='search_b', description='B', prefer_builtin='web_search'),
+            ToolDefinition(name='regular_tool', description='C'),
+        ],
+        builtin_tools=[WebSearchTool()],
+    )
+    _, result = model.prepare_request(None, params)
+    assert len(result.builtin_tools) == 1
+    # Both fallbacks removed, regular tool kept
+    assert [t.name for t in result.function_tools] == ['regular_tool']
+
+
+def test_prefer_builtin_mixed_support():
+    """Multiple builtins with mixed support — each resolved independently."""
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.function import FunctionModel
+    from pydantic_ai.profiles import ModelProfile
+    from pydantic_ai.tools import ToolDefinition
+
+    # Only supports web search, not code execution
+    model = FunctionModel(
+        lambda m, i: None,  # type: ignore
+        profile=ModelProfile(supported_builtin_tools=frozenset({WebSearchTool})),
+    )
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='local_search', description='Search', prefer_builtin='web_search'),
+            ToolDefinition(name='local_code', description='Code', prefer_builtin='code_execution'),
+        ],
+        builtin_tools=[WebSearchTool(), CodeExecutionTool()],
+    )
+    _, result = model.prepare_request(None, params)
+    # WebSearch: builtin supported → fallback removed, builtin kept
+    # CodeExecution: builtin not supported → builtin removed, fallback kept
+    assert len(result.builtin_tools) == 1
+    assert isinstance(result.builtin_tools[0], WebSearchTool)
+    assert [t.name for t in result.function_tools] == ['local_code']

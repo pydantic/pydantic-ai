@@ -127,6 +127,8 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         provider, model_name = model_name.split('/', 1)
         if provider in provider_to_profile:
             model_name, *_ = model_name.split(':', 1)  # drop tags
+            if provider == 'anthropic':
+                model_name = model_name.replace('.', '-')
             profile = provider_to_profile[provider](model_name)
 
         # As OpenRouterProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
@@ -165,19 +167,19 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         """Configure the provider with either an API key or prebuilt client.
 
         Args:
-            api_key: OpenRouter API key. Falls back to ``OPENROUTER_API_KEY``
-                when omitted and required unless ``openai_client`` is provided.
+            api_key: OpenRouter API key. Falls back to `OPENROUTER_API_KEY`
+                when omitted and required unless `openai_client` is provided.
             app_url: Optional url for app attribution. Falls back to
-                ``OPENROUTER_APP_URL`` when omitted.
+                `OPENROUTER_APP_URL` when omitted.
             app_title: Optional title for app attribution. Falls back to
-                ``OPENROUTER_APP_TITLE`` when omitted.
-            openai_client: Existing ``AsyncOpenAI`` client to reuse instead of
+                `OPENROUTER_APP_TITLE` when omitted.
+            openai_client: Existing `AsyncOpenAI` client to reuse instead of
                 creating one internally.
-            http_client: Custom ``httpx.AsyncClient`` to pass into the
-                ``AsyncOpenAI`` constructor when building a client.
+            http_client: Custom `httpx.AsyncClient` to pass into the
+                `AsyncOpenAI` constructor when building a client.
 
         Raises:
-            UserError: If no API key is available and no ``openai_client`` is
+            UserError: If no API key is available and no `openai_client` is
                 provided.
         """
         api_key = api_key or os.getenv('OPENROUTER_API_KEY')
