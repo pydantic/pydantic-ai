@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+from collections.abc import Callable
+from dataclasses import dataclass
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -10,7 +13,7 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ContextWindowExceeded
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.providers.gateway import gateway_provider
 
 from .conftest import try_import
@@ -85,113 +88,121 @@ def _mock_response(status_code: int) -> httpx.Response:
     return httpx.Response(status_code, request=_MOCK_REQUEST)
 
 
+@pytest.fixture
+def gateway_api_key() -> str:
+    return os.getenv('PYDANTIC_AI_GATEWAY_API_KEY', 'test-api-key')
+
+
 # ==================== VCR integration tests ====================
 
 
-@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
-async def test_openai_context_window_exceeded(allow_model_requests: None, openai_api_key: str):
-    """Test that OpenAI Chat context length exceeded errors raise ContextWindowExceeded."""
-    model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model)
-
-    with pytest.raises(ContextWindowExceeded) as exc_info:
-        await agent.run(HUGE_PROMPT)
-
-    assert exc_info.value.status_code == 400
-    assert exc_info.value.model_name == 'gpt-4o-mini'
+@dataclass
+class Case:
+    id: str
+    model_name: str
+    api_key_fixture: str
+    model_factory: Callable[[str], Model]
+    prompt: str = HUGE_PROMPT
 
 
-@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
-async def test_openai_responses_context_window_exceeded(allow_model_requests: None, openai_api_key: str):
-    """Test that OpenAI Responses API context length exceeded errors raise ContextWindowExceeded."""
-    model = OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model)
+_vcr_cases: list[Case] = []
 
-    with pytest.raises(ContextWindowExceeded) as exc_info:
-        await agent.run(HUGE_PROMPT)
-
-    assert exc_info.value.status_code == 400
-    assert exc_info.value.model_name == 'gpt-4o-mini'
-
-
-@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
-async def test_anthropic_context_window_exceeded(allow_model_requests: None, gateway_api_key: str):
-    """Test that Anthropic context length exceeded errors raise ContextWindowExceeded."""
-    model = AnthropicModel('claude-haiku-4-5', provider=gateway_provider('anthropic', api_key=gateway_api_key))
-    agent = Agent(model)
-
-    with pytest.raises(ContextWindowExceeded) as exc_info:
-        await agent.run(ANTHROPIC_HUGE_PROMPT)
-
-    assert exc_info.value.status_code == 400
-    assert exc_info.value.model_name == 'claude-haiku-4-5'
-
-
-@pytest.mark.skipif(not groq_imports_successful(), reason='groq not installed')
-async def test_groq_context_window_exceeded(allow_model_requests: None, groq_api_key: str):
-    """Test that Groq context length exceeded errors raise ContextWindowExceeded."""
-    model = GroqModel('llama-3.1-8b-instant', provider=GroqProvider(api_key=groq_api_key))
-    agent = Agent(model)
-
-    with pytest.raises(ContextWindowExceeded) as exc_info:
-        await agent.run(HUGE_PROMPT)
-
-    assert exc_info.value.status_code == 400
-    assert exc_info.value.model_name == 'llama-3.1-8b-instant'
-
-
-@pytest.mark.skipif(not google_imports_successful(), reason='google-genai not installed')
-async def test_google_context_window_exceeded(allow_model_requests: None, gemini_api_key: str):
-    """Test that Google context length exceeded errors raise ContextWindowExceeded."""
-    model = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(api_key=gemini_api_key))
-    agent = Agent(model)
-
-    with pytest.raises(ContextWindowExceeded) as exc_info:
-        await agent.run(GOOGLE_HUGE_PROMPT)
-
-    assert exc_info.value.status_code == 400
-    assert exc_info.value.model_name == 'gemini-2.0-flash'
-
-
-@pytest.mark.skipif(not bedrock_imports_successful(), reason='boto3 not installed')
-async def test_bedrock_context_window_exceeded(allow_model_requests: None, gateway_api_key: str):
-    """Test that Bedrock context length exceeded errors raise ContextWindowExceeded."""
-    model = BedrockConverseModel(
-        'us.amazon.nova-micro-v1:0', provider=gateway_provider('bedrock', api_key=gateway_api_key)
+if openai_imports_successful():
+    _vcr_cases.extend(
+        [
+            Case(
+                id='openai_chat',
+                model_name='gpt-4o-mini',
+                api_key_fixture='openai_api_key',
+                model_factory=lambda key: OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(api_key=key)),
+            ),
+            Case(
+                id='openai_responses',
+                model_name='gpt-4o-mini',
+                api_key_fixture='openai_api_key',
+                model_factory=lambda key: OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(api_key=key)),
+            ),
+        ]
     )
+
+if anthropic_imports_successful():
+    _vcr_cases.append(
+        Case(
+            id='anthropic',
+            model_name='claude-haiku-4-5',
+            api_key_fixture='gateway_api_key',
+            model_factory=lambda key: AnthropicModel(
+                'claude-haiku-4-5', provider=gateway_provider('anthropic', api_key=key)
+            ),
+            prompt=ANTHROPIC_HUGE_PROMPT,
+        ),
+    )
+
+if groq_imports_successful():
+    _vcr_cases.append(
+        Case(
+            id='groq',
+            model_name='llama-3.1-8b-instant',
+            api_key_fixture='groq_api_key',
+            model_factory=lambda key: GroqModel('llama-3.1-8b-instant', provider=GroqProvider(api_key=key)),
+        ),
+    )
+
+if google_imports_successful():
+    _vcr_cases.append(
+        Case(
+            id='google',
+            model_name='gemini-2.0-flash',
+            api_key_fixture='gemini_api_key',
+            model_factory=lambda key: GoogleModel('gemini-2.0-flash', provider=GoogleProvider(api_key=key)),
+            prompt=GOOGLE_HUGE_PROMPT,
+        ),
+    )
+
+if bedrock_imports_successful():
+    _vcr_cases.append(
+        Case(
+            id='bedrock',
+            model_name='us.amazon.nova-micro-v1:0',
+            api_key_fixture='gateway_api_key',
+            model_factory=lambda key: BedrockConverseModel(
+                'us.amazon.nova-micro-v1:0', provider=gateway_provider('bedrock', api_key=key)
+            ),
+        ),
+    )
+
+if mistral_imports_successful():
+    _vcr_cases.append(
+        Case(
+            id='mistral',
+            model_name='mistral-small-latest',
+            api_key_fixture='mistral_api_key',
+            model_factory=lambda key: MistralModel('mistral-small-latest', provider=MistralProvider(api_key=key)),
+        ),
+    )
+
+if cohere_imports_successful():
+    _vcr_cases.append(
+        Case(
+            id='cohere',
+            model_name='command-r7b-12-2024',
+            api_key_fixture='co_api_key',
+            model_factory=lambda key: CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=key)),
+        ),
+    )
+
+
+@pytest.mark.parametrize('case', _vcr_cases, ids=lambda c: c.id)
+async def test_context_window_exceeded(case: Case, allow_model_requests: None, request: pytest.FixtureRequest) -> None:
+    api_key = request.getfixturevalue(case.api_key_fixture)
+    model = case.model_factory(api_key)
     agent = Agent(model)
 
     with pytest.raises(ContextWindowExceeded) as exc_info:
-        await agent.run(HUGE_PROMPT)
+        await agent.run(case.prompt)
 
     assert exc_info.value.status_code == 400
-    assert exc_info.value.model_name == 'us.amazon.nova-micro-v1:0'
-
-
-@pytest.mark.skipif(not mistral_imports_successful(), reason='mistral not installed')
-async def test_mistral_context_window_exceeded(allow_model_requests: None, mistral_api_key: str):
-    """Test that Mistral context length exceeded errors raise ContextWindowExceeded."""
-    model = MistralModel('mistral-small-latest', provider=MistralProvider(api_key=mistral_api_key))
-    agent = Agent(model)
-
-    with pytest.raises(ContextWindowExceeded) as exc_info:
-        await agent.run(HUGE_PROMPT)
-
-    assert exc_info.value.status_code == 400
-    assert exc_info.value.model_name == 'mistral-small-latest'
-
-
-@pytest.mark.skipif(not cohere_imports_successful(), reason='cohere not installed')
-async def test_cohere_context_window_exceeded(allow_model_requests: None, co_api_key: str):
-    """Test that Cohere context length exceeded errors raise ContextWindowExceeded."""
-    model = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key))
-    agent = Agent(model)
-
-    with pytest.raises(ContextWindowExceeded) as exc_info:
-        await agent.run(HUGE_PROMPT)
-
-    assert exc_info.value.status_code == 400
-    assert exc_info.value.model_name == 'command-r7b-12-2024'
+    assert exc_info.value.model_name == case.model_name
 
 
 # ==================== Unit tests for _check_context_window_exceeded branches ====================

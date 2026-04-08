@@ -240,10 +240,9 @@ class MistralModel(Model):
             model_settings,
             model_request_parameters,
         )
-        with _map_api_errors(self.model_name):
-            response = await self._completions_create(
-                messages, cast(MistralModelSettings, model_settings or {}), model_request_parameters
-            )
+        response = await self._completions_create(
+            messages, cast(MistralModelSettings, model_settings or {}), model_request_parameters
+        )
         model_response = self._process_response(response)
         return model_response
 

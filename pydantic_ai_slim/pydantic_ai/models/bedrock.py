@@ -371,6 +371,8 @@ _CONTEXT_WINDOW_ERROR_PATTERNS = (
 def _check_context_window_exceeded(e: ClientError, model_name: str) -> ContextWindowExceeded | None:
     """Check if the error is a context window exceeded error and return the appropriate exception."""
     status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
+    if not isinstance(status_code, int):
+        return None
     message = e.response.get('Error', {}).get('Message', '')
     if (
         status_code == 400

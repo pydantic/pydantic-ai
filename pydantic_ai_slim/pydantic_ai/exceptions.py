@@ -287,16 +287,19 @@ class ContextWindowExceeded(AgentRunError):
         self.body = body
         self.input_tokens = input_tokens
         self.context_window = context_window
-        super().__init__(f'Context window exceeded for {model_name}')
+        message = f'status_code: {status_code}, model_name: {model_name}, body: {body}'
+        super().__init__(message)
 
-    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
-        return self.__class__, (self.status_code, self.model_name, self.body)
+    def __reduce__(self) -> tuple[type, tuple[Any, ...], dict[str, Any]]:
+        return (
+            self.__class__,
+            (self.status_code, self.model_name, self.body),
+            {'input_tokens': self.input_tokens, 'context_window': self.context_window},
+        )
 
-    def __str__(self) -> str:
-        msg = f'status_code: {self.status_code}, model_name: {self.model_name}'
-        if self.body is not None:
-            msg += f', body: {self.body}'
-        return msg
+    def __setstate__(self, state: dict[str, Any] | None) -> None:
+        self.input_tokens = state.get('input_tokens') if state else None
+        self.context_window = state.get('context_window') if state else None
 
 
 class FallbackExceptionGroup(ExceptionGroup[Any]):
