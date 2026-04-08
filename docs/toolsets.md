@@ -526,6 +526,67 @@ mcp = MCPServerHTTP('http://localhost:8000/mcp')
 agent = Agent('openai:gpt-5.2', toolsets=[mcp.defer_loading()])
 ```
 
+### Including Return Schemas
+
+[`IncludeReturnSchemasToolset`][pydantic_ai.toolsets.IncludeReturnSchemasToolset] wraps a toolset and sets `include_return_schema=True` on all its tools, causing the model to receive return type information. For models that natively support return schemas (e.g. Google Gemini), the schema is passed as a structured API field. For other models, it is injected into the tool description as JSON text.
+
+To easily chain different modifications, you can also call [`.include_return_schemas()`][pydantic_ai.toolsets.AbstractToolset.include_return_schemas] on any toolset instead of directly constructing an `IncludeReturnSchemasToolset`.
+
+```python {title="include_return_schemas_toolset.py"}
+from pydantic_ai import Agent, FunctionToolset
+from pydantic_ai.models.test import TestModel
+
+
+def get_temperature(city: str) -> float:
+    """Get the temperature for a city."""
+    return 21.0
+
+
+toolset = FunctionToolset(tools=[get_temperature])
+
+test_model = TestModel()
+agent = Agent(test_model, toolsets=[toolset.include_return_schemas()])
+result = agent.run_sync('What is the temperature?')
+params = test_model.last_model_request_parameters
+assert params is not None
+assert params.function_tools[0].include_return_schema is True
+```
+
+_(This example is complete, it can be run "as is")_
+
+This is the toolset-level equivalent of the [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability, which applies across all toolsets or a selected subset.
+
+### Setting Tool Metadata
+
+[`SetMetadataToolset`][pydantic_ai.toolsets.SetMetadataToolset] wraps a toolset and merges metadata key-value pairs onto all its tools. This is useful for tagging tools with configuration that other capabilities or custom logic can inspect.
+
+To easily chain different modifications, you can also call [`.with_metadata()`][pydantic_ai.toolsets.AbstractToolset.with_metadata] on any toolset instead of directly constructing a `SetMetadataToolset`.
+
+```python {title="set_metadata_toolset.py"}
+from pydantic_ai import Agent, FunctionToolset
+from pydantic_ai.models.test import TestModel
+
+
+def search(query: str) -> str:
+    """Search for information."""
+    return f'Results for: {query}'
+
+
+toolset = FunctionToolset(tools=[search])
+
+test_model = TestModel()
+agent = Agent(test_model, toolsets=[toolset.with_metadata(sensitive=True)])
+result = agent.run_sync('Search for something')
+params = test_model.last_model_request_parameters
+assert params is not None
+assert params.function_tools[0].metadata is not None
+assert params.function_tools[0].metadata['sensitive'] is True
+```
+
+_(This example is complete, it can be run "as is")_
+
+This is the toolset-level equivalent of the [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] capability, which applies across all toolsets or a selected subset.
+
 ### Changing Tool Execution
 
 [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] wraps another toolset and delegates all responsibility to it.

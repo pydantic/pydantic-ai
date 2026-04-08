@@ -21,7 +21,9 @@ from pydantic_ai.capabilities import (
     MCP,
     BuiltinTool,
     ImageGeneration,
+    IncludeToolReturnSchemas,
     PrefixTools,
+    SetToolMetadata,
     Thinking,
     ThreadExecutor,
     Toolset,
@@ -77,8 +79,10 @@ def test_capability_types() -> None:
         {
             'BuiltinTool': BuiltinTool,
             'ImageGeneration': ImageGeneration,
+            'IncludeToolReturnSchemas': IncludeToolReturnSchemas,
             'MCP': MCP,
             'PrefixTools': PrefixTools,
+            'SetToolMetadata': SetToolMetadata,
             'Thinking': Thinking,
             'WebFetch': WebFetch,
             'WebSearch': WebSearch,
@@ -1200,11 +1204,41 @@ Supported by:
                     'title': 'short_spec_BuiltinTool',
                     'type': 'object',
                 },
+                'short_spec_IncludeToolReturnSchemas': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'IncludeToolReturnSchemas': {
+                            'anyOf': [
+                                {'const': 'all', 'type': 'string'},
+                                {'items': {'type': 'string'}, 'type': 'array'},
+                                {'additionalProperties': True, 'type': 'object'},
+                            ],
+                            'title': 'Includetoolreturnschemas',
+                        }
+                    },
+                    'title': 'short_spec_IncludeToolReturnSchemas',
+                    'type': 'object',
+                },
                 'short_spec_MCP': {
                     'additionalProperties': False,
                     'properties': {'MCP': {'title': 'Mcp', 'type': 'string'}},
                     'required': ['MCP'],
                     'title': 'short_spec_MCP',
+                    'type': 'object',
+                },
+                'short_spec_SetToolMetadata': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'SetToolMetadata': {
+                            'anyOf': [
+                                {'const': 'all', 'type': 'string'},
+                                {'items': {'type': 'string'}, 'type': 'array'},
+                                {'additionalProperties': True, 'type': 'object'},
+                            ],
+                            'title': 'Settoolmetadata',
+                        }
+                    },
+                    'title': 'short_spec_SetToolMetadata',
                     'type': 'object',
                 },
                 'short_spec_Thinking': {
@@ -1357,9 +1391,13 @@ Supported by:
                                 {'$ref': '#/$defs/short_spec_BuiltinTool'},
                                 {'const': 'ImageGeneration', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_ImageGeneration'},
+                                {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
+                                {'$ref': '#/$defs/short_spec_IncludeToolReturnSchemas'},
                                 {'$ref': '#/$defs/short_spec_MCP'},
                                 {'$ref': '#/$defs/spec_MCP'},
                                 {'$ref': '#/$defs/spec_PrefixTools'},
+                                {'const': 'SetToolMetadata', 'type': 'string'},
+                                {'$ref': '#/$defs/short_spec_SetToolMetadata'},
                                 {'const': 'Thinking', 'type': 'string'},
                                 {'$ref': '#/$defs/short_spec_Thinking'},
                                 {'const': 'WebFetch', 'type': 'string'},
@@ -1495,9 +1533,13 @@ Supported by:
                             {'$ref': '#/$defs/short_spec_BuiltinTool'},
                             {'const': 'ImageGeneration', 'type': 'string'},
                             {'$ref': '#/$defs/spec_ImageGeneration'},
+                            {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
+                            {'$ref': '#/$defs/short_spec_IncludeToolReturnSchemas'},
                             {'$ref': '#/$defs/short_spec_MCP'},
                             {'$ref': '#/$defs/spec_MCP'},
                             {'$ref': '#/$defs/spec_PrefixTools'},
+                            {'const': 'SetToolMetadata', 'type': 'string'},
+                            {'$ref': '#/$defs/short_spec_SetToolMetadata'},
                             {'const': 'Thinking', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_Thinking'},
                             {'const': 'WebFetch', 'type': 'string'},

@@ -7,6 +7,7 @@ specific LLM being used.
 from __future__ import annotations as _annotations
 
 import base64
+import json
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
@@ -756,6 +757,7 @@ class Model(ABC):
         model_settings = merge_model_settings(self.settings, model_settings)
 
         params = self.customize_request_parameters(model_request_parameters)
+        params = _prepare_return_schemas(params, self.profile)
 
         # Resolve unified thinking setting and strip from model_settings
         if model_settings and 'thinking' in model_settings:
@@ -1544,6 +1546,43 @@ def _customize_output_object(transformer: type[JsonSchemaTransformer], output_ob
         json_schema=json_schema,
         strict=schema_transformer.is_strict_compatible if output_object.strict is None else output_object.strict,
     )
+
+
+def _prepare_return_schemas(params: ModelRequestParameters, profile: ModelProfile) -> ModelRequestParameters:
+    """Resolve return schemas: clear on tools that haven't opted in, inject into descriptions for non-native models.
+
+    For tools with `include_return_schema=True` and a non-empty schema, models that natively support
+    return schemas keep the schema as-is; other models get it injected into the tool description.
+    Tools that haven't opted in have their `return_schema` cleared.
+    """
+    inject = not profile.supports_tool_return_schema
+    resolved: list[ToolDefinition] = []
+    changed = False
+    for td in params.function_tools:
+        if not td.include_return_schema and td.return_schema is not None:
+            td = replace(td, return_schema=None)
+            changed = True
+        elif td.include_return_schema and not td.return_schema:
+            warnings.warn(
+                f'Tool {td.name!r} has `include_return_schema` enabled but no meaningful return schema'
+                f' was generated. Set `include_return_schema=False` on this tool to suppress this warning.',
+                UserWarning,
+                stacklevel=1,
+            )
+            td = replace(td, return_schema=None)
+            changed = True
+        elif inject and td.return_schema:
+            parts: list[str] = []
+            if td.description:
+                parts.append(td.description)
+            parts.append('Return schema:')
+            parts.append(json.dumps(td.return_schema, indent=2))
+            td = replace(td, description='\n\n'.join(parts), return_schema=None)
+            changed = True
+        resolved.append(td)
+    if changed:
+        return replace(params, function_tools=resolved)
+    return params
 
 
 def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestParameters) -> FinalResultEvent | None:
