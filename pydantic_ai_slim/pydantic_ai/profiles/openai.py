@@ -8,7 +8,19 @@ from typing import Any, Literal
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from ..exceptions import UserError
+from ..settings import ThinkingLevel
 from . import ModelProfile
+
+OPENAI_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
+    True: 'medium',
+    False: 'none',
+    'minimal': 'minimal',
+    'low': 'low',
+    'medium': 'medium',
+    'high': 'high',
+    'xhigh': 'xhigh',
+}
+"""Maps unified thinking values to OpenAI reasoning_effort strings."""
 
 SAMPLING_PARAMS = (
     'temperature',
@@ -45,16 +57,21 @@ class OpenAIModelProfile(ModelProfile):
 
     If `openai_chat_send_back_thinking_parts` is set to `'field'`, this field must be set to a non-None value."""
 
-    openai_chat_send_back_thinking_parts: Literal['tags', 'field', False] = 'tags'
+    openai_chat_send_back_thinking_parts: Literal['auto', 'tags', 'field', False] = 'auto'
     """Whether the model includes thinking content in requests.
 
     This can be:
-    * `'tags'` (default): The thinking content is included in the main `content` field, enclosed within thinking tags as
+    * `'auto'` (default): Automatically detects how to send thinking content. If thinking was received in a custom field
+    (tracked via `ThinkingPart.id` and `ThinkingPart.provider_name`), it's sent back in that same field. Otherwise,
+    it's sent using tags. Only the `reasoning` and `reasoning_content` fields are checked by
+    default when receiving responses. If your provider uses a different field name, you must explicitly set
+    `openai_chat_thinking_field` to that field name.
+    * `'tags'`: The thinking content is included in the main `content` field, enclosed within thinking tags as
     specified in `thinking_tags` profile option.
     * `'field'`: The thinking content is included in a separate field specified by `openai_chat_thinking_field`.
     * `False`: No thinking content is sent in the request.
 
-    Defaults to `'thinking_tags'` for backward compatibility reasons."""
+    Defaults to `'auto'` to ensure thinking is sent back in the format expected by the model/provider."""
 
     openai_supports_strict_tool_definition: bool = True
     """This can be set by a provider or user if the OpenAI-"compatible" API doesn't support strict tool definitions."""
@@ -70,7 +87,7 @@ class OpenAIModelProfile(ModelProfile):
     # safe to pass that value along.  Default is `True` to preserve existing
     # behaviour for OpenAI itself and most providers.
     openai_supports_tool_choice_required: bool = True
-    """Whether the provider accepts the value ``tool_choice='required'`` in the request payload."""
+    """Whether the provider accepts the value `tool_choice='required'` in the request payload."""
 
     openai_system_prompt_role: OpenAISystemPromptRole | None = None
     """The role to use for the system prompt message. If not provided, defaults to `'system'`."""
@@ -125,12 +142,13 @@ class OpenAIModelProfile(ModelProfile):
                 'If `openai_chat_send_back_thinking_parts` is "field", '
                 '`openai_chat_thinking_field` must be set to a non-None value.'
             )
+        # Note: 'auto' mode doesn't require openai_chat_thinking_field since it detects dynamically
 
 
 def openai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an OpenAI model."""
     # GPT-5.1+ models use `reasoning={"effort": "none"}` by default, which allows sampling params.
-    is_gpt_5_1_plus = model_name.startswith(('gpt-5.1', 'gpt-5.2'))
+    is_gpt_5_1_plus = model_name.startswith(('gpt-5.1', 'gpt-5.2', 'gpt-5.3', 'gpt-5.4'))
 
     # doesn't support `reasoning={"effort": "none"}` -  default is set at 'medium'
     # see https://platform.openai.com/docs/guides/reasoning
@@ -139,9 +157,12 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # always reasoning
     is_o_series = model_name.startswith('o')
 
-    thinking_always_enabled = is_o_series or (is_gpt_5 and 'gpt-5-chat' not in model_name)
+    # gpt-5.3-chat-latest is non-reasoning unlike other 5.1+ chat variants
+    is_gpt_5_3_chat = model_name.startswith('gpt-5.3-chat')
 
-    supports_reasoning = thinking_always_enabled or is_gpt_5_1_plus
+    thinking_always_enabled = is_o_series or (is_gpt_5 and '-chat' not in model_name)
+
+    supports_reasoning = (thinking_always_enabled or is_gpt_5_1_plus) and not is_gpt_5_3_chat
 
     # The o1-mini model doesn't support the `system` role, so we default to `user`.
     # See https://github.com/pydantic/pydantic-ai/issues/974 for more details.
@@ -149,7 +170,9 @@ def openai_model_profile(model_name: str) -> ModelProfile:
 
     # Check if the model supports web search (only specific search-preview models)
     supports_web_search = '-search-preview' in model_name
-    supports_image_output = is_gpt_5 or 'o3' in model_name or '4.1' in model_name or '4o' in model_name
+    supports_image_output = (
+        is_gpt_5 or is_gpt_5_1_plus or 'o3' in model_name or '4.1' in model_name or '4o' in model_name
+    )
 
     # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18,
     # and gpt-4o-2024-08-06 model snapshots and later. We leave it in here for all models because the
@@ -160,11 +183,13 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         supports_json_schema_output=True,
         supports_json_object_output=True,
         supports_image_output=supports_image_output,
+        supports_thinking=supports_reasoning,
+        thinking_always_enabled=thinking_always_enabled,
         openai_system_prompt_role=openai_system_prompt_role,
         openai_chat_supports_web_search=supports_web_search,
         openai_supports_encrypted_reasoning_content=supports_reasoning,
         openai_supports_reasoning=supports_reasoning,
-        openai_supports_reasoning_effort_none=is_gpt_5_1_plus,
+        openai_supports_reasoning_effort_none=is_gpt_5_1_plus and not is_gpt_5_3_chat,
     )
 
 

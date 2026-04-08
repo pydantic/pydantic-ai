@@ -1,4 +1,3 @@
-from inline_snapshot import snapshot
 from pydantic import TypeAdapter
 
 from pydantic_ai.builtin_tools import (
@@ -11,6 +10,8 @@ from pydantic_ai.builtin_tools import (
     WebSearchUserLocation,
 )
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
+
+from .._inline_snapshot import snapshot
 
 ta = TypeAdapter(ModelRequestParameters)
 
@@ -35,6 +36,8 @@ def test_model_request_parameters_are_serializable():
             'prompted_output_template': None,
             'allow_text_output': True,
             'allow_image_output': False,
+            'instruction_parts': None,
+            'thinking': None,
         }
     )
     assert ta.validate_python(dumped) == params
@@ -69,6 +72,8 @@ def test_model_request_parameters_are_serializable():
                     'kind': 'function',
                     'metadata': None,
                     'timeout': None,
+                    'defer_loading': False,
+                    'prefer_builtin': None,
                 }
             ],
             'builtin_tools': [
@@ -134,11 +139,15 @@ def test_model_request_parameters_are_serializable():
                     'kind': 'function',
                     'metadata': None,
                     'timeout': None,
+                    'defer_loading': False,
+                    'prefer_builtin': None,
                 }
             ],
             'prompted_output_template': None,
             'allow_text_output': True,
             'allow_image_output': False,
+            'instruction_parts': None,
+            'thinking': None,
         }
     )
     assert ta.validate_python(dumped) == params

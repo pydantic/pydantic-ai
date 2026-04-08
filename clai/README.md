@@ -70,9 +70,9 @@ options:
   -l, --list-models     List all available models and exit
   --version             Show version and exit
   -m MODEL, --model MODEL
-                        Model to use, in format "<provider>:<model>" e.g. "openai:gpt-5" or "anthropic:claude-sonnet-4-5". Defaults to "openai:gpt-5".
+                        Model to use, in format "<provider>:<model>" e.g. "openai:gpt-5" or "anthropic:claude-sonnet-4-6". Defaults to "openai:gpt-5".
   -a AGENT, --agent AGENT
-                        Custom Agent to use, in format "module:variable", e.g. "mymodule.submodule:my_agent"
+                        Custom Agent to use: a module path like "module:variable" or a YAML/JSON spec file like "agent.yml"
   -t CODE_THEME, --code-theme CODE_THEME
                         Which colors to use for code, can be "dark", "light" or any theme from pygments.org/styles/. Defaults to "dark" which works well on dark terminals.
   --no-stream           Disable streaming from the model
@@ -85,7 +85,7 @@ For more information on how to use it, see the [CLI documentation](https://ai.py
 Launch a web-based chat interface:
 
 ```bash
-clai web -m openai:gpt-5
+clai web -m openai:gpt-5.2
 ```
 
 ![Web Chat UI](https://ai.pydantic.dev/img/web-chat-ui.png)
@@ -97,7 +97,7 @@ You can also serve an existing agent. For example, if you have an agent defined 
 ```python
 from pydantic_ai import Agent
 
-my_agent = Agent('openai:gpt-5', instructions='You are a helpful assistant.')
+my_agent = Agent('openai:gpt-5.2', instructions='You are a helpful assistant.')
 ```
 
 Launch the web UI with:

@@ -2,7 +2,6 @@ import re
 
 import httpx
 import pytest
-from inline_snapshot import snapshot
 from pytest_mock import MockerFixture
 
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
@@ -20,6 +19,7 @@ from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 
+from .._inline_snapshot import snapshot
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
@@ -125,9 +125,19 @@ def test_openrouter_provider_model_profile(mocker: MockerFixture):
     assert openai_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     anthropic_profile = provider.model_profile('anthropic/claude-3.5-sonnet')
-    anthropic_model_profile_mock.assert_called_with('claude-3.5-sonnet')
+    anthropic_model_profile_mock.assert_called_with('claude-3-5-sonnet')
     assert anthropic_profile is not None
     assert anthropic_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+
+    anthropic_profile = provider.model_profile('anthropic/claude-sonnet-4.5')
+    anthropic_model_profile_mock.assert_called_with('claude-sonnet-4-5')
+    assert anthropic_profile is not None
+    assert anthropic_profile.supports_json_schema_output is True
+
+    anthropic_profile = provider.model_profile('anthropic/claude-haiku-4.5:free')
+    anthropic_model_profile_mock.assert_called_with('claude-haiku-4-5')
+    assert anthropic_profile is not None
+    assert anthropic_profile.supports_json_schema_output is True
 
     mistral_profile = provider.model_profile('mistralai/mistral-large-2407')
     mistral_model_profile_mock.assert_called_with('mistral-large-2407')

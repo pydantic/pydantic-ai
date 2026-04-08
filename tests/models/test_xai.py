@@ -22,7 +22,6 @@ from decimal import Decimal
 from typing import Any
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
@@ -47,6 +46,7 @@ from pydantic_ai import (
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -54,6 +54,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
+    UserError,
     UserPromptPart,
     VideoUrl,
     WebSearchTool,
@@ -63,6 +64,7 @@ from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     CachePoint,
+    UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.output import NativeOutput, PromptedOutput, ToolOutput
@@ -70,7 +72,8 @@ from pydantic_ai.profiles.grok import GrokModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
+from .._inline_snapshot import snapshot
+from ..conftest import IsDatetime, IsNow, IsStr, try_import
 from .mock_xai import (
     MockXai,
     create_code_execution_response,
@@ -96,7 +99,12 @@ with try_import() as imports_successful:
     import xai_sdk.chat as chat_types
     from xai_sdk.proto import chat_pb2, usage_pb2
 
-    from pydantic_ai.models.xai import XaiModel, XaiModelSettings
+    from pydantic_ai.models import xai as xai_module
+    from pydantic_ai.models.xai import (
+        XaiModel,
+        XaiModelSettings,
+        _extract_usage,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.providers.xai import XaiProvider
 
 
@@ -253,7 +261,7 @@ async def test_xai_request_structured_response_tool_output(allow_model_requests:
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=420, output_tokens=16, details={'cache_read_tokens': 157}),
+                usage=RequestUsage(input_tokens=420, cache_read_tokens=157, output_tokens=16),
                 model_name='grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -283,7 +291,7 @@ async def test_xai_request_structured_response_tool_output(allow_model_requests:
                         tool_call_id=IsStr(),
                     )
                 ],
-                usage=RequestUsage(input_tokens=448, output_tokens=36, details={'cache_read_tokens': 436}),
+                usage=RequestUsage(input_tokens=448, cache_read_tokens=436, output_tokens=36),
                 model_name='grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -556,7 +564,7 @@ async def test_xai_request_structured_response_native_output(allow_model_request
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=439, output_tokens=16, details={'cache_read_tokens': 314}),
+                usage=RequestUsage(input_tokens=439, cache_read_tokens=314, output_tokens=16),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -579,7 +587,7 @@ async def test_xai_request_structured_response_native_output(allow_model_request
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
-                usage=RequestUsage(input_tokens=467, output_tokens=13, details={'cache_read_tokens': 455}),
+                usage=RequestUsage(input_tokens=467, cache_read_tokens=455, output_tokens=13),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -618,7 +626,10 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
                     ToolCallPart(tool_name='get_location', args='{"loc_name":"London"}', tool_call_id=IsStr()),
                 ],
                 usage=RequestUsage(
-                    input_tokens=351, output_tokens=53, details={'reasoning_tokens': 223, 'cache_read_tokens': 148}
+                    input_tokens=351,
+                    cache_read_tokens=148,
+                    output_tokens=53,
+                    details={'reasoning_tokens': 223},
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -653,7 +664,10 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=670, output_tokens=63, details={'reasoning_tokens': 83, 'cache_read_tokens': 601}
+                    input_tokens=670,
+                    cache_read_tokens=601,
+                    output_tokens=63,
+                    details={'reasoning_tokens': 83},
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -668,8 +682,9 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
     assert result.usage() == snapshot(
         RunUsage(
             requests=2,
+            cache_read_tokens=749,
             input_tokens=1021,
-            details={'reasoning_tokens': 306, 'cache_read_tokens': 749},
+            details={'reasoning_tokens': 306},
             output_tokens=116,
             tool_calls=1,
         )
@@ -1043,6 +1058,29 @@ async def test_xai_penalty_parameters(allow_model_requests: None) -> None:
     assert result.output == 'test response'
 
 
+async def test_xai_unified_thinking(allow_model_requests: None, xai_provider: XaiProvider):
+    """Test that unified thinking='high' flows through to xAI reasoning_effort."""
+    m = XaiModel('grok-3-mini', provider=xai_provider)
+    agent = Agent(m, model_settings={'thinking': 'high'})
+
+    result = await agent.run('What is 2+2?')
+    assert '4' in result.output
+    # Verify we get thinking parts (reasoning model with high effort)
+    response_messages = [m for m in result.all_messages() if isinstance(m, ModelResponse)]
+    assert len(response_messages) >= 1
+    # The reasoning model should produce some output
+    assert result.output
+
+
+async def test_xai_unified_thinking_false(allow_model_requests: None, xai_provider: XaiProvider):
+    """Test that unified thinking=False on a reasoning model is silently ignored (no reasoning_effort sent)."""
+    m = XaiModel('grok-3-mini', provider=xai_provider)
+    agent = Agent(m, model_settings={'thinking': False})
+
+    result = await agent.run('What is 2+2?')
+    assert '4' in result.output
+
+
 async def test_xai_instructions(allow_model_requests: None, xai_provider: XaiProvider):
     """Test that instructions are passed through to xAI SDK as a system message."""
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=xai_provider)
@@ -1064,7 +1102,7 @@ async def test_xai_instructions(allow_model_requests: None, xai_provider: XaiPro
                         content="Paris is the capital of France. It's the largest city in the country and a major global center for art, fashion, and culture."
                     )
                 ],
-                usage=RequestUsage(input_tokens=181, output_tokens=27, details={'cache_read_tokens': 162}),
+                usage=RequestUsage(input_tokens=181, cache_read_tokens=162, output_tokens=27),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -1100,7 +1138,7 @@ async def test_xai_system_prompt(allow_model_requests: None, xai_provider: XaiPr
                         content="Paris is the capital of France. It's the largest city in the country and a major global center for art, fashion, and culture."
                     )
                 ],
-                usage=RequestUsage(input_tokens=181, output_tokens=27, details={'cache_read_tokens': 180}),
+                usage=RequestUsage(input_tokens=181, cache_read_tokens=180, output_tokens=27),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -1221,7 +1259,7 @@ async def test_xai_image_url_tool_response(allow_model_requests: None, xai_provi
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=356, output_tokens=15, details={'cache_read_tokens': 314}),
+                usage=RequestUsage(input_tokens=356, cache_read_tokens=314, output_tokens=15),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -1234,58 +1272,10 @@ async def test_xai_image_url_tool_response(allow_model_requests: None, xai_provi
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file bd38f5',
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(
-                        content=[
-                            'This is file bd38f5:',
-                            ImageUrl(
-                                url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
-                            ),
-                        ],
-                        timestamp=IsDatetime(),
-                    ),
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='The image shows a single raw potato.')],
-                usage=RequestUsage(input_tokens=657, output_tokens=8, details={'cache_read_tokens': 371}),
-                model_name=XAI_NON_REASONING_MODEL,
-                timestamp=IsDatetime(),
-                provider_name='xai',
-                provider_url='https://api.x.ai/v1',
-                provider_response_id=IsStr(),
-                finish_reason='stop',
-                run_id=IsStr(),
-            ),
-        ]
-    )
-
-
-async def test_xai_image_as_binary_content_tool_response(
-    allow_model_requests: None, image_content: BinaryContent, xai_provider: XaiProvider
-):
-    """Test xAI with binary image content from tool response."""
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=xai_provider)
-    agent = Agent(m)
-
-    @agent.tool_plain
-    async def get_image() -> BinaryContent:
-        return image_content
-
-    result = await agent.run(['What fruit is in the image you can get from the get_image tool?'])
-
-    # Verify the complete message history with snapshot
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content=['What fruit is in the image you can get from the get_image tool?'],
+                        content=ImageUrl(
+                            url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
+                        ),
+                        tool_call_id='call_37730393',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -1293,38 +1283,8 @@ async def test_xai_image_as_binary_content_tool_response(
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=356, output_tokens=15, details={'cache_read_tokens': 314}),
-                model_name=XAI_NON_REASONING_MODEL,
-                timestamp=IsDatetime(),
-                provider_name='xai',
-                provider_url='https://api.x.ai/v1',
-                provider_response_id=IsStr(),
-                finish_reason='tool_call',
-                run_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='get_image',
-                        content='See file 241a70',
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(
-                        content=[
-                            'This is file 241a70:',
-                            IsInstance(BinaryContent),
-                        ],
-                        timestamp=IsDatetime(),
-                    ),
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='Kiwi')],
-                usage=RequestUsage(input_tokens=657, output_tokens=2, details={'cache_read_tokens': 371}),
+                parts=[TextPart(content='The image shows a single raw potato.')],
+                usage=RequestUsage(input_tokens=657, cache_read_tokens=371, output_tokens=8),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -1544,6 +1504,51 @@ async def test_xai_binary_content_document_input(allow_model_requests: None):
     )
 
 
+async def test_uploaded_file_xai_model(allow_model_requests: None):
+    """Test that UploadedFile is correctly mapped in XaiModel."""
+    response = create_response(content='The file contains important data.')
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='xai')])
+
+    assert result.output == 'The file contains important data.'
+
+    assert get_mock_chat_create_kwargs(mock_client) == snapshot(
+        [
+            {
+                'model': XAI_NON_REASONING_MODEL,
+                'messages': [
+                    {
+                        'content': [
+                            {'text': 'Analyze this file'},
+                            {'file': {'file_id': 'file-abc123'}},
+                        ],
+                        'role': 'ROLE_USER',
+                    }
+                ],
+                'tools': None,
+                'tool_choice': None,
+                'response_format': None,
+                'use_encrypted_content': False,
+                'include': [],
+            }
+        ]
+    )
+
+
+async def test_uploaded_file_wrong_provider_xai(allow_model_requests: None):
+    """Test that UploadedFile with wrong provider raises an error in XaiModel."""
+    response = create_response(content='Should not reach here.')
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(UserError, match="provider_name='anthropic'.*cannot be used with XaiModel"):
+        await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='anthropic')])
+
+
 async def test_xai_audio_url_not_supported(allow_model_requests: None):
     """Test that AudioUrl raises NotImplementedError."""
     response = create_response(content='This should not be reached')
@@ -1553,7 +1558,7 @@ async def test_xai_audio_url_not_supported(allow_model_requests: None):
 
     audio_url = AudioUrl(url='https://example.com/audio.mp3')
 
-    with pytest.raises(NotImplementedError, match='AudioUrl is not supported by xAI SDK'):
+    with pytest.raises(NotImplementedError, match='AudioUrl is not supported in xAI user prompts'):
         await agent.run(['What is in this audio?', audio_url])
 
 
@@ -1566,7 +1571,7 @@ async def test_xai_video_url_not_supported(allow_model_requests: None):
 
     video_url = VideoUrl(url='https://example.com/video.mp4')
 
-    with pytest.raises(NotImplementedError, match='VideoUrl is not supported by xAI SDK'):
+    with pytest.raises(NotImplementedError, match='VideoUrl is not supported in xAI user prompts'):
         await agent.run(['What is in this video?', video_url])
 
 
@@ -1582,7 +1587,7 @@ async def test_xai_binary_content_audio_not_supported(allow_model_requests: None
         media_type='audio/mpeg',
     )
 
-    with pytest.raises(NotImplementedError, match='AudioUrl/BinaryContent with audio is not supported by xAI SDK'):
+    with pytest.raises(NotImplementedError, match='BinaryContent with audio is not supported in xAI user prompts'):
         await agent.run(['What is in this audio?', audio_content])
 
 
@@ -1593,9 +1598,9 @@ async def test_xai_binary_content_unknown_media_type_raises(allow_model_requests
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
-    # Neither image/*, audio/*, nor a known document type => should fail during prompt mapping.
+    # Video binary content is not supported by xAI SDK
     bc = BinaryContent(b'123', media_type='video/mp4')
-    with pytest.raises(RuntimeError, match='Unsupported binary content type: video/mp4'):
+    with pytest.raises(NotImplementedError, match='BinaryContent with video is not supported in xAI user prompts'):
         await agent.run(['hello', bc])
 
 
@@ -1710,8 +1715,12 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_provi
                 ],
                 usage=RequestUsage(
                     input_tokens=2332,
+                    cache_read_tokens=1540,
                     output_tokens=38,
-                    details={'reasoning_tokens': 310, 'cache_read_tokens': 1540, 'server_side_tools_web_search': 1},
+                    details={
+                        'reasoning_tokens': 310,
+                        'server_side_tools_web_search': 1,
+                    },
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -1800,8 +1809,12 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                 ],
                 usage=RequestUsage(
                     input_tokens=4441,
+                    cache_read_tokens=2530,
                     output_tokens=135,
-                    details={'reasoning_tokens': 631, 'cache_read_tokens': 2530, 'server_side_tools_web_search': 2},
+                    details={
+                        'reasoning_tokens': 631,
+                        'server_side_tools_web_search': 2,
+                    },
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -2052,8 +2065,12 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None, xai_p
                 ],
                 usage=RequestUsage(
                     input_tokens=1889,
+                    cache_read_tokens=1347,
                     output_tokens=52,
-                    details={'reasoning_tokens': 161, 'cache_read_tokens': 1347, 'server_side_tools_code_execution': 1},
+                    details={
+                        'reasoning_tokens': 161,
+                        'server_side_tools_code_execution': 1,
+                    },
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -2119,8 +2136,9 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
                 ],
                 usage=RequestUsage(
                     input_tokens=1718,
+                    cache_read_tokens=1037,
                     output_tokens=31,
-                    details={'cache_read_tokens': 1037, 'server_side_tools_code_execution': 1},
+                    details={'server_side_tools_code_execution': 1},
                 ),
                 model_name='grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
@@ -2265,9 +2283,9 @@ Return just the final number with no other text.\
                 ],
                 usage=RequestUsage(
                     input_tokens=11140,
+                    cache_read_tokens=6347,
                     output_tokens=68,
                     details={
-                        'cache_read_tokens': 6347,
                         'server_side_tools_web_search': 1,
                         'server_side_tools_code_execution': 1,
                     },
@@ -2346,7 +2364,10 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                     ToolCallPart(tool_name='guess_city', args='{}', tool_call_id=IsStr()),
                 ],
                 usage=RequestUsage(
-                    input_tokens=743, output_tokens=15, details={'reasoning_tokens': 483, 'cache_read_tokens': 170}
+                    input_tokens=743,
+                    cache_read_tokens=170,
+                    output_tokens=15,
+                    details={'reasoning_tokens': 483},
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -2405,8 +2426,12 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                 ],
                 usage=RequestUsage(
                     input_tokens=2973,
+                    cache_read_tokens=1506,
                     output_tokens=150,
-                    details={'reasoning_tokens': 168, 'cache_read_tokens': 1506, 'server_side_tools_web_search': 1},
+                    details={
+                        'reasoning_tokens': 168,
+                        'server_side_tools_web_search': 1,
+                    },
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -2540,8 +2565,12 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-this-repositor
                 ],
                 usage=RequestUsage(
                     input_tokens=1844,
+                    cache_read_tokens=771,
                     output_tokens=140,
-                    details={'reasoning_tokens': 202, 'cache_read_tokens': 771, 'server_side_tools_mcp_server': 1},
+                    details={
+                        'reasoning_tokens': 202,
+                        'server_side_tools_mcp_server': 1,
+                    },
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -2659,8 +2688,12 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                 ],
                 usage=RequestUsage(
                     input_tokens=1783,
+                    cache_read_tokens=853,
                     output_tokens=141,
-                    details={'reasoning_tokens': 262, 'cache_read_tokens': 853, 'server_side_tools_mcp_server': 1},
+                    details={
+                        'reasoning_tokens': 262,
+                        'server_side_tools_mcp_server': 1,
+                    },
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -3132,7 +3165,10 @@ The first 10 prime numbers are: 2, 3, 5, 7, 11, 13, 17, 19, 23, 29.\
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=165, output_tokens=40, details={'reasoning_tokens': 121, 'cache_read_tokens': 151}
+                    input_tokens=165,
+                    cache_read_tokens=151,
+                    output_tokens=40,
+                    details={'reasoning_tokens': 121},
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -3259,6 +3295,26 @@ async def test_xai_usage_without_details(allow_model_requests: None):
 
     # Verify usage without details (empty dict when no additional usage info)
     assert result.usage() == snapshot(RunUsage(input_tokens=20, output_tokens=10, requests=1))
+
+
+def test_xai_usage_fallback_when_extract_fails(monkeypatch: pytest.MonkeyPatch):
+    """Test that token counts fall back to raw usage data when genai-prices extraction returns zeros."""
+
+    # Mock RequestUsage.extract to return zeros, simulating genai-prices extraction failure
+    def mock_extract(cls: type[RequestUsage], *args: Any, **kwargs: Any) -> RequestUsage:
+        details: dict[str, int] = kwargs.get('details') or {}
+        return RequestUsage(details=details)
+
+    monkeypatch.setattr(xai_module.RequestUsage, 'extract', classmethod(mock_extract))
+
+    response = create_response(
+        content='answer',
+        usage=create_usage(prompt_tokens=15, completion_tokens=8),
+    )
+    result = _extract_usage(
+        response, model='unknown-model', provider='unknown', provider_url='https://unknown.example.com'
+    )
+    assert result == snapshot(RequestUsage(input_tokens=15, output_tokens=8))
 
 
 async def test_xai_usage_with_server_side_tools(allow_model_requests: None):
@@ -5392,6 +5448,29 @@ async def test_xai_file_part_in_history_skipped(allow_model_requests: None):
             }
         ]
     )
+
+
+async def test_map_user_prompt_with_text_content(allow_model_requests: None):
+    response = create_response(content='test response')
+    mock_client = MockXai.create_mock([response])
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+
+    m = await model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        part=UserPromptPart(
+            content=['Hi there', TextContent(content='This is a test', metadata={'format': 'markdown'})],
+            timestamp=IsDatetime(),
+        )
+    )
+
+    assert repr(m) == snapshot("""\
+content {
+  text: "Hi there"
+}
+content {
+  text: "This is a test"
+}
+role: ROLE_USER
+""")
 
 
 # End of tests

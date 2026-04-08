@@ -15,8 +15,10 @@ from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from . import _utils, messages as _messages
 
 if TYPE_CHECKING:
+    from .agent.abstract import AbstractAgent
     from .models import Model
     from .result import RunUsage
+    from .settings import ModelSettings
 
 # TODO (v2): Change the default for all typevars like this from `None` to `object`
 AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
@@ -36,6 +38,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """The model used in this run."""
     usage: RunUsage
     """LLM usage associated with the run."""
+    agent: AbstractAgent[RunContextAgentDepsT, Any] | None = field(default=None, repr=False)
+    """The agent running this context, or `None` if not set."""
     prompt: str | Sequence[_messages.UserContent] | None = None
     """The original user prompt passed to the run."""
     messages: list[_messages.ModelMessage] = field(default_factory=list[_messages.ModelMessage])
@@ -55,9 +59,17 @@ class RunContext(Generic[RunContextAgentDepsT]):
     tool_name: str | None = None
     """Name of the tool being called."""
     retry: int = 0
-    """Number of retries of this tool so far."""
+    """Number of retries so far.
+
+    For tool calls, this is the number of retries of the specific tool.
+    For output validation, this is the number of output validation retries.
+    """
     max_retries: int = 0
-    """The maximum number of retries of this tool."""
+    """The maximum number of retries allowed.
+
+    For tool calls, this is the maximum retries for the specific tool.
+    For output validation, this is the maximum output validation retries.
+    """
     run_step: int = 0
     """The current step in the run."""
     tool_call_approved: bool = False
@@ -70,6 +82,15 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """"Unique identifier for the agent run."""
     metadata: dict[str, Any] | None = None
     """Metadata associated with this agent run, if configured."""
+    model_settings: ModelSettings | None = None
+    """The resolved model settings for the current run step.
+
+    Populated before each model request, after all model settings layers
+    (model defaults, agent-level, capability, and run-level) have been merged.
+    Available in model request hooks (`before_model_request`, `wrap_model_request`,
+    `after_model_request`). Currently `None` in tool hooks, output validators,
+    and during agent construction.
+    """
 
     @property
     def last_attempt(self) -> bool:

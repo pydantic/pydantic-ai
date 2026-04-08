@@ -55,7 +55,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 
 server = MCPServerStreamableHTTP('http://localhost:8000/mcp')  # (1)!
-agent = Agent('openai:gpt-5', toolsets=[server])  # (2)!
+agent = Agent('openai:gpt-5.2', toolsets=[server])  # (2)!
 
 async def main():
     result = await agent.run('What is 7 plus 5?')
@@ -116,7 +116,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerSSE
 
 server = MCPServerSSE('http://localhost:3001/sse')  # (1)!
-agent = Agent('openai:gpt-5', toolsets=[server])  # (2)!
+agent = Agent('openai:gpt-5.2', toolsets=[server])  # (2)!
 
 
 async def main():
@@ -141,7 +141,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
 server = MCPServerStdio('python', args=['mcp_server.py'], timeout=10)
-agent = Agent('openai:gpt-5', toolsets=[server])
+agent = Agent('openai:gpt-5.2', toolsets=[server])
 
 
 async def main():
@@ -228,7 +228,7 @@ from pydantic_ai.mcp import load_mcp_servers
 servers = load_mcp_servers('mcp_config.json')
 
 # Create agent with all loaded servers
-agent = Agent('openai:gpt-5', toolsets=servers)
+agent = Agent('openai:gpt-5.2', toolsets=servers)
 
 async def main():
     result = await agent.run('What is 7 plus 5?')
@@ -335,31 +335,20 @@ calculator_server = MCPServerSSE(
 # Both servers might have a tool named 'get_data', but they'll be exposed as:
 # - 'weather_get_data'
 # - 'calc_get_data'
-agent = Agent('openai:gpt-5', toolsets=[weather_server, calculator_server])
+agent = Agent('openai:gpt-5.2', toolsets=[weather_server, calculator_server])
 ```
 
 ## Server Instructions
 
-MCP servers can provide instructions during initialization that give context about how to best interact with the server's tools. These instructions are accessible via the [`instructions`][pydantic_ai.mcp.MCPServer.instructions] property after the server connection is established.
+MCP servers can provide instructions during initialization that give context about how to best interact with the server's tools. These are accessible via the [`instructions`][pydantic_ai.mcp.MCPServer.instructions] property after the connection is established, and can be automatically injected into the agent's instructions by setting `include_instructions=True` when creating the server.
 
-```python {title="mcp_server_instructions.py"}
+```python {title="mcp_server_include_instructions.py" test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 
-server = MCPServerStreamableHTTP('http://localhost:8000/mcp')
-agent = Agent('openai:gpt-5', toolsets=[server])
-
-@agent.instructions
-async def mcp_server_instructions():
-    return server.instructions  # (1)!
-
-async def main():
-    result = await agent.run('What is 7 plus 5?')
-    print(result.output)
-    #> The answer is 12.
+server = MCPServerStreamableHTTP('http://localhost:8000/mcp', include_instructions=True)
+agent = Agent('openai:gpt-5.2', toolsets=[server])
 ```
-
-1. The server connection is guaranteed to be established by this point, so `server.instructions` is available.
 
 ## Tool metadata
 
@@ -461,7 +450,7 @@ server = MCPServerSSE(
     'http://localhost:3001/sse',
     http_client=http_client,  # (1)!
 )
-agent = Agent('openai:gpt-5', toolsets=[server])
+agent = Agent('openai:gpt-5.2', toolsets=[server])
 
 async def main():
     result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
@@ -469,7 +458,7 @@ async def main():
     #> There are 9,208 days between January 1, 2000, and March 18, 2025.
 ```
 
-1. When you supply `http_client`, Pydantic AI re-uses this client for every
+1. When you supply `http_client`, Pydantic AI reuses this client for every
    request. Anything supported by **httpx** (`verify`, `cert`, custom
    proxies, timeouts, etc.) therefore applies to all MCP traffic.
 
@@ -582,7 +571,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
 server = MCPServerStdio('python', args=['generate_svg.py'])
-agent = Agent('openai:gpt-5', toolsets=[server])
+agent = Agent('openai:gpt-5.2', toolsets=[server])
 
 
 async def main():
@@ -724,7 +713,7 @@ restaurant_server = MCPServerStdio(
 )
 
 # Create agent
-agent = Agent('openai:gpt-5', toolsets=[restaurant_server])
+agent = Agent('openai:gpt-5.2', toolsets=[restaurant_server])
 
 
 async def main():

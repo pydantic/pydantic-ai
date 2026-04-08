@@ -21,7 +21,7 @@ from opentelemetry.trace import Span, SpanKind, Tracer, TracerProvider, get_trac
 from opentelemetry.util.types import AttributeValue
 from pydantic import TypeAdapter
 
-from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
+from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, get_agent_run_baggage_attributes
 
 from .. import _otel_messages
 from .._run_context import RunContext
@@ -92,7 +92,8 @@ class InstrumentationSettings:
     event_mode: Literal['attributes', 'logs'] = 'attributes'
     include_binary_content: bool = True
     include_content: bool = True
-    version: Literal[1, 2, 3] = DEFAULT_INSTRUMENTATION_VERSION
+    version: Literal[1, 2, 3, 4, 5] = DEFAULT_INSTRUMENTATION_VERSION
+    use_aggregated_usage_attribute_names: bool = False
 
     def __init__(
         self,
@@ -101,9 +102,10 @@ class InstrumentationSettings:
         meter_provider: MeterProvider | None = None,
         include_binary_content: bool = True,
         include_content: bool = True,
-        version: Literal[1, 2, 3] = DEFAULT_INSTRUMENTATION_VERSION,
+        version: Literal[1, 2, 3, 4, 5] = DEFAULT_INSTRUMENTATION_VERSION,
         event_mode: Literal['attributes', 'logs'] = 'attributes',
         logger_provider: LoggerProvider | None = None,
+        use_aggregated_usage_attribute_names: bool = False,
     ):
         """Create instrumentation options.
 
@@ -125,6 +127,14 @@ class InstrumentationSettings:
                     - `gen_ai.system_instructions` for instructions passed to the agent.
                     - `gen_ai.input.messages` and `gen_ai.output.messages` on model request spans.
                     - `pydantic_ai.all_messages` on agent run spans.
+                Version 3 is the same as version 2, with additional support for thinking tokens.
+                Version 4 is the same as version 3, with GenAI semantic conventions for multimodal content:
+                    URL-based media uses type='uri' with uri and mime_type fields (and modality for image/audio/video).
+                    Inline binary content uses type='blob' with mime_type and content fields (and modality for image/audio/video).
+                    https://opentelemetry.io/docs/specs/semconv/gen-ai/non-normative/examples-llm-calls/#multimodal-inputs-example
+                Version 5 is the same as version 4, but CallDeferred and ApprovalRequired exceptions
+                    no longer record an exception event or set the span status to ERROR — the span is left
+                    as UNSET, since deferrals are control flow, not errors.
             event_mode: The mode for emitting events in version 1.
                 If `'attributes'`, events are attached to the span as attributes.
                 If `'logs'`, events are emitted as OpenTelemetry log-based events.
@@ -132,6 +142,12 @@ class InstrumentationSettings:
                 If not provided, the global logger provider is used.
                 Calling `logfire.configure()` sets the global logger provider, so most users don't need this.
                 This is only used if `event_mode='logs'` and `version=1`.
+            use_aggregated_usage_attribute_names: Whether to use `gen_ai.aggregated_usage.*` attribute names
+                for token usage on agent run spans instead of the standard `gen_ai.usage.*` names.
+                Enable this to prevent double-counting in observability backends that aggregate span
+                attributes across parent and child spans. Defaults to False.
+                Note: `gen_ai.aggregated_usage.*` is a custom namespace, not part of the OpenTelemetry
+                Semantic Conventions. It may be updated if OTel introduces an official convention.
         """
         from pydantic_ai import __version__
 
@@ -154,6 +170,7 @@ class InstrumentationSettings:
             version = 1
 
         self.version = version
+        self.use_aggregated_usage_attribute_names = use_aggregated_usage_attribute_names
 
         # As specified in the OpenTelemetry GenAI metrics spec:
         # https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/#metric-gen_aiclienttokenusage
@@ -249,7 +266,7 @@ class InstrumentationSettings:
     ):
         if self.version == 1:
             events = self.messages_to_otel_events(input_messages, parameters)
-            for event in self.messages_to_otel_events([response], parameters):
+            for event in self.messages_to_otel_events([response]):
                 events.append(
                     LogRecord(
                         attributes={'event.name': 'gen_ai.choice'},
@@ -334,9 +351,9 @@ class InstrumentationSettings:
                 continue
             token_attributes = {**attributes, 'gen_ai.token.type': typ}
             self.tokens_histogram.record(tokens, token_attributes)
-            if price_calculation:
-                cost = float(getattr(price_calculation, f'{typ}_price'))
-                self.cost_histogram.record(cost, token_attributes)
+        if price_calculation:
+            cost = float(price_calculation.total_price)
+            self.cost_histogram.record(cost, attributes)
 
 
 GEN_AI_SYSTEM_ATTRIBUTE = 'gen_ai.system'
@@ -439,6 +456,7 @@ class InstrumentedModel(WrapperModel):
             'gen_ai.operation.name': operation,
             **self.model_attributes(self.wrapped),
             **self.model_request_parameters_attributes(model_request_parameters),
+            **get_agent_run_baggage_attributes(),
             'logfire.json_schema': json.dumps(
                 {
                     'type': 'object',
@@ -484,15 +502,6 @@ class InstrumentedModel(WrapperModel):
                     nonlocal record_metrics
                     record_metrics = _record_metrics
 
-                    if not span.is_recording():
-                        return
-
-                    self.instrumentation_settings.handle_messages(messages, response, system, span, parameters)
-
-                    attributes_to_set = {
-                        **response.usage.opentelemetry_attributes(),
-                        'gen_ai.response.model': response_model,
-                    }
                     try:
                         price_calculation = response.cost()
                     except LookupError:
@@ -502,7 +511,18 @@ class InstrumentedModel(WrapperModel):
                         warnings.warn(
                             f'Failed to get cost from response: {type(e).__name__}: {e}', CostCalculationFailedWarning
                         )
-                    else:
+
+                    if not span.is_recording():
+                        return
+
+                    self.instrumentation_settings.handle_messages(messages, response, system, span, parameters)
+
+                    attributes_to_set = {
+                        **response.usage.opentelemetry_attributes(),
+                        'gen_ai.response.model': response_model,
+                    }
+
+                    if price_calculation:
                         attributes_to_set['operation.cost'] = float(price_calculation.total_price)
 
                     if response.provider_response_id is not None:

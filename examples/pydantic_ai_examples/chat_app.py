@@ -40,7 +40,7 @@ from pydantic_ai import (
 logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
 
-agent = Agent('openai:gpt-5')
+agent = Agent('openai:gpt-5.2')
 THIS_DIR = Path(__file__).parent
 
 

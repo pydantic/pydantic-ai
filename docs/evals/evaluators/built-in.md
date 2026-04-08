@@ -25,6 +25,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import EqualsExpected
 
 dataset = Dataset(
+    name='equals_expected_demo',
     cases=[
         Case(
             name='addition',
@@ -69,6 +70,7 @@ from pydantic_evals.evaluators import Equals
 
 # Check output is always "success"
 dataset = Dataset(
+    name='equals_demo',
     cases=[Case(inputs='test')],
     evaluators=[
         Equals(value='success', evaluation_name='is_success'),
@@ -134,6 +136,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import Contains
 
 dataset = Dataset(
+    name='contains_demo',
     cases=[Case(inputs='test')],
     evaluators=[
         # Check for required keywords
@@ -179,6 +182,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import IsInstance
 
 dataset = Dataset(
+    name='isinstance_demo',
     cases=[Case(inputs='test')],
     evaluators=[
         # Check output is always a string
@@ -237,6 +241,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import MaxDuration
 
 dataset = Dataset(
+    name='max_duration_demo',
     cases=[Case(inputs='test')],
     evaluators=[
         # SLA: must respond in under 2 seconds
@@ -269,7 +274,7 @@ from pydantic_evals.evaluators import LLMJudge
 
 LLMJudge(
     rubric='Response is accurate and helpful',
-    model='openai:gpt-5',
+    model='openai:gpt-5.2',
     include_input=False,
     include_expected_output=False,
     model_settings=None,
@@ -281,7 +286,7 @@ LLMJudge(
 **Parameters:**
 
 - `rubric` (str): The evaluation criteria (required)
-- `model` (Model | KnownModelName | None): Model to use (default: `'openai:gpt-4o'`)
+- `model` (Model | KnownModelName | None): Model to use (default: `'openai:gpt-5.2'`)
 - `include_input` (bool): Include task inputs in the prompt (default: `False`)
 - `include_expected_output` (bool): Include expected output in the prompt (default: `False`)
 - `model_settings` (ModelSettings | None): Custom model settings
@@ -319,6 +324,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import LLMJudge
 
 dataset = Dataset(
+    name='llm_judge_demo',
     cases=[Case(inputs='test', expected_output='result')],
     evaluators=[
         # Basic accuracy check
@@ -329,7 +335,7 @@ dataset = Dataset(
         # Quality score with different model
         LLMJudge(
             rubric='Overall response quality',
-            model='anthropic:claude-sonnet-4-5',
+            model='anthropic:claude-sonnet-4-6',
             score={'evaluation_name': 'quality', 'include_reason': False},
             assertion=False,
         ),
@@ -376,6 +382,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import HasMatchingSpan
 
 dataset = Dataset(
+    name='span_check_demo',
     cases=[Case(inputs='test')],
     evaluators=[
         # Check that a specific tool was called
@@ -404,7 +411,24 @@ dataset = Dataset(
 
 ---
 
+## Built-in Report Evaluators
+
+In addition to the case-level evaluators above, Pydantic Evals provides report evaluators that
+analyze entire experiment results. These are passed via the `report_evaluators` parameter on `Dataset`.
+
+| Report Evaluator | Purpose | Output |
+|------------------|---------|--------|
+| [`ConfusionMatrixEvaluator`][pydantic_evals.evaluators.ConfusionMatrixEvaluator] | Classification confusion matrix | `ConfusionMatrix` |
+| [`PrecisionRecallEvaluator`][pydantic_evals.evaluators.PrecisionRecallEvaluator] | PR curve with AUC | `PrecisionRecall` |
+
+**See:** [Report Evaluators](report-evaluators.md) for full documentation, parameters, and examples,
+including how to write custom report evaluators that produce `ScalarResult` and `TableResult` analyses.
+
+---
+
 ## Quick Reference Table
+
+### Case-Level Evaluators
 
 | Evaluator | Purpose | Return Type | Cost | Speed |
 |-----------|---------|-------------|------|-------|
@@ -415,6 +439,13 @@ dataset = Dataset(
 | [`MaxDuration`][pydantic_evals.evaluators.MaxDuration] | Performance threshold | `bool` | Free | Instant |
 | [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] | Subjective quality | `bool` and/or `float` | $$ | Slow |
 | [`HasMatchingSpan`][pydantic_evals.evaluators.HasMatchingSpan] | Behavioral check | `bool` | Free | Fast |
+
+### Report-Level Evaluators
+
+| Evaluator | Purpose | Output Type | Cost | Speed |
+|-----------|---------|-------------|------|-------|
+| [`ConfusionMatrixEvaluator`][pydantic_evals.evaluators.ConfusionMatrixEvaluator] | Classification matrix | `ConfusionMatrix` | Free | Instant |
+| [`PrecisionRecallEvaluator`][pydantic_evals.evaluators.PrecisionRecallEvaluator] | PR curve with AUC | `PrecisionRecall` | Free | Instant |
 
 ## Combining Evaluators
 
@@ -430,6 +461,7 @@ from pydantic_evals.evaluators import (
 )
 
 dataset = Dataset(
+    name='combined_evaluators',
     cases=[Case(inputs='test')],
     evaluators=[
         # Fast checks first (fail fast)
@@ -453,4 +485,5 @@ This approach:
 
 - **[LLM Judge](llm-judge.md)** - Deep dive on LLM-as-a-Judge evaluation
 - **[Custom Evaluators](custom.md)** - Write your own evaluation logic
+- **[Report Evaluators](report-evaluators.md)** - Experiment-wide analyses (confusion matrices, PR curves, etc.)
 - **[Span-Based Evaluation](span-based.md)** - Using OpenTelemetry spans for behavioral checks

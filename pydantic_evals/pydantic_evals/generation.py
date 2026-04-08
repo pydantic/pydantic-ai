@@ -35,7 +35,7 @@ async def generate_dataset(
     dataset_type: type[Dataset[InputsT, OutputT, MetadataT]],
     path: Path | str | None = None,
     custom_evaluator_types: Sequence[type[Evaluator[InputsT, OutputT, MetadataT]]] = (),
-    model: models.Model | models.KnownModelName = 'openai:gpt-4o',
+    model: models.Model | models.KnownModelName = 'openai:gpt-5.2',
     n_examples: int = 3,
     extra_instructions: str | None = None,
 ) -> Dataset[InputsT, OutputT, MetadataT]:
@@ -48,7 +48,7 @@ async def generate_dataset(
         path: Optional path to save the generated dataset. If provided, the dataset will be saved to this location.
         dataset_type: The type of dataset to generate, with the desired input, output, and metadata types.
         custom_evaluator_types: Optional sequence of custom evaluator classes to include in the schema.
-        model: The Pydantic AI model to use for generation. Defaults to 'gpt-4o'.
+        model: The Pydantic AI model to use for generation. Defaults to 'openai:gpt-5.2'.
         n_examples: Number of examples to generate. Defaults to 3.
         extra_instructions: Optional additional instructions to provide to the LLM.
 
@@ -73,10 +73,13 @@ async def generate_dataset(
         retries=1,
     )
 
+    default_name = Path(path).stem if path is not None else 'generated'
     result = await agent.run(extra_instructions or 'Please generate the object.')
     output = strip_markdown_fences(result.output)
     try:
-        result = dataset_type.from_text(output, fmt='json', custom_evaluator_types=custom_evaluator_types)
+        result = dataset_type.from_text(
+            output, fmt='json', default_name=default_name, custom_evaluator_types=custom_evaluator_types
+        )
     except ValidationError as e:  # pragma: no cover
         print(f'Raw response from model:\n{result.output}')
         raise e

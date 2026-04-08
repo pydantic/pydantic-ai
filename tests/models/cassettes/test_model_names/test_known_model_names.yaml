@@ -15,7 +15,7 @@ interactions:
       alt-svc:
       - h3=":443"; ma=86400
       content-length:
-      - '479'
+      - '695'
       content-type:
       - application/json
       referrer-policy:
@@ -25,7 +25,7 @@ interactions:
     parsed_body:
       data:
       - created: 0
-        id: zai-glm-4.6
+        id: llama3.1-8b
         object: model
         owned_by: Cerebras
       - created: 0
@@ -33,19 +33,27 @@ interactions:
         object: model
         owned_by: Cerebras
       - created: 0
-        id: qwen-3-235b-a22b-instruct-2507
-        object: model
-        owned_by: Cerebras
-      - created: 0
-        id: llama3.1-8b
-        object: model
-        owned_by: Cerebras
-      - created: 0
         id: gpt-oss-120b
         object: model
         owned_by: Cerebras
       - created: 0
+        id: qwen-3-235b-a22b-instruct-2507
+        object: model
+        owned_by: Cerebras
+      - created: 0
         id: qwen-3-32b
+        object: model
+        owned_by: Cerebras
+      - created: 0
+        id: zai-glm-4.7
+        object: model
+        owned_by: Cerebras
+      - created: 0
+        id: qwen-3-coder-480b
+        object: model
+        owned_by: Cerebras
+      - created: 0
+        id: zai-glm-4.6
         object: model
         owned_by: Cerebras
       object: list
@@ -66,7 +74,7 @@ interactions:
   response:
     headers:
       content-length:
-      - '1347'
+      - '1637'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -78,6 +86,12 @@ interactions:
       strict-transport-security:
       - max-age=63072000
     parsed_body:
+    - model_id: amazon-rerank-1-0
+      regions:
+      - eu
+      - us
+      type:
+      - text-to-score
     - model_id: claude-3-5-haiku
       regions:
       - us
@@ -129,6 +143,12 @@ interactions:
       - us
       type:
       - text-to-embedding
+    - model_id: cohere-rerank-3-5
+      regions:
+      - eu
+      - us
+      type:
+      - text-to-score
     - model_id: gpt-oss-120b
       regions:
       - eu

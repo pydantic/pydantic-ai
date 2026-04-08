@@ -27,7 +27,7 @@ You can then use `AnthropicModel` by name:
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('anthropic:claude-sonnet-4-5')
+agent = Agent('anthropic:claude-sonnet-4-6')
 ...
 ```
 
@@ -152,12 +152,9 @@ See [Anthropic's Microsoft Foundry documentation](https://platform.claude.com/do
 Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) to reduce costs by caching parts of your prompts. Pydantic AI provides four ways to use prompt caching:
 
 1. **Cache User Messages with [`CachePoint`][pydantic_ai.messages.CachePoint]**: Insert a `CachePoint` marker in your user messages to cache everything before it
-2. **Cache System Instructions**: Set [`AnthropicModelSettings.anthropic_cache_instructions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_instructions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly
+2. **Cache System Instructions**: Set [`AnthropicModelSettings.anthropic_cache_instructions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_instructions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly. When you have both static and dynamic [instructions](../agent.md#instructions), the cache point is automatically placed after the last static instruction, so dynamic instructions can change without invalidating the static cache.
 3. **Cache Tool Definitions**: Set [`AnthropicModelSettings.anthropic_cache_tool_definitions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_tool_definitions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly
 4. **Cache All Messages**: Set [`AnthropicModelSettings.anthropic_cache_messages`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_messages] to `True` to automatically cache all messages
-
-!!! note "Amazon Bedrock"
-    When using `AsyncAnthropicBedrock`, the TTL parameter is automatically omitted from all cache control settings (including `CachePoint`, `anthropic_cache_instructions`, `anthropic_cache_tool_definitions`, and `anthropic_cache_messages`) because Bedrock doesn't support explicit TTL.
 
 ### Example 1: Automatic Message Caching
 
@@ -168,7 +165,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-5',
+    'anthropic:claude-sonnet-4-6',
     instructions='You are a helpful assistant.',
     model_settings=AnthropicModelSettings(
         anthropic_cache_messages=True,  # Automatically caches the last message
@@ -193,7 +190,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-5',
+    'anthropic:claude-sonnet-4-6',
     instructions='Detailed instructions...',
     model_settings=AnthropicModelSettings(
         anthropic_cache_instructions=True,      # Cache system instructions
@@ -212,6 +209,41 @@ result = agent.run_sync('Search for Python best practices')
 print(result.output)
 ```
 
+### Smart Instruction Caching
+
+When you use `anthropic_cache_instructions` with both static and dynamic [instructions](../agent.md#instructions), Pydantic AI automatically places the cache boundary at the optimal point. Static instructions (from `Agent(instructions=...)`) are sorted before dynamic instructions (from `@agent.instructions` functions or [toolsets](../toolsets.md)), and the cache point is placed after the last static instruction block.
+
+This means your stable, static instructions are cached efficiently, while dynamic instructions (which may change between requests) remain outside the cache boundary and don't cause cache invalidation.
+
+```python {test="skip"}
+from datetime import date
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    deps_type=str,
+    instructions='You are a helpful customer service agent. Follow company policy.',  # (1)!
+    model_settings=AnthropicModelSettings(
+        anthropic_cache_instructions=True,  # (2)!
+    ),
+)
+
+
+@agent.instructions
+def dynamic_context(ctx: RunContext[str]) -> str:  # (3)!
+    return f"Customer name: {ctx.deps}. Today's date: {date.today()}."
+
+
+result = agent.run_sync('What is your return policy?', deps='Alice')
+print(result.output)
+```
+
+1. Static instructions are cached across requests.
+2. Enables smart cache placement at the static/dynamic boundary.
+3. Dynamic instructions change per-request and are not cached.
+
 ### Example 3: Fine-Grained Control with CachePoint
 
 Use manual `CachePoint` markers to control cache locations precisely:
@@ -220,7 +252,7 @@ Use manual `CachePoint` markers to control cache locations precisely:
 from pydantic_ai import Agent, CachePoint
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-5',
+    'anthropic:claude-sonnet-4-6',
     instructions='Instructions...',
 )
 
@@ -242,7 +274,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-5',
+    'anthropic:claude-sonnet-4-6',
     instructions='Instructions...',
     model_settings=AnthropicModelSettings(
         anthropic_cache_instructions=True  # Default 5m TTL
@@ -278,7 +310,7 @@ from pydantic_ai import Agent, CachePoint
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-5',
+    'anthropic:claude-sonnet-4-6',
     instructions='Detailed instructions...',
     model_settings=AnthropicModelSettings(
         anthropic_cache_instructions=True,      # 1 cache point
@@ -315,7 +347,7 @@ from pydantic_ai import Agent, CachePoint
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-5',
+    'anthropic:claude-sonnet-4-6',
     instructions='Instructions...',
     model_settings=AnthropicModelSettings(
         anthropic_cache_instructions=True,      # 1 cache point

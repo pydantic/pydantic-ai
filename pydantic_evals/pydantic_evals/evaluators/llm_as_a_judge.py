@@ -7,7 +7,8 @@ from typing import Any
 from pydantic import BaseModel, Field
 from pydantic_core import to_json
 
-from pydantic_ai import Agent, MultiModalContent, UserContent, models
+from pydantic_ai import Agent, UserContent, models
+from pydantic_ai.messages import MULTI_MODAL_CONTENT_TYPES
 from pydantic_ai.settings import ModelSettings
 
 __all__ = (
@@ -20,7 +21,7 @@ __all__ = (
 )
 
 
-_default_model: models.Model | models.KnownModelName = 'openai:gpt-4o'
+_default_model: models.Model | models.KnownModelName = 'openai:gpt-5.2'
 
 
 class GradingOutput(BaseModel, populate_by_name=True):
@@ -60,7 +61,7 @@ async def judge_output(
 ) -> GradingOutput:
     """Judge the output of a model based on a rubric.
 
-    If the model is not specified, a default model is used. The default model starts as 'openai:gpt-4o',
+    If the model is not specified, a default model is used. The default model starts as 'openai:gpt-5.2',
     but this can be changed using the `set_default_judge_model` function.
     """
     user_prompt = _build_prompt(output=output, rubric=rubric)
@@ -101,7 +102,7 @@ async def judge_input_output(
 ) -> GradingOutput:
     """Judge the output of a model based on the inputs and a rubric.
 
-    If the model is not specified, a default model is used. The default model starts as 'openai:gpt-4o',
+    If the model is not specified, a default model is used. The default model starts as 'openai:gpt-5.2',
     but this can be changed using the `set_default_judge_model` function.
     """
     user_prompt = _build_prompt(inputs=inputs, output=output, rubric=rubric)
@@ -146,7 +147,7 @@ async def judge_input_output_expected(
 ) -> GradingOutput:
     """Judge the output of a model based on the inputs and a rubric.
 
-    If the model is not specified, a default model is used. The default model starts as 'openai:gpt-4o',
+    If the model is not specified, a default model is used. The default model starts as 'openai:gpt-5.2',
     but this can be changed using the `set_default_judge_model` function.
     """
     user_prompt = _build_prompt(inputs=inputs, output=output, rubric=rubric, expected_output=expected_output)
@@ -190,7 +191,7 @@ async def judge_output_expected(
 ) -> GradingOutput:
     """Judge the output of a model based on the expected output, output, and a rubric.
 
-    If the model is not specified, a default model is used. The default model starts as 'openai:gpt-4o',
+    If the model is not specified, a default model is used. The default model starts as 'openai:gpt-5.2',
     but this can be changed using the `set_default_judge_model` function.
     """
     user_prompt = _build_prompt(output=output, rubric=rubric, expected_output=expected_output)
@@ -238,7 +239,7 @@ def _make_section(content: Any, tag: str) -> list[str | UserContent]:
 
     sections.append(f'<{tag}>')
     for item in items:
-        sections.append(item if isinstance(item, str | MultiModalContent) else _stringify(item))
+        sections.append(item if isinstance(item, (str, *MULTI_MODAL_CONTENT_TYPES)) else _stringify(item))
     sections.append(f'</{tag}>')
     return sections
 

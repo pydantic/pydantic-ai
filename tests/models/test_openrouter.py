@@ -1,10 +1,10 @@
 import datetime
 import json
 from collections.abc import Sequence
-from typing import Literal, cast
+from typing import Any, Literal, cast
+from unittest.mock import AsyncMock, patch
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 from vcr.cassette import Cassette
 
@@ -24,17 +24,28 @@ from pydantic_ai import (
     ToolCallPart,
     ToolDefinition,
     UnexpectedModelBehavior,
+    UserPromptPart,
+    VideoUrl,
 )
+from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.models import ModelRequestParameters
 
+from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
     from openai.types.chat import ChatCompletion
     from openai.types.chat.chat_completion import Choice
 
-    from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
+    from pydantic_ai.models.openrouter import (
+        OpenRouterModel,
+        OpenRouterModelSettings,
+        _map_openrouter_provider_details,  # pyright: ignore[reportPrivateUsage]
+        _openrouter_settings_to_openai_settings,  # pyright: ignore[reportPrivateUsage]
+        _OpenRouterChatCompletion,  # pyright: ignore[reportPrivateUsage]
+        _OpenRouterChatCompletionChunk,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 pytestmark = [
@@ -195,7 +206,7 @@ async def test_openrouter_tool_calling(allow_model_requests: None, openrouter_ap
     assert tool_call_part.tool_name == 'divide'
     assert tool_call_part.args == snapshot('{"numerator": 123, "denominator": 456, "on_inf": "infinity"}')
 
-    mapped_messages = await model._map_messages([response], None)  # type: ignore[reportPrivateUsage]
+    mapped_messages = await model._map_messages([response], ModelRequestParameters())  # type: ignore[reportPrivateUsage]
     tool_call_message = mapped_messages[0]
     assert tool_call_message['role'] == 'assistant'
     assert tool_call_message.get('content') is None
@@ -243,7 +254,7 @@ async def test_openrouter_preserve_reasoning_block(allow_model_requests: None, o
     )
     messages.append(await model_request(model, messages))
 
-    openai_messages = await model._map_messages(messages, None)  # type: ignore[reportPrivateUsage]
+    openai_messages = await model._map_messages(messages, ModelRequestParameters())  # type: ignore[reportPrivateUsage]
 
     assistant_message = openai_messages[1]
     assert assistant_message['role'] == 'assistant'
@@ -267,6 +278,182 @@ async def test_openrouter_preserve_reasoning_block(allow_model_requests: None, o
     assert 'data' in reasoning_encrypted
     assert reasoning_encrypted['type'] == 'reasoning.encrypted'
     assert reasoning_encrypted['format'] == 'openai-responses-v1'
+
+
+async def test_openrouter_video_url_mapping() -> None:
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('google/gemini-3-flash-preview', provider=provider)
+
+    messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Count the students.',
+                        VideoUrl(url='https://example.com/video.mp4'),
+                    ]
+                )
+            ]
+        )
+    ]
+
+    mapped_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    content = mapped_messages[0].get('content')
+    assert content is not None
+    assert isinstance(content, list)
+
+    assert content[0] == {'type': 'text', 'text': 'Count the students.'}
+    assert content[1] == {'type': 'video_url', 'video_url': {'url': 'https://example.com/video.mp4'}}
+
+
+async def test_openrouter_binary_content_video_mapping() -> None:
+    """Test that `BinaryContent` with a video media type maps to a `video_url` part."""
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('google/gemini-3-flash-preview', provider=provider)
+
+    binary_video = BinaryContent(data=b'video-bytes', media_type='video/mp4')
+
+    messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Count the students.',
+                        binary_video,
+                    ]
+                )
+            ]
+        )
+    ]
+
+    mapped_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    content = mapped_messages[0].get('content')
+    assert content is not None
+    assert isinstance(content, list)
+
+    assert content[0] == {'type': 'text', 'text': 'Count the students.'}
+    assert content[1] == {
+        'type': 'video_url',
+        'video_url': {'url': binary_video.data_uri},
+    }
+
+
+async def test_openrouter_video_url_force_download() -> None:
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('google/gemini-3-flash-preview', provider=provider)
+
+    with patch('pydantic_ai.models.openrouter.download_item', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = {
+            'data': 'data:video/mp4;base64,AAAA',
+            'data_type': 'mp4',
+        }
+
+        messages = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'Count the students.',
+                            VideoUrl(url='https://example.com/video.mp4', force_download=True),
+                        ]
+                    )
+                ]
+            )
+        ]
+
+        mapped_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+            messages, ModelRequestParameters()
+        )
+        content = mapped_messages[0].get('content')
+        assert content is not None
+        assert isinstance(content, list)
+
+        assert content[1] == {'type': 'video_url', 'video_url': {'url': 'data:video/mp4;base64,AAAA'}}
+        mock_download.assert_called_once()
+        call_args = mock_download.call_args
+        assert call_args[0][0].url == 'https://example.com/video.mp4'
+        assert call_args[1]['data_format'] == 'base64_uri'
+        assert call_args[1]['type_format'] == 'extension'
+
+
+async def test_openrouter_video_url_no_force_download() -> None:
+    """Test that `force_download=False` does not call `download_item` for `VideoUrl`."""
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('google/gemini-3-flash-preview', provider=provider)
+
+    with patch('pydantic_ai.models.openrouter.download_item', new_callable=AsyncMock) as mock_download:
+        messages = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'Count the students.',
+                            VideoUrl(url='https://example.com/video.mp4', force_download=False),
+                        ]
+                    )
+                ]
+            )
+        ]
+
+        mapped_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+            messages, ModelRequestParameters()
+        )
+        content = mapped_messages[0].get('content')
+        assert content is not None
+        assert isinstance(content, list)
+
+        assert content[1] == {'type': 'video_url', 'video_url': {'url': 'https://example.com/video.mp4'}}
+        mock_download.assert_not_called()
+
+
+async def test_openrouter_video_url_public_api(
+    allow_model_requests: None, openrouter_api_key: str
+) -> None:  # pragma: lax no cover
+    """Test `VideoUrl` support through the public `Agent.run` API."""
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('google/gemini-2.5-flash', provider=provider)
+    agent = Agent(model)
+
+    result = await agent.run(
+        [
+            'What is in this video?',
+            VideoUrl(url='https://upload.wikimedia.org/wikipedia/commons/8/8f/Panda_at_Smithsonian_zoo.webm'),
+        ]
+    )
+
+    assert isinstance(result.output, str)
+    assert result.output == snapshot("""\
+This video features a giant panda in an enclosure designed to resemble its natural habitat. The enclosure includes:
+- **Rocks and terrain:** Various sized rocks create a textured landscape.
+- **Bamboo:** Fresh bamboo shoots are scattered around, which the panda is seen eating.
+- **Background mural:** A painted mural on the back wall depicts a mountainous, green landscape, enhancing the immersive feel of the habitat.
+- **Window:** A clear window is visible in the upper part of the background, likely part of the viewing area for visitors.
+- **Enrichment toy:** A large, round, light brown object (possibly a ball or feeder) is seen on the rocks, likely an enrichment toy for the panda.
+- **Panda:** The main subject is a black and white giant panda, which is actively eating bamboo at the bottom right of the frame, occasionally looking up.\
+""")
+
+
+async def test_openrouter_binary_content_video_public_api(
+    allow_model_requests: None, openrouter_api_key: str, video_content: BinaryContent, vcr: Cassette
+) -> None:  # pragma: lax no cover
+    """Test `BinaryContent` video support through the public `Agent.run` API."""
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('google/gemini-2.5-flash', provider=provider)
+    agent = Agent(model)
+
+    result = await agent.run(['What is in this video? Answer in one short sentence.', video_content])
+    assert isinstance(result.output, str)
+    assert result.output == snapshot(
+        "The video shows a camera on a tripod recording a scenic mountain landscape, with a preview of the shot visible on the camera's screen."
+    )
+
+    assert vcr is not None
+    assert len(vcr.requests) == 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+
+    video_content_part = request_body['messages'][0]['content'][1]
+    assert video_content_part['type'] == 'video_url'
+    assert video_content_part['video_url']['url'].startswith('data:video/mp4;base64,')
 
 
 async def test_openrouter_errors_raised(allow_model_requests: None, openrouter_api_key: str) -> None:
@@ -345,15 +532,8 @@ async def test_openrouter_validate_error_response(openrouter_api_key: str) -> No
 
 
 async def test_openrouter_with_provider_details_but_no_parent_details(openrouter_api_key: str) -> None:
-    from typing import Any
-
     class TestOpenRouterModel(OpenRouterModel):
         def _process_provider_details(self, response: ChatCompletion) -> dict[str, Any] | None:
-            from pydantic_ai.models.openrouter import (
-                _map_openrouter_provider_details,  # pyright: ignore[reportPrivateUsage]
-                _OpenRouterChatCompletion,  # pyright: ignore[reportPrivateUsage]
-            )
-
             assert isinstance(response, _OpenRouterChatCompletion)
             openrouter_details = _map_openrouter_provider_details(response)
             return openrouter_details or None
@@ -385,7 +565,7 @@ async def test_openrouter_map_messages_reasoning(allow_model_requests: None, ope
     user_message = ModelRequest.user_text_prompt('Who are you. Think about it.')
     response = await model_request(model, [user_message])
 
-    mapped_messages = await model._map_messages([user_message, response], None)  # type: ignore[reportPrivateUsage]
+    mapped_messages = await model._map_messages([user_message, response], ModelRequestParameters())  # type: ignore[reportPrivateUsage]
 
     assert len(mapped_messages) == 2
     assert mapped_messages[1]['reasoning_details'] == snapshot(  # type: ignore[reportGeneralTypeIssues]
@@ -442,7 +622,7 @@ async def test_openrouter_tool_optional_parameters(allow_model_requests: None, o
     assert tool_call_part.tool_name == 'find_education_content'
     assert tool_call_part.args == snapshot(None)
 
-    mapped_messages = await model._map_messages([response], None)  # type: ignore[reportPrivateUsage]
+    mapped_messages = await model._map_messages([response], ModelRequestParameters())  # type: ignore[reportPrivateUsage]
     tool_call_message = mapped_messages[0]
     assert tool_call_message['role'] == 'assistant'
     assert tool_call_message.get('content') == snapshot("I'll search for education content for you.")
@@ -653,6 +833,52 @@ async def test_openrouter_url_citation_annotation_validation(openrouter_api_key:
     assert text_part.content == 'According to the source, this is the answer.'
 
 
+async def test_openrouter_service_tier_completion(openrouter_api_key: str) -> None:
+    """OpenRouter providers can return service_tier values outside the OpenAI Literal."""
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('google/gemini-2.5-flash', provider=provider)
+
+    message = ChatCompletionMessage.model_construct(role='assistant', content='hi')
+    choice = Choice.model_construct(index=0, message=message, finish_reason='stop', native_finish_reason='stop')
+    response = ChatCompletion.model_construct(
+        id='gen-123',
+        choices=[choice],
+        created=1234567890,
+        object='chat.completion',
+        model='google/gemini-2.5-flash',
+        provider='Google',
+        service_tier='standard',
+    )
+
+    result = model._process_response(response)  # type: ignore[reportPrivateUsage]
+    text_part = cast(TextPart, result.parts[0])
+    assert text_part.content == 'hi'
+
+
+async def test_openrouter_service_tier_chunk() -> None:
+    """OpenRouter streaming chunks can return service_tier values outside the OpenAI Literal."""
+    data = {
+        'id': 'gen-123',
+        'choices': [
+            {
+                'index': 0,
+                'delta': {'role': 'assistant', 'content': 'hi'},
+                'finish_reason': 'stop',
+                'native_finish_reason': 'stop',
+            }
+        ],
+        'created': 1234567890,
+        'model': 'google/gemini-2.5-flash',
+        'object': 'chat.completion.chunk',
+        'provider': 'Google',
+        'service_tier': 'on_demand',
+    }
+    result = _OpenRouterChatCompletionChunk.model_validate(data)
+    assert result.service_tier == 'on_demand'
+
+
 async def test_openrouter_document_url_no_force_download(
     allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
 ) -> None:
@@ -686,3 +912,266 @@ async def test_openrouter_document_url_no_force_download(
             'type': 'file',
         }
     )
+
+
+async def test_openrouter_supported_builtin_tools() -> None:
+    """Test that OpenRouterModel declares support for WebSearchTool."""
+    supported = OpenRouterModel.supported_builtin_tools()
+    assert WebSearchTool in supported
+
+
+async def test_openrouter_web_search_prepare_request(openrouter_api_key: str) -> None:
+    """Test that prepare_request injects web search plugins when WebSearchTool is present."""
+
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('openai/gpt-4.1', provider=provider)
+
+    model_request_parameters = ModelRequestParameters(
+        builtin_tools=[WebSearchTool(search_context_size='high')],
+    )
+
+    new_settings, _ = model.prepare_request(None, model_request_parameters)
+
+    assert new_settings is not None
+    extra_body = cast(dict[str, Any], new_settings.get('extra_body', {}))
+    assert 'plugins' in extra_body
+    assert extra_body['plugins'] == [{'id': 'web'}]
+    assert 'web_search_options' in extra_body
+    assert extra_body['web_search_options'] == {'search_context_size': 'high'}
+
+
+async def test_openrouter_no_web_search_without_tool(openrouter_api_key: str) -> None:
+    """Test that no plugins are added when WebSearchTool is not present."""
+
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('openai/gpt-4.1', provider=provider)
+
+    model_request_parameters = ModelRequestParameters()
+
+    new_settings, _ = model.prepare_request(None, model_request_parameters)
+
+    assert new_settings is not None
+    extra_body = cast(dict[str, Any], new_settings.get('extra_body', {}))
+    assert 'plugins' not in extra_body
+    assert 'web_search_options' not in extra_body
+
+
+async def test_openrouter_settings_to_openai_settings_with_web_search() -> None:
+    """Test _openrouter_settings_to_openai_settings when WebSearchTool is configured."""
+    settings = OpenRouterModelSettings()
+    model_request_parameters = ModelRequestParameters(
+        builtin_tools=[WebSearchTool(search_context_size='high')],
+    )
+
+    result = _openrouter_settings_to_openai_settings(settings, model_request_parameters)
+
+    extra_body = cast(dict[str, Any], result.get('extra_body', {}))
+    assert 'plugins' in extra_body
+    assert extra_body['plugins'] == [{'id': 'web'}]
+    assert 'web_search_options' in extra_body
+    assert extra_body['web_search_options'] == {'search_context_size': 'high'}
+
+
+async def test_openrouter_prepare_request_loop_with_non_websearch_first(openrouter_api_key: str) -> None:
+    """Test prepare_request loop continuation when first tool is not WebSearchTool."""
+    from unittest.mock import Mock
+
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('openai/gpt-4.1', provider=provider)
+
+    non_web_tool = Mock(spec=[])
+    web_tool = WebSearchTool(search_context_size='medium')
+
+    model_request_parameters = ModelRequestParameters(
+        builtin_tools=[non_web_tool, web_tool],
+    )
+
+    with patch.object(model.__class__.__bases__[0], 'prepare_request', return_value=({}, model_request_parameters)):
+        new_settings, _ = model.prepare_request(None, model_request_parameters)
+
+    assert new_settings is not None
+    extra_body = cast(dict[str, Any], new_settings.get('extra_body', {}))
+    assert 'plugins' in extra_body
+    assert extra_body['plugins'] == [{'id': 'web'}]
+    assert extra_body['web_search_options'] == {'search_context_size': 'medium'}
+
+
+def test_openrouter_nested_provider_response() -> None:
+    """OpenRouter sometimes nests the real response inside the 'provider' dict.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/3994.
+    """
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+
+    nested_completion = ChatCompletion.model_construct(
+        id=None,
+        choices=None,
+        model=None,
+        object=None,
+        provider={
+            'id': 'gen-123',
+            'choices': [
+                {
+                    'index': 0,
+                    'message': {'role': 'assistant', 'content': 'Hello from nested!'},
+                    'finish_reason': 'stop',
+                    'native_finish_reason': 'STOP',
+                    'logprobs': None,
+                }
+            ],
+            'model': 'google/gemini-3-flash-preview',
+            'object': 'chat.completion',
+            'provider': 'Google',
+        },
+        created=1234567890,
+        usage=None,
+    )
+
+    model_response = model._process_response(nested_completion)  # type: ignore[reportPrivateUsage]
+
+    assert model_response.parts == snapshot([TextPart(content='Hello from nested!')])
+    assert model_response.provider_details == snapshot(
+        {
+            'downstream_provider': 'Google',
+            'finish_reason': 'STOP',
+            'timestamp': datetime.datetime(2009, 2, 13, 23, 31, 30, tzinfo=datetime.timezone.utc),
+        }
+    )
+
+
+def test_openrouter_nested_provider_null_name() -> None:
+    """Nested provider dict with provider=None falls back to 'unknown'."""
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+
+    completion = ChatCompletion.model_construct(
+        id=None,
+        choices=None,
+        model=None,
+        object=None,
+        provider={
+            'id': 'nested-gen-1',
+            'choices': [
+                {
+                    'index': 0,
+                    'message': {'role': 'assistant', 'content': 'Hi'},
+                    'finish_reason': 'stop',
+                    'native_finish_reason': 'STOP',
+                    'logprobs': None,
+                }
+            ],
+            'model': 'openai/gpt-4.1-mini',
+            'object': 'chat.completion',
+            'provider': None,
+            'created': 1234567890,
+            'usage': {'prompt_tokens': 10, 'completion_tokens': 5, 'total_tokens': 15},
+        },
+        created=1234567890,
+    )
+
+    result = model._process_response(completion)  # type: ignore[reportPrivateUsage]
+    assert result.provider_details == snapshot(
+        {
+            'downstream_provider': 'unknown',
+            'finish_reason': 'STOP',
+            'timestamp': datetime.datetime(2009, 2, 13, 23, 31, 30, tzinfo=datetime.timezone.utc),
+        }
+    )
+
+
+def test_openrouter_provider_dict_without_choices_raises() -> None:
+    """Provider is a dict with no 'choices' key — no unwrap happens, validation fails."""
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+
+    completion = ChatCompletion.model_construct(
+        id=None,
+        choices=None,
+        model=None,
+        object=None,
+        provider={'some_key': 'some_value'},
+        created=1234567890,
+    )
+
+    with pytest.raises(UnexpectedModelBehavior):
+        model._process_response(completion)  # type: ignore[reportPrivateUsage]
+
+
+def test_openrouter_error_with_null_fields() -> None:
+    """Error responses with null standard fields raise ModelHTTPError.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/3994.
+    """
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+
+    error_completion = ChatCompletion.model_construct(
+        id=None,
+        choices=None,
+        model=None,
+        object=None,
+        provider=None,
+        created=1234567890,
+        usage=None,
+        error={'code': 400, 'message': 'Invalid request parameters'},
+    )
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        model._process_response(error_completion)  # type: ignore[reportPrivateUsage]
+
+    assert exc_info.value.status_code == 400
+    assert 'Invalid request parameters' in str(exc_info.value)
+
+
+def test_openrouter_malformed_error_fallthrough() -> None:
+    """Malformed error data falls through to validation, surfacing as UnexpectedModelBehavior."""
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+
+    completion = ChatCompletion.model_construct(
+        id=None,
+        choices=None,
+        model=None,
+        object=None,
+        provider=None,
+        created=1234567890,
+        usage=None,
+        error='something went wrong',
+    )
+
+    with pytest.raises(UnexpectedModelBehavior):
+        model._process_response(completion)  # type: ignore[reportPrivateUsage]
+
+
+def test_openrouter_error_with_metadata() -> None:
+    """Real-world error response with metadata field from #3994.
+
+    OpenRouter returns error code 524 with extra metadata including the raw
+    error and provider name. The extra fields should be ignored.
+    """
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('google/gemini-3-flash-preview', provider=provider)
+
+    completion = ChatCompletion.model_construct(
+        id=None,
+        choices=None,
+        created=1768361801,
+        model=None,
+        object=None,
+        service_tier=None,
+        system_fingerprint=None,
+        usage=None,
+        error={
+            'message': 'Provider returned error',
+            'code': 524,
+            'metadata': {'raw': 'error code: 524', 'provider_name': 'Google'},
+        },
+        user_id='org_xxx',
+    )
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        model._process_response(completion)  # type: ignore[reportPrivateUsage]
+
+    assert exc_info.value.status_code == 524
+    assert 'Provider returned error' in str(exc_info.value)

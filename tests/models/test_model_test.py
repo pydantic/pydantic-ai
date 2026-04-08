@@ -4,14 +4,12 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
-import re
 from datetime import timezone
 from typing import Annotated, Any, Literal
 
 import pytest
 from annotated_types import Ge, Gt, Le, Lt, MaxLen, MinLen
 from anyio import Event
-from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
 
 from pydantic_ai import (
@@ -34,6 +32,7 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.models.test import TestModel, _chars, _JsonSchemaTestData  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.usage import RequestUsage, RunUsage
 
+from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr
 
 
@@ -288,7 +287,7 @@ def test_output_tool_retry_error_handled():
         call_count += 1
         raise ModelRetry('Fail')
 
-    with pytest.raises(UnexpectedModelBehavior, match=re.escape('Exceeded maximum retries (2) for output validation')):
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(2\) for output validation'):
         agent.run_sync('Hello', model=TestModel())
 
     assert call_count == 3

@@ -106,7 +106,7 @@ def create_api_app(
     model_infos: list[ModelInfo] = []
 
     # Filter out builtin_tools that are already configured on the agent (they're always included)
-    agent_tool_ids = {t.unique_id for t in agent._builtin_tools if isinstance(t, AbstractBuiltinTool)}  # pyright: ignore[reportPrivateUsage]
+    agent_tool_ids = {t.unique_id for t in agent._cap_builtin_tools if isinstance(t, AbstractBuiltinTool)}  # pyright: ignore[reportPrivateUsage]
     ui_builtin_tools = [t for t in (builtin_tools or []) if t.unique_id not in agent_tool_ids]
 
     # Build combined models: agent's model first (if exists), then provided models
@@ -120,7 +120,7 @@ def create_api_app(
     for label, model_ref in all_models:
         model = infer_model(model_ref)
         # Use original string if provided to preserve openai-chat: vs openai-responses: distinction
-        model_id = model_ref if isinstance(model_ref, str) else f'{model.system}:{model.model_name}'
+        model_id = model_ref if isinstance(model_ref, str) else model.model_id
         if model_id in seen_model_ids:
             continue
         seen_model_ids.add(model_id)
