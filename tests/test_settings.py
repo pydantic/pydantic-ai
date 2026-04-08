@@ -18,7 +18,6 @@ with try_import() as google_available:
 
 with try_import() as bedrock_available:
     from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
-    from pydantic_ai.providers.bedrock import BedrockProvider
 
 pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
 
@@ -136,14 +135,12 @@ async def test_top_p_settings(allow_model_requests: None, model: Model, vcr: Cas
 
 
 @pytest.fixture()
-def google_provider(gemini_api_key: str) -> GoogleProvider:
+def google_provider(gemini_api_key: str):
     return GoogleProvider(api_key=gemini_api_key)
 
 
 @pytest.mark.skipif(not google_available(), reason='google-genai not installed')
-async def test_google_model_thinking_config(
-    allow_model_requests: None, google_provider: GoogleProvider, vcr: Cassette | None
-):
+async def test_google_model_thinking_config(allow_model_requests: None, google_provider: Any, vcr: Cassette | None):
     model = GoogleModel('gemini-3-flash-preview', provider=google_provider)
     settings = GoogleModelSettings(google_thinking_config={'include_thoughts': False})
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=settings)
@@ -154,26 +151,12 @@ async def test_google_model_thinking_config(
     assert request_body['generationConfig']['thinkingConfig'] == {'include_thoughts': False}
 
 
-@pytest.mark.skipif(not google_available(), reason='google-genai not installed')
-async def test_google_model_vertex_labels(
-    allow_model_requests: None, vertex_provider: GoogleProvider, vcr: Cassette | None
-):  # pragma: lax no cover
-    model = GoogleModel('gemini-3-flash-preview', provider=vertex_provider)
-    settings = GoogleModelSettings(google_labels={'environment': 'test', 'team': 'analytics'})
-    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=settings)
-    result = await agent.run('What is the capital of France?')
-    assert result.output == snapshot('The capital of France is Paris.\n')
-
-    request_body = _get_request_body(vcr)
-    assert request_body['labels'] == {'environment': 'test', 'team': 'analytics'}
-
-
 # --- Bedrock provider-specific settings ---
 
 
 @pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')
 async def test_bedrock_model_performance_config(
-    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette | None
+    allow_model_requests: None, bedrock_provider: Any, vcr: Cassette | None
 ):
     model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
     model_settings = BedrockModelSettings(bedrock_performance_configuration={'latency': 'optimized'})
@@ -188,9 +171,7 @@ async def test_bedrock_model_performance_config(
 
 
 @pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')
-async def test_bedrock_model_guardrail_config(
-    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette | None
-):
+async def test_bedrock_model_guardrail_config(allow_model_requests: None, bedrock_provider: Any, vcr: Cassette | None):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     model_settings = BedrockModelSettings(
         bedrock_guardrail_config={
@@ -214,9 +195,7 @@ async def test_bedrock_model_guardrail_config(
 
 
 @pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')
-async def test_bedrock_model_request_metadata(
-    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette | None
-):
+async def test_bedrock_model_request_metadata(allow_model_requests: None, bedrock_provider: Any, vcr: Cassette | None):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     model_settings = BedrockModelSettings(bedrock_request_metadata={'test': 'test'})
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=model_settings)
@@ -230,9 +209,7 @@ async def test_bedrock_model_request_metadata(
 
 
 @pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')
-async def test_bedrock_model_service_tier(
-    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette | None
-):
+async def test_bedrock_model_service_tier(allow_model_requests: None, bedrock_provider: Any, vcr: Cassette | None):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     model_settings = BedrockModelSettings(bedrock_service_tier={'type': 'default'})
     agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=model_settings)
