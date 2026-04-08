@@ -27,6 +27,8 @@ Pydantic AI ships with several capabilities that cover common needs:
 | [`PrefixTools`][pydantic_ai.capabilities.PrefixTools] | Wraps a capability and prefixes its tool names | Yes |
 | [`BuiltinTool`][pydantic_ai.capabilities.BuiltinTool] | Registers a [builtin tool](builtin-tools.md) with the agent | Yes |
 | [`Toolset`][pydantic_ai.capabilities.Toolset] | Wraps an [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] | — |
+| [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] | Includes return type schemas in tool definitions sent to the model | Yes |
+| [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] | Merges metadata key-value pairs onto selected tools | Yes |
 | [`HistoryProcessor`][pydantic_ai.capabilities.HistoryProcessor] | Wraps a [history processor](message-history.md#processing-message-history) | — |
 | [`ThreadExecutor`][pydantic_ai.capabilities.ThreadExecutor] | Uses a custom thread executor for [sync functions](tools-advanced.md#thread-executor-for-long-running-servers) | — |
 
@@ -216,6 +218,117 @@ Every [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] has a 
 ```python {title="prefix_convenience.py" test="skip" lint="skip"}
 MCP(url='https://mcp.example.com/api').prefix_tools('mcp')
 ```
+
+### IncludeToolReturnSchemas
+
+[`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] includes return type schemas in tool definitions sent to the model. For models that natively support return schemas (e.g. Google Gemini), the schema is passed as a structured field in the API request. For other models, it is injected into the tool description as JSON text.
+
+```python {title="include_return_schemas.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import IncludeToolReturnSchemas
+from pydantic_ai.models.test import TestModel
+
+
+test_model = TestModel()
+agent = Agent(test_model, capabilities=[IncludeToolReturnSchemas()])
+
+
+@agent.tool_plain
+def get_temperature(city: str) -> float:
+    """Get the temperature for a city."""
+    return 21.0
+
+
+result = agent.run_sync('What is the temperature in Paris?')
+params = test_model.last_model_request_parameters
+assert params is not None
+td = params.function_tools[0]
+assert td.include_return_schema is True
+```
+
+_(This example is complete, it can be run "as is")_
+
+Use the `tools` parameter to select which tools should include return schemas. It accepts a list of tool names, a metadata dict for matching, or a callable predicate:
+
+```python {title="include_return_schemas_selective.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import IncludeToolReturnSchemas
+from pydantic_ai.models.test import TestModel
+
+
+test_model = TestModel()
+agent = Agent(
+    test_model,
+    capabilities=[IncludeToolReturnSchemas(tools=['get_temperature'])],
+)
+
+
+@agent.tool_plain
+def get_temperature(city: str) -> float:
+    """Get the temperature for a city."""
+    return 21.0
+
+
+@agent.tool_plain
+def get_greeting(name: str) -> str:
+    """Get a greeting."""
+    return f'Hello, {name}!'
+
+
+result = agent.run_sync('Hello')
+params = test_model.last_model_request_parameters
+assert params is not None
+temp_tool = next(t for t in params.function_tools if t.name == 'get_temperature')
+greet_tool = next(t for t in params.function_tools if t.name == 'get_greeting')
+assert temp_tool.include_return_schema is True
+assert greet_tool.include_return_schema is None
+```
+
+_(This example is complete, it can be run "as is")_
+
+The same effect can be achieved at the toolset level using [`.include_return_schemas()`][pydantic_ai.toolsets.AbstractToolset.include_return_schemas] — see [toolset composition](toolsets.md#including-return-schemas).
+
+### SetToolMetadata
+
+[`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] merges metadata key-value pairs onto selected tools. This is useful for tagging tools with configuration that other capabilities or custom logic can inspect:
+
+```python {title="set_tool_metadata.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import SetToolMetadata
+from pydantic_ai.models.test import TestModel
+
+
+test_model = TestModel()
+agent = Agent(
+    test_model,
+    capabilities=[SetToolMetadata(tools=['search'], sensitive=True)],
+)
+
+
+@agent.tool_plain
+def search(query: str) -> str:
+    """Search for information."""
+    return f'Results for: {query}'
+
+
+@agent.tool_plain
+def greet(name: str) -> str:
+    """Greet someone."""
+    return f'Hello, {name}!'
+
+
+result = agent.run_sync('Search for pydantic')
+params = test_model.last_model_request_parameters
+assert params is not None
+search_tool = next(t for t in params.function_tools if t.name == 'search')
+greet_tool = next(t for t in params.function_tools if t.name == 'greet')
+assert search_tool.metadata is not None and search_tool.metadata.get('sensitive') is True
+assert greet_tool.metadata is None or greet_tool.metadata.get('sensitive') is None
+```
+
+_(This example is complete, it can be run "as is")_
+
+The same effect can be achieved at the toolset level using [`.with_metadata()`][pydantic_ai.toolsets.AbstractToolset.with_metadata] — see [toolset composition](toolsets.md#setting-tool-metadata).
 
 ## Building custom capabilities
 
