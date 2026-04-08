@@ -32,6 +32,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
     capabilities: Sequence[AbstractCapability[AgentDepsT]]
 
+    def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
+        for cap in self.capabilities:
+            cap.apply(visitor)
+
     @property
     def has_wrap_node_run(self) -> bool:
         return any(c.has_wrap_node_run for c in self.capabilities)
