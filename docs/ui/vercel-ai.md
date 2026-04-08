@@ -152,18 +152,28 @@ On the frontend, AI SDK UI's [`useChat`](https://ai-sdk.dev/docs/reference/ai-sd
 Both [`system_prompt`](../agent.md#system-prompts) and [`instructions`](../agent.md#instructions) are included in the request sent to the model. The key difference is how they interact with the message history sent by the frontend:
 
 - **`instructions`** are always injected fresh on each request, regardless of message history. This is the recommended default.
-- **`system_prompt`** messages are preserved across turns in the message history. Since the Vercel AI frontend manages message history, system prompts from prior turns are already present in subsequent requests.
+- **`system_prompt`** messages are preserved across turns in the message history. When the frontend manages message history and doesn't include prior system prompts, the agent reinjects them on each request.
 
 By default, system prompts sent by the frontend are **stripped** for security, since a malicious client could inject arbitrary instructions via crafted API requests. A warning is emitted when this happens.
 
-To accept frontend system prompts instead, pass `accept_frontend_system_prompt=True`:
+To accept frontend system prompts instead, pass `accept_frontend_system_prompt=True`. When a frontend system prompt is accepted, the agent's own system prompt is not injected — since a `SystemPromptPart` already exists in the history. If the frontend sends no system prompt, the agent's system prompt is injected as usual.
 
-```python {test="skip" lint="skip"}
-adapter = VercelAIAdapter(
-    agent=agent,
-    run_input=run_input,
-    accept_frontend_system_prompt=True,
-)
+```python {title="vercel_ai_accept_frontend_system_prompt.py"}
+from fastapi import FastAPI
+from starlette.requests import Request
+from starlette.responses import Response
+
+from pydantic_ai import Agent
+from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+
+agent = Agent('openai:gpt-5.2', instructions='Be fun!')
+
+app = FastAPI()
+
+
+@app.post('/chat')
+async def chat(request: Request) -> Response:
+    return await VercelAIAdapter.dispatch_request(
+        request, agent=agent, accept_frontend_system_prompt=True
+    )
 ```
-
-When a frontend system prompt is accepted, the agent's own system prompt is not injected — since a `SystemPromptPart` already exists in the history. If the frontend sends no system prompt, the agent's system prompt is injected as usual.
