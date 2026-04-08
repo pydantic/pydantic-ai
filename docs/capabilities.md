@@ -223,7 +223,7 @@ MCP(url='https://mcp.example.com/api').prefix_tools('mcp')
 
 [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] includes return type schemas in tool definitions sent to the model. For models that natively support return schemas (e.g. Google Gemini), the schema is passed as a structured field in the API request. For other models, it is injected into the tool description as JSON text.
 
-```python {title="include_return_schemas.py"}
+```python {title="include_return_schemas.py" lint="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import IncludeToolReturnSchemas
 from pydantic_ai.models.test import TestModel
@@ -250,7 +250,7 @@ _(This example is complete, it can be run "as is")_
 
 Use the `tools` parameter to select which tools should include return schemas. It accepts a list of tool names, a metadata dict for matching, or a callable predicate:
 
-```python {title="include_return_schemas_selective.py"}
+```python {title="include_return_schemas_selective.py" lint="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import IncludeToolReturnSchemas
 from pydantic_ai.models.test import TestModel
@@ -292,7 +292,7 @@ The same effect can be achieved at the toolset level using [`.include_return_sch
 
 [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] merges metadata key-value pairs onto selected tools. This is useful for tagging tools with configuration that other capabilities or custom logic can inspect:
 
-```python {title="set_tool_metadata.py"}
+```python {title="set_tool_metadata.py" lint="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import SetToolMetadata
 from pydantic_ai.models.test import TestModel
