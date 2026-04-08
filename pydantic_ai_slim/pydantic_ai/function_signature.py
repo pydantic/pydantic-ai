@@ -389,6 +389,40 @@ class FunctionSignature:
                     result.append(type_sig)
         return result
 
+    @staticmethod
+    def render_type_definitions(
+        signatures: list[FunctionSignature],
+        conflicting_type_names: frozenset[str],
+    ) -> list[str]:
+        """Render unique TypedDict definitions for a set of function signatures.
+
+        For types whose names conflict across signatures (as identified by
+        `dedup_referenced_types`), each definition is rendered with a
+        tool-name prefix (e.g. `get_user_Address`).
+
+        Args:
+            signatures: The function signatures (after `dedup_referenced_types`).
+            conflicting_type_names: The set returned by `dedup_referenced_types`.
+
+        Returns:
+            A list of rendered TypedDict class definitions as strings.
+        """
+        unique_types = FunctionSignature.collect_unique_referenced_types(signatures)
+        if not unique_types:
+            return []
+
+        owner_for: dict[int, str] = {}
+        for sig in signatures:
+            for tsig in sig.referenced_types:
+                if tsig.name in conflicting_type_names and id(tsig) not in owner_for:
+                    owner_for[id(tsig)] = sig.name
+
+        rendered: list[str] = []
+        for tsig in unique_types:
+            owner = owner_for.get(id(tsig))
+            rendered.append(tsig.render_definition(owner_name=owner, conflicting_type_names=conflicting_type_names))
+        return rendered
+
 
 # Shared singletons
 _ANY = SimpleTypeExpr('Any')

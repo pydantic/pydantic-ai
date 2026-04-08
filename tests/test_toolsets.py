@@ -1845,7 +1845,7 @@ async def test_filtered_toolset_async_filter():
         return x
 
     def tool_b(x: str) -> str:
-        return x
+        return x  # pragma: no cover
 
     async def async_filter(ctx: RunContext, td: ToolDefinition) -> bool:
         return td.name == 'tool_a'
@@ -1917,6 +1917,67 @@ def test_set_tool_metadata_capability_with_async_selector():
     assert td_a.metadata is not None
     assert td_a.metadata['tagged'] is True
     assert td_b.metadata is None or 'tagged' not in td_b.metadata
+
+
+def test_set_tool_metadata_capability_with_sync_callable_selector():
+    """SetToolMetadata with sync callable selector."""
+    from pydantic_ai.capabilities import SetToolMetadata
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x
+
+    test_model = TestModel()
+    agent = Agent(
+        test_model,
+        tools=[tool_a, tool_b],
+        capabilities=[SetToolMetadata(tools=lambda ctx, td: td.name == 'tool_a', flagged=True)],
+    )
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    td_a = next(td for td in params.function_tools if td.name == 'tool_a')
+    td_b = next(td for td in params.function_tools if td.name == 'tool_b')
+    assert td_a.metadata is not None
+    assert td_a.metadata['flagged'] is True
+    assert td_b.metadata is None or 'flagged' not in td_b.metadata
+
+
+def test_set_tool_metadata_capability_with_nested_dict_selector():
+    """SetToolMetadata with nested dict selector exercises deep metadata matching."""
+    from pydantic_ai.capabilities import SetToolMetadata
+    from pydantic_ai.tools import Tool
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x
+
+    test_model = TestModel()
+    agent = Agent(
+        test_model,
+        tools=[
+            Tool(tool_a, metadata={'config': {'env': 'prod', 'region': 'us'}}),
+            Tool(tool_b, metadata={'config': {'env': 'staging'}}),
+        ],
+        capabilities=[SetToolMetadata(tools={'config': {'env': 'prod'}}, verified=True)],
+    )
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    td_a = next(td for td in params.function_tools if td.name == 'tool_a')
+    td_b = next(td for td in params.function_tools if td.name == 'tool_b')
+    # tool_a matches: config.env == 'prod' (deep inclusion, extra 'region' key is fine)
+    assert td_a.metadata is not None
+    assert td_a.metadata['verified'] is True
+    # tool_b doesn't match: config.env == 'staging'
+    assert td_b.metadata is not None
+    assert 'verified' not in td_b.metadata
 
 
 def test_set_tool_metadata_capability_with_dict_selector():

@@ -97,6 +97,23 @@ def test_dedup_referenced_types_substring_names():
     assert 'meta: UserMeta' in rendered
 
 
+def test_render_definition_with_conflicting_types():
+    """render_definition applies tool-name prefix for conflicting types."""
+    user = TypeSignature(
+        name='User',
+        fields={
+            'name': TypeFieldSignature(name='name', type=SimpleTypeExpr('str'), required=True, description=None),
+        },
+    )
+    # Without conflict info, renders as plain name
+    plain = user.render_definition()
+    assert plain.startswith('class User(TypedDict):')
+
+    # With conflict info, renders with prefix
+    prefixed = user.render_definition(owner_name='tool_a', conflicting_type_names=frozenset({'User'}))
+    assert prefixed.startswith('class tool_a_User(TypedDict):')
+
+
 def test_dedup_identical_types_unified():
     """Identical TypeSignatures are unified to the same object instance."""
     user1 = TypeSignature(
