@@ -220,7 +220,15 @@ class ContextWindowExceeded(UnexpectedModelBehavior):
         self.status_code = status_code
         self.input_tokens = input_tokens
         self.context_window = context_window
-        body_str = str(body) if body is not None else None
+        if body is None:
+            body_str: str | None = None
+        elif isinstance(body, str):
+            body_str = body
+        else:
+            try:
+                body_str = json.dumps(body)
+            except (TypeError, ValueError):
+                body_str = str(body)
         super().__init__(message=f'Context window exceeded for {model_name}', body=body_str)
 
 

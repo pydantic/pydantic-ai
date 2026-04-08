@@ -208,7 +208,7 @@ def _check_context_window_exceeded(e: errors.APIError, model_name: str) -> Conte
         return ContextWindowExceeded(
             status_code=e.code,
             model_name=model_name,
-            body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
+            body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
         )
     return None
 
