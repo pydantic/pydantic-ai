@@ -77,6 +77,17 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     sensible defaults and typically don't need to be overridden.
     """
 
+    def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
+        """Run a visitor function on all leaf capabilities in this tree.
+
+        For a single capability, calls the visitor on itself.
+        Overridden by [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability]
+        to recursively visit all child capabilities, and by
+        [`WrapperCapability`][pydantic_ai.capabilities.WrapperCapability]
+        to delegate to the wrapped capability.
+        """
+        visitor(self)
+
     @property
     def has_wrap_node_run(self) -> bool:
         """Whether this capability (or any sub-capability) overrides wrap_node_run."""
