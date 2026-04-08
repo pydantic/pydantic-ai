@@ -2402,6 +2402,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         UserWarning,
                         stacklevel=1,
                     )
+                    td = dataclasses.replace(td, return_schema=None, function_signature=td.function_signature)
                 resolved.append(td)
             return resolved
 

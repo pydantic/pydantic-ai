@@ -145,8 +145,29 @@ class TypeSignature:
         """Return the type name (for use in type expressions like `def foo(x: User)`)."""
         return self.display_name
 
-    def render_definition(self) -> str:
-        """Render the full TypedDict class definition."""
+    def render_definition(
+        self, *, owner_name: str | None = None, conflicting_type_names: frozenset[str] = frozenset()
+    ) -> str:
+        """Render the full TypedDict class definition.
+
+        Args:
+            owner_name: The owning tool name, used to build prefixed type names
+                for conflicting types (e.g. ``get_user_Address``).
+            conflicting_type_names: Set of type names that need tool-name prefixes
+                (from ``dedup_referenced_types``). Only effective when ``owner_name``
+                is also provided.
+        """
+        if owner_name and conflicting_type_names:
+            overrides = {n: f'{owner_name}_{n}' for n in conflicting_type_names}
+            token = _type_name_overrides.set(overrides)
+            try:
+                return self._render_definition()
+            finally:
+                _type_name_overrides.reset(token)
+        return self._render_definition()
+
+    def _render_definition(self) -> str:
+        """Render the full TypedDict class definition (internal, assumes overrides are set)."""
         lines = [f'class {self.display_name}(TypedDict):']
         if self.description:
             lines.extend(_render_description(self.description, indent='    '))
