@@ -222,6 +222,38 @@ async def test_bedrock_model_service_tier(allow_model_requests: None, bedrock_pr
     assert request_body['serviceTier'] == {'type': 'default'}
 
 
+@pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')
+async def test_bedrock_model_prompt_variables(allow_model_requests: None, bedrock_provider: Any, vcr: Cassette | None):
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    model_settings = BedrockModelSettings(bedrock_prompt_variables={'leo': {'text': 'aaaa'}})
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=model_settings)
+    result = await agent.run('What is the capital of France?')
+    assert result.output == snapshot(
+        'The capital of France is Paris. Paris is not only the political center of France but also one of the most significant cultural, historical, and economic cities in the world. It is known for its landmarks such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral, among many others.'
+    )
+
+    request_body = _get_request_body(vcr)
+    assert request_body['promptVariables'] == {'leo': {'text': 'aaaa'}}
+
+
+@pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')
+async def test_bedrock_model_additional_response_fields(
+    allow_model_requests: None, bedrock_provider: Any, vcr: Cassette | None
+):
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    model_settings = BedrockModelSettings(
+        bedrock_additional_model_response_fields_paths=['/amazon-bedrock-invocationMetrics'],
+    )
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=model_settings)
+    result = await agent.run('What is the capital of France?')
+    assert result.output == snapshot(
+        "The capital of France is Paris. Paris is not only the political and administrative center of the country but also a major cultural, historical, and economic hub. It's well-known for its landmarks such as the Eiffel Tower, the Louvre Museum, Notre-Dame Cathedral, and the Champs-Élysées."
+    )
+
+    request_body = _get_request_body(vcr)
+    assert request_body['additionalModelResponseFieldPaths'] == ['/amazon-bedrock-invocationMetrics']
+
+
 class TestMergeModelSettingsThinking:
     """merge_model_settings with unified thinking fields."""
 

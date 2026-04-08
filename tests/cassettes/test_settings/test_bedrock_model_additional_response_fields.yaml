@@ -1,0 +1,90 @@
+interactions:
+- request:
+    body: Action=AssumeRole&Version=2011-06-15&RoleArn=scrubbed&RoleSessionName=scrubbed
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ZTc3ZTVkYTMtNTZhNC00YjhhLThlZmQtMzAxODVlZjljNTU3
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '149'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24veC13d3ctZm9ybS11cmxlbmNvZGVkOyBjaGFyc2V0PXV0Zi04
+    method: POST
+    uri: https://sts.us-east-1.amazonaws.com/
+  response:
+    body:
+      string: |
+        <AssumeRoleResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">
+          <AssumeRoleResult>
+            <AssumedRoleUser>
+              <AssumedRoleId>SCRUBBED</AssumedRoleId>
+              <Arn>SCRUBBED</Arn>
+            </AssumedRoleUser>
+            <Credentials>
+              <AccessKeyId>SCRUBBED</AccessKeyId>
+              <SecretAccessKey>SCRUBBED</SecretAccessKey>
+              <SessionToken>SCRUBBED</SessionToken>
+              <Expiration>2099-01-01T00:00:00Z</Expiration>
+            </Credentials>
+          </AssumeRoleResult>
+          <ResponseMetadata>
+            <RequestId>78f3247c-7db8-4a16-be06-f1ad7cbb5827</RequestId>
+          </ResponseMetadata>
+        </AssumeRoleResponse>
+    headers:
+      content-length:
+      - '585'
+      content-type:
+      - text/xml
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is the capital of France?"}]}], "system": [{"text": "You
+      are a helpful chatbot."}], "inferenceConfig": {}, "additionalModelResponseFieldPaths": ["/amazon-bedrock-invocationMetrics"]}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        MzU5ZDk3OTQtMDg4NS00MTk3LTk1M2UtNGJiNzU2ZGQyZWM2
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '240'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '518'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 571
+      output:
+        message:
+          content:
+          - text: The capital of France is Paris. Paris is not only the political and administrative center of the country
+              but also a major cultural, historical, and economic hub. It's well-known for its landmarks such as the Eiffel
+              Tower, the Louvre Museum, Notre-Dame Cathedral, and the Champs-Élysées.
+          role: assistant
+      stopReason: end_turn
+      usage:
+        inputTokens: 13
+        outputTokens: 65
+        serverToolUsage: {}
+        totalTokens: 78
+    status:
+      code: 200
+      message: OK
+version: 1

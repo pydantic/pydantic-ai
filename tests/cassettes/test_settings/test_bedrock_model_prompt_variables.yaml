@@ -1,0 +1,90 @@
+interactions:
+- request:
+    body: Action=AssumeRole&Version=2011-06-15&RoleArn=scrubbed&RoleSessionName=scrubbed
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        NWI0YjAwNDMtY2Y0Ny00MzUyLThmMzMtZmQwZDE4ZWY1YTcy
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '149'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24veC13d3ctZm9ybS11cmxlbmNvZGVkOyBjaGFyc2V0PXV0Zi04
+    method: POST
+    uri: https://sts.us-east-1.amazonaws.com/
+  response:
+    body:
+      string: |
+        <AssumeRoleResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">
+          <AssumeRoleResult>
+            <AssumedRoleUser>
+              <AssumedRoleId>SCRUBBED</AssumedRoleId>
+              <Arn>SCRUBBED</Arn>
+            </AssumedRoleUser>
+            <Credentials>
+              <AccessKeyId>SCRUBBED</AccessKeyId>
+              <SecretAccessKey>SCRUBBED</SecretAccessKey>
+              <SessionToken>SCRUBBED</SessionToken>
+              <Expiration>2099-01-01T00:00:00Z</Expiration>
+            </Credentials>
+          </AssumeRoleResult>
+          <ResponseMetadata>
+            <RequestId>05451a03-27f0-4625-afbf-dba1fe451315</RequestId>
+          </ResponseMetadata>
+        </AssumeRoleResponse>
+    headers:
+      content-length:
+      - '585'
+      content-type:
+      - text/xml
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is the capital of France?"}]}], "system": [{"text": "You
+      are a helpful chatbot."}], "inferenceConfig": {}, "promptVariables": {"leo": {"text": "aaaa"}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        YTE5Mjk0ZjQtNjA0Yy00MDdkLTgzZTctYjI1N2Q4OGE5M2Ew
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '210'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '515'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 677
+      output:
+        message:
+          content:
+          - text: The capital of France is Paris. Paris is not only the political center of France but also one of the most
+              significant cultural, historical, and economic cities in the world. It is known for its landmarks such as the
+              Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral, among many others.
+          role: assistant
+      stopReason: end_turn
+      usage:
+        inputTokens: 13
+        outputTokens: 61
+        serverToolUsage: {}
+        totalTokens: 74
+    status:
+      code: 200
+      message: OK
+version: 1
