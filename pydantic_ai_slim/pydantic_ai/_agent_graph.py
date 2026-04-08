@@ -270,7 +270,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
         if next_message:
             await self._reevaluate_dynamic_prompts([next_message], run_context)
-            if not any(
+            if reinject_system_prompts.get() and not any(
                 isinstance(part, _messages.SystemPromptPart)
                 for msg in (*messages, next_message)
                 if isinstance(msg, _messages.ModelRequest)
@@ -1755,6 +1755,8 @@ class _RunMessages:
 
 
 _messages_ctx_var: ContextVar[_RunMessages] = ContextVar('var')
+
+reinject_system_prompts: ContextVar[bool] = ContextVar('reinject_system_prompts', default=False)
 
 
 @contextmanager

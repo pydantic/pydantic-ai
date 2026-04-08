@@ -20,6 +20,7 @@ from pydantic import BaseModel, ValidationError
 from typing_extensions import Self, TypeVar
 
 from pydantic_ai import DeferredToolRequests, DeferredToolResults, _instructions
+from pydantic_ai._agent_graph import reinject_system_prompts
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.agent.abstract import AgentMetadata
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
@@ -225,7 +226,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         """
         return self.build_event_stream().streaming_response(stream)
 
-    def run_stream_native(
+    async def run_stream_native(
         self,
         *,
         output_type: OutputSpec[Any] | None = None,
@@ -311,21 +312,26 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 stacklevel=2,
             )
 
-        return self.agent.run_stream_events(
-            output_type=output_type,
-            message_history=message_history,
-            deferred_tool_results=deferred_tool_results,
-            model=model,
-            deps=deps,
-            model_settings=model_settings,
-            instructions=instructions,
-            usage_limits=usage_limits,
-            usage=usage,
-            metadata=metadata,
-            infer_name=infer_name,
-            toolsets=toolsets,
-            builtin_tools=builtin_tools,
-        )
+        token = reinject_system_prompts.set(True)
+        try:
+            async for event in self.agent.run_stream_events(
+                output_type=output_type,
+                message_history=message_history,
+                deferred_tool_results=deferred_tool_results,
+                model=model,
+                deps=deps,
+                model_settings=model_settings,
+                instructions=instructions,
+                usage_limits=usage_limits,
+                usage=usage,
+                metadata=metadata,
+                infer_name=infer_name,
+                toolsets=toolsets,
+                builtin_tools=builtin_tools,
+            ):
+                yield event
+        finally:
+            reinject_system_prompts.reset(token)
 
     def run_stream(
         self,

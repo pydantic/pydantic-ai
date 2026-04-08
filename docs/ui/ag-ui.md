@@ -291,7 +291,7 @@ Both [`system_prompt`](../agent.md#system-prompts) and [`instructions`](../agent
 
 By default, system prompts sent by the frontend (as `SystemMessage` in the AG-UI message history) are **stripped** for security, since a malicious client could inject arbitrary instructions via crafted API requests. A warning is emitted when this happens.
 
-To accept frontend system prompts instead, pass `accept_frontend_system_prompt=True`. When a frontend system prompt is accepted, the agent's own system prompt is not injected — since a `SystemPromptPart` already exists in the history. If the frontend sends no system prompt, the agent's system prompt is injected as usual.
+To accept frontend system prompts instead, pass `accept_frontend_system_prompt=True`. When a frontend system prompt is accepted, the agent's own system prompt is not injected — since a [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] already exists in the history. If the frontend sends no system prompt, the agent's system prompt is injected as usual.
 
 ```python {title="ag_ui_accept_frontend_system_prompt.py"}
 from fastapi import FastAPI
