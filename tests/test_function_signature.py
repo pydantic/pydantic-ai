@@ -114,6 +114,54 @@ def test_render_definition_with_conflicting_types():
     assert prefixed.startswith('class tool_a_User(TypedDict):')
 
 
+def test_render_type_definitions_with_conflicts():
+    """render_type_definitions renders unique types with prefixes for conflicts."""
+    user1 = TypeSignature(
+        name='User',
+        fields={'name': TypeFieldSignature(name='name', type=SimpleTypeExpr('str'), required=True)},
+    )
+    user2 = TypeSignature(
+        name='User',
+        fields={'id': TypeFieldSignature(name='id', type=SimpleTypeExpr('int'), required=True)},
+    )
+    address = TypeSignature(
+        name='Address',
+        fields={'city': TypeFieldSignature(name='city', type=SimpleTypeExpr('str'), required=True)},
+    )
+
+    sig1 = FunctionSignature(
+        name='get_user',
+        params={'user': FunctionParam(name='user', type=user1)},
+        return_type=SimpleTypeExpr('Any'),
+        referenced_types=[user1, address],
+    )
+    sig2 = FunctionSignature(
+        name='find_user',
+        params={'user': FunctionParam(name='user', type=user2)},
+        return_type=SimpleTypeExpr('Any'),
+        referenced_types=[user2],
+    )
+    conflicting = FunctionSignature.get_conflicting_type_names([sig1, sig2])
+    assert conflicting == frozenset({'User'})
+
+    rendered = FunctionSignature.render_type_definitions([sig1, sig2], conflicting)
+    # Should have 3 definitions: prefixed User for each sig, plus Address
+    assert len(rendered) == 3
+    assert any('class get_user_User(TypedDict):' in r for r in rendered)
+    assert any('class find_user_User(TypedDict):' in r for r in rendered)
+    assert any('class Address(TypedDict):' in r for r in rendered)
+
+
+def test_render_type_definitions_empty():
+    """render_type_definitions returns empty list when no referenced types."""
+    sig = FunctionSignature(
+        name='simple',
+        params={'x': FunctionParam(name='x', type=SimpleTypeExpr('int'))},
+        return_type=SimpleTypeExpr('str'),
+    )
+    assert FunctionSignature.render_type_definitions([sig], frozenset()) == []
+
+
 def test_dedup_identical_types_unified():
     """Identical TypeSignatures are unified to the same object instance."""
     user1 = TypeSignature(

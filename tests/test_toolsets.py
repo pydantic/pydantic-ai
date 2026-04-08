@@ -1957,12 +1957,16 @@ def test_set_tool_metadata_capability_with_nested_dict_selector():
     def tool_b(x: str) -> str:
         return x
 
+    def tool_c(x: float) -> float:
+        return x
+
     test_model = TestModel()
     agent = Agent(
         test_model,
         tools=[
             Tool(tool_a, metadata={'config': {'env': 'prod', 'region': 'us'}}),
             Tool(tool_b, metadata={'config': {'env': 'staging'}}),
+            Tool(tool_c, metadata={'other': 'value'}),  # missing 'config' key entirely
         ],
         capabilities=[SetToolMetadata(tools={'config': {'env': 'prod'}}, verified=True)],
     )
@@ -1972,12 +1976,16 @@ def test_set_tool_metadata_capability_with_nested_dict_selector():
     assert params is not None
     td_a = next(td for td in params.function_tools if td.name == 'tool_a')
     td_b = next(td for td in params.function_tools if td.name == 'tool_b')
+    td_c = next(td for td in params.function_tools if td.name == 'tool_c')
     # tool_a matches: config.env == 'prod' (deep inclusion, extra 'region' key is fine)
     assert td_a.metadata is not None
     assert td_a.metadata['verified'] is True
     # tool_b doesn't match: config.env == 'staging'
     assert td_b.metadata is not None
     assert 'verified' not in td_b.metadata
+    # tool_c doesn't match: 'config' key missing entirely
+    assert td_c.metadata is not None
+    assert 'verified' not in td_c.metadata
 
 
 def test_set_tool_metadata_capability_with_dict_selector():
