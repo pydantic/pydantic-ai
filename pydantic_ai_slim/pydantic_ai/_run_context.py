@@ -15,6 +15,7 @@ from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from . import _utils, messages as _messages
 
 if TYPE_CHECKING:
+    from ._tool_manager import ToolManager
     from .agent.abstract import AbstractAgent
     from .models import Model
     from .result import RunUsage
@@ -90,6 +91,17 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Available in model request hooks (`before_model_request`, `wrap_model_request`,
     `after_model_request`). Currently `None` in tool hooks, output validators,
     and during agent construction.
+    """
+
+    tool_manager: ToolManager[RunContextAgentDepsT] | None = None
+    """The tool manager for the current run step.
+
+    Provides access to tool validation and execution, including tracing and
+    capability hooks. Useful for toolsets that need to dispatch tool calls
+    programmatically (e.g. code execution sandboxes).
+
+    Not available in `TemporalRunContext` — it is not serializable across
+    Temporal activity boundaries.
     """
 
     @property
