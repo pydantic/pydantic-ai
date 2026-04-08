@@ -138,12 +138,11 @@ def _check_context_window_exceeded(e: SDKError, model_name: str) -> ContextWindo
     """Check if the error is a context window exceeded error and return the appropriate exception."""
     if e.status_code != 400:
         return None
-    body = _utils.as_dict(e.body)
-    if body is None and isinstance(e.body, str):
-        try:
-            body = _utils.as_dict(pydantic_core.from_json(e.body))
-        except ValueError:
-            pass
+    body: dict[str, Any] | None = None
+    try:
+        body = _utils.as_dict(pydantic_core.from_json(e.body))
+    except (ValueError, TypeError):
+        pass
     if body:
         if body.get('code') == '3051' or body.get('code') == 3051:
             return ContextWindowExceeded(
