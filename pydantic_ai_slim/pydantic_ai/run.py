@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Generic, Literal, overload
 
 from pydantic_graph import BaseNode, End, GraphRunContext
-from pydantic_graph.beta.graph import EndMarker, GraphRun, GraphTaskRequest, JoinItem
+from pydantic_graph.beta.graph import EndMarker, ErrorMarker, GraphRun, GraphTaskRequest, JoinItem
 from pydantic_graph.beta.step import NodeStep
 
 from . import (
@@ -123,6 +123,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         This is the next node that will be used during async iteration, or if a node is not passed to `self.next(...)`.
         """
         task = self._graph_run.next_task
+        if isinstance(task, ErrorMarker):
+            raise task.error
         return self._task_to_node(task)
 
     @property
@@ -260,7 +262,17 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             result = await cap.wrap_node_run(run_context, node=node, handler=step_fn)
         except Exception as e:
             result = await cap.on_node_run_error(run_context, node=node, error=e)
+            # on_node_run_error recovered from the exception by returning a result.
+            # Update the graph runner so it can continue with the new node or End.
+            if not isinstance(result, End):
+                self._graph_run.override_next([self._node_to_task(result)])
         result = await cap.after_node_run(run_context, node=node, result=result)
+
+        # If after_node_run changed the result from End to a node, update the graph
+        # runner so agent_run.result doesn't prematurely report the run as finished.
+        if not isinstance(result, End) and self._graph_run.output is not None:
+            self._graph_run.override_next([self._node_to_task(result)])
+
         return result
 
     async def _run_node_with_hooks(

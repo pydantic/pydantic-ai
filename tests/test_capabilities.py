@@ -7144,3 +7144,67 @@ class TestModelRetryFromHooks:
                 ),
             ]
         )
+
+
+# --- Hook recovery tests (after_node_run End→node, ErrorMarker in next_node) ---
+
+
+async def test_after_node_run_end_to_node_override():
+    """after_node_run can convert an End result back to a node, continuing execution."""
+    from pydantic_ai._agent_graph import ModelRequestNode
+
+    call_count = 0
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[TextPart('first answer')])
+        return ModelResponse(parts=[TextPart('second answer')])
+
+    redirected = False
+
+    @dataclass
+    class RedirectOnFirstEnd(AbstractCapability[Any]):
+        """Redirects the first End back to a ModelRequestNode to force a second model call."""
+
+        _redirected: bool = field(default=False, init=False)
+
+        async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+            nonlocal redirected
+            if isinstance(result, End) and not self._redirected:
+                self._redirected = True
+                redirected = True
+                return ModelRequestNode(ModelRequest(parts=[UserPromptPart(content='try again')]))
+            return result
+
+    agent = Agent(FunctionModel(llm), capabilities=[RedirectOnFirstEnd()])
+    result = await agent.run('hello')
+
+    assert redirected
+    assert call_count == 2
+    assert result.output == 'second answer'
+
+
+async def test_next_node_raises_on_error_marker():
+    """Accessing next_node after a node error re-raises the original exception."""
+    call_count = 0
+
+    def failing_then_ok_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise ValueError('model failure')
+        return ModelResponse(parts=[TextPart('ok')])
+
+    agent = Agent(FunctionModel(failing_then_ok_model))
+    async with agent.iter('hello') as agent_run:
+        node = agent_run.next_node
+        while not isinstance(node, End):
+            try:
+                node = await agent_run.next(node)
+            except ValueError:
+                # After an unrecovered error, next_node should re-raise
+                with pytest.raises(ValueError, match='model failure'):
+                    _ = agent_run.next_node
+                break
