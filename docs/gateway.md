@@ -96,63 +96,61 @@ export PYDANTIC_AI_GATEWAY_API_KEY="pylf_v..."
 
 You can access multiple models with the same API key, as shown in the code snippet below.
 
-=== "Hello World"
+```python {title="hello_world.py"}
+from pydantic_ai import Agent
 
-    ```python {title="hello_world.py"}
-    from pydantic_ai import Agent
+agent = Agent('gateway/openai:gpt-5.2')
 
-    agent = Agent('gateway/openai:gpt-5.2')
+result = agent.run_sync('Where does "hello world" come from?')
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+```
 
-    result = agent.run_sync('Where does "hello world" come from?')
-    print(result.output)
-    """
-    The first known use of "hello, world" was in a 1974 textbook about the C programming language.
-    """
-    ```
+#### Passing API Key directly
 
-=== "Passing API Key directly"
+Pass your API key directly using the [`gateway_provider`][pydantic_ai.providers.gateway.gateway_provider]:
 
-    Pass your API key directly using the [`gateway_provider`][pydantic_ai.providers.gateway.gateway_provider]:
+```python {title="passing_api_key.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.gateway import gateway_provider
 
-    ```python {title="passing_api_key.py"}
-    from pydantic_ai import Agent
-    from pydantic_ai.models.openai import OpenAIChatModel
-    from pydantic_ai.providers.gateway import gateway_provider
+provider = gateway_provider('openai', api_key='pylf_v...')
+model = OpenAIChatModel('gpt-5.2', provider=provider)
+agent = Agent(model)
 
-    provider = gateway_provider('openai', api_key='pylf_v...')
-    model = OpenAIChatModel('gpt-5.2', provider=provider)
-    agent = Agent(model)
+result = agent.run_sync('Where does "hello world" come from?')
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+```
 
-    result = agent.run_sync('Where does "hello world" come from?')
-    print(result.output)
-    """
-    The first known use of "hello, world" was in a 1974 textbook about the C programming language.
-    """
-    ```
+#### Using a different upstream provider
 
-=== "Using a different upstream provider"
+To use an alternate provider or routing group, you can specify it in the route parameter:
 
-    To use an alternate provider or routing group, you can specify it in the route parameter:
+```python {title="routing_via_provider.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.gateway import gateway_provider
 
-    ```python {title="routing_via_provider.py"}
-    from pydantic_ai import Agent
-    from pydantic_ai.models.openai import OpenAIChatModel
-    from pydantic_ai.providers.gateway import gateway_provider
+provider = gateway_provider(
+    'openai',
+    api_key='pylf_v...',
+    route='builtin-openai'
+)
+model = OpenAIChatModel('gpt-5.2', provider=provider)
+agent = Agent(model)
 
-    provider = gateway_provider(
-        'openai',
-        api_key='pylf_v...',
-        route='builtin-openai'
-    )
-    model = OpenAIChatModel('gpt-5.2', provider=provider)
-    agent = Agent(model)
-
-    result = agent.run_sync('Where does "hello world" come from?')
-    print(result.output)
-    """
-    The first known use of "hello, world" was in a 1974 textbook about the C programming language.
-    """
-    ```
+result = agent.run_sync('Where does "hello world" come from?')
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+```
 
 ### Claude Code
 
