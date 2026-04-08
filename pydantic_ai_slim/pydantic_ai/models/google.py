@@ -524,7 +524,9 @@ class GoogleModel(Model):
     def _get_tool_config(
         self, model_request_parameters: ModelRequestParameters, tools: list[ToolDict] | None
     ) -> ToolConfigDict | None:
-        has_builtin_tools = bool(model_request_parameters.builtin_tools)
+        has_server_side_tools = any(
+            not isinstance(tool, ImageGenerationTool) for tool in model_request_parameters.builtin_tools
+        )
         if not model_request_parameters.allow_text_output and tools:
             names: list[str] = []
             for tool in tools:
@@ -532,10 +534,10 @@ class GoogleModel(Model):
                     if name := function_declaration.get('name'):  # pragma: no branch
                         names.append(name)
             tool_config = _tool_config(names)
-            if has_builtin_tools:
+            if has_server_side_tools:
                 tool_config['include_server_side_tool_invocations'] = True
             return tool_config
-        elif has_builtin_tools:
+        elif has_server_side_tools:
             return ToolConfigDict(include_server_side_tool_invocations=True)
         else:
             return None
