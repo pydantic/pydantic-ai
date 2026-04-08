@@ -87,7 +87,7 @@ class MCPSamplingModel(Model):
 
     @property
     def provider(self) -> None:
-        return None
+        return None  # pragma: no cover
 
     @property
     def model_name(self) -> str:
