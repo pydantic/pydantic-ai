@@ -25,6 +25,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import EqualsExpected
 
 dataset = Dataset(
+    name='equals_expected_demo',
     cases=[
         Case(
             name='addition',
@@ -69,6 +70,7 @@ from pydantic_evals.evaluators import Equals
 
 # Check output is always "success"
 dataset = Dataset(
+    name='equals_demo',
     cases=[Case(inputs='test')],
     evaluators=[
         Equals(value='success', evaluation_name='is_success'),
@@ -134,6 +136,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import Contains
 
 dataset = Dataset(
+    name='contains_demo',
     cases=[Case(inputs='test')],
     evaluators=[
         # Check for required keywords
@@ -179,6 +182,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import IsInstance
 
 dataset = Dataset(
+    name='isinstance_demo',
     cases=[Case(inputs='test')],
     evaluators=[
         # Check output is always a string
@@ -237,6 +241,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import MaxDuration
 
 dataset = Dataset(
+    name='max_duration_demo',
     cases=[Case(inputs='test')],
     evaluators=[
         # SLA: must respond in under 2 seconds
@@ -319,6 +324,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import LLMJudge
 
 dataset = Dataset(
+    name='llm_judge_demo',
     cases=[Case(inputs='test', expected_output='result')],
     evaluators=[
         # Basic accuracy check
@@ -376,6 +382,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import HasMatchingSpan
 
 dataset = Dataset(
+    name='span_check_demo',
     cases=[Case(inputs='test')],
     evaluators=[
         # Check that a specific tool was called
@@ -454,6 +461,7 @@ from pydantic_evals.evaluators import (
 )
 
 dataset = Dataset(
+    name='combined_evaluators',
     cases=[Case(inputs='test')],
     evaluators=[
         # Fast checks first (fail fast)

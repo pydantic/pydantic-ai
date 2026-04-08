@@ -47,7 +47,7 @@ requires-python = ">=3.10"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,google,xai,groq,anthropic,mistral,cohere,bedrock,huggingface,cli,mcp,fastmcp,evals,ag-ui,retries,temporal,logfire,ui]=={{ version }}",
+    "pydantic-ai-slim[openai,vertexai,google,xai,groq,anthropic,mistral,cohere,bedrock,huggingface,cli,mcp,fastmcp,evals,ag-ui,retries,temporal,logfire,ui,spec]=={{ version }}",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
@@ -91,6 +91,7 @@ members = [
 
 [tool.uv]
 default-groups = ["dev", "lint", "docs"]
+constraint-dependencies = ["ray>=2.54.0", "authlib>=1.6.7"]
 
 [dependency-groups]
 dev = [
@@ -101,6 +102,8 @@ dev = [
     "dirty-equals>=0.9.0",
     "duckduckgo-search>=7.0.0",
     "exa-py>=2.0.0",
+    "tavily-python>=0.5.0",
+    "markdownify>=1.2",
     "inline-snapshot>=0.19.3",
     "pytest>=9.0.0",
     "pytest-examples>=0.0.18",
@@ -262,6 +265,8 @@ filterwarnings = [
     # prefect has a Pydantic v2 compatibility issue in RRuleSchedule
     # happens only for python < 3.12 because of vllms pins
     "ignore:UnsupportedFieldAttributeWarning:UserWarning",
+    # coolname (prefect dep) uses codecs.open(), deprecated in Python 3.14
+    "ignore:codecs.open\\(\\) is deprecated:DeprecationWarning",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run

@@ -5,14 +5,20 @@ from typing import Any
 
 from pydantic_ai.messages import BaseToolReturnPart, ProviderDetailsDelta, ToolReturnPart
 from pydantic_ai.ui.vercel_ai.request_types import (
+    DynamicToolApprovalRequestedPart,
+    DynamicToolApprovalRespondedPart,
     DynamicToolInputAvailablePart,
     DynamicToolInputStreamingPart,
     DynamicToolOutputAvailablePart,
+    DynamicToolOutputDeniedPart,
     DynamicToolOutputErrorPart,
+    ToolApprovalRequestedPart,
     ToolApprovalResponded,
+    ToolApprovalRespondedPart,
     ToolInputAvailablePart,
     ToolInputStreamingPart,
     ToolOutputAvailablePart,
+    ToolOutputDeniedPart,
     ToolOutputErrorPart,
     UIMessage,
 )
@@ -88,9 +94,9 @@ _DATA_CHUNK_TYPES = (DataChunk, SourceUrlChunk, SourceDocumentChunk, FileChunk)
 def iter_metadata_chunks(
     tool_result: ToolReturnPart,
 ) -> Iterator[DataChunk | SourceUrlChunk | SourceDocumentChunk | FileChunk]:
-    """Yield data-carrying chunks from ``tool_result.metadata`` (or ``.content``).
+    """Yield data-carrying chunks from `tool_result.metadata` (or `.content`).
 
-    Used by both the streaming and dump paths. Only ``_DATA_CHUNK_TYPES`` are
+    Used by both the streaming and dump paths. Only `_DATA_CHUNK_TYPES` are
     yielded; protocol-control chunks are filtered out.
     """
     possible = tool_result.metadata or tool_result.content
@@ -110,19 +116,36 @@ _TOOL_PART_TYPES = (
     ToolInputAvailablePart,
     ToolOutputAvailablePart,
     ToolOutputErrorPart,
+    ToolApprovalRequestedPart,
+    ToolApprovalRespondedPart,
+    ToolOutputDeniedPart,
     DynamicToolInputStreamingPart,
     DynamicToolInputAvailablePart,
     DynamicToolOutputAvailablePart,
     DynamicToolOutputErrorPart,
+    DynamicToolApprovalRequestedPart,
+    DynamicToolApprovalRespondedPart,
+    DynamicToolOutputDeniedPart,
+)
+
+
+_APPROVAL_RESPONDED_TYPES = (
+    ToolApprovalRespondedPart,
+    DynamicToolApprovalRespondedPart,
 )
 
 
 def iter_tool_approval_responses(
     messages: list[UIMessage],
 ) -> Iterator[tuple[str, ToolApprovalResponded]]:
-    """Yield `(tool_call_id, approval)` for each responded tool approval in assistant messages."""
+    """Yield `(tool_call_id, approval)` for each responded tool approval in assistant messages.
+
+    Only `approval-responded` parts are matched. `output-denied` parts have
+    already been materialized into the message history by `load_messages()` and
+    must not be re-processed as deferred results.
+    """
     for msg in messages:
         if msg.role == 'assistant':
             for part in msg.parts:
-                if isinstance(part, _TOOL_PART_TYPES) and isinstance(part.approval, ToolApprovalResponded):
+                if isinstance(part, _APPROVAL_RESPONDED_TYPES) and isinstance(part.approval, ToolApprovalResponded):
                     yield part.tool_call_id, part.approval
