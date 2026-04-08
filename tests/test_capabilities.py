@@ -1032,8 +1032,10 @@ def test_model_json_schema_with_capabilities():
                     'description': """\
 Settings to configure an LLM.
 
-Here we include only settings which apply to multiple models / model providers,
-though not all of these settings are supported by all models.\
+Includes only settings which apply to multiple models / model providers,
+though not all of these settings are supported by all models.
+
+All types must be serializable using Pydantic.\
 """,
                     'properties': {
                         'max_tokens': {'title': 'Max Tokens', 'type': 'integer'},
@@ -1041,6 +1043,15 @@ though not all of these settings are supported by all models.\
                         'top_p': {'title': 'Top P', 'type': 'number'},
                         'timeout': {'title': 'Timeout', 'type': 'number'},
                         'parallel_tool_calls': {'title': 'Parallel Tool Calls', 'type': 'boolean'},
+                        'tool_choice': {
+                            'anyOf': [
+                                {'enum': ['none', 'required', 'auto'], 'type': 'string'},
+                                {'items': {'type': 'string'}, 'type': 'array'},
+                                {'$ref': '#/$defs/ToolOrOutput'},
+                                {'type': 'null'},
+                            ],
+                            'title': 'Tool Choice',
+                        },
                         'seed': {'title': 'Seed', 'type': 'integer'},
                         'presence_penalty': {'title': 'Presence Penalty', 'type': 'number'},
                         'frequency_penalty': {'title': 'Frequency Penalty', 'type': 'number'},
@@ -1065,6 +1076,14 @@ though not all of these settings are supported by all models.\
                         'extra_body': {'title': 'Extra Body'},
                     },
                     'title': 'ModelSettings',
+                    'type': 'object',
+                },
+                'ToolOrOutput': {
+                    'properties': {
+                        'function_tools': {'items': {'type': 'string'}, 'title': 'Function Tools', 'type': 'array'}
+                    },
+                    'required': ['function_tools'],
+                    'title': 'ToolOrOutput',
                     'type': 'object',
                 },
                 'UrlContextTool': {
