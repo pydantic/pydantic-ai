@@ -43,7 +43,7 @@ TOP_P_KEYS: dict[str, str] = {
 }
 
 
-def _get_request_body(vcr: Cassette | None) -> dict[str, Any]:
+def _get_request_body(vcr: Cassette | None) -> dict[str, Any]:  # pragma: lax no cover
     assert vcr is not None
     assert vcr.requests, 'No requests recorded'  # pyright: ignore[reportUnknownMemberType]
     # Iterate from the end to find the model API request (JSON body), skipping auth requests like STS
