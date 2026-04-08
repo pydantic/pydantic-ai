@@ -21,7 +21,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers import Provider
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.bedrock import BedrockProvider
-    from pydantic_ai.providers.gateway import GATEWAY_BASE_URL, gateway_provider
+    from pydantic_ai.providers.gateway import GATEWAY_BASE_URL, gateway_provider, normalize_gateway_provider
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.groq import GroqProvider
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -188,6 +188,107 @@ async def test_model_provider_argument():
 
     model = BedrockConverseModel('amazon.nova-micro-v1:0', provider='gateway')
     assert GATEWAY_BASE_URL in model._provider.base_url  # type: ignore[reportPrivateUsage]
+
+
+@patch.dict(
+    os.environ, {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key', 'PYDANTIC_AI_GATEWAY_BASE_URL': GATEWAY_BASE_URL}
+)
+@pytest.mark.parametrize(
+    'model_name, provider_cls',
+    [
+        pytest.param('claude-sonnet-4-6', AnthropicProvider, id='claude-via-vertex'),
+        pytest.param('gemini-2.5-flash', GoogleProvider, id='gemini-via-vertex'),
+    ],
+)
+def test_gateway_google_vertex_model_routing(model_name: str, provider_cls: type[Provider[Any]]):
+    provider = gateway_provider('google-vertex', model_name=model_name)
+    assert isinstance(provider, provider_cls)
+    assert provider.base_url in (
+        f'{GATEWAY_BASE_URL}/google-vertex/',
+        f'{GATEWAY_BASE_URL}/google-vertex',
+    )
+
+
+@patch.dict(
+    os.environ, {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key', 'PYDANTIC_AI_GATEWAY_BASE_URL': GATEWAY_BASE_URL}
+)
+@pytest.mark.parametrize(
+    'model_id, model_cls, provider_cls',
+    [
+        pytest.param('gateway/google-vertex:claude-sonnet-4-6', AnthropicModel, AnthropicProvider, id='claude'),
+        pytest.param('gateway/google-vertex:gemini-2.5-flash', GoogleModel, GoogleProvider, id='gemini'),
+    ],
+)
+def test_gateway_google_vertex_via_agent_string(model_id: str, model_cls: type, provider_cls: type):
+    from pydantic_ai.models import infer_model
+
+    model = infer_model(model_id)
+    assert isinstance(model, model_cls)
+    assert isinstance(model._provider, provider_cls)  # type: ignore[reportPrivateUsage]
+
+
+@patch.dict(
+    os.environ, {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key', 'PYDANTIC_AI_GATEWAY_BASE_URL': GATEWAY_BASE_URL}
+)
+def test_gateway_google_vertex_claude_rejects_custom_factory():
+    from pydantic_ai.models import infer_model
+    from pydantic_ai.providers import infer_provider
+
+    custom_factory = lambda provider_name: infer_provider(provider_name)  # noqa: E731
+
+    with pytest.raises(
+        UserError,
+        match=r"requires an 'anthropic' provider.*custom `provider_factory`",
+    ):
+        infer_model('gateway/google-vertex:claude-sonnet-4-6', provider_factory=custom_factory)
+
+
+@pytest.mark.parametrize(
+    'provider, model_name, expected',
+    [
+        pytest.param('google-vertex', 'claude-sonnet-4-6', 'anthropic', id='vertex-claude'),
+        pytest.param('google-vertex', 'claude-3-5-sonnet-v2', 'anthropic', id='vertex-claude-3'),
+        pytest.param('google-vertex', 'gemini-2.5-flash', 'google-vertex', id='vertex-gemini'),
+        pytest.param('google-vertex', None, 'google-vertex', id='vertex-no-model'),
+        pytest.param('gemini', 'claude-sonnet-4-6', 'anthropic', id='gemini-alias-claude'),
+        pytest.param('anthropic', 'claude-sonnet-4-6', 'anthropic', id='anthropic-unchanged'),
+        pytest.param('openai', 'gpt-5', 'openai', id='openai-unchanged'),
+    ],
+)
+def test_normalize_gateway_provider_with_model_name(provider: str, model_name: str | None, expected: str):
+    assert normalize_gateway_provider(provider, model_name=model_name) == expected
+
+
+@patch.dict(
+    os.environ, {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key', 'PYDANTIC_AI_GATEWAY_BASE_URL': GATEWAY_BASE_URL}
+)
+@pytest.mark.parametrize(
+    'model_id, provider_cls, model_name',
+    [
+        pytest.param(
+            'gateway/google-vertex:claude-sonnet-4-6',
+            AnthropicProvider,
+            'claude-sonnet-4-6',
+            id='claude-via-vertex',
+        ),
+        pytest.param(
+            'gateway/google-vertex:gemini-2.5-flash',
+            GoogleProvider,
+            'gemini-2.5-flash',
+            id='gemini-via-vertex',
+        ),
+    ],
+)
+def test_gateway_google_vertex_profile_parity(model_id: str, provider_cls: type[Provider[Any]], model_name: str):
+    """Verify infer_model_profile returns the same profile as the provider that infer_model would select."""
+    from pydantic_ai.models import infer_model, infer_model_profile
+
+    model = infer_model(model_id)
+    profile = infer_model_profile(model_id)
+    provider_profile = provider_cls.model_profile(model_name)
+
+    assert isinstance(model._provider, provider_cls)  # type: ignore[reportPrivateUsage]
+    assert profile == provider_profile
 
 
 async def test_gateway_provider_routing_group(gateway_api_key: str):

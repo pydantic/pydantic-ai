@@ -27,6 +27,7 @@ def gateway_provider(
     upstream_provider: Literal['openai', 'openai-chat', 'openai-responses', 'chat', 'responses'],
     /,
     *,
+    model_name: str | None = None,
     route: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
@@ -39,6 +40,7 @@ def gateway_provider(
     upstream_provider: Literal['groq'],
     /,
     *,
+    model_name: str | None = None,
     route: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
@@ -51,6 +53,7 @@ def gateway_provider(
     upstream_provider: Literal['anthropic'],
     /,
     *,
+    model_name: str | None = None,
     route: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
@@ -63,6 +66,7 @@ def gateway_provider(
     upstream_provider: Literal['bedrock', 'converse'],
     /,
     *,
+    model_name: str | None = None,
     route: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
@@ -74,11 +78,12 @@ def gateway_provider(
     upstream_provider: Literal['gemini', 'google-vertex'],
     /,
     *,
+    model_name: str | None = None,
     route: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
     http_client: httpx.AsyncClient | None = None,
-) -> Provider[GoogleClient]: ...
+) -> Provider[GoogleClient | AsyncAnthropicClient]: ...
 
 
 @overload
@@ -86,6 +91,7 @@ def gateway_provider(
     upstream_provider: str,
     /,
     *,
+    model_name: str | None = None,
     route: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
@@ -118,6 +124,7 @@ def gateway_provider(
     upstream_provider: UpstreamProvider | str,
     /,
     *,
+    model_name: str | None = None,
     # Every provider
     route: str | None = None,
     api_key: str | None = None,
@@ -129,6 +136,8 @@ def gateway_provider(
 
     Args:
         upstream_provider: The upstream provider to use.
+        model_name: The model name, used to route Anthropic models on google-vertex
+            to the Anthropic provider instead of Google.
         route: The name of the provider or routing group to use to handle the request. If not provided, the default
             routing group for the API format will be used.
         api_key: The API key to use for authentication. If not provided, the `PYDANTIC_AI_GATEWAY_API_KEY`
@@ -155,6 +164,11 @@ def gateway_provider(
         route = normalize_gateway_provider(upstream_provider)
 
     base_url = _merge_url_path(base_url, route)
+
+    # Anthropic models on google-vertex need the Anthropic SDK (rawPredict), not Google GenAI.
+    # Redirect after route computation so the URL path stays as google-vertex.
+    if upstream_provider in ('google-vertex', 'gemini') and model_name is not None and _is_anthropic_model(model_name):
+        upstream_provider = 'anthropic'
 
     if upstream_provider in ('openai', 'openai-chat', 'openai-responses', 'chat', 'responses'):
         from .openai import OpenAIProvider
@@ -219,11 +233,13 @@ def _merge_url_path(base_url: str, path: str) -> str:
     return base_url.rstrip('/') + '/' + path.lstrip('/')
 
 
-def normalize_gateway_provider(provider: str) -> str:
+def normalize_gateway_provider(provider: str, *, model_name: str | None = None) -> str:
     """Normalize a gateway provider name.
 
     Args:
         provider: The provider name to normalize.
+        model_name: The model name, used to route Anthropic models on google-vertex
+            to the Anthropic provider instead of Google.
     """
     provider = provider.removeprefix('gateway/')
 
@@ -232,10 +248,17 @@ def normalize_gateway_provider(provider: str) -> str:
     elif provider in ('openai-responses', 'responses'):
         return 'openai-responses'
     elif provider in ('gemini', 'google-vertex'):
+        if model_name is not None and _is_anthropic_model(model_name):
+            return 'anthropic'
         return 'google-vertex'
     elif provider in ('bedrock', 'converse'):
         return 'bedrock'
     return provider
+
+
+def _is_anthropic_model(model_name: str) -> bool:
+    """Check if a model name refers to an Anthropic model (e.g. Claude on Vertex AI)."""
+    return model_name.startswith('claude')
 
 
 # TODO(Marcelo): We should deprecate this, and remove it in v2.
