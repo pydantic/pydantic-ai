@@ -5979,22 +5979,10 @@ async def test_groq_prompted_output(allow_model_requests: None, groq_api_key: st
     )
 
 
-GROQ_NATIVE_MODELS = [
-    'openai/gpt-oss-120b',
-    'moonshotai/kimi-k2-instruct',
-    'meta-llama/llama-4-scout-17b-16e-instruct',
-]
-
-
 @pytest.mark.vcr()
-@pytest.mark.parametrize('model_name', GROQ_NATIVE_MODELS)
-async def test_groq_default_native_output(allow_model_requests: None, groq_api_key: str, model_name: str):
-    """Test that models with native output profiles default to native structured output.
-
-    This verifies that when using a plain output_type (no explicit NativeOutput/ToolOutput wrapper),
-    models with native output profiles use native structured output by default instead of tool calling.
-    """
-    m = GroqModel(model_name, provider=GroqProvider(api_key=groq_api_key))
+async def test_groq_default_native_output_gpt_oss(allow_model_requests: None, groq_api_key: str):
+    """Test that gpt-oss defaults to native structured output."""
+    m = GroqModel('openai/gpt-oss-120b', provider=GroqProvider(api_key=groq_api_key))
 
     class CityLocation(BaseModel):
         city: str
@@ -6004,37 +5992,119 @@ async def test_groq_default_native_output(allow_model_requests: None, groq_api_k
 
     result = await agent.run('What is the capital of France?')
     assert isinstance(result.output, CityLocation)
-    assert result.output.city
-    assert result.output.country
-
-    # Verify it used native output (TextPart with JSON) not tool calling (ToolCallPart)
-    response = result.response
-    assert isinstance(response, ModelResponse)
-    assert not any(isinstance(part, ToolCallPart) for part in response.parts), (
-        f'Expected native output but got tool call: {response.parts}'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The user asks: "What is the capital of France?" We need to respond according to the response format: CityLocation JSON with fields city and country. The capital of France is Paris, country is France. So output JSON: {"city":"Paris","country":"France"} Ensure compact JSON, no extra fields.'
+                    ),
+                    TextPart(content='{"city":"Paris","country":"France"}'),
+                ],
+                usage=RequestUsage(input_tokens=170, output_tokens=85),
+                model_name='openai/gpt-oss-120b',
+                timestamp=IsDatetime(),
+                provider_name='groq',
+                provider_url='https://api.groq.com',
+                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+                provider_response_id='chatcmpl-6f2d9825-b5ca-465c-8762-b7cde23623fa',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
     )
-    assert any(isinstance(part, TextPart) for part in response.parts), (
-        f'Expected TextPart for native output: {response.parts}'
-    )
-
-
-GROQ_NATIVE_MODELS_WITH_TOOLS = [
-    'openai/gpt-oss-120b',
-    'moonshotai/kimi-k2-instruct',
-]
 
 
 @pytest.mark.vcr()
-@pytest.mark.parametrize('model_name', GROQ_NATIVE_MODELS_WITH_TOOLS)
-async def test_groq_native_with_tools_falls_back_to_tool_output(
-    allow_model_requests: None, groq_api_key: str, model_name: str
-):
-    """Test that native output automatically falls back to tool output when function tools are present.
+async def test_groq_default_native_output_kimi(allow_model_requests: None, groq_api_key: str):
+    """Test that kimi-k2 defaults to native structured output."""
+    m = GroqModel('moonshotai/kimi-k2-instruct', provider=GroqProvider(api_key=groq_api_key))
 
-    Groq doesn't support native structured output (JSON mode) with function tools.
-    When an agent has function tools defined, the model should fall back to tool-based output.
-    """
-    m = GroqModel(model_name, provider=GroqProvider(api_key=groq_api_key))
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=CityLocation)
+
+    result = await agent.run('What is the capital of France?')
+    assert isinstance(result.output, CityLocation)
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"city":"Paris","country":"France"}')],
+                usage=RequestUsage(input_tokens=89, output_tokens=10),
+                model_name='moonshotai/kimi-k2-instruct',
+                timestamp=IsDatetime(),
+                provider_name='groq',
+                provider_url='https://api.groq.com',
+                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+                provider_response_id='chatcmpl-61127624-2a26-440d-b9d6-79975ecc1227',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_groq_default_native_output_llama4(allow_model_requests: None, groq_api_key: str):
+    """Test that llama-4-scout defaults to native structured output."""
+    m = GroqModel('meta-llama/llama-4-scout-17b-16e-instruct', provider=GroqProvider(api_key=groq_api_key))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=CityLocation)
+
+    result = await agent.run('What is the capital of France?')
+    assert isinstance(result.output, CityLocation)
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+{
+"city": "Paris",
+  "country": "France"
+}\
+"""
+                    )
+                ],
+                usage=RequestUsage(input_tokens=95, output_tokens=17),
+                model_name='meta-llama/llama-4-scout-17b-16e-instruct',
+                timestamp=IsDatetime(),
+                provider_name='groq',
+                provider_url='https://api.groq.com',
+                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+                provider_response_id='chatcmpl-d27fc01d-1b3c-4692-9e2e-2afef6af0027',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_groq_native_with_tools_falls_back_gpt_oss(allow_model_requests: None, groq_api_key: str):
+    """Test that gpt-oss falls back to tool output when function tools are present."""
+    m = GroqModel('openai/gpt-oss-120b', provider=GroqProvider(api_key=groq_api_key))
 
     class CityLocation(BaseModel):
         city: str
@@ -6048,14 +6118,133 @@ async def test_groq_native_with_tools_falls_back_to_tool_output(
 
     result = await agent.run('What is the capital of France?')
     assert isinstance(result.output, CityLocation)
-    assert result.output.city
-    assert result.output.country
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The capital of France is **Paris**.')],
+                model_name='openai/gpt-oss-120b',
+                timestamp=IsDatetime(),
+                provider_name='groq',
+                provider_url='https://api.groq.com',
+                finish_reason='error',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content=[
+                            {
+                                'type': 'json_invalid',
+                                'loc': (),
+                                'msg': 'Invalid JSON: expected value at line 1 column 1',
+                                'input': 'The capital of France is **Paris**.',
+                                'ctx': {'error': 'expected value at line 1 column 1'},
+                            }
+                        ],
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The user says there\'s a validation error expecting JSON. Probably the system expects a function call to final_result with JSON output. We need to respond using the final_result function, providing city and country. The question: "What is the capital of France?" The answer: city = "Paris", country = "France". Use the function final_result.'
+                    ),
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"city":"Paris","country":"France"}',
+                        tool_call_id='fc_3b660a12-1bb6-48d9-b318-07f6d4a64bfb',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=245, output_tokens=104),
+                model_name='openai/gpt-oss-120b',
+                timestamp=IsDatetime(),
+                provider_name='groq',
+                provider_url='https://api.groq.com',
+                provider_details={'finish_reason': 'tool_calls', 'timestamp': IsDatetime()},
+                provider_response_id='chatcmpl-10de341a-7f97-4601-8254-96158e69442a',
+                finish_reason='tool_call',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='fc_3b660a12-1bb6-48d9-b318-07f6d4a64bfb',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
-    # Verify it used tool output (ToolCallPart) not native output
-    response = result.response
-    assert isinstance(response, ModelResponse)
-    assert any(isinstance(part, ToolCallPart) for part in response.parts), (
-        f'Expected tool output fallback when native + tools: {response.parts}'
+
+@pytest.mark.vcr()
+async def test_groq_native_with_tools_falls_back_kimi(allow_model_requests: None, groq_api_key: str):
+    """Test that kimi-k2 falls back to tool output when function tools are present."""
+    m = GroqModel('moonshotai/kimi-k2-instruct', provider=GroqProvider(api_key=groq_api_key))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=CityLocation)
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:  # pragma: no cover
+        return f'Sunny in {city}'
+
+    result = await agent.run('What is the capital of France?')
+    assert isinstance(result.output, CityLocation)
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"city":"Paris","country":"France"}',
+                        tool_call_id='functions.final_result:0',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=171, output_tokens=30),
+                model_name='moonshotai/kimi-k2-instruct',
+                timestamp=IsDatetime(),
+                provider_name='groq',
+                provider_url='https://api.groq.com',
+                provider_details={'finish_reason': 'tool_calls', 'timestamp': IsDatetime()},
+                provider_response_id='chatcmpl-f17dc497-fe1d-438c-98cc-9a623c4afffa',
+                finish_reason='tool_call',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='functions.final_result:0',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
     )
 
 
