@@ -2,17 +2,48 @@
 
 ## Context
 
-Follow-up to PR #4090 (tool search for deferred-loaded tools). DouweM noted that making ToolSearchToolset a capability is "not worth doing now, but in the future." This plan implements that future direction: a pluggable search strategy via a `ToolSearch` capability, allowing users to swap in semantic search, BM25, or any custom matching logic.
+Follow-up to PR #4090 (tool search for deferred-loaded tools). This plan makes the search strategy pluggable via a `ToolSearch` capability, allowing users to swap in custom matching logic or let `'auto'` route to the best available strategy per provider.
 
-Research in `local-notes/tool-search-research.md` shows the community unanimously moving toward semantic/vector search for tool discovery (97%+ hit rates vs substring's inherent limitations). Spring AI's biggest win is making the strategy pluggable. This plan brings that flexibility to Pydantic AI.
+## Design Decisions
 
-## Design: Config-holder capability (Approach A)
+Sources: DouweM review on #4960, Slack call 2026-04-07, PR #4090 review threads.
 
-- `ToolSearchToolset` gets `search_fn` + `max_results` params (defaulting to current substring behavior)
-- New `ToolSearch` capability holds config, does NOT wrap itself
-- Agent detects `ToolSearch` in capabilities, extracts config, passes to hardcoded TST
-- TST moves before capability wrappers so capabilities can override search_tools behavior
-- No auto-injection, no double-wrapping, backward compatible
+- **`strategy` field, not separate `search_fn`**: all search options are mutually exclusive → single key. `Literal['auto', 'substring', 'regex', 'bm25', 'tool_search'] | Callable[..., Sequence[str]]`, default `'auto'`. Native strategy names included from the start per DouweM review — sets us up for native implementation without API changes.
+- **BuiltinOrLocalTool subclass** (not config-holder): `ToolSearch` subclasses `BuiltinOrLocalTool`, inheriting automatic routing between provider-native (builtin) and local (substring) implementations via `prefer_builtin` on `ToolDefinition`. Same pattern as `WebSearch`, `ImageGeneration`.
+- **Central `_DEFAULT_STRATEGY` mapping**: `dict[str, str]` mapping provider names to their best native strategy. `'auto'` resolves via this mapping at request time. Stored with the TST so we can update defaults without breaking changes.
+- **No separate config data class**: options are kwargs on the capability directly.
+- **Custom callable**: returns `Sequence[str]` (tool names to include), description read from docstring (same as tool functions).
+- **TST wraps before capability wrappers**: capabilities are outermost so they can change anything.
+- **Use `visit_and_replace`** (not a custom `_find_tool_search` helper) for extracting config from the capability tree.
+- **Naming**: `search_guidance` (not `keywords_description`) for the model-facing prompt on how to formulate search input. `tool_description` (not `description`) for the search tool's description text.
+
+### Provider native strategies (researched)
+
+| Provider | Strategies | Notes |
+|----------|-----------|-------|
+| Ours | `substring` | split terms, `any(term in searchable)` |
+| Anthropic | `regex`, `bm25` (versioned `_20251119`) | server-side, hides name + desc + schema |
+| OpenAI | `tool_search` (single, no variants) | server or client execution, hides schema only |
+
+### Default strategy mapping
+
+```python
+_DEFAULT_STRATEGY: dict[str, str] = {
+    'anthropic': 'bm25',
+    'openai': 'tool_search',
+    # all others: fall back to 'substring'
+}
+```
+
+### How `strategy` maps to BuiltinOrLocalTool routing
+
+| strategy value | builtin | local | effect |
+|---|---|---|---|
+| `'auto'` (default) | `True` (default builtin) | substring TST | provider with native support → builtin; without → local substring |
+| `'substring'` | `False` | substring TST | always local, any provider |
+| `'bm25'`, `'regex'` | `True` + specific config | substring TST | force specific Anthropic native strategy; error if provider doesn't support |
+| `'tool_search'` | `True` + specific config | substring TST | force OpenAI native strategy; error if provider doesn't support |
+| `Callable` | `False` | custom search via callable | always local with user's function |
 
 ## Changes
 
@@ -20,7 +51,7 @@ Research in `local-notes/tool-search-research.md` shows the community unanimousl
 
 **File:** `pydantic_ai_slim/pydantic_ai/toolsets/_tool_search.py`
 
-Rename `_SearchIndexEntry` → `ToolSearchEntry` (drop underscore). This is the type users need to implement custom search functions.
+Rename `_SearchIndexEntry` → `ToolSearchEntry`. This is the type users need to implement custom search functions.
 
 **Export from:** `pydantic_ai/toolsets/__init__.py`
 
@@ -29,12 +60,10 @@ Rename `_SearchIndexEntry` → `ToolSearchEntry` (drop underscore). This is the 
 **File:** `pydantic_ai_slim/pydantic_ai/toolsets/_tool_search.py`
 
 ```python
-ToolSearchFunc = Callable[[str, Sequence[ToolSearchEntry]], Sequence[ToolSearchEntry]]
+ToolSearchFunc = Callable[[str, Sequence[ToolSearchEntry]], Sequence[str]]
 ```
 
-`(keywords: str, entries) -> matches`. Sync — search is fast in-memory.
-
-**Design decision:** Pass raw `str` keywords (not pre-split `list[str]`). Rationale: custom search fns may want to do their own tokenization (e.g., semantic search treats the whole phrase as input, not individual terms). The default substring impl splits internally.
+`(keywords: str, entries) -> tool_names`. Pass raw `str` (not pre-split) — custom fns may tokenize differently (e.g. semantic search treats whole phrase as input).
 
 **Export from:** `pydantic_ai/toolsets/__init__.py`
 
@@ -47,34 +76,48 @@ ToolSearchFunc = Callable[[str, Sequence[ToolSearchEntry]], Sequence[ToolSearchE
 class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     search_fn: ToolSearchFunc | None = None
     max_results: int = _MAX_SEARCH_RESULTS
-    description: str | None = None
-    keywords_description: str | None = None
+    tool_description: str | None = None
+    search_guidance: str | None = None
 ```
 
-- In `_search_tools`: if `self.search_fn` is set, call it and cap results at `self.max_results`. Otherwise current substring logic using `self.max_results`.
-- In `get_tools`: use `self.description` / `self.keywords_description` if set, otherwise fall back to current hardcoded defaults. This lets users tailor the prompt to their search strategy (e.g. semantic search works better with natural language phrases than space-separated keywords).
+Also add `_DEFAULT_STRATEGY` mapping here.
 
-**Note:** The `keywords` parameter name stays fixed — changing the schema field name would require changing arg parsing. A custom `keywords_description` like `'Natural language description of the tools you need'` gets 90% of the benefit without that complexity. Full schema override can be a future extension if needed.
+- In `_search_tools`: if `self.search_fn` is set, call it and cap results at `self.max_results`. Otherwise current substring logic using `self.max_results`.
+- In `get_tools`: use `self.tool_description` / `self.search_guidance` if set, otherwise fall back to current hardcoded defaults.
+
+The `keywords` parameter name on the search tool stays fixed — changing schema field names would require changing arg parsing. `search_guidance` like `'Natural language description of the tools you need'` gets 90% of the benefit.
 
 ### 4. Create `ToolSearch` capability
 
 **New file:** `pydantic_ai_slim/pydantic_ai/capabilities/tool_search.py`
 
 ```python
-@dataclass
-class ToolSearch(AbstractCapability[AgentDepsT]):
-    """Customize tool search strategy for deferred tool discovery."""
-    search_fn: ToolSearchFunc | None = None
+@dataclass(init=False)
+class ToolSearch(BuiltinOrLocalTool[AgentDepsT]):
+    strategy: Literal['auto', 'substring', 'regex', 'bm25', 'tool_search'] | Callable[..., Sequence[str]] = 'auto'
     max_results: int = 10
-    description: str | None = None
-    keywords_description: str | None = None
+    tool_description: str | None = None
+    search_guidance: str | None = None
 
-    @classmethod
-    def get_serialization_name(cls) -> str | None:
-        return None  # callable → not serializable
+    def _default_builtin(self) -> ToolSearchTool | None:
+        return ToolSearchTool()
+
+    def _builtin_unique_id(self) -> str:
+        return ToolSearchTool.kind  # 'tool_search'
+
+    def _default_local(self) -> Tool | AbstractToolset | None:
+        # return local substring search toolset
+        ...
+
+    def _requires_builtin(self) -> bool:
+        # strategy values that only work with native providers
+        return isinstance(self.strategy, str) and self.strategy in ('bm25', 'regex', 'tool_search')
 ```
 
-Config-holder — no `get_wrapper_toolset`, no `get_toolset`.
+`__init__` sets `builtin`/`local` based on `strategy`:
+- `'auto'` → `builtin=True`, `local=<default>`
+- `'substring'` → `builtin=False`, `local=<default>`
+- `Callable` → `builtin=False`, `local=<custom>`
 
 **Export from:** `pydantic_ai/capabilities/__init__.py` (add to `__all__`, NOT to `CAPABILITY_TYPES`)
 
@@ -90,102 +133,81 @@ BEFORE:                          AFTER:
 3. ToolSearchToolset             3. capability wrappers (outermost)
 ```
 
-This fulfills DouweM's review request: "capabilities need to be able to change basically anything."
-
-### 6. Agent wiring: extract config from ToolSearch capability
+### 6. Agent wiring: extract config via `visit_and_replace`
 
 **File:** `pydantic_ai_slim/pydantic_ai/agent/__init__.py`
 
-Helper to find `ToolSearch` in capability tree:
-```python
-def _find_tool_search(cap):
-    if isinstance(cap, ToolSearch): return cap
-    if isinstance(cap, CombinedCapability):
-        for c in cap.capabilities:
-            if found := _find_tool_search(c): return found
-    if isinstance(cap, WrapperCapability):
-        return _find_tool_search(cap.wrapped)
-    return None
-```
+Use `visit_and_replace` (per DouweM review) instead of a custom `_find_tool_search` helper to locate `ToolSearch` in the capability tree and extract its config for the TST.
 
-In `_get_toolset`:
-```python
-ts_cap = _find_tool_search(run_capability)
-toolset = ToolSearchToolset(
-    wrapped=toolset,
-    search_fn=ts_cap.search_fn if ts_cap else None,
-    max_results=ts_cap.max_results if ts_cap else _MAX_SEARCH_RESULTS,
-    description=ts_cap.description if ts_cap else None,
-    keywords_description=ts_cap.keywords_description if ts_cap else None,
-)
-```
+Also: need a canonical pattern for "auto inject unless already injected" capabilities (DouweM's note). This applies to TST — if user already has a `ToolSearch` capability, don't double-inject.
 
-### 7. Documentation
-
-**File:** `docs/tools-advanced.md`
-
-Add subsection under "Tool Search" for custom search strategy:
-
-```markdown
-### Custom Search Strategy
-
-By default, tool search uses substring matching on space-separated keywords. Use the
-[`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability to customize the search
-function and/or the prompt shown to the model:
-
-\```python
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import ToolSearch
-from pydantic_ai.toolsets import ToolSearchEntry
-
-def semantic_search(keywords: str, entries: list[ToolSearchEntry]) -> list[ToolSearchEntry]:
-    # your embedding/vector logic here
-    ...
-
-agent = Agent(
-    'openai:gpt-5.2',
-    capabilities=[
-        ToolSearch(
-            search_fn=semantic_search,
-            description='Search for tools by describing what you need in natural language.',
-            keywords_description='A natural language description of the capability you need.',
-        )
-    ],
-)
-\```
-```
-
-**File:** `docs/capabilities.md` — add `ToolSearch` to built-in capabilities table.
-
-### 8. Tests
+### 7. Tests
 
 **File:** `tests/test_tool_search.py`
 
 - `test_custom_search_fn`: Pass custom fn to `ToolSearchToolset`, verify it's called and results used
 - `test_custom_max_results`: Set `max_results=2`, verify capping
-- `test_custom_description`: Set `description` + `keywords_description`, verify they appear in the search tool def shown to the model
-- `test_tool_search_capability_integration`: Agent with `capabilities=[ToolSearch(search_fn=...)]` + deferred tools, verify custom search is used
-- `test_tool_search_capability_prompt_override`: Agent with `capabilities=[ToolSearch(description=..., keywords_description=...)]`, verify the search_tools tool def uses custom prompts
+- `test_custom_tool_description`: Set `tool_description` + `search_guidance`, verify they appear in the search tool def
+- `test_tool_search_capability_integration`: Agent with `capabilities=[ToolSearch(strategy=...)]` + deferred tools, verify custom search is used
+- `test_tool_search_capability_prompt_override`: Agent with `capabilities=[ToolSearch(tool_description=..., search_guidance=...)]`, verify the search_tools tool def uses custom prompts
 - `test_default_behavior_preserved`: Agent with `capabilities=[ToolSearch()]` (no custom fn), verify substring matching unchanged
-- `test_capability_wrapping_over_tst`: Verify a capability's `get_wrapper_toolset` wraps outside TST (i.e., TST is now inner)
+- `test_capability_wrapping_over_tst`: Verify a capability's `get_wrapper_toolset` wraps outside TST
 
-## File manifest
+### 8. Documentation (deferred until after review)
+
+Per PR flow, docs/docstrings left as placeholders until logic is confirmed.
+
+## User-facing API
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import ToolSearch
+
+# Default: auto-routes to best available per provider
+agent = Agent('anthropic:claude-sonnet-4-5', capabilities=[ToolSearch()])
+
+# Force local substring search
+agent = Agent('anthropic:claude-sonnet-4-5', capabilities=[ToolSearch(strategy='substring')])
+
+# Custom search function (description from docstring)
+def my_search(keywords: str, entries: list[ToolSearchEntry]) -> Sequence[str]:
+    '''Search tools using semantic similarity.'''
+    ...
+
+agent = Agent('openai:gpt-5.4', capabilities=[ToolSearch(strategy=my_search)])
+
+# Custom prompts
+agent = Agent(
+    'openai:gpt-5.4',
+    capabilities=[
+        ToolSearch(
+            tool_description='Search for tools by describing what you need.',
+            search_guidance='A natural language description of the capability you need.',
+        )
+    ],
+)
+```
+
+## Open Questions
+
+1. `ToolSearchFunc` signature: `(keywords: str, entries: Sequence[ToolSearchEntry]) -> Sequence[str]` — confirm return type is tool names (not filtered entries).
+2. Canonical "auto inject unless already injected" pattern for capabilities — does this need a general solution in this PR or just the TST-specific case?
+3. When `strategy='auto'` and provider has no native support, should we fall back to `'substring'` silently or warn? Silently seems right (like `WebSearch` falling back to local).
+
+## File Manifest
 
 | File | Action |
 |------|--------|
-| `pydantic_ai_slim/pydantic_ai/toolsets/_tool_search.py` | Make entry public, add type + params |
+| `pydantic_ai_slim/pydantic_ai/toolsets/_tool_search.py` | Make entry public, add type + params + `_DEFAULT_STRATEGY` |
 | `pydantic_ai_slim/pydantic_ai/toolsets/__init__.py` | Export `ToolSearchEntry`, `ToolSearchFunc` |
-| `pydantic_ai_slim/pydantic_ai/capabilities/tool_search.py` | **New** — `ToolSearch` capability |
+| `pydantic_ai_slim/pydantic_ai/capabilities/tool_search.py` | **New** — `ToolSearch(BuiltinOrLocalTool)` capability |
 | `pydantic_ai_slim/pydantic_ai/capabilities/__init__.py` | Export `ToolSearch` |
-| `pydantic_ai_slim/pydantic_ai/agent/__init__.py` | Reorder TST, extract ToolSearch config |
-| `docs/tools-advanced.md` | Custom search strategy section |
-| `docs/capabilities.md` | Add ToolSearch to table |
+| `pydantic_ai_slim/pydantic_ai/agent/__init__.py` | Reorder TST, extract ToolSearch config via `visit_and_replace` |
 | `tests/test_tool_search.py` | Custom search tests |
 
 ## Verification
 
 1. `make format && make lint && make typecheck`
 2. `uv run pytest tests/test_tool_search.py -x`
-3. Verify custom search fn actually replaces substring matching (unit test)
+3. Verify custom search fn replaces substring matching (unit test)
 4. Verify capability wrapper order (capability wraps outside TST)
-5. `make docs-serve` — verify new docs section
