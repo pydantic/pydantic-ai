@@ -745,6 +745,7 @@ class Model(ABC):
         model_settings = merge_model_settings(self.settings, model_settings)
 
         params = self.customize_request_parameters(model_request_parameters)
+        params = _resolve_return_schemas(params)
         params = _maybe_inject_return_schemas(params, self.profile)
 
         # Resolve unified thinking setting and strip from model_settings
@@ -1484,6 +1485,29 @@ def _customize_output_object(transformer: type[JsonSchemaTransformer], output_ob
     )
 
 
+def _resolve_return_schemas(params: ModelRequestParameters) -> ModelRequestParameters:
+    """Clear return_schema on tools that haven't opted in, warn for empty schemas."""
+    resolved: list[ToolDefinition] = []
+    changed = False
+    for td in params.function_tools:
+        if not td.include_return_schema and td.return_schema is not None:
+            td = replace(td, return_schema=None)
+            changed = True
+        elif td.include_return_schema and not td.return_schema:
+            warnings.warn(
+                f'Tool {td.name!r} has `include_return_schema` enabled but no meaningful return schema'
+                f' was generated. Set `include_return_schema=False` on this tool to suppress this warning.',
+                UserWarning,
+                stacklevel=1,
+            )
+            td = replace(td, return_schema=None)
+            changed = True
+        resolved.append(td)
+    if changed:
+        return replace(params, function_tools=resolved)
+    return params
+
+
 def _maybe_inject_return_schemas(params: ModelRequestParameters, profile: ModelProfile) -> ModelRequestParameters:
     """For models without native return schema support, inject schemas into tool descriptions."""
     if not profile.supports_tool_return_schema and any(t.return_schema for t in params.function_tools):
@@ -1508,9 +1532,7 @@ def _inject_return_schema_in_description(tool_def: ToolDefinition) -> ToolDefini
     parts.append('Return schema:')
     parts.append(json.dumps(tool_def.return_schema, indent=2))
     description = '\n\n'.join(parts)
-    return replace(
-        tool_def, description=description, return_schema=None, function_signature=tool_def.function_signature
-    )
+    return replace(tool_def, description=description, return_schema=None)
 
 
 def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestParameters) -> FinalResultEvent | None:

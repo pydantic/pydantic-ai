@@ -65,7 +65,6 @@ from ..tools import (
     GenerateToolJsonSchema,
     RunContext,
     Tool,
-    ToolDefinition,
     ToolFuncContext,
     ToolFuncEither,
     ToolFuncPlain,
@@ -2386,27 +2385,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             wrapper = run_capability.get_wrapper_toolset(toolset)
             if wrapper is not None:
                 toolset = wrapper
-
-        # Resolve include_return_schema: clear return_schema on tools that haven't opted in.
-        async def _resolve_return_schema(
-            ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
-        ) -> list[ToolDefinition]:
-            resolved: list[ToolDefinition] = []
-            for td in tool_defs:
-                if not td.include_return_schema and td.return_schema is not None:
-                    td = dataclasses.replace(td, return_schema=None, function_signature=td.function_signature)
-                elif td.include_return_schema and not td.return_schema:
-                    warnings.warn(
-                        f'Tool {td.name!r} has `include_return_schema` enabled but no meaningful return schema'
-                        f' was generated. Set `include_return_schema=False` on this tool to suppress this warning.',
-                        UserWarning,
-                        stacklevel=1,
-                    )
-                    td = dataclasses.replace(td, return_schema=None, function_signature=td.function_signature)
-                resolved.append(td)
-            return resolved
-
-        toolset = PreparedToolset(toolset, _resolve_return_schema)
 
         # Always wraps; short-circuits when no deferred tools.
         # Wraps outside PreparedToolset and capability wrappers so search_tools is always available.
