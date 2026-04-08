@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import copy
 import functools
 import inspect
 import re
@@ -576,6 +577,21 @@ def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, s
         _update_mapped_json_schema_refs(not_schema, name_mapping)
 
 
+def _unique_def_name(name: str, schema: dict[str, Any], all_defs: dict[str, dict[str, Any]]) -> str:
+    """Generate a unique definition name by appending the schema title and/or a numeric suffix."""
+    new_name = name
+    if title := schema.get('title'):
+        new_name = f'{title}_{name}'
+
+    i = 1
+    original_new_name = new_name
+    new_name = f'{new_name}_{i}'
+    while new_name in all_defs:
+        i += 1
+        new_name = f'{original_new_name}_{i}'
+    return new_name
+
+
 def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     """Merges the `$defs` from different JSON schemas into a single deduplicated `$defs`, handling name collisions of `$defs` that are not the same, and rewrites `$ref`s to point to the new `$defs`.
 
@@ -599,24 +615,34 @@ def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str
                 all_defs[name] = def_schema
                 schema_name_mapping[name] = name
             elif def_schema != all_defs[name]:
-                new_name = name
-                if title := schema.get('title'):
-                    new_name = f'{title}_{name}'
+                # Different def with same name — assign a unique name
+                schema_name_mapping[name] = _unique_def_name(name, schema, all_defs)
+                all_defs[schema_name_mapping[name]] = def_schema
+            # else: structurally equal — handled below
 
-                i = 1
-                original_new_name = new_name
-                new_name = f'{new_name}_{i}'
-                while new_name in all_defs:
-                    i += 1
-                    new_name = f'{original_new_name}_{i}'
-
-                all_defs[new_name] = def_schema
-                schema_name_mapping[name] = new_name
+        # Defs that are structurally equal (same dict) may still be semantically
+        # different if they contain $refs that point to defs that were renamed in
+        # this schema. E.g. both schemas have Wrapper={$ref Inner}, but their
+        # Inner defs differ, so Schema B's Inner was renamed to Inner_1. The shared
+        # Wrapper is not actually equal — Schema B needs its own copy with updated refs.
+        # Loop until stable, since creating a copy can trigger further copies
+        # in defs that reference it (transitive chains).
+        changed = True
+        while changed:
+            changed = False
+            for name, def_schema in defs.items():
+                if name not in schema_name_mapping:
+                    updated = copy.deepcopy(def_schema)
+                    _update_mapped_json_schema_refs(updated, schema_name_mapping)
+                    if updated != def_schema:
+                        schema_name_mapping[name] = _unique_def_name(name, schema, all_defs)
+                        all_defs[schema_name_mapping[name]] = updated
+                        changed = True
+                    else:
+                        schema_name_mapping[name] = name
 
         # Update refs inside definitions so internal cross-references
         # (e.g. Outer referencing Inner which was renamed to Inner_1) are corrected.
-        # This applies to all defs in the schema, not just renamed ones, since
-        # a non-renamed def can also reference a renamed def.
         for new_name in schema_name_mapping.values():
             _update_mapped_json_schema_refs(all_defs[new_name], schema_name_mapping)
 

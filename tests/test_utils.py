@@ -722,6 +722,58 @@ def test_merge_json_schema_defs_additional_properties_allof_not():
     )
 
 
+def test_merge_json_schema_defs_structurally_equal_with_different_ref_targets():
+    """Defs that are structurally equal but whose $refs resolve to different types need separate copies."""
+    schema_a = {
+        '$defs': {
+            'Inner': {'type': 'object', 'properties': {'x': {'type': 'string'}}},
+            'Wrapper': {'type': 'object', 'properties': {'inner': {'$ref': '#/$defs/Inner'}}},
+        },
+        'properties': {'wrapper': {'$ref': '#/$defs/Wrapper'}},
+        'type': 'object',
+        'title': 'SchemaA',
+    }
+    schema_b = {
+        '$defs': {
+            'Inner': {'type': 'object', 'properties': {'x': {'type': 'integer'}}},
+            'Wrapper': {'type': 'object', 'properties': {'inner': {'$ref': '#/$defs/Inner'}}},
+        },
+        'properties': {'wrapper': {'$ref': '#/$defs/Wrapper'}},
+        'type': 'object',
+        'title': 'SchemaB',
+    }
+
+    rewritten_schemas, all_defs = merge_json_schema_defs([schema_a, schema_b])
+
+    # Both Wrappers are structurally identical ({$ref: Inner}), but their Inner
+    # defs differ, so SchemaB needs its own Wrapper copy with updated refs.
+    assert all_defs == snapshot(
+        {
+            'Inner': {'type': 'object', 'properties': {'x': {'type': 'string'}}},
+            'Wrapper': {'type': 'object', 'properties': {'inner': {'$ref': '#/$defs/Inner'}}},
+            'SchemaB_Inner_1': {'type': 'object', 'properties': {'x': {'type': 'integer'}}},
+            'SchemaB_Wrapper_1': {
+                'type': 'object',
+                'properties': {'inner': {'$ref': '#/$defs/SchemaB_Inner_1'}},
+            },
+        }
+    )
+    assert rewritten_schemas == snapshot(
+        [
+            {
+                'properties': {'wrapper': {'$ref': '#/$defs/Wrapper'}},
+                'type': 'object',
+                'title': 'SchemaA',
+            },
+            {
+                'properties': {'wrapper': {'$ref': '#/$defs/SchemaB_Wrapper_1'}},
+                'type': 'object',
+                'title': 'SchemaB',
+            },
+        ]
+    )
+
+
 def test_strip_markdown_fences():
     assert strip_markdown_fences('{"foo": "bar"}') == '{"foo": "bar"}'
     assert strip_markdown_fences('```json\n{"foo": "bar"}\n```') == '{"foo": "bar"}'
