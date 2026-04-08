@@ -4309,76 +4309,53 @@ def test_include_return_schema_warning_empty_schema():
         agent.run_sync('test')
 
 
-def test_return_schema_description_injection():
-    """return_schema is injected into description for models without native support."""
-    from pydantic_ai.models import _inject_return_schema_in_description
-    from pydantic_ai.tools import ToolDefinition
-
-    td = ToolDefinition(
-        name='test',
-        description='A test tool',
-        return_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}},
-    )
-    result = _inject_return_schema_in_description(td)
-    assert result.return_schema is None
-    assert result.description is not None
-    assert 'A test tool' in result.description
-    assert 'Return schema:' in result.description
-    assert '"type": "object"' in result.description
-
-    # Also test with no description
-    td_no_desc = ToolDefinition(
-        name='test',
-        return_schema={'type': 'string'},
-    )
-    result_no_desc = _inject_return_schema_in_description(td_no_desc)
-    assert result_no_desc.description is not None
-    assert result_no_desc.description.startswith('Return schema:')
-
-
-def test_return_schema_description_injection_no_schema():
-    """_inject_return_schema_in_description is a no-op when return_schema is None."""
-    from pydantic_ai.models import _inject_return_schema_in_description
-    from pydantic_ai.tools import ToolDefinition
-
-    td = ToolDefinition(name='test', description='A test tool')
-    result = _inject_return_schema_in_description(td)
-    assert result is td  # same object, no-op
-
-
-def test_maybe_inject_return_schemas():
-    """_maybe_inject_return_schemas injects for non-native models, skips for native."""
-    from pydantic_ai.models import (
-        ModelRequestParameters,
-        _maybe_inject_return_schemas,
-    )
+def test_prepare_return_schemas():
+    """_prepare_return_schemas resolves and injects return schemas in a single pass."""
+    from pydantic_ai.models import ModelRequestParameters, _prepare_return_schemas
     from pydantic_ai.profiles import ModelProfile
     from pydantic_ai.tools import ToolDefinition
 
-    td = ToolDefinition(
+    td_with_schema = ToolDefinition(
         name='test',
         description='A tool',
         return_schema={'type': 'string'},
+        include_return_schema=True,
+    )
+    td_no_opt_in = ToolDefinition(
+        name='other',
+        description='Another tool',
+        return_schema={'type': 'integer'},
     )
     params = ModelRequestParameters(
-        function_tools=[td],
+        function_tools=[td_with_schema, td_no_opt_in],
         output_tools=[],
         output_mode='auto',
         output_object=None,
     )
 
-    # Non-native: should inject
+    # Non-native model: opted-in tool gets schema injected into description, non-opted-in gets cleared
     profile_no_native = ModelProfile(supports_tool_return_schema=False)
-    result = _maybe_inject_return_schemas(params, profile_no_native)
+    result = _prepare_return_schemas(params, profile_no_native)
     assert result.function_tools[0].return_schema is None
-    desc = result.function_tools[0].description
-    assert desc is not None
-    assert 'Return schema:' in desc
+    assert 'Return schema:' in (result.function_tools[0].description or '')
+    assert 'A tool' in (result.function_tools[0].description or '')
+    assert result.function_tools[1].return_schema is None
+    assert 'Return schema:' not in (result.function_tools[1].description or '')
 
-    # Native: should pass through
+    # Native model: opted-in tool keeps schema, non-opted-in gets cleared
     profile_native = ModelProfile(supports_tool_return_schema=True)
-    result = _maybe_inject_return_schemas(params, profile_native)
+    result = _prepare_return_schemas(params, profile_native)
     assert result.function_tools[0].return_schema == {'type': 'string'}
+    assert result.function_tools[1].return_schema is None
+
+    # No description: schema injection still works
+    td_no_desc = ToolDefinition(name='bare', return_schema={'type': 'string'}, include_return_schema=True)
+    params_no_desc = ModelRequestParameters(
+        function_tools=[td_no_desc], output_tools=[], output_mode='auto', output_object=None
+    )
+    result = _prepare_return_schemas(params_no_desc, profile_no_native)
+    assert result.function_tools[0].description is not None
+    assert result.function_tools[0].description.startswith('Return schema:')
 
 
 def test_return_schema_google_native():
