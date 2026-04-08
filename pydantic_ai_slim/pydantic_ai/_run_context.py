@@ -15,11 +15,11 @@ from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from . import _utils, messages as _messages
 
 if TYPE_CHECKING:
-    from ._tool_manager import ToolManager
     from .agent.abstract import AbstractAgent
     from .models import Model
     from .result import RunUsage
     from .settings import ModelSettings
+    from .tool_manager import ToolManager
 
 # TODO (v2): Change the default for all typevars like this from `None` to `object`
 AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)

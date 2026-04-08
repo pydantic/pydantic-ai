@@ -18,23 +18,23 @@ from pydantic_graph import End
 from .. import (
     _agent_graph,
     _instructions,
-    _tool_manager,
     _utils,
     exceptions,
     messages as _messages,
     models,
     result,
+    tool_manager,
     usage as _usage,
 )
 from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
 from .._template import TemplateStr
-from .._tool_manager import ToolManager
 from ..builtin_tools import AbstractBuiltinTool
 from ..output import OutputDataT, OutputSpec
 from ..result import AgentStream, FinalResult, StreamedRunResult
 from ..run import AgentRun, AgentRunResult, AgentRunResultEvent
 from ..settings import ModelSettings
+from ..tool_manager import ToolManager
 from ..tools import (
     AgentBuiltinTool,
     AgentDepsT,
@@ -1293,7 +1293,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
     @staticmethod
     @contextmanager
-    def parallel_tool_call_execution_mode(mode: _tool_manager.ParallelExecutionMode = 'parallel') -> Iterator[None]:
+    def parallel_tool_call_execution_mode(mode: tool_manager.ParallelExecutionMode = 'parallel') -> Iterator[None]:
         """Set the parallel execution mode during the context.
 
         Args:

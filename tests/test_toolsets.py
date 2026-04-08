@@ -22,10 +22,10 @@ from pydantic_ai import (
     WrapperToolset,
 )
 from pydantic_ai._run_context import RunContext
-from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import InstructionPart, ModelRequest, ModelResponse, TextPart
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.usage import RunUsage
