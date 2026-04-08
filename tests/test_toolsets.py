@@ -1786,3 +1786,156 @@ async def test_concurrent_runs_dont_share_state():
     assert results[1].output == 'Done'
     # Each run should have its own count (1), not share state (1, 2)
     assert all(c == 1 for c in call_counts)
+
+
+def test_include_return_schemas_toolset():
+    """IncludeReturnSchemasToolset sets include_return_schema=True on wrapped tools."""
+
+    def my_tool(x: int) -> int:
+        return x
+
+    toolset = FunctionToolset(tools=[my_tool])
+    test_model = TestModel()
+    agent = Agent(test_model, toolsets=[toolset.include_return_schemas()])
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    td = next(td for td in params.function_tools if td.name == 'my_tool')
+    assert td.include_return_schema is True
+    assert 'Return schema' in (td.description or '')
+
+
+def test_set_metadata_toolset():
+    """SetMetadataToolset merges metadata onto all wrapped tools."""
+
+    def my_tool(x: int) -> int:
+        return x
+
+    toolset = FunctionToolset(tools=[my_tool])
+    test_model = TestModel()
+    agent = Agent(test_model, toolsets=[toolset.with_metadata(code_mode=True, priority=1)])
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    td = next(td for td in params.function_tools if td.name == 'my_tool')
+    assert td.metadata is not None
+    assert td.metadata['code_mode'] is True
+    assert td.metadata['priority'] == 1
+
+
+async def test_filtered_toolset_async_filter():
+    """FilteredToolset supports async filter functions."""
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x
+
+    async def async_filter(ctx: RunContext, td: ToolDefinition) -> bool:
+        return td.name == 'tool_a'
+
+    toolset = FunctionToolset(tools=[tool_a, tool_b])
+    test_model = TestModel()
+    agent = Agent(test_model, toolsets=[toolset.filtered(async_filter)])
+    await agent.run('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    tool_names = [td.name for td in params.function_tools]
+    assert tool_names == ['tool_a']
+
+
+def test_set_tool_metadata_capability():
+    """SetToolMetadata capability merges metadata onto selected tools."""
+    from pydantic_ai.capabilities import SetToolMetadata
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x
+
+    test_model = TestModel()
+    agent = Agent(
+        test_model,
+        tools=[tool_a, tool_b],
+        capabilities=[SetToolMetadata(tools=['tool_a'], code_mode=True)],
+    )
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    td_a = next(td for td in params.function_tools if td.name == 'tool_a')
+    td_b = next(td for td in params.function_tools if td.name == 'tool_b')
+    assert td_a.metadata is not None
+    assert td_a.metadata['code_mode'] is True
+    # tool_b should not have the metadata
+    assert td_b.metadata is None or 'code_mode' not in td_b.metadata
+
+
+def test_set_tool_metadata_capability_with_async_selector():
+    """SetToolMetadata with async callable selector."""
+    from pydantic_ai.capabilities import SetToolMetadata
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x
+
+    async def only_tool_a(ctx: RunContext, td: ToolDefinition) -> bool:
+        return td.name == 'tool_a'
+
+    test_model = TestModel()
+    agent = Agent(
+        test_model,
+        tools=[tool_a, tool_b],
+        capabilities=[SetToolMetadata(tools=only_tool_a, tagged=True)],
+    )
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    td_a = next(td for td in params.function_tools if td.name == 'tool_a')
+    td_b = next(td for td in params.function_tools if td.name == 'tool_b')
+    assert td_a.metadata is not None
+    assert td_a.metadata['tagged'] is True
+    assert td_b.metadata is None or 'tagged' not in td_b.metadata
+
+
+def test_set_tool_metadata_capability_with_dict_selector():
+    """SetToolMetadata with dict selector matches tools by metadata."""
+    from pydantic_ai.capabilities import SetToolMetadata
+    from pydantic_ai.tools import Tool
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x
+
+    test_model = TestModel()
+    agent = Agent(
+        test_model,
+        tools=[
+            Tool(tool_a, metadata={'env': 'prod'}),
+            Tool(tool_b, metadata={'env': 'staging'}),
+        ],
+        capabilities=[SetToolMetadata(tools={'env': 'prod'}, audited=True)],
+    )
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    td_a = next(td for td in params.function_tools if td.name == 'tool_a')
+    td_b = next(td for td in params.function_tools if td.name == 'tool_b')
+    # tool_a matched the dict selector, gets audited=True merged
+    assert td_a.metadata is not None
+    assert td_a.metadata['audited'] is True
+    assert td_a.metadata['env'] == 'prod'
+    # tool_b didn't match
+    assert td_b.metadata is not None
+    assert 'audited' not in td_b.metadata
