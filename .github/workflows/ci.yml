@@ -116,6 +116,8 @@ jobs:
         install:
           - name: pydantic-ai-slim
             command: "--package pydantic-ai-slim"
+          - name: pydantic-evals
+            command: "--package pydantic-evals"
           - name: standard
             command: ""
           - name: all-extras

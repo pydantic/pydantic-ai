@@ -16,9 +16,6 @@ from ..conftest import IsStr, try_import
 from .utils import render_table
 
 with try_import() as imports_successful:
-    import logfire
-    from logfire.testing import CaptureLogfire
-
     from pydantic_evals import Case, Dataset, PydanticEvalsDeprecationWarning
     from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
     from pydantic_evals.evaluators import (
@@ -51,6 +48,11 @@ with try_import() as imports_successful:
             return eval(self.expression, {'ctx': ctx})
 
 
+with try_import() as logfire_import_successful:
+    import logfire
+    from logfire.testing import CaptureLogfire
+
+
 with try_import() as tenacity_import_successful:
     from tenacity import stop_after_attempt
 
@@ -59,6 +61,8 @@ with try_import() as tenacity_import_successful:
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
 
+needs_logfire = pytest.mark.skipif(not logfire_import_successful(), reason='logfire not installed')
+
 
 if sys.version_info < (3, 11):
     from exceptiongroup import ExceptionGroup  # pragma: lax no cover
@@ -66,9 +70,11 @@ else:
     ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
 
-@pytest.fixture(autouse=True)
-def use_logfire(capfire: CaptureLogfire):
-    assert capfire
+if logfire_import_successful():
+
+    @pytest.fixture(autouse=True)
+    def use_logfire(capfire: CaptureLogfire):
+        assert capfire
 
 
 class TaskInput(BaseModel):
@@ -780,6 +786,7 @@ async def test_report_round_trip_serialization(example_dataset: Dataset[TaskInpu
     assert report == report_adapter.validate_json(report_adapter.dump_json(report, indent=2))
 
 
+@needs_logfire
 async def test_genai_attribute_collection(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
     async def my_task(inputs: TaskInput) -> TaskOutput:
         with logfire.span(
@@ -1543,6 +1550,7 @@ def test_evaluate_non_serializable_inputs():
 """)
 
 
+@needs_logfire
 async def test_evaluate_async_logfire(
     example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
     simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
