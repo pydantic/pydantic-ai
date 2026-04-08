@@ -281,6 +281,7 @@ async def test_evaluate_async(
     )
 
 
+@needs_logfire
 async def test_evaluate_sync(
     example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
     simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
@@ -417,6 +418,7 @@ async def test_evaluate_with_retried_task_and_evaluator(
     )
 
 
+@needs_logfire
 async def test_evaluate_with_concurrency(
     example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
     simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
@@ -471,6 +473,7 @@ async def test_evaluate_with_concurrency(
     )
 
 
+@needs_logfire
 async def test_evaluate_with_failing_task(
     example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
     simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
@@ -529,6 +532,7 @@ async def test_evaluate_with_failing_task(
     )
 
 
+@needs_logfire
 async def test_evaluate_with_failing_evaluator(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
     """Test evaluating a dataset with a failing evaluator."""
 
@@ -597,6 +601,7 @@ async def test_evaluate_with_failing_evaluator(example_dataset: Dataset[TaskInpu
     assert report.failures == snapshot([])
 
 
+@needs_logfire
 async def test_increment_eval_metric(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
     """Test the increment_eval_metric function."""
 
@@ -648,6 +653,7 @@ async def test_increment_eval_metric(example_dataset: Dataset[TaskInput, TaskOut
     )
 
 
+@needs_logfire
 async def test_repeated_name_outputs(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
     """Test the increment_eval_metric function."""
 
@@ -717,6 +723,7 @@ async def test_repeated_name_outputs(example_dataset: Dataset[TaskInput, TaskOut
     )
 
 
+@needs_logfire
 async def test_report_round_trip_serialization(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
     """Test the increment_eval_metric function."""
 
@@ -1063,6 +1070,7 @@ async def test_duplicate_evaluator_failure(example_dataset: Dataset[TaskInput, T
     assert str(exc_info.value) == snapshot("Duplicate evaluator class name: 'FirstEvaluator'")
 
 
+@needs_logfire
 async def test_invalid_evaluator_output_type(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
     """Test that an invalid evaluator output type raises an error."""
     invalid_evaluator = Python(expression='...')
@@ -1135,6 +1143,7 @@ async def test_invalid_evaluator_output_type(example_dataset: Dataset[TaskInput,
     assert report.failures == snapshot([])
 
 
+@needs_logfire
 async def test_dataset_evaluate_with_failing_task(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
     """Test evaluating a dataset with a failing task."""
 
@@ -1169,6 +1178,7 @@ async def test_dataset_evaluate_with_failing_task(example_dataset: Dataset[TaskI
     )
 
 
+@needs_logfire
 async def test_dataset_evaluate_with_failing_evaluator(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
     """Test evaluating a dataset with a failing evaluator."""
 
@@ -1237,6 +1247,7 @@ async def test_dataset_evaluate_with_failing_evaluator(example_dataset: Dataset[
     assert report.failures == snapshot([])
 
 
+@needs_logfire
 async def test_dataset_evaluate_with_invalid_evaluator_result(
     example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
 ):
@@ -1505,6 +1516,7 @@ def test_import_generate_dataset():
     assert generate_dataset
 
 
+@needs_logfire
 def test_evaluate_non_serializable_inputs():
     @dataclass
     class MyInputs:
