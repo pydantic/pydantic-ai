@@ -7175,8 +7175,8 @@ async def test_after_node_run_end_to_node_override():
             if isinstance(result, End) and not self._redirected:
                 self._redirected = True
                 redirected = True
-                return ModelRequestNode(ModelRequest(parts=[UserPromptPart(content='try again')]))
-            return result
+                return ModelRequestNode(ModelRequest(parts=[UserPromptPart(content='try again')]))  # pyright: ignore[reportUnknownVariableType]
+            return result  # pyright: ignore[reportUnknownVariableType]
 
     agent = Agent(FunctionModel(llm), capabilities=[RedirectOnFirstEnd()])
     result = await agent.run('hello')
@@ -7208,3 +7208,53 @@ async def test_next_node_raises_on_error_marker():
                 with pytest.raises(ValueError, match='model failure'):
                     _ = agent_run.next_node
                 break
+
+
+async def test_on_node_run_error_returns_end():
+    """on_node_run_error can recover from an exception by returning End, completing the run."""
+    from pydantic_ai.result import FinalResult
+
+    def always_fails(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ValueError('model exploded')
+
+    @dataclass
+    class RecoverWithEnd(AbstractCapability[Any]):
+        async def on_node_run_error(self, ctx: RunContext[Any], *, node: Any, error: Exception) -> Any:
+            return End(FinalResult('recovered output'))
+
+    agent = Agent(FunctionModel(always_fails), capabilities=[RecoverWithEnd()])
+    result = await agent.run('hello')
+    assert result.output == 'recovered output'
+
+
+async def test_after_node_run_node_to_end():
+    """after_node_run can short-circuit a run by converting a continuation node to End."""
+    from pydantic_ai.result import FinalResult
+
+    call_count = 0
+
+    def model_with_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='my_tool', args='{}')])
+        return ModelResponse(parts=[TextPart('should not reach')])
+
+    @dataclass
+    class ShortCircuitAfterTool(AbstractCapability[Any]):
+        """After seeing a tool call result, short-circuit to End instead of continuing."""
+
+        async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+            if not isinstance(result, End) and call_count == 1:
+                return End(FinalResult('short-circuited'))
+            return result  # pyright: ignore[reportUnknownVariableType]
+
+    agent = Agent(FunctionModel(model_with_tool), capabilities=[ShortCircuitAfterTool()])
+
+    @agent.tool_plain
+    def my_tool() -> str:
+        return 'tool result'
+
+    result = await agent.run('hello')
+    assert result.output == 'short-circuited'
+    assert call_count == 1

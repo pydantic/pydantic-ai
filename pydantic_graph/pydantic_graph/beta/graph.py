@@ -517,16 +517,20 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
                 self._next = [GraphTask.from_request(gtr, self._get_next_task_id) for gtr in value]
         return await anext(self)
 
-    def override_next(self, value: Sequence[GraphTaskRequest]) -> None:
+    def override_next(self, value: Sequence[GraphTaskRequest] | EndMarker[OutputT]) -> None:
         """Override the next pending step, allowing the graph to continue after an `End` or error.
 
         This is used by hook systems (like `after_node_run` or `on_node_run_error`) to redirect
-        the graph to a new node when the current step produced an `End` result or raised an error.
+        the graph to a new node when the current step produced an `End` result or raised an error,
+        or to signal early completion by passing an `EndMarker`.
 
         Args:
-            value: New task requests to execute next.
+            value: New task requests to execute next, or an `EndMarker` to signal completion.
         """
-        self._next = [GraphTask.from_request(gtr, self._get_next_task_id) for gtr in value]
+        if isinstance(value, EndMarker):
+            self._next = value
+        else:
+            self._next = [GraphTask.from_request(gtr, self._get_next_task_id) for gtr in value]
 
     @property
     def next_task(self) -> EndMarker[OutputT] | ErrorMarker | Sequence[GraphTask]:

@@ -230,6 +230,18 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     def _node_to_task(self, node: _agent_graph.AgentNode[AgentDepsT, OutputDataT]) -> GraphTaskRequest:
         return GraphTaskRequest(NodeStep(type(node)).id, inputs=node, fork_stack=())
 
+    def _sync_graph_state(self, result: _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]) -> None:
+        """Synchronize the graph runner's state to match a hook-modified result.
+
+        After a capability hook changes the result (e.g. `on_node_run_error` recovering,
+        or `after_node_run` converting End↔node), the graph runner's internal `_next` must
+        be updated so that `output` and `next_node` reflect the hook's decision.
+        """
+        if isinstance(result, End):
+            self._graph_run.override_next(EndMarker(result.data))
+        else:
+            self._graph_run.override_next([self._node_to_task(result)])
+
     async def _advance_graph(
         self,
         node: _agent_graph.AgentNode[AgentDepsT, Any],
@@ -264,14 +276,12 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             result = await cap.on_node_run_error(run_context, node=node, error=e)
             # on_node_run_error recovered from the exception by returning a result.
             # Update the graph runner so it can continue with the new node or End.
-            if not isinstance(result, End):
-                self._graph_run.override_next([self._node_to_task(result)])
+            self._sync_graph_state(result)
         result = await cap.after_node_run(run_context, node=node, result=result)
 
-        # If after_node_run changed the result from End to a node, update the graph
-        # runner so agent_run.result doesn't prematurely report the run as finished.
-        if not isinstance(result, End) and self._graph_run.output is not None:
-            self._graph_run.override_next([self._node_to_task(result)])
+        # If after_node_run changed the result type (End↔node), sync the graph runner state
+        # so agent_run.result correctly reflects whether the run is finished.
+        self._sync_graph_state(result)
 
         return result
 
