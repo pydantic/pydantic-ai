@@ -668,22 +668,6 @@ class AnthropicModel(Model):
             _provider_url=self._provider.base_url,
         )
 
-    def _get_tools(
-        self, model_request_parameters: ModelRequestParameters, model_settings: AnthropicModelSettings
-    ) -> list[BetaToolUnionParam]:
-        tools: list[BetaToolUnionParam] = [
-            self._map_tool_definition(r, model_settings) for r in model_request_parameters.tool_defs.values()
-        ]
-
-        # Add cache_control to the last tool if enabled
-        if tools and (cache_tool_defs := model_settings.get('anthropic_cache_tool_definitions')):
-            # If True, use '5m'; otherwise use the specified ttl value
-            ttl: Literal['5m', '1h'] = '5m' if cache_tool_defs is True else cache_tool_defs
-            last_tool = tools[-1]
-            last_tool['cache_control'] = self._build_cache_control(ttl)
-
-        return tools
-
     def _add_builtin_tools(
         self, tools: list[BetaToolUnionParam], model_request_parameters: ModelRequestParameters
     ) -> tuple[list[BetaToolUnionParam], list[BetaRequestMCPServerURLDefinitionParam], set[str]]:
