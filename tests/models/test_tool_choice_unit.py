@@ -383,6 +383,43 @@ def test_support_tool_forcing_implicit_resolution(provider_name: str, resolved_t
     assert result is expected
 
 
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+@pytest.mark.parametrize(
+    'settings,expected',
+    [
+        pytest.param(
+            {'anthropic_thinking': {'type': 'disabled'}},
+            True,
+            id='disabled_thinking_allows_forcing',
+        ),
+        pytest.param(
+            {'thinking': True},
+            False,
+            id='unified_thinking_blocks_forcing',
+        ),
+        pytest.param(
+            {'thinking': 'high'},
+            False,
+            id='unified_thinking_effort_blocks_forcing',
+        ),
+        pytest.param(
+            {'thinking': False},
+            True,
+            id='unified_thinking_false_allows_forcing',
+        ),
+        pytest.param(
+            {'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024}, 'thinking': False},
+            False,
+            id='provider_specific_takes_precedence',
+        ),
+    ],
+)
+def test_support_tool_forcing_thinking_detection(settings: Any, expected: bool):
+    """Thinking detection checks both anthropic_thinking and unified thinking field."""
+    result = anthropic_support_tool_forcing(settings, 'required')
+    assert result is expected
+
+
 # =============================================================================
 # Provider-specific tests that don't fit the consolidated patterns
 # =============================================================================

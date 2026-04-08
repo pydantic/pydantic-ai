@@ -1666,11 +1666,17 @@ def _support_tool_forcing(
     Otherwise the value may come from the `tool_choice` resolution logic, in which case we fall back softly.
     Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use
     """
-    thinking_enabled = model_settings.get('anthropic_thinking') is not None
+    # Mirror the dual-check pattern from prepare_request (lines 404-410)
+    thinking_enabled = False
+    if anthropic_thinking := model_settings.get('anthropic_thinking'):
+        thinking_enabled = anthropic_thinking.get('type') in ('enabled', 'adaptive')
+    elif model_settings.get('thinking'):
+        thinking_enabled = True
+
     if not thinking_enabled:
         return True
 
-    explicit_choice = (model_settings or {}).get('tool_choice')
+    explicit_choice = model_settings.get('tool_choice')
     if explicit_choice == 'required' or isinstance(explicit_choice, list):
         raise UserError(
             f"Anthropic does not support {context} with thinking mode. Disable thinking or use `tool_choice='auto'`."
