@@ -152,6 +152,7 @@ nav:
           - api/exceptions.md
           - api/ext.md
           - api/format_prompt.md
+          - api/function_signature.md
           - api/mcp.md
           - api/messages.md
           - api/models/anthropic.md
