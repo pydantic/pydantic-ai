@@ -1977,6 +1977,92 @@ async def test_combined_capability_for_run_returns_new_when_child_changes():
     assert new_per_run.run_id == 1
 
 
+def test_visit_single_capability():
+    """AbstractCapability.visit() yields just the capability itself."""
+
+    @dataclass
+    class MyCap(AbstractCapability[None]):
+        pass
+
+    cap = MyCap()
+    visited = list(cap.visit())
+    assert visited == [cap]
+
+
+def test_visit_combined_capability():
+    """CombinedCapability.visit() recursively yields all leaf capabilities."""
+
+    @dataclass
+    class CapA(AbstractCapability[None]):
+        pass
+
+    @dataclass
+    class CapB(AbstractCapability[None]):
+        pass
+
+    cap_a = CapA()
+    cap_b = CapB()
+    combined = CombinedCapability([cap_a, cap_b])
+
+    visited = list(combined.visit())
+    assert visited == [cap_a, cap_b]
+
+
+def test_visit_nested_combined_capability():
+    """CombinedCapability.visit() flattens nested CombinedCapabilities."""
+
+    @dataclass
+    class CapA(AbstractCapability[None]):
+        pass
+
+    @dataclass
+    class CapB(AbstractCapability[None]):
+        pass
+
+    @dataclass
+    class CapC(AbstractCapability[None]):
+        pass
+
+    cap_a = CapA()
+    cap_b = CapB()
+    cap_c = CapC()
+    inner = CombinedCapability([cap_a, cap_b])
+    outer = CombinedCapability([inner, cap_c])
+
+    visited = list(outer.visit())
+    assert visited == [cap_a, cap_b, cap_c]
+
+
+def test_visit_wrapper_capability():
+    """WrapperCapability.visit() yields just the wrapper itself."""
+    inner = Thinking()
+    wrapper = WrapperCapability(wrapped=inner)
+
+    visited = list(wrapper.visit())
+    assert visited == [wrapper]
+
+
+def test_visit_finds_capability_by_type():
+    """Realistic usage: use visit() to check if a specific capability type is present."""
+    thinking = Thinking()
+    web_search = WebSearch()
+    combined = CombinedCapability([thinking, web_search])
+
+    has_thinking = any(isinstance(c, Thinking) for c in combined.visit())
+    has_web_search = any(isinstance(c, WebSearch) for c in combined.visit())
+    has_web_fetch = any(isinstance(c, WebFetch) for c in combined.visit())
+
+    assert has_thinking
+    assert has_web_search
+    assert not has_web_fetch
+
+
+def test_visit_empty_combined():
+    """CombinedCapability with no children yields nothing."""
+    combined = CombinedCapability([])
+    assert list(combined.visit()) == []
+
+
 async def test_for_run_with_different_toolset():
     """When for_run returns a capability with a different get_toolset(), the per-run toolset is used."""
     toolset_a = FunctionToolset(id='a')
