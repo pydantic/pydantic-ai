@@ -32,6 +32,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
     capabilities: Sequence[AbstractCapability[AgentDepsT]]
 
+    def __post_init__(self) -> None:
+        from ._ordering import iter_leaves, sort_capabilities
+
+        if any(type(leaf).get_ordering() is not None for leaf in iter_leaves(self)):
+            self.capabilities = sort_capabilities(list(self.capabilities))
+
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         for cap in self.capabilities:
             cap.apply(visitor)
@@ -109,7 +115,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         wrapped = toolset
         any_wrapped = False
-        for capability in self.capabilities:
+        for capability in reversed(self.capabilities):
             result = capability.get_wrapper_toolset(wrapped)
             if result is not None:
                 wrapped = result
