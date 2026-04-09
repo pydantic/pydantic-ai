@@ -1535,7 +1535,6 @@ class AnthropicStreamedResponse(StreamedResponse):
 
         await self._stream.close()
         self._cancelled = True
-        # Close the stream
 
     @property
     def model_name(self) -> AnthropicModelName:

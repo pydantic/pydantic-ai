@@ -399,6 +399,7 @@ class GroqModel(Model):
         return GroqStreamedResponse(
             model_request_parameters=model_request_parameters,
             _response=peekable_response,
+            _stream=response,
             _model_name=first_chunk.model,
             _model_profile=self.profile,
             _provider_name=self._provider.name,
@@ -575,10 +576,17 @@ class GroqStreamedResponse(StreamedResponse):
     _model_name: GroqModelName
     _model_profile: ModelProfile
     _response: AsyncIterable[chat.ChatCompletionChunk]
+    _stream: AsyncStream[chat.ChatCompletionChunk]
     _provider_name: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
+
+    async def cancel(self) -> None:
+        if self.cancelled:
+            return
+        await self._stream.close()
+        self._cancelled = True
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with _map_api_errors(self._model_name):

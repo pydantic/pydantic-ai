@@ -1119,6 +1119,11 @@ class StreamedResponse(ABC):
         return self._event_iterator
 
     async def cancel(self) -> None:
+        """Cancel the stream, stopping token generation.
+
+        Providers must override this to close the underlying HTTP/gRPC connection
+        and set ``self._cancelled = True``.
+        """
         raise NotImplementedError(
             f'Stream cancellation is not implemented for {type(self).__name__}. '
             'This provider must override `cancel()` to support streaming cancellation.'

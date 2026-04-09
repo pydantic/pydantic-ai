@@ -987,6 +987,7 @@ class OpenAIChatModel(Model):
             _model_name=model_name,
             _model_profile=self.profile,
             _response=peekable_response,
+            _stream=response,
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
             _provider_timestamp=number_to_datetime(first_chunk.created) if first_chunk.created else None,
@@ -1712,6 +1713,7 @@ class OpenAIResponsesModel(Model):
             _model_name=first_chunk.response.model,
             _model_settings=model_settings,
             _response=peekable_response,
+            _stream=response,
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
             _provider_timestamp=number_to_datetime(first_chunk.response.created_at)
@@ -2401,6 +2403,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     _model_name: OpenAIModelName
     _model_profile: ModelProfile
     _response: AsyncIterable[ChatCompletionChunk]
+    _stream: AsyncStream[ChatCompletionChunk]
     _provider_name: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
@@ -2408,6 +2411,12 @@ class OpenAIStreamedResponse(StreamedResponse):
     _model_settings: OpenAIChatModelSettings | None = None
     _has_refusal: bool = field(default=False, init=False)
     _refusal_text: str = field(default='', init=False)
+
+    async def cancel(self) -> None:
+        if self.cancelled:
+            return
+        await self._stream.close()
+        self._cancelled = True
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with _map_api_errors(self._model_name):
@@ -2590,12 +2599,19 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _model_name: OpenAIModelName
     _model_settings: OpenAIResponsesModelSettings
     _response: AsyncIterable[responses.ResponseStreamEvent]
+    _stream: AsyncStream[responses.ResponseStreamEvent]
     _provider_name: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
     _has_refusal: bool = field(default=False, init=False)
     _refusal_text: str = field(default='', init=False)
+
+    async def cancel(self) -> None:
+        if self.cancelled:
+            return
+        await self._stream.close()
+        self._cancelled = True
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with _map_api_errors(self._model_name):

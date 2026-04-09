@@ -846,6 +846,7 @@ class StreamEventsResult(Generic[OutputDataT]):
         return False
 
     def __aiter__(self) -> StreamEventsResult[OutputDataT]:
+        # TODO(v2): remove standalone iteration support and require `async with`
         if not self._managed:
             warnings.warn(
                 'Iterating `StreamEventsResult` directly is deprecated. '

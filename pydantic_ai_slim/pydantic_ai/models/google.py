@@ -757,6 +757,7 @@ class GoogleModel(Model):
             model_request_parameters=model_request_parameters,
             _model_name=first_chunk.model_version or self._model_name,
             _response=peekable_response,
+            _stream=response,
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
             _provider_timestamp=first_chunk.create_time,
@@ -994,6 +995,7 @@ class GeminiStreamedResponse(StreamedResponse):
 
     _model_name: GoogleModelName
     _response: AsyncIterator[GenerateContentResponse]
+    _stream: AsyncIterator[GenerateContentResponse]
     _provider_name: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
@@ -1001,6 +1003,13 @@ class GeminiStreamedResponse(StreamedResponse):
     _file_search_tool_call_id: str | None = field(default=None, init=False)
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
     _has_content_filter: bool = field(default=False, init=False)
+
+    async def cancel(self) -> None:
+        if self.cancelled:
+            return
+        # google.genai types this as AsyncIterator but it is an AsyncGenerator at runtime
+        await self._stream.aclose()  # type: ignore[union-attr]
+        self._cancelled = True
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         if self._provider_timestamp is not None:

@@ -321,6 +321,7 @@ class HuggingFaceModel(Model):
             _model_name=first_chunk.model,
             _model_profile=self.profile,
             _response=peekable_response,
+            _stream=response,
             _provider_name=self._provider.name,
             _provider_url=self.base_url,
             _provider_timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
@@ -478,10 +479,18 @@ class HuggingFaceStreamedResponse(StreamedResponse):
     _model_name: str
     _model_profile: ModelProfile
     _response: AsyncIterable[ChatCompletionStreamOutput]
+    _stream: AsyncIterable[ChatCompletionStreamOutput]
     _provider_name: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
+
+    async def cancel(self) -> None:
+        if self.cancelled:
+            return
+        # huggingface_hub types this as AsyncIterable but it is an AsyncGenerator at runtime
+        await self._stream.aclose()  # type: ignore[union-attr]
+        self._cancelled = True
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with _map_api_errors(self._model_name):

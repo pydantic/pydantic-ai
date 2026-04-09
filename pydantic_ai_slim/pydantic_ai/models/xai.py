@@ -749,6 +749,7 @@ class XaiModel(Model):
             model_request_parameters=model_request_parameters,
             _model_name=self._model_name,
             _response=peekable_response,
+            _stream=response,
             _timestamp=first_response.created,
             _provider=self._provider,
         )
@@ -760,8 +761,16 @@ class XaiStreamedResponse(StreamedResponse):
 
     _model_name: str
     _response: _utils.PeekableAsyncStream[tuple[chat_types.Response, chat_types.Chunk]]
+    _stream: AsyncIterator[tuple[chat_types.Response, Any]]
     _timestamp: datetime
     _provider: Provider[AsyncClient]
+
+    async def cancel(self) -> None:
+        if self.cancelled:
+            return
+        # xAI SDK uses gRPC; the stream's cancel() is synchronous
+        self._stream.cancel()  # type: ignore[union-attr]
+        self._cancelled = True
 
     @property
     def system(self) -> str:

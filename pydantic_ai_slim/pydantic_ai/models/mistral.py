@@ -413,6 +413,7 @@ class MistralModel(Model):
         return MistralStreamedResponse(
             model_request_parameters=model_request_parameters,
             _response=peekable_response,
+            _stream=response,
             _model_name=first_chunk.data.model,
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
@@ -654,12 +655,21 @@ class MistralStreamedResponse(StreamedResponse):
 
     _model_name: MistralModelName
     _response: AsyncIterable[MistralCompletionEvent]
+    _stream: MistralEventStreamAsync[MistralCompletionEvent]
     _provider_name: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
 
     _delta_content: str = field(default='', init=False)
+
+    async def cancel(self) -> None:
+        if self.cancelled:
+            return
+        # Close the underlying httpx response directly, avoiding the fragile
+        # __aexit__(None, None, None) pattern on EventStreamAsync.
+        await self._stream.response.aclose()
+        self._cancelled = True
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with _map_api_errors(self._model_name):

@@ -473,6 +473,13 @@ class GeminiStreamedResponse(StreamedResponse):
     _provider_url: str
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
+    async def cancel(self) -> None:
+        if self.cancelled:
+            return
+        # _stream is httpx's aiter_bytes(), an async generator at runtime
+        await self._stream.aclose()  # type: ignore[union-attr]
+        self._cancelled = True
+
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for gemini_response in self._get_gemini_responses():
             candidate = gemini_response['candidates'][0]

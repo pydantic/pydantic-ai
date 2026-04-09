@@ -1172,6 +1172,13 @@ class BedrockStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _provider_response_id: str | None = None
 
+    async def cancel(self) -> None:
+        if self.cancelled:
+            return
+        # Bedrock's EventStream.close() is synchronous
+        self._event_stream.close()
+        self._cancelled = True
+
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with _map_api_errors(self._model_name):
             if self._provider_response_id is not None:
