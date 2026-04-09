@@ -119,13 +119,18 @@ class ToolManager(Generic[AgentDepsT]):
 
         toolset = await self.toolset.for_run_step(ctx)
 
-        return self.__class__(
+        new_tm = self.__class__(
             toolset=toolset,
             root_capability=self.root_capability,
             ctx=ctx,
             tools=await toolset.get_tools(ctx),
             default_max_retries=self.default_max_retries,
         )
+        # Make the prepared ToolManager accessible from RunContext so that
+        # wrapper toolsets (e.g. CodeModeToolset) can dispatch tool calls
+        # through the standard validation/execution path.
+        ctx.tool_manager = new_tm
+        return new_tm
 
     @property
     def tool_defs(self) -> list[ToolDefinition]:
