@@ -880,6 +880,7 @@ async def main():
         async for event in stream:
             if isinstance(event, PartStartEvent):
                 print(f'Started: {event.part!r}')
+                #> Started: TextPart(content='Python is a ')
             elif isinstance(event, FinalResultEvent):
                 await stream.cancel()  # (2)!
                 break
