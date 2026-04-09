@@ -19,7 +19,7 @@ from types import TracebackType
 from typing import Any, Generic, Literal, TypeVar, cast, get_args, overload
 
 import httpx
-from typing_extensions import Self, TypeAliasType, TypedDict
+from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 
 from .. import _utils
 from .._json_schema import JsonSchemaTransformer
@@ -1326,16 +1326,11 @@ def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: in
     )
 
 
+@deprecated('`cached_async_http_client` is deprecated, use `create_async_http_client` instead.')
 def cached_async_http_client(
     *, provider: str | None = None, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5
 ) -> httpx.AsyncClient:
-    """Deprecated. Use [`create_async_http_client`][pydantic_ai.models.create_async_http_client] instead."""
-    warnings.warn(
-        'cached_async_http_client is deprecated, use create_async_http_client instead. '
-        'Note: the new function creates a new client per call instead of returning a cached one.',
-        DeprecationWarning,
-        stacklevel=2,
-    )
+    """Use [`create_async_http_client`][pydantic_ai.models.create_async_http_client] instead."""
     return create_async_http_client(timeout=timeout, connect=connect)
 
 
