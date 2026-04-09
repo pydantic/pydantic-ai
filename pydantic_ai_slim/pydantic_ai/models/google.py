@@ -524,8 +524,14 @@ class GoogleModel(Model):
     def _get_tool_config(
         self, model_request_parameters: ModelRequestParameters, tools: list[ToolDict] | None
     ) -> ToolConfigDict | None:
+        # Server-side tools are those that return toolCall/toolResponse parts when
+        # include_server_side_tool_invocations is set. Per the ToolType enum
+        # (https://ai.google.dev/api/caching#ToolType), this includes google_search,
+        # url_context, and file_search. ImageGenerationTool is a native model capability
+        # and CodeExecutionTool uses its own executableCode/codeExecutionResult parts.
         has_server_side_tools = any(
-            not isinstance(tool, ImageGenerationTool) for tool in model_request_parameters.builtin_tools
+            not isinstance(tool, (ImageGenerationTool, CodeExecutionTool))
+            for tool in model_request_parameters.builtin_tools
         )
         if not model_request_parameters.allow_text_output and tools:
             names: list[str] = []
@@ -1331,7 +1337,7 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
                     part['executable_code'] = cast(ExecutableCodeDict, item.args_as_dict())
                 elif tool_type := _BUILTIN_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name):
                     part['tool_call'] = {'id': item.tool_call_id, 'tool_type': tool_type, 'args': item.args_as_dict()}
-                else:
+                else:  # pragma: no cover
                     raise UnexpectedModelBehavior(f'Unknown builtin tool name: {item.tool_name!r}')
         elif isinstance(item, BuiltinToolReturnPart):
             if item.provider_name == provider_name:
@@ -1346,7 +1352,7 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
                         'tool_type': tool_type,
                         'response': tool_content,
                     }
-                else:
+                else:  # pragma: no cover
                     raise UnexpectedModelBehavior(f'Unknown builtin tool name: {item.tool_name!r}')
         elif isinstance(item, FilePart):
             content = item.content
@@ -1433,8 +1439,9 @@ def _process_response_from_parts(
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
 
-    # When include_server_side_tool_invocations is set, the API returns tool_call/tool_response
-    # parts directly. Skip metadata-based reconstruction to avoid duplicate builtin tool parts.
+    # When ToolConfig.includeServerSideToolInvocations is true, the API returns native
+    # toolCall/toolResponse parts (https://ai.google.dev/api/caching#ToolConfig).
+    # Skip metadata-based reconstruction to avoid duplicate builtin tool parts.
     has_tool_invocations = any(p.tool_call or p.tool_response for p in parts)
     if not has_tool_invocations:
         web_search_call, web_search_return = _map_grounding_metadata(grounding_metadata, provider_name)
@@ -1545,10 +1552,10 @@ def _map_code_execution_result(
 
 def _map_tool_call(tool_call: ToolCall, provider_name: str) -> BuiltinToolCallPart:
     tool_type = tool_call.tool_type
-    if tool_type is None:
+    if tool_type is None:  # pragma: no cover
         raise UnexpectedModelBehavior(f'Unexpected tool type in tool_call: {tool_call!r}')
     tool_name = _TOOL_TYPE_TO_BUILTIN_TOOL_NAME.get(tool_type)
-    if tool_name is None:
+    if tool_name is None:  # pragma: no cover
         raise UnexpectedModelBehavior(f'Unknown tool type in tool_call: {tool_type!r}')
     return BuiltinToolCallPart(
         provider_name=provider_name,
@@ -1560,10 +1567,10 @@ def _map_tool_call(tool_call: ToolCall, provider_name: str) -> BuiltinToolCallPa
 
 def _map_tool_response(tool_response: ToolResponse, provider_name: str) -> BuiltinToolReturnPart:
     tool_type = tool_response.tool_type
-    if tool_type is None:
+    if tool_type is None:  # pragma: no cover
         raise UnexpectedModelBehavior(f'Unexpected tool type in tool_response: {tool_response!r}')
     tool_name = _TOOL_TYPE_TO_BUILTIN_TOOL_NAME.get(tool_type)
-    if tool_name is None:
+    if tool_name is None:  # pragma: no cover
         raise UnexpectedModelBehavior(f'Unknown tool type in tool_response: {tool_type!r}')
     return BuiltinToolReturnPart(
         provider_name=provider_name,
