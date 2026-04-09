@@ -46,7 +46,6 @@ from .._agent_graph import (
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
 from .._template import TemplateStr, validate_from_spec_args
-from .._tool_manager import ParallelExecutionMode, ToolManager
 from ..builtin_tools import AbstractBuiltinTool
 from ..capabilities import AbstractCapability, CombinedCapability
 from ..capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
@@ -55,6 +54,7 @@ from ..models.instrumented import InstrumentationSettings, InstrumentedModel, in
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings, merge_model_settings
+from ..tool_manager import ParallelExecutionMode, ToolManager
 from ..tools import (
     AgentBuiltinTool,
     AgentDepsT,
@@ -631,6 +631,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             history_processors: Processors for message history.
             event_stream_handler: Handler for streaming events.
             tool_timeout: Default timeout for tool execution, overrides spec `tool_timeout` if provided.
+
             max_concurrency: Limit on concurrent agent runs.
             capabilities: Additional capabilities merged with those from the spec.
 
@@ -1976,6 +1977,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
+        include_return_schema: bool | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -1997,6 +1999,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
+        include_return_schema: bool | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -2056,6 +2059,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
             defer_loading: Whether to hide this tool until it's discovered via tool search. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
+            include_return_schema: Whether to include the return schema in the tool definition sent to the model.
+                If `None`, defaults to `False` unless the [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
         """
 
         def tool_decorator(
@@ -2079,6 +2084,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 metadata=metadata,
                 timeout=timeout,
                 defer_loading=defer_loading,
+                include_return_schema=include_return_schema,
             )
             return func_
 
@@ -2106,6 +2112,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
+        include_return_schema: bool | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
     def tool_plain(
@@ -2127,6 +2134,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
+        include_return_schema: bool | None = None,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
@@ -2187,6 +2195,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
             defer_loading: Whether to hide this tool until it's discovered via tool search. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
+            include_return_schema: Whether to include the return schema in the tool definition sent to the model.
+                If `None`, defaults to `False` unless the [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
         """
 
         def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
@@ -2208,6 +2218,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 metadata=metadata,
                 timeout=timeout,
                 defer_loading=defer_loading,
+                include_return_schema=include_return_schema,
             )
             return func_
 
@@ -2375,7 +2386,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if self._prepare_tools:
             toolset = PreparedToolset(toolset, self._prepare_tools)
 
-        # Let capabilities wrap the assembled non-output toolset
         if run_capability is not None:
             wrapper = run_capability.get_wrapper_toolset(toolset)
             if wrapper is not None:
@@ -2453,7 +2463,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     async def __aenter__(self) -> Self:
         """Enter the agent context.
 
-        This will start all [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] registered as `toolsets` so they are ready to be used.
+        This will start all [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] registered as `toolsets` so they are ready to be used,
+        and enter the model so the provider's HTTP client will be closed cleanly on exit.
 
         This is a no-op if the agent has already been entered.
         """
@@ -2462,6 +2473,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 async with AsyncExitStack() as exit_stack:
                     toolset = self._get_toolset()
                     await exit_stack.enter_async_context(toolset)
+
+                    if self.model is not None:
+                        model = self._get_model(None)
+                        await exit_stack.enter_async_context(model)
 
                     self._exit_stack = exit_stack.pop_all()
             self._entered_count += 1
