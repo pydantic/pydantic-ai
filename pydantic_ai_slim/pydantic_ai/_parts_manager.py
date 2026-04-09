@@ -67,7 +67,7 @@ class ModelResponsePartsManager:
         """Return only model response parts that are complete (i.e., not ToolCallPartDelta's).
 
         Args:
-            exclude_incomplete_tool_calls: If True, also exclude tool calls with incomplete (unparseable) arguments.
+            exclude_incomplete_tool_calls: If True, also exclude tool calls with incomplete (unparsable) arguments.
 
         Returns:
             A list of ModelResponsePart objects. ToolCallPartDelta objects are excluded.
