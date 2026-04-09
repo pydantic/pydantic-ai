@@ -871,6 +871,35 @@ When multiple capabilities are passed to an agent, they are composed into a sing
 
 This means the first capability in the list has the first and last say on the operation — it sees the original input in its `wrap_*` before handler, and it sees the final output after handler returns.
 
+### Ordering
+
+By default, capabilities are composed in the order you list them. When a capability needs to be at a specific position regardless of where the user lists it, override [`get_ordering`][pydantic_ai.capabilities.AbstractCapability.get_ordering] to return a [`CapabilityOrdering`][pydantic_ai.capabilities.CapabilityOrdering]:
+
+```python {test="skip" lint="skip"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
+
+
+@dataclass
+class InstrumentationCapability(AbstractCapability[Any]):
+    """Must wrap all other capabilities to trace everything."""
+
+    @classmethod
+    def get_ordering(cls) -> CapabilityOrdering:
+        return CapabilityOrdering(position='outermost')
+```
+
+The available constraints are:
+
+* **`position`** — `'outermost'` or `'innermost'`. Places the capability in a tier before (or after) all capabilities without that position. Multiple capabilities can share a tier; original list order breaks ties within it.
+* **`wraps`** — list of capability types this one wraps around (is outside of). Use when your capability needs to see the output of another: `CapabilityOrdering(wraps=[OtherCapability])`.
+* **`wrapped_by`** — list of capability types that wrap around this one (are outside of it). The inverse of `wraps`.
+* **`requires`** — list of capability types that must be present. Raises [`UserError`][pydantic_ai.exceptions.UserError] if any are missing. Does not imply ordering.
+
+When constraints are declared, [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] topologically sorts its children at construction time, preserving user-provided order as a tiebreaker.
+
 ## Examples
 
 ### Guardrail (PII redaction)
