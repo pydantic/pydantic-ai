@@ -1530,8 +1530,6 @@ class AnthropicStreamedResponse(StreamedResponse):
             raise
 
     async def cancel(self) -> None:
-        # return await super().cancel()
-        # Reach into the Anthropic SDK to cancel this out
         if self.cancelled:
             return
 

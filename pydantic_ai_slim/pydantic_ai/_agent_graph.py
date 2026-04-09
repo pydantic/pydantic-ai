@@ -1874,7 +1874,23 @@ def _is_same_request(message: _messages.ModelMessage, request: _messages.ModelRe
 
 
 def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:
-    """Clean the message history by merging consecutive messages of the same type."""
+    """Clean the message history by merging consecutive messages of the same type and filtering incomplete tool calls.
+
+    For interrupted responses (from stream cancellation), tool calls with incomplete arguments that have no
+    corresponding tool return or retry prompt are filtered out. If an interrupted response ends up with no
+    parts after filtering, it is dropped entirely (providers like OpenAI/Mistral reject empty assistant messages).
+    """
+    # Collect tool_call_ids that already have a ToolReturnPart or RetryPromptPart in history.
+    # We only strip incomplete tool calls that have NO matching return; stripping one that does
+    # would orphan the return part and break the conversation for the provider.
+    processed_tool_call_ids: set[str] = set()
+    for message in messages:
+        if isinstance(message, _messages.ModelRequest):
+            for part in message.parts:
+                if isinstance(part, _messages.ToolReturnPart | _messages.RetryPromptPart):
+                    if part.tool_call_id:
+                        processed_tool_call_ids.add(part.tool_call_id)
+
     clean_messages: list[_messages.ModelMessage] = []
     for message in messages:
         last_message = clean_messages[-1] if len(clean_messages) > 0 else None
@@ -1904,6 +1920,23 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
             else:
                 clean_messages.append(message)
         elif isinstance(message, _messages.ModelResponse):  # pragma: no branch
+            # Filter incomplete tool calls from interrupted responses
+            if message.interrupted:
+                filtered_parts = [
+                    part
+                    for part in message.parts
+                    if not (
+                        isinstance(part, _messages.BaseToolCallPart)
+                        and part.args_incomplete
+                        and part.tool_call_id not in processed_tool_call_ids
+                    )
+                ]
+                # Drop empty interrupted responses entirely — providers reject empty assistant messages
+                if not filtered_parts:
+                    continue
+                if len(filtered_parts) != len(message.parts):
+                    message = replace(message, parts=filtered_parts)
+
             if (
                 last_message
                 and isinstance(last_message, _messages.ModelResponse)

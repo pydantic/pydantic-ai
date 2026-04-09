@@ -19,6 +19,7 @@ from typing import Any, TypeVar
 
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
+    BaseToolCallPart,
     BuiltinToolCallPart,
     ModelResponsePart,
     ModelResponseStreamEvent,
@@ -62,13 +63,19 @@ class ModelResponsePartsManager:
     _vendor_id_to_part_index: dict[VendorId, int] = field(default_factory=dict[VendorId, int], init=False)
     """Maps a vendor's "part" ID (if provided) to the index in `_parts` where that part resides."""
 
-    def get_parts(self) -> list[ModelResponsePart]:
+    def get_parts(self, *, exclude_incomplete_tool_calls: bool = False) -> list[ModelResponsePart]:
         """Return only model response parts that are complete (i.e., not ToolCallPartDelta's).
+
+        Args:
+            exclude_incomplete_tool_calls: If True, also exclude tool calls with incomplete (unparseable) arguments.
 
         Returns:
             A list of ModelResponsePart objects. ToolCallPartDelta objects are excluded.
         """
-        return [p for p in self._parts if not isinstance(p, ToolCallPartDelta)]
+        parts = [p for p in self._parts if not isinstance(p, ToolCallPartDelta)]
+        if exclude_incomplete_tool_calls:
+            parts = [p for p in parts if not (isinstance(p, BaseToolCallPart) and p.args_incomplete)]
+        return parts
 
     def get_part_by_vendor_id(self, vendor_id: VendorId) -> ManagedPart | None:
         """Return a part by its vendor ID.

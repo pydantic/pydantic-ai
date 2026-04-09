@@ -1668,6 +1668,19 @@ class BaseToolCallPart:
         """Return `True` if the tool call has content."""
         return self.args not in ('', {}, None)
 
+    @property
+    def args_incomplete(self) -> bool:
+        """Whether the tool call arguments are incomplete (truncated JSON from cancellation)."""
+        if isinstance(self.args, dict):
+            return False
+        if not self.args:
+            return False
+        try:
+            pydantic_core.from_json(self.args)
+            return False
+        except Exception:
+            return True
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
@@ -1754,6 +1767,9 @@ class ModelResponse:
 
     metadata: dict[str, Any] | None = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+
+    interrupted: bool | None = None
+    """Flag set when the response was interrupted due to cancellation."""
 
     @property
     def text(self) -> str | None:

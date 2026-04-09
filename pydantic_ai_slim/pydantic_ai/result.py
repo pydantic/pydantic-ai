@@ -30,7 +30,7 @@ from .output import (
 from .usage import RunUsage, UsageLimits
 
 if TYPE_CHECKING:
-    from .run import AgentRunResult
+    from .run import AgentRunResult, AgentRunResultEvent
 
 __all__ = (
     'OutputDataT',
@@ -826,6 +826,23 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         [`get_output`][pydantic_ai.result.StreamedRunResultSync.get_output] completes.
         """
         return self._streamed_run_result.is_complete
+
+
+class StreamEventsResult(Generic[OutputDataT]):
+    async def __aenter__(self) -> StreamEventsResult[OutputDataT]:
+        return self
+
+    async def __aexit__(self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: Any) -> bool:
+        return False
+
+    def __aiter__(self) -> StreamEventsResult[OutputDataT]:
+        return self
+
+    async def __anext__(self) -> _messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]:
+        raise StopAsyncIteration
+
+    async def cancel(self) -> None:
+        pass
 
 
 @dataclass(repr=False)
