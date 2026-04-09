@@ -201,7 +201,7 @@ _XAI_MODEL_SETTINGS_MAPPING: dict[str, str] = {
 }
 
 
-class XaiModel(Model[AsyncClient]):
+class XaiModel(Model):
     """A model that uses the xAI SDK to interact with xAI models."""
 
     _model_name: str

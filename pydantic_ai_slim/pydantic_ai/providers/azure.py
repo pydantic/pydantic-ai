@@ -8,7 +8,7 @@ from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import create_async_http_client
+from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
@@ -132,10 +132,7 @@ class AzureProvider(Provider[AsyncOpenAI]):
                     'Must provide one of the `api_version` argument or the `OPENAI_API_VERSION` environment variable'
                 )
 
-            if http_client is None:
-                http_client = create_async_http_client()
-                self._own_http_client = http_client
-                self._http_client_factory = create_async_http_client
+            http_client = http_client or cached_async_http_client(provider='azure')
             self._client = AsyncAzureOpenAI(
                 azure_endpoint=azure_endpoint,
                 api_key=api_key,
@@ -143,6 +140,3 @@ class AzureProvider(Provider[AsyncOpenAI]):
                 http_client=http_client,
             )
             self._base_url = str(self._client.base_url)
-
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

@@ -86,10 +86,6 @@ class MCPSamplingModel(Model):
         yield
 
     @property
-    def provider(self) -> None:
-        return None  # pragma: no cover
-
-    @property
     def model_name(self) -> str:
         """The model name.
 

@@ -136,7 +136,7 @@ class MistralModelSettings(ModelSettings, total=False):
 
 
 @dataclass(init=False)
-class MistralModel(Model[Mistral]):
+class MistralModel(Model):
     """A model that uses Mistral.
 
     Internally, this uses the [Mistral Python client](https://github.com/mistralai/client-python) to interact with the API.

@@ -6,17 +6,11 @@ The providers are in charge of providing an authenticated client to the API.
 from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
-from asyncio import Lock
-from collections.abc import Callable
-from types import TracebackType
-from typing import Any, Generic
-
-import httpx
-from typing_extensions import Self, TypeVar
+from typing import Any, Generic, TypeVar
 
 from ..profiles import ModelProfile
 
-InterfaceClient = TypeVar('InterfaceClient', default=Any)
+InterfaceClient = TypeVar('InterfaceClient')
 
 
 class Provider(ABC, Generic[InterfaceClient]):
@@ -27,16 +21,9 @@ class Provider(ABC, Generic[InterfaceClient]):
     Each provider only supports a specific interface. An interface can be supported by multiple providers.
 
     For example, the `OpenAIChatModel` interface can be supported by the `OpenAIProvider` and the `DeepSeekProvider`.
-
-    When used as an async context manager, providers that create their own HTTP client will close it on exit.
-    This is handled automatically when using [`Agent`][pydantic_ai.agent.Agent] as a context manager.
     """
 
     _client: InterfaceClient
-    _own_http_client: httpx.AsyncClient | None = None
-    _http_client_factory: Callable[[], httpx.AsyncClient] | None = None
-    _entered_count: int = 0
-    _enter_lock: Lock | None = None
 
     @property
     @abstractmethod
@@ -60,38 +47,6 @@ class Provider(ABC, Generic[InterfaceClient]):
     def model_profile(model_name: str) -> ModelProfile | None:
         """The model profile for the named model, if available."""
         return None  # pragma: no cover
-
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
-        """Update the SDK client's internal HTTP client reference.
-
-        Subclasses that manage their own HTTP client should override this to inject
-        the new client into their SDK client after re-creation.
-        """
-
-    async def __aenter__(self) -> Self:
-        if self._enter_lock is None:
-            self._enter_lock = Lock()
-        async with self._enter_lock:
-            if self._entered_count == 0 and self._own_http_client is not None:
-                if self._own_http_client.is_closed and self._http_client_factory is not None:
-                    new_client = self._http_client_factory()
-                    self._own_http_client = new_client
-                    self._set_http_client(new_client)
-            self._entered_count += 1
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: TracebackType | None,
-    ) -> bool | None:
-        if self._enter_lock is None:
-            return
-        async with self._enter_lock:
-            self._entered_count -= 1
-            if self._entered_count == 0 and self._own_http_client is not None:
-                await self._own_http_client.aclose()
 
     def __repr__(self) -> str:
         return f'{self.__class__.__name__}(name={self.name}, base_url={self.base_url})'  # pragma: lax no cover

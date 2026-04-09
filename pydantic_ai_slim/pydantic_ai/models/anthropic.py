@@ -265,7 +265,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
 
 
 @dataclass(init=False)
-class AnthropicModel(Model[AsyncAnthropicClient]):
+class AnthropicModel(Model):
     """A model that uses the Anthropic API.
 
     Internally, this uses the [Anthropic Python client](https://github.com/anthropics/anthropic-sdk-python) to interact with the API.

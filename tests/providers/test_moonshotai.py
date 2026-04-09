@@ -53,8 +53,9 @@ def test_moonshotai_pass_openai_client() -> None:
     assert provider.client == openai_client
 
 
-def test_moonshotai_provider_creates_http_client() -> None:
-    """Test MoonshotAI provider creates its own HTTP client."""
+def test_moonshotai_provider_with_cached_http_client() -> None:
+    """Test MoonshotAI provider using cached HTTP client (covers line 76)."""
+    # This should use the else branch with cached_async_http_client
     provider = MoonshotAIProvider(api_key='api-key')
     assert isinstance(provider.client, openai.AsyncOpenAI)
     assert provider.client.api_key == 'api-key'

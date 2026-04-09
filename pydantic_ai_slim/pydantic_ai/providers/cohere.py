@@ -6,13 +6,13 @@ import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import create_async_http_client
+from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.providers import Provider
 
 try:
     from cohere import AsyncClient, AsyncClientV2
-except ImportError as _import_error:
+except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `cohere` package to use the Cohere provider, '
         'you can use the `cohere` optional group — `pip install "pydantic-ai-slim[cohere]"`'
@@ -28,7 +28,7 @@ class CohereProvider(Provider[AsyncClientV2]):
 
     @property
     def base_url(self) -> str:
-        client_wrapper = self.client._client_wrapper  # pyright: ignore[reportPrivateUsage]
+        client_wrapper = self.client._client_wrapper  # type: ignore
         return str(client_wrapper.get_base_url())
 
     @property
@@ -78,13 +78,6 @@ class CohereProvider(Provider[AsyncClientV2]):
                 self._client = AsyncClientV2(api_key=api_key, httpx_client=http_client, base_url=base_url)
                 self._v1_client = AsyncClient(api_key=api_key, httpx_client=http_client, base_url=base_url)
             else:
-                http_client = create_async_http_client()
-                self._own_http_client = http_client
-                self._http_client_factory = create_async_http_client
+                http_client = cached_async_http_client(provider='cohere')
                 self._client = AsyncClientV2(api_key=api_key, httpx_client=http_client, base_url=base_url)
                 self._v1_client = AsyncClient(api_key=api_key, httpx_client=http_client, base_url=base_url)
-
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
-        self._client._client_wrapper.httpx_client.httpx_client = http_client  # pyright: ignore[reportPrivateUsage]
-        if self._v1_client is not None:  # pragma: no branch
-            self._v1_client._client_wrapper.httpx_client.httpx_client = http_client  # pyright: ignore[reportPrivateUsage]

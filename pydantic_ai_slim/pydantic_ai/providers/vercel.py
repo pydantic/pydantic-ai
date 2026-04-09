@@ -7,7 +7,7 @@ import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import create_async_http_client
+from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -107,12 +107,7 @@ class VercelProvider(Provider[AsyncOpenAI]):
                 base_url=self.base_url, api_key=api_key, http_client=http_client, default_headers=default_headers
             )
         else:
-            http_client = create_async_http_client()
-            self._own_http_client = http_client
-            self._http_client_factory = create_async_http_client
+            http_client = cached_async_http_client(provider='vercel')
             self._client = AsyncOpenAI(
                 base_url=self.base_url, api_key=api_key, http_client=http_client, default_headers=default_headers
             )
-
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

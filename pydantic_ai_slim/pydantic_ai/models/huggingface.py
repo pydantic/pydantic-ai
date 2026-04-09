@@ -129,7 +129,7 @@ class HuggingFaceModelSettings(ModelSettings, total=False):
 
 
 @dataclass(init=False)
-class HuggingFaceModel(Model[AsyncInferenceClient]):
+class HuggingFaceModel(Model):
     """A model that uses Hugging Face Inference Providers.
 
     Internally, this uses the [HF Python client](https://github.com/huggingface/huggingface_hub) to interact with the API.

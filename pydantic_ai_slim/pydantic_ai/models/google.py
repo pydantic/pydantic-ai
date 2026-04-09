@@ -268,7 +268,7 @@ def _google_vertex_service_tier_headers(service_tier: GoogleServiceTier) -> dict
 
 
 @dataclass(init=False)
-class GoogleModel(Model[Client]):
+class GoogleModel(Model):
     """A model that uses Gemini via `generativelanguage.googleapis.com` API.
 
     This is implemented from scratch rather than using a dedicated SDK, good API documentation is
