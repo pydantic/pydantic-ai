@@ -1072,6 +1072,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 'Cannot pass both `message_history` and `session_id` — when providing `message_history`, '
                 '`session_id` would be ignored. Provide only one.'
             )
+        if message_history is None and session_id is not None and user_prompt is None:
+            warnings.warn(
+                '`session_id` was provided without a `user_prompt`; the agent will resume from stored history but no new '
+                'user input was provided. If this is unintentional, pass `user_prompt=...` or omit `session_id`.',
+                stacklevel=2,
+            )
         if message_history is None and session_id is not None and self._memory is None:
             raise exceptions.UserError(
                 '`session_id` was provided, but no `memory` store is configured on this agent. '
@@ -1538,8 +1544,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                             run_metadata,
                             model_request_parameters=state.last_model_request_parameters,
                         )
-                except Exception:
-                    pass
+                    )
+            except Exception:
+                pass
             finally:
                 run_span.end()
 
