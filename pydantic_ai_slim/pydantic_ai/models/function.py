@@ -346,6 +346,9 @@ class FunctionStreamedResponse(StreamedResponse):
                     else:
                         assert_never(delta)
 
+    async def cancel(self) -> None:
+        self._cancelled = True
+
     @property
     def model_name(self) -> str:
         """Get the model name of the response."""
