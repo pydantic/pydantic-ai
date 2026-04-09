@@ -8590,10 +8590,44 @@ def test_ordering_preserves_user_order():
 
 
 def test_ordering_nested_combined():
-    """Outermost inside a nested CombinedCapability bubbles up."""
-    inner = CombinedCapability([OutermostCap()])
+    """Ordering from leaves inside a nested CombinedCapability is respected.
+
+    When a CombinedCapability is nested inside another, its leaves' ordering
+    constraints are merged and applied to the outer sort. Leaves without
+    ordering constraints are skipped during the merge.
+    """
+    # OutermostCap declares position='outermost'; PlainCapB has no ordering.
+    # The merged effective ordering for 'inner' should be position='outermost',
+    # placing it before PlainCapA despite being listed second.
+    inner = CombinedCapability([PlainCapB(), OutermostCap()])
     caps = sort_capabilities([PlainCapA(), inner])
     assert caps[0] is inner
+
+
+def test_ordering_nested_combined_no_constraints():
+    """A nested CombinedCapability with no ordering leaves is treated as unconstrained."""
+    inner = CombinedCapability([PlainCapA(), PlainCapB()])
+    outer_caps = sort_capabilities([inner, OutermostCap()])
+    # OutermostCap first (has ordering), inner second (no constraints → unconstrained)
+    assert outer_caps[0].__class__ is OutermostCap
+    assert outer_caps[1] is inner
+
+
+def test_ordering_nested_combined_wraps_without_position():
+    """A nested CombinedCapability with wraps constraints (but no position) merges correctly."""
+    inner = CombinedCapability([PlainCapB(), WrapsACap()])
+    # WrapsACap has wraps=[PlainCapA] but no position.
+    # The nested group inherits that constraint, so it sorts before PlainCapA.
+    caps = sort_capabilities([PlainCapA(), inner])
+    assert caps[0] is inner
+    assert caps[1].__class__ is PlainCapA
+
+
+def test_ordering_single_capability():
+    """sort_capabilities with a single capability returns it unchanged."""
+    cap = OutermostCap()
+    caps = sort_capabilities([cap])
+    assert caps == [cap]
 
 
 def test_ordering_no_constraints_noop():
