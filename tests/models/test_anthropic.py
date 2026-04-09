@@ -50,6 +50,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
+    InstructionPart,
     UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters
@@ -317,7 +318,7 @@ async def test_async_request_prompt_caching(allow_model_requests: None):
 async def test_cache_point_adds_cache_control(allow_model_requests: None):
     """Test that CachePoint correctly adds cache_control to content blocks.
 
-    By default, CachePoint uses ttl='5m'. For non-Bedrock clients, the ttl field is included.
+    By default, CachePoint uses ttl='5m'.
     """
     c = completion_message(
         [BetaTextBlock(text='response', type='text')],
@@ -365,7 +366,7 @@ async def test_cache_point_multiple_markers(allow_model_requests: None):
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     content = completion_kwargs['messages'][0]['content']
 
-    # Default ttl='5m' for non-Bedrock clients
+    # Default ttl='5m'
     assert content == snapshot(
         [
             {'text': 'First chunk', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
@@ -413,7 +414,7 @@ async def test_cache_point_with_image_content(allow_model_requests: None):
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     content = completion_kwargs['messages'][0]['content']
 
-    # Default ttl='5m' for non-Bedrock clients
+    # Default ttl='5m'
     assert content == snapshot(
         [
             {
@@ -464,8 +465,8 @@ def test_cache_control_unsupported_param_type():
         m._add_cache_control_to_last_param(params)  # type: ignore[arg-type]  # Testing internal method
 
 
-def test_build_cache_control_bedrock_omits_ttl():
-    """Test that _build_cache_control automatically omits TTL for Bedrock clients."""
+def test_build_cache_control_bedrock_includes_ttl():
+    """Test that _build_cache_control includes TTL for Bedrock clients."""
     from unittest.mock import MagicMock
 
     from anthropic import AsyncAnthropicBedrock
@@ -476,12 +477,12 @@ def test_build_cache_control_bedrock_omits_ttl():
 
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_bedrock_client))
 
-    # Verify cache_control is built without TTL for Bedrock
+    # Verify cache_control includes TTL for Bedrock
     cache_control = m._build_cache_control('5m')  # pyright: ignore[reportPrivateUsage]
-    assert cache_control == {'type': 'ephemeral'}  # No 'ttl' field
+    assert cache_control == {'type': 'ephemeral', 'ttl': '5m'}
 
     cache_control_1h = m._build_cache_control('1h')  # pyright: ignore[reportPrivateUsage]
-    assert cache_control_1h == {'type': 'ephemeral'}  # TTL still omitted
+    assert cache_control_1h == {'type': 'ephemeral', 'ttl': '1h'}
 
 
 def test_build_cache_control_standard_client_includes_ttl():
@@ -770,6 +771,172 @@ async def test_anthropic_cache_with_custom_ttl(allow_model_requests: None):
     assert tools[0]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '1h'})
     # System instructions should have 5m TTL
     assert system[0]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '5m'})
+
+
+async def test_anthropic_cache_instructions_mixed_static_dynamic(allow_model_requests: None):
+    """Test that cache_control is placed after the last static instruction when mixed with dynamic."""
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        instructions='Static instructions that should be cached.',
+        model_settings=AnthropicModelSettings(anthropic_cache_instructions=True),
+    )
+
+    @agent.instructions
+    def dynamic_context() -> str:
+        return 'Dynamic context that changes per run.'
+
+    await agent.run('test prompt')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    system = completion_kwargs['system']
+    # Should have 2 blocks: static (with cache_control) and dynamic (without)
+    assert system == snapshot(
+        [
+            {
+                'type': 'text',
+                'text': 'Static instructions that should be cached.',
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            },
+            {
+                'type': 'text',
+                'text': 'Dynamic context that changes per run.',
+            },
+        ]
+    )
+
+
+async def test_anthropic_cache_instructions_all_dynamic(allow_model_requests: None):
+    """Test that when all instructions are dynamic, no cache_control is placed on instructions."""
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        system_prompt='A static system prompt.',
+        model_settings=AnthropicModelSettings(anthropic_cache_instructions=True),
+    )
+
+    @agent.instructions
+    def dynamic_instructions() -> str:
+        return 'Dynamic instructions only.'
+
+    await agent.run('test prompt')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    system = completion_kwargs['system']
+    # System prompt block gets cache_control (it's static), dynamic instructions don't
+    assert system == snapshot(
+        [
+            {
+                'type': 'text',
+                'text': 'A static system prompt.',
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            },
+            {
+                'type': 'text',
+                'text': 'Dynamic instructions only.',
+            },
+        ]
+    )
+
+
+async def test_anthropic_cache_instructions_all_static_with_toolset(allow_model_requests: None):
+    """Test all-static cache placement with multiple instruction sources."""
+    from pydantic_ai import FunctionToolset
+
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    toolset = FunctionToolset(instructions='Use the tools wisely.')
+    agent = Agent(
+        m,
+        instructions='You are a helpful assistant.',
+        toolsets=[toolset],
+        model_settings=AnthropicModelSettings(anthropic_cache_instructions=True),
+    )
+
+    await agent.run('test prompt')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    system = completion_kwargs['system']
+    # All instruction parts are static — cache_control on the last block
+    assert system == snapshot(
+        [
+            {
+                'type': 'text',
+                'text': 'You are a helpful assistant.',
+            },
+            {
+                'type': 'text',
+                'text': 'Use the tools wisely.',
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            },
+        ]
+    )
+
+
+async def test_anthropic_cache_instructions_all_dynamic_no_system_prompt(allow_model_requests: None):
+    """Test all-dynamic instructions with no system prompt — no cache_control at all."""
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        model_settings=AnthropicModelSettings(anthropic_cache_instructions=True),
+    )
+
+    @agent.instructions
+    def dynamic_only() -> str:
+        return 'Dynamic instructions.'
+
+    await agent.run('test prompt')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    system = completion_kwargs['system']
+    # No system prompt, all dynamic → no cache_control
+    assert system == snapshot(
+        [
+            {
+                'type': 'text',
+                'text': 'Dynamic instructions.',
+            },
+        ]
+    )
+
+
+async def test_anthropic_cache_instructions_no_instructions(allow_model_requests: None):
+    """Test that cache_instructions with no actual instructions works gracefully."""
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        model_settings=AnthropicModelSettings(anthropic_cache_instructions=True),
+    )
+
+    await agent.run('test prompt')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    # No system prompts or instructions — system param is omitted
+    assert 'system' not in completion_kwargs or not completion_kwargs['system']
 
 
 async def test_anthropic_incompatible_schema_disables_auto_strict(allow_model_requests: None):
@@ -8655,20 +8822,28 @@ async def test_anthropic_system_prompts_and_instructions_ordering():
                 SystemPromptPart(content='System prompt 2'),
                 UserPromptPart(content='Hello'),
             ],
-            instructions='Instructions content',
         ),
     ]
+    model_request_parameters = ModelRequestParameters(
+        instruction_parts=[InstructionPart(content='Instructions content')],
+    )
 
-    system_prompt, anthropic_messages = await m._map_message(messages, ModelRequestParameters(), {})  # pyright: ignore[reportPrivateUsage]
+    system_prompt, anthropic_messages = await m._map_message(messages, model_request_parameters, {})  # pyright: ignore[reportPrivateUsage]
 
     # Verify system prompts and instructions are joined in order: system1, system2, instructions
-    assert system_prompt == snapshot("""\
+    assert system_prompt == snapshot(
+        [
+            {
+                'type': 'text',
+                'text': """\
 System prompt 1
 
-System prompt 2
-
-Instructions content\
-""")
+System prompt 2\
+""",
+            },
+            {'type': 'text', 'text': 'Instructions content'},
+        ]
+    )
     # Verify user message is in anthropic_messages
     assert len(anthropic_messages) == 1
     assert anthropic_messages[0]['role'] == 'user'

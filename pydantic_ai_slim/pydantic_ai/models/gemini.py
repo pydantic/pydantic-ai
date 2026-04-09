@@ -102,7 +102,7 @@ class GeminiModelSettings(ModelSettings, total=False):
 
 @deprecated('Use `GoogleModel` instead. See <https://ai.pydantic.dev/models/google/> for more details.')
 @dataclass(init=False)
-class GeminiModel(Model):
+class GeminiModel(Model[httpx.AsyncClient]):
     """A model that uses Gemini via `generativelanguage.googleapis.com` API.
 
     This is implemented from scratch rather than using a dedicated SDK, good API documentation is
@@ -372,8 +372,9 @@ class GeminiModel(Model):
                 contents.append(_content_model_response(m))
             else:
                 assert_never(m)
-        if instructions := self._get_instructions(messages, model_request_parameters):
-            sys_prompt_parts.append(_GeminiTextPart(text=instructions))
+        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
+            for part in instruction_parts:
+                sys_prompt_parts.append(_GeminiTextPart(text=part.content))
         return sys_prompt_parts, contents
 
     async def _map_user_prompt(self, part: UserPromptPart) -> list[_GeminiPartUnion]:
