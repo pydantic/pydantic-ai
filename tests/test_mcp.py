@@ -15,6 +15,7 @@ import pytest
 from pydantic_ai import (
     BinaryContent,
     BinaryImage,
+    InstructionPart,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -30,7 +31,7 @@ from pydantic_ai.exceptions import (
     UnexpectedModelBehavior,
     UserError,
 )
-from pydantic_ai.models import Model, cached_async_http_client
+from pydantic_ai.models import Model, create_async_http_client
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -244,7 +245,7 @@ async def test_server_instructions_enabled(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True)
     async with server:
         instructions = await server.get_instructions(run_context)
-        assert instructions == 'Be a helpful assistant.'
+        assert instructions == InstructionPart(content='Be a helpful assistant.', dynamic=True)
 
 
 async def test_server_instructions_included_in_agent_request() -> None:
@@ -2335,7 +2336,7 @@ async def test_agent_run_stream_with_mcp_server_http(allow_model_requests: None,
 
 
 async def test_custom_http_client_not_closed():
-    custom_http_client = cached_async_http_client()
+    custom_http_client = create_async_http_client()
 
     assert not custom_http_client.is_closed
 
@@ -2352,7 +2353,7 @@ async def test_custom_http_client_not_closed():
 async def test_http_client_mutually_exclusive_with_headers():
     server = MCPServerStreamableHTTP(
         url='https://example.com/mcp',
-        http_client=cached_async_http_client(),
+        http_client=create_async_http_client(),
         headers={'Authorization': 'Bearer token'},
     )
     with pytest.raises(ValueError, match='`http_client` is mutually exclusive with `headers`'):

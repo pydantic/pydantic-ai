@@ -3,10 +3,11 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncIterable, Callable
+from collections.abc import AsyncIterable, AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
-from datetime import timezone
-from typing import Any, Generic, Literal, TypeVar, Union
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, Union
 
 import pytest
 from dirty_equals import IsJson
@@ -25,6 +26,7 @@ from pydantic_ai import (
     CombinedToolset,
     DocumentUrl,
     ExternalToolset,
+    FilePart,
     FunctionToolset,
     ImageUrl,
     IncompleteToolCall,
@@ -65,18 +67,123 @@ from pydantic_ai.builtin_tools import (
     WebSearchUserLocation,
 )
 from pydantic_ai.exceptions import ContentFilterError
+from pydantic_ai.messages import ModelResponseStreamEvent
+from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputObjectDefinition, StructuredDict, ToolOutput
+from pydantic_ai.providers import Provider
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
 
+if TYPE_CHECKING:
+    from pydantic_ai.providers.alibaba import AlibabaProvider
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.providers.azure import AzureProvider
+    from pydantic_ai.providers.cerebras import CerebrasProvider
+    from pydantic_ai.providers.cohere import CohereProvider
+    from pydantic_ai.providers.deepseek import DeepSeekProvider
+    from pydantic_ai.providers.fireworks import FireworksProvider
+    from pydantic_ai.providers.github import GitHubProvider
+    from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.google_gla import GoogleGLAProvider  # pyright: ignore[reportDeprecated]
+    from pydantic_ai.providers.google_vertex import GoogleVertexProvider  # pyright: ignore[reportDeprecated]
+    from pydantic_ai.providers.grok import GrokProvider  # pyright: ignore[reportDeprecated]
+    from pydantic_ai.providers.groq import GroqProvider
+    from pydantic_ai.providers.heroku import HerokuProvider
+    from pydantic_ai.providers.litellm import LiteLLMProvider
+    from pydantic_ai.providers.mistral import MistralProvider
+    from pydantic_ai.providers.moonshotai import MoonshotAIProvider
+    from pydantic_ai.providers.nebius import NebiusProvider
+    from pydantic_ai.providers.ollama import OllamaProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+    from pydantic_ai.providers.ovhcloud import OVHcloudProvider
+    from pydantic_ai.providers.sambanova import SambaNovaProvider
+    from pydantic_ai.providers.together import TogetherProvider
+    from pydantic_ai.providers.vercel import VercelProvider
+else:
+    try:
+        from pydantic_ai.providers.alibaba import AlibabaProvider
+        from pydantic_ai.providers.azure import AzureProvider
+        from pydantic_ai.providers.cerebras import CerebrasProvider
+        from pydantic_ai.providers.deepseek import DeepSeekProvider
+        from pydantic_ai.providers.fireworks import FireworksProvider
+        from pydantic_ai.providers.github import GitHubProvider
+        from pydantic_ai.providers.grok import GrokProvider  # pyright: ignore[reportDeprecated]
+        from pydantic_ai.providers.heroku import HerokuProvider
+        from pydantic_ai.providers.moonshotai import MoonshotAIProvider
+        from pydantic_ai.providers.nebius import NebiusProvider
+        from pydantic_ai.providers.ollama import OllamaProvider
+        from pydantic_ai.providers.openai import OpenAIProvider
+        from pydantic_ai.providers.openrouter import OpenRouterProvider
+        from pydantic_ai.providers.ovhcloud import OVHcloudProvider
+        from pydantic_ai.providers.sambanova import SambaNovaProvider
+        from pydantic_ai.providers.together import TogetherProvider
+        from pydantic_ai.providers.vercel import VercelProvider
+    except ImportError:  # pragma: lax no cover
+        AlibabaProvider = AzureProvider = CerebrasProvider = DeepSeekProvider = None  # type: ignore
+        FireworksProvider = GitHubProvider = GrokProvider = HerokuProvider = None  # type: ignore
+        MoonshotAIProvider = NebiusProvider = OllamaProvider = OpenAIProvider = None  # type: ignore
+        OpenRouterProvider = OVHcloudProvider = SambaNovaProvider = None  # type: ignore
+        TogetherProvider = VercelProvider = None  # type: ignore
+
+    try:
+        from pydantic_ai.providers.anthropic import AnthropicProvider
+    except ImportError:  # pragma: lax no cover
+        AnthropicProvider = None
+
+    try:
+        from pydantic_ai.providers.cohere import CohereProvider
+    except ImportError:  # pragma: lax no cover
+        CohereProvider = None
+
+    try:
+        from pydantic_ai.providers.google import GoogleProvider
+    except ImportError:  # pragma: lax no cover
+        GoogleProvider = None
+
+    try:
+        from pydantic_ai.providers.google_gla import GoogleGLAProvider  # pyright: ignore[reportDeprecated]
+    except ImportError:  # pragma: lax no cover
+        GoogleGLAProvider = None
+
+    try:
+        from pydantic_ai.providers.google_vertex import GoogleVertexProvider  # pyright: ignore[reportDeprecated]
+    except ImportError:  # pragma: lax no cover
+        GoogleVertexProvider = None
+
+    try:
+        from pydantic_ai.providers.groq import GroqProvider
+    except ImportError:  # pragma: lax no cover
+        GroqProvider = None
+
+    try:
+        from pydantic_ai.providers.litellm import LiteLLMProvider
+    except ImportError:  # pragma: lax no cover
+        LiteLLMProvider = None
+
+    try:
+        from pydantic_ai.providers.mistral import MistralProvider
+    except ImportError:  # pragma: lax no cover
+        MistralProvider = None
+
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv
 
 pytestmark = pytest.mark.anyio
+
+requires_openai = pytest.mark.skipif(OpenAIProvider is None, reason='openai not installed')  # pyright: ignore[reportUnnecessaryComparison]
+requires_anthropic = pytest.mark.skipif(AnthropicProvider is None, reason='anthropic not installed')  # pyright: ignore[reportUnnecessaryComparison]
+requires_cohere = pytest.mark.skipif(CohereProvider is None, reason='cohere not installed')  # pyright: ignore[reportUnnecessaryComparison]
+requires_google = pytest.mark.skipif(GoogleProvider is None, reason='google-genai not installed')  # pyright: ignore[reportUnnecessaryComparison]
+requires_google_gla = pytest.mark.skipif(GoogleGLAProvider is None, reason='google-gla deps not installed')  # pyright: ignore[reportUnnecessaryComparison, reportDeprecated]
+requires_google_vertex = pytest.mark.skipif(GoogleVertexProvider is None, reason='google-auth not installed')  # pyright: ignore[reportUnnecessaryComparison, reportDeprecated]
+requires_groq = pytest.mark.skipif(GroqProvider is None, reason='groq not installed')  # pyright: ignore[reportUnnecessaryComparison]
+requires_litellm = pytest.mark.skipif(LiteLLMProvider is None, reason='litellm not installed')  # pyright: ignore[reportUnnecessaryComparison]
+requires_mistral = pytest.mark.skipif(MistralProvider is None, reason='mistral not installed')  # pyright: ignore[reportUnnecessaryComparison]
 
 
 def test_result_tuple():
@@ -2374,6 +2481,25 @@ def test_prompted_output_with_template():
     )
 
 
+def test_prompted_output_with_template_and_instructions():
+    def return_foo(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.instructions is not None
+        assert 'Be helpful' in info.instructions
+        assert 'Gimme some JSON:' in info.instructions
+        text = Foo(bar='baz').model_dump_json()
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    m = FunctionModel(return_foo)
+
+    class Foo(BaseModel):
+        bar: str
+
+    agent = Agent(m, instructions='Be helpful', output_type=PromptedOutput(Foo, template='Gimme some JSON:'))
+
+    result = agent.run_sync('What is the capital of Mexico?')
+    assert result.output == snapshot(Foo(bar='baz'))
+
+
 def test_prompted_output_with_template_false():
     def return_foo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.model_request_parameters.prompted_output_template is False
@@ -2975,7 +3101,7 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
                         dynamic_ref=IsStr(),
                     ),
                     UserPromptPart(
-                        content=['Hello', ImageUrl(url='https://example.com/image.jpg', identifier='39cfc4')],
+                        content=['Hello', ImageUrl(url='https://example.com/image.jpg')],
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
@@ -6068,9 +6194,7 @@ Your task is to greet people.\
         ModelRequest(
             parts=[UserPromptPart(content='Hello again!', timestamp=IsDatetime())],
             timestamp=IsNow(tz=timezone.utc),
-            instructions="""\
-You are a helpful assistant.\
-""",
+            instructions='You are a helpful assistant.',
             run_id=IsStr(),
         )
     )
@@ -6221,6 +6345,236 @@ def test_agent_repr() -> None:
     assert repr(agent) == snapshot(
         "Agent(model=None, name=None, end_strategy='early', model_settings=None, output_type=<class 'str'>, instrument=None)"
     )
+
+
+async def test_agent_context_manager_no_model():
+    agent = Agent()
+    async with agent:
+        pass
+
+
+def test_cached_async_http_client_deprecated():
+    from pydantic_ai.models import cached_async_http_client
+
+    with pytest.warns(DeprecationWarning, match='cached_async_http_client is deprecated'):
+        cached_async_http_client()
+
+
+@requires_openai
+async def test_provider_lifecycle_closes_client():
+    """Provider lifecycle closes owned HTTP client on exit.
+
+    Regression test for PR #4421 (provider lifecycle management).
+    https://github.com/pydantic/pydantic-ai/pull/4421
+    """
+    provider = OpenAIProvider(api_key='test-key')
+    async with provider:
+        http_client = provider.client._client  # pyright: ignore[reportPrivateUsage]
+        assert not http_client.is_closed
+    assert http_client.is_closed
+
+
+@requires_openai
+async def test_provider_reentrant_lifecycle():
+    """Reentrant provider lifecycle keeps client open until outermost exit.
+
+    Regression test for PR #4421 (provider lifecycle management).
+    https://github.com/pydantic/pydantic-ai/pull/4421
+    """
+    provider = OpenAIProvider(api_key='test-key')
+    async with provider:
+        http_client = provider.client._client  # pyright: ignore[reportPrivateUsage]
+        async with provider:
+            assert not http_client.is_closed
+        assert not http_client.is_closed
+    assert http_client.is_closed
+
+
+@requires_openai
+async def test_provider_aexit_without_aenter():
+    """Calling __aexit__ without __aenter__ is a no-op (no crash).
+
+    Regression test for PR #4421 (provider lifecycle management).
+    https://github.com/pydantic/pydantic-ai/pull/4421
+    """
+    provider = OpenAIProvider(api_key='test-key')
+    await provider.__aexit__(None, None, None)
+    # Clean up the owned http client to avoid ResourceWarning from __del__
+    assert provider._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+    await provider._own_http_client.aclose()  # pyright: ignore[reportPrivateUsage]
+
+
+# TODO(v2): uncomment when we re-enable the ResourceWarning in Provider.__del__
+# @requires_openai
+# async def test_provider_del_warns_on_unclosed_client():
+#     """Provider.__del__ warns if the HTTP client was never closed.
+#
+#     Regression test for PR #4421 (provider lifecycle management).
+#     https://github.com/pydantic/pydantic-ai/pull/4421
+#     """
+#     provider = OpenAIProvider(api_key='test-key')
+#     assert provider._own_http_client is not None
+#     assert not provider._own_http_client.is_closed
+#     with pytest.warns(ResourceWarning, match='was garbage collected with an open HTTP client'):
+#         provider.__del__()
+#     # Clean up
+#     await provider._own_http_client.aclose()
+
+
+@requires_openai
+async def test_provider_reentry_after_close():
+    """Provider can be re-entered after exit by recreating the HTTP client."""
+    provider = OpenAIProvider(api_key='test-key')
+
+    async with provider:
+        first_client = provider.client._client  # pyright: ignore[reportPrivateUsage]
+        assert not first_client.is_closed
+    assert first_client.is_closed
+
+    async with provider:
+        second_client = provider.client._client  # pyright: ignore[reportPrivateUsage]
+        assert not second_client.is_closed
+        assert second_client is not first_client
+    assert second_client.is_closed
+
+
+@requires_google_gla
+@pytest.mark.filterwarnings('ignore:`GoogleGLAProvider` is deprecated.:DeprecationWarning')
+async def test_google_gla_provider_reentry_after_close():
+    """GoogleGLAProvider restores base_url and API key header on re-entry."""
+    provider = GoogleGLAProvider(api_key='test-key')  # pyright: ignore[reportDeprecated]
+
+    async with provider:
+        first_client = provider.client
+        assert not first_client.is_closed
+        assert str(first_client.base_url) == 'https://generativelanguage.googleapis.com/v1beta/models/'
+        assert first_client.headers['X-Goog-Api-Key'] == 'test-key'
+    assert first_client.is_closed
+
+    async with provider:
+        second_client = provider.client
+        assert not second_client.is_closed
+        assert second_client is not first_client
+        assert str(second_client.base_url) == 'https://generativelanguage.googleapis.com/v1beta/models/'
+        assert second_client.headers['X-Goog-Api-Key'] == 'test-key'
+    assert second_client.is_closed
+
+
+@requires_google_vertex
+@pytest.mark.filterwarnings('ignore:`GoogleVertexProvider` is deprecated.:DeprecationWarning')
+async def test_google_vertex_provider_reentry_after_close():
+    """GoogleVertexProvider restores auth and base_url on re-entry."""
+    provider = GoogleVertexProvider(service_account_file='/dev/null', project_id='test-project', region='us-central1')  # pyright: ignore[reportDeprecated]
+
+    async with provider:
+        first_client = provider.client
+        assert not first_client.is_closed
+        assert first_client.auth is not None
+        assert 'us-central1' in str(first_client.base_url)
+    assert first_client.is_closed
+
+    async with provider:
+        second_client = provider.client
+        assert not second_client.is_closed
+        assert second_client is not first_client
+        assert second_client.auth is not None
+        assert 'us-central1' in str(second_client.base_url)
+    assert second_client.is_closed
+
+
+@requires_openai
+async def test_gateway_provider_reentry_after_close():
+    """Gateway provider restores event_hooks on re-entry."""
+    from pydantic_ai.providers.gateway import gateway_provider
+
+    provider = gateway_provider('openai', api_key='test-key', base_url='https://gateway.example.com/proxy')
+
+    async with provider:
+        first_client = provider._own_http_client  # pyright: ignore[reportPrivateUsage]
+        assert first_client is not None
+        assert not first_client.is_closed
+        assert len(first_client.event_hooks.get('request', [])) == 1
+    assert first_client.is_closed
+
+    async with provider:
+        second_client = provider._own_http_client  # pyright: ignore[reportPrivateUsage]
+        assert second_client is not None
+        assert not second_client.is_closed
+        assert second_client is not first_client
+        assert len(second_client.event_hooks.get('request', [])) == 1
+    assert second_client.is_closed
+
+
+@requires_openai
+async def test_azure_provider_lifecycle_closes_client():
+    """Azure provider lifecycle closes owned HTTP client on exit.
+
+    Regression test for PR #4421 (provider lifecycle management).
+    https://github.com/pydantic/pydantic-ai/pull/4421
+    """
+    provider = AzureProvider(
+        azure_endpoint='https://test.openai.azure.com',
+        api_key='test-key',
+        api_version='2024-02-01',
+    )
+    async with provider:
+        http_client = provider.client._client  # pyright: ignore[reportPrivateUsage]
+        assert not http_client.is_closed
+    assert http_client.is_closed
+
+
+@pytest.mark.filterwarnings('ignore:`GrokProvider` is deprecated.:DeprecationWarning')
+@pytest.mark.parametrize(
+    'provider_factory',
+    [
+        pytest.param(lambda: OpenAIProvider(api_key='t'), marks=[requires_openai], id='openai'),
+        pytest.param(lambda: AnthropicProvider(api_key='t'), marks=[requires_anthropic], id='anthropic'),
+        pytest.param(lambda: GroqProvider(api_key='t'), marks=[requires_groq], id='groq'),
+        pytest.param(lambda: MistralProvider(api_key='t'), marks=[requires_mistral], id='mistral'),
+        pytest.param(lambda: CohereProvider(api_key='t'), marks=[requires_cohere], id='cohere'),
+        pytest.param(lambda: GoogleProvider(api_key='t'), marks=[requires_google], id='google'),
+        pytest.param(
+            lambda: AzureProvider(azure_endpoint='https://t.openai.azure.com', api_key='t', api_version='2024-02-01'),
+            marks=[requires_openai],
+            id='azure',
+        ),
+        pytest.param(lambda: CerebrasProvider(api_key='t'), marks=[requires_openai], id='cerebras'),
+        pytest.param(lambda: DeepSeekProvider(api_key='t'), marks=[requires_openai], id='deepseek'),
+        pytest.param(lambda: FireworksProvider(api_key='t'), marks=[requires_openai], id='fireworks'),
+        pytest.param(lambda: GitHubProvider(api_key='t'), marks=[requires_openai], id='github'),
+        pytest.param(lambda: GrokProvider(api_key='t'), marks=[requires_openai], id='grok'),  # pyright: ignore[reportDeprecated]
+        pytest.param(lambda: HerokuProvider(api_key='t'), marks=[requires_openai], id='heroku'),
+        pytest.param(lambda: LiteLLMProvider(api_key='t'), marks=[requires_litellm], id='litellm'),
+        pytest.param(lambda: MoonshotAIProvider(api_key='t'), marks=[requires_openai], id='moonshotai'),
+        pytest.param(lambda: NebiusProvider(api_key='t'), marks=[requires_openai], id='nebius'),
+        pytest.param(
+            lambda: OllamaProvider(base_url='http://localhost:11434/v1'), marks=[requires_openai], id='ollama'
+        ),
+        pytest.param(lambda: OpenRouterProvider(api_key='t'), marks=[requires_openai], id='openrouter'),
+        pytest.param(lambda: OVHcloudProvider(api_key='t'), marks=[requires_openai], id='ovhcloud'),
+        pytest.param(lambda: SambaNovaProvider(api_key='t'), marks=[requires_openai], id='sambanova'),
+        pytest.param(lambda: TogetherProvider(api_key='t'), marks=[requires_openai], id='together'),
+        pytest.param(lambda: VercelProvider(api_key='t'), marks=[requires_openai], id='vercel'),
+        pytest.param(lambda: AlibabaProvider(api_key='t'), marks=[requires_openai], id='alibaba'),
+    ],
+)
+async def test_provider_reentry_recreates_http_client(provider_factory: Callable[[], Provider[Any]]):
+    """All providers with _own_http_client properly close on exit and recreate on re-entry."""
+    provider = provider_factory()
+    assert provider._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+
+    async with provider:
+        first_client = provider._own_http_client  # pyright: ignore[reportPrivateUsage]
+        assert first_client is not None
+        assert not first_client.is_closed
+    assert first_client.is_closed
+
+    async with provider:
+        second_client = provider._own_http_client  # pyright: ignore[reportPrivateUsage]
+        assert second_client is not None
+        assert not second_client.is_closed
+        assert second_client is not first_client
+    assert second_client.is_closed
 
 
 def test_tool_call_with_validation_value_error_serializable():
@@ -7156,8 +7510,8 @@ async def test_thinking_only_response_retry():
                         timestamp=IsDatetime(),
                     ),
                 ],
-                instructions='You are a helpful assistant.',
                 timestamp=IsNow(tz=timezone.utc),
+                instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -7175,8 +7529,8 @@ async def test_thinking_only_response_retry():
                         timestamp=IsDatetime(),
                     )
                 ],
-                instructions='You are a helpful assistant.',
                 timestamp=IsNow(tz=timezone.utc),
+                instructions='You are a helpful assistant.',
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -8864,6 +9218,208 @@ def test_output_validator_exceeds_output_retries():
         agent.run_sync('Hello')
 
     assert retries_log == [0, 1, 2]
+
+
+# endregion
+
+
+# region Image output validators
+
+
+async def test_image_output_validators_run():
+    """Test that output validators are called and can modify image output."""
+
+    def return_image(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[FilePart(content=BinaryImage(data=b'original', media_type='image/png'))])
+
+    image_profile = ModelProfile(supports_image_output=True)
+    agent = Agent(FunctionModel(return_image, profile=image_profile), output_type=BinaryImage)
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], output: BinaryImage) -> BinaryImage:
+        return BinaryImage(data=b'modified', media_type=output.media_type)
+
+    result = await agent.run('Give me an image')
+    assert isinstance(result.output, BinaryImage)
+    assert result.output.data == b'modified', 'validator should be able to modify the output'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Give me an image', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[FilePart(content=BinaryImage(data=b'original', media_type='image/png'))],
+                usage=RequestUsage(input_tokens=54, output_tokens=8),
+                model_name='function:return_image:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_image_output_validator_model_retry():
+    """Test that ModelRetry from image validator raises UnexpectedModelBehavior in streaming."""
+
+    class ImageStreamedResponse(StreamedResponse):
+        async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+            self._usage = RequestUsage()
+            yield self._parts_manager.handle_part(
+                vendor_part_id=0,
+                part=FilePart(content=BinaryImage(data=b'fake-png', media_type='image/png')),
+            )
+
+        @property
+        def model_name(self) -> str:
+            return 'image-model'
+
+        @property
+        def provider_name(self) -> str:
+            return 'test'
+
+        @property
+        def provider_url(self) -> str:
+            return 'https://test.example.com'
+
+        @property
+        def timestamp(self) -> datetime:
+            return datetime(2024, 1, 1)
+
+    class ImageStreamModel(Model):
+        @property
+        def system(self) -> str:  # pragma: no cover
+            return 'test'
+
+        @property
+        def model_name(self) -> str:
+            return 'image-model'
+
+        @property
+        def base_url(self) -> str:  # pragma: no cover
+            return 'https://test.example.com'
+
+        async def request(  # pragma: no cover
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            return ModelResponse(parts=[FilePart(content=BinaryImage(data=b'fake-png', media_type='image/png'))])
+
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            run_context: RunContext | None = None,
+        ) -> AsyncIterator[StreamedResponse]:
+            yield ImageStreamedResponse(model_request_parameters=model_request_parameters)
+
+    image_profile = ModelProfile(supports_image_output=True)
+    agent = Agent(ImageStreamModel(profile=image_profile), output_type=BinaryImage)
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], output: BinaryImage) -> BinaryImage:
+        raise ModelRetry('image validation failed')
+
+    with pytest.raises(
+        UnexpectedModelBehavior,
+        match='Output validation failed during streaming, and retries are not supported',
+    ):
+        async with agent.run_stream('Give me an image') as stream:
+            await stream.get_output()
+
+
+async def test_image_output_validators_run_stream():
+    """Test that output validators are called and can modify image output during streaming."""
+
+    class ImageStreamedResponse(StreamedResponse):
+        async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+            self._usage = RequestUsage()
+            yield self._parts_manager.handle_part(
+                vendor_part_id=0,
+                part=FilePart(content=BinaryImage(data=b'original', media_type='image/png')),
+            )
+
+        @property
+        def model_name(self) -> str:
+            return 'image-model'
+
+        @property
+        def provider_name(self) -> str:
+            return 'test'
+
+        @property
+        def provider_url(self) -> str:
+            return 'https://test.example.com'
+
+        @property
+        def timestamp(self) -> datetime:
+            return datetime(2024, 1, 1)
+
+    class ImageStreamModel(Model):
+        @property
+        def system(self) -> str:  # pragma: no cover
+            return 'test'
+
+        @property
+        def model_name(self) -> str:
+            return 'image-model'
+
+        @property
+        def base_url(self) -> str:  # pragma: no cover
+            return 'https://test.example.com'
+
+        async def request(  # pragma: no cover
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            return ModelResponse(parts=[FilePart(content=BinaryImage(data=b'original', media_type='image/png'))])
+
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            run_context: RunContext | None = None,
+        ) -> AsyncIterator[StreamedResponse]:
+            yield ImageStreamedResponse(model_request_parameters=model_request_parameters)
+
+    image_profile = ModelProfile(supports_image_output=True)
+    agent = Agent(ImageStreamModel(profile=image_profile), output_type=BinaryImage)
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], output: BinaryImage) -> BinaryImage:
+        return BinaryImage(data=b'modified', media_type=output.media_type)
+
+    async with agent.run_stream('Give me an image') as stream:
+        result = await stream.get_output()
+
+    assert isinstance(result, BinaryImage)
+    assert result.data == b'modified', 'validator should be able to modify the output'
+    assert stream.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Give me an image', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[FilePart(content=BinaryImage(data=b'original', media_type='image/png'))],
+                model_name='image-model',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                provider_url='https://test.example.com',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 # endregion
