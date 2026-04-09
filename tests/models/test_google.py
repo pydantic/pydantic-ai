@@ -75,6 +75,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import Is, snapshot
@@ -3905,6 +3906,24 @@ async def test_google_image_generation_tool_no_server_side_tool_config(google_pr
     tools, _image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
     tool_config = model._get_tool_config(params, tools)  # pyright: ignore[reportPrivateUsage]
     assert tool_config is None
+
+    output_tool = ToolDefinition(
+        name='result',
+        description='result tool',
+        parameters_json_schema={'type': 'object', 'properties': {'spam': {'type': 'number'}}},
+    )
+    params_with_output = ModelRequestParameters(
+        builtin_tools=[ImageGenerationTool()],
+        output_tools=[output_tool],
+        allow_text_output=False,
+        output_mode='tool',
+        output_object=None,
+    )
+    params_with_output = model.customize_request_parameters(params_with_output)
+    tools_with_output, _ = model._get_tools(params_with_output)  # pyright: ignore[reportPrivateUsage]
+    tool_config_with_output = model._get_tool_config(params_with_output, tools_with_output)  # pyright: ignore[reportPrivateUsage]
+    assert tool_config_with_output is not None
+    assert 'include_server_side_tool_invocations' not in tool_config_with_output
 
 
 async def test_google_vertexai_image_generation(
