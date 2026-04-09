@@ -109,10 +109,10 @@ PreviewGroqModelNames = Literal[
 GroqModelName = str | ProductionGroqModelNames | PreviewGroqModelNames
 """Possible Groq model names.
 
-Since Groq supports a variety of models and the list changes frequencly, we explicitly list the named models as of 2025-03-31
+Since Groq supports a variety of models and the list changes frequently, we explicitly list the named models as of 2025-03-31
 but allow any name in the type hints.
 
-See <https://console.groq.com/docs/models> for an up to date date list of models and more details.
+See <https://console.groq.com/docs/models> for an up to date list of models and more details.
 """
 
 _FINISH_REASON_MAP: dict[Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call'], FinishReason] = {
@@ -137,7 +137,7 @@ class GroqModelSettings(ModelSettings, total=False):
 
 
 @dataclass(init=False)
-class GroqModel(Model):
+class GroqModel(Model[AsyncGroq]):
     """A model that uses the Groq API.
 
     Internally, this uses the [Groq Python client](https://github.com/groq/groq-python) to interact with the API.
@@ -375,7 +375,7 @@ class GroqModel(Model):
         finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
         return ModelResponse(
             parts=items,
-            usage=_map_usage(response),
+            usage=_map_usage(response, self._provider.name, self.base_url, response.model),
             model_name=response.model,
             provider_response_id=response.id,
             provider_name=self._provider.name,
@@ -589,7 +589,7 @@ class GroqStreamedResponse(StreamedResponse):
                 if self._provider_timestamp is not None:  # pragma: no branch
                     self.provider_details = {'timestamp': self._provider_timestamp}
                 async for chunk in self._response:
-                    self._usage += _map_usage(chunk)
+                    self._usage += _map_usage(chunk, self._provider_name, self._provider_url, self._model_name)
 
                     if chunk.id:  # pragma: no branch
                         self.provider_response_id = chunk.id
@@ -698,7 +698,12 @@ class GroqStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def _map_usage(completion: chat.ChatCompletionChunk | chat.ChatCompletion) -> usage.RequestUsage:
+def _map_usage(
+    completion: chat.ChatCompletionChunk | chat.ChatCompletion,
+    provider: str,
+    provider_url: str,
+    model: str,
+) -> usage.RequestUsage:
     response_usage = None
     if isinstance(completion, chat.ChatCompletion):
         response_usage = completion.usage
@@ -708,9 +713,20 @@ def _map_usage(completion: chat.ChatCompletionChunk | chat.ChatCompletion) -> us
     if response_usage is None:
         return usage.RequestUsage()
 
-    return usage.RequestUsage(
-        input_tokens=response_usage.prompt_tokens,
-        output_tokens=response_usage.completion_tokens,
+    usage_data = response_usage.model_dump(exclude_none=True)
+    details = {
+        k: v
+        for k, v in usage_data.items()
+        if k not in {'prompt_tokens', 'completion_tokens', 'total_tokens'}
+        if isinstance(v, int)
+    }
+
+    return usage.RequestUsage.extract(
+        dict(model=model, usage=usage_data),
+        provider=provider,
+        provider_url=provider_url,
+        provider_fallback='groq',
+        details=details or None,
     )
 
 

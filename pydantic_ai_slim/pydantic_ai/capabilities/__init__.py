@@ -18,9 +18,11 @@ from .combined import CombinedCapability
 from .history_processor import HistoryProcessor
 from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
+from .include_return_schemas import IncludeToolReturnSchemas
 from .mcp import MCP
 from .prefix_tools import PrefixTools
 from .prepare_tools import PrepareTools
+from .set_tool_metadata import SetToolMetadata
 from .thinking import Thinking
 from .thread_executor import ThreadExecutor
 from .toolset import Toolset
@@ -34,9 +36,11 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         BuiltinTool,
         HistoryProcessor,
         ImageGeneration,
+        IncludeToolReturnSchemas,
         MCP,
         PrefixTools,
         PrepareTools,
+        SetToolMetadata,
         Thinking,
         Toolset,
         WebFetch,
@@ -62,9 +66,11 @@ __all__ = [
     'CAPABILITY_TYPES',
     'ImageGeneration',
     'HistoryProcessor',
+    'IncludeToolReturnSchemas',
     'MCP',
     'PrefixTools',
     'PrepareTools',
+    'SetToolMetadata',
     'Thinking',
     'ThreadExecutor',
     'Toolset',
