@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 from urllib.parse import parse_qs, urlparse
 
 import anyio.to_thread
-from botocore.client import BaseClient
 from botocore.exceptions import ClientError
 from typing_extensions import ParamSpec, assert_never
 
@@ -51,7 +50,7 @@ from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, 
 from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP
 from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from pydantic_ai.providers import Provider, infer_provider
-from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
+from pydantic_ai.providers.bedrock import BaseClient, BedrockModelProfile, remove_bedrock_geo_prefix
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.tools import ToolDefinition
 
