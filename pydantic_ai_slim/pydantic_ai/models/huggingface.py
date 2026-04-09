@@ -488,7 +488,11 @@ class HuggingFaceStreamedResponse(StreamedResponse):
     async def cancel(self) -> None:
         if self.cancelled:
             return
-        # huggingface_hub types this as AsyncIterable but it is an AsyncGenerator at runtime
+        # huggingface_hub types this as AsyncIterable but it is an AsyncGenerator at runtime.
+        # TODO(#1524): If cancel() is called while iteration is in-flight (another task
+        # is awaiting __anext__), aclose() raises RuntimeError("asynchronous generator is
+        # already running"). Catch RuntimeError here and still set _cancelled so the
+        # wrapper iterators stop on next check.
         await self._stream.aclose()  # type: ignore[union-attr]
         self._cancelled = True
 

@@ -672,6 +672,9 @@ class MistralStreamedResponse(StreamedResponse):
         self._cancelled = True
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        # TODO(#1524): If cancel() closes the underlying httpx response during an in-flight read,
+        # httpx.StreamClosed (subclass of httpx.StreamError) will be raised here.
+        # Add: except httpx.StreamClosed: if self.cancelled: return; raise
         with _map_api_errors(self._model_name):
             if self._provider_timestamp is not None:  # pragma: no branch
                 self.provider_details = {'timestamp': self._provider_timestamp}

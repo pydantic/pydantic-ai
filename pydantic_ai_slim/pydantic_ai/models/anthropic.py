@@ -1525,6 +1525,9 @@ class AnthropicStreamedResponse(StreamedResponse):
             # is set, because in that case we deliberately closed the stream from under the
             # in-flight read and the resulting failure is expected. Any other occurrence is a
             # real transport/API error and must propagate.
+            # TODO(#1524): Verify whether httpx.StreamClosed (subclass of httpx.StreamError,
+            # NOT httpx.ReadError) should also be caught here. The Anthropic SDK's AsyncStream
+            # may raise differently from raw httpx.
             if self.cancelled:
                 return
             raise

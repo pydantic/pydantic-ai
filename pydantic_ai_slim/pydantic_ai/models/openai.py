@@ -2419,6 +2419,9 @@ class OpenAIStreamedResponse(StreamedResponse):
         self._cancelled = True
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        # TODO(#1524): If cancel() closes the stream during an in-flight read,
+        # httpx.StreamClosed (subclass of httpx.StreamError) will be raised here.
+        # Add: except httpx.StreamClosed: if self.cancelled: return; raise
         with _map_api_errors(self._model_name):
             if self._provider_timestamp is not None:  # pragma: no branch
                 self.provider_details = {'timestamp': self._provider_timestamp}
@@ -2614,6 +2617,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         self._cancelled = True
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
+        # TODO(#1524): If cancel() closes the stream during an in-flight read,
+        # httpx.StreamClosed (subclass of httpx.StreamError) will be raised here.
+        # Add: except httpx.StreamClosed: if self.cancelled: return; raise
         with _map_api_errors(self._model_name):
             # Track annotations by item_id and content_index
             _annotations_by_item: dict[str, list[Any]] = {}

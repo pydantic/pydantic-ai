@@ -476,7 +476,11 @@ class GeminiStreamedResponse(StreamedResponse):
     async def cancel(self) -> None:
         if self.cancelled:
             return
-        # _stream is httpx's aiter_bytes(), an async generator at runtime
+        # _stream is httpx's aiter_bytes(), an async generator at runtime.
+        # TODO(#1524): If cancel() is called while iteration is in-flight (another task
+        # is awaiting __anext__), aclose() raises RuntimeError("asynchronous generator is
+        # already running"). Catch RuntimeError here and still set _cancelled so the
+        # wrapper iterators stop on next check.
         await self._stream.aclose()  # type: ignore[union-attr]
         self._cancelled = True
 

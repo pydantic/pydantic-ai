@@ -589,6 +589,9 @@ class GroqStreamedResponse(StreamedResponse):
         self._cancelled = True
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
+        # TODO(#1524): If cancel() closes the stream during an in-flight read,
+        # httpx.StreamClosed (subclass of httpx.StreamError) will be raised here.
+        # Add: except httpx.StreamClosed: if self.cancelled: return; raise
         with _map_api_errors(self._model_name):
             try:
                 executed_tool_call_id: str | None = None

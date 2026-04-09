@@ -1180,6 +1180,9 @@ class BedrockStreamedResponse(StreamedResponse):
         self._cancelled = True
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
+        # TODO(#1524): If cancel() closes the EventStream during an in-flight read,
+        # urllib3.exceptions.ProtocolError will be raised here.
+        # Add: except urllib3.exceptions.ProtocolError: if self.cancelled: return; raise
         with _map_api_errors(self._model_name):
             if self._provider_response_id is not None:
                 self.provider_response_id = self._provider_response_id
