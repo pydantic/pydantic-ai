@@ -1113,6 +1113,11 @@ Supported by:
                             'title': 'Enable Video Understanding',
                             'type': 'boolean',
                         },
+                        'include_x_search_output': {
+                            'default': False,
+                            'title': 'Include X Search Output',
+                            'type': 'boolean',
+                        },
                     },
                     'title': 'XSearchTool',
                     'type': 'object',
