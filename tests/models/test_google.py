@@ -3896,6 +3896,17 @@ async def test_google_image_generation_tool_all_fields(mocker: MockerFixture, go
     }
 
 
+async def test_google_image_generation_tool_no_server_side_tool_config(google_provider: GoogleProvider) -> None:
+    """ImageGenerationTool alone should not set include_server_side_tool_invocations."""
+    model = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
+    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool()])
+    params = model.customize_request_parameters(params)
+
+    tools, _image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    tool_config = model._get_tool_config(params, tools)  # pyright: ignore[reportPrivateUsage]
+    assert tool_config is None
+
+
 async def test_google_vertexai_image_generation(
     allow_model_requests: None, vertex_provider: GoogleProvider
 ):  # pragma: lax no cover
