@@ -11,8 +11,16 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 from urllib.parse import parse_qs, urlparse
 
 import anyio.to_thread
-from botocore.exceptions import ClientError
 from typing_extensions import ParamSpec, assert_never
+
+try:
+    from botocore.client import BaseClient
+    from botocore.exceptions import ClientError
+except ImportError as _import_error:
+    raise ImportError(
+        'Please install `boto3` to use the Bedrock model, '
+        'you can use the `bedrock` optional group — `pip install "pydantic-ai-slim[bedrock]"`'
+    ) from _import_error
 
 from pydantic_ai import (
     AudioUrl,
@@ -50,7 +58,7 @@ from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, 
 from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP
 from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from pydantic_ai.providers import Provider, infer_provider
-from pydantic_ai.providers.bedrock import BaseClient, BedrockModelProfile, remove_bedrock_geo_prefix
+from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.tools import ToolDefinition
 
