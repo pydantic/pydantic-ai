@@ -301,13 +301,13 @@ jobs:
         with:
           jobs: ${{ toJSON(needs) }}
 
-  trigger-docs:
-    needs: [ check ]
-    if: "success() && github.ref == 'refs/heads/main'"
+  deploy-docs:
+    needs: [check]
+    if: success() && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
       - name: Generate app token
-        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859  # v3.0.0
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
         id: app-token
         with:
           app-id: ${{ vars.DOCS_APP_ID }}
