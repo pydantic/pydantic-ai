@@ -81,7 +81,7 @@ class DeepSeekProvider(Provider[AsyncOpenAI]):
         if not api_key and openai_client is None:
             raise UserError(
                 'Set the `DEEPSEEK_API_KEY` environment variable or pass it via `DeepSeekProvider(api_key=...)`'
-                'to use the DeepSeek provider.'
+                ' to use the DeepSeek provider.'
             )
 
         if openai_client is not None:
