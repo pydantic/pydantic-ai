@@ -1116,6 +1116,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                 'finish_reason': 'content_filter',
                 'run_id': IsStr(),
                 'metadata': None,
+                'interrupted': None,
             }
         ]
     )
@@ -4416,6 +4417,7 @@ async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
         model_request_parameters=ModelRequestParameters(),
         _model_name='gemini-test',
         _response=response_iterator(),
+        _stream=response_iterator(),
         _timestamp=IsDatetime(),
         _provider_name='test-provider',
         _provider_url='',
