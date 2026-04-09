@@ -41,17 +41,7 @@ def _validate_constraints(
     orderings: list[CapabilityOrdering | None],
     leaf_types: list[set[type]],
 ) -> None:
-    """Validate position uniqueness and required dependencies."""
-    outermost = [i for i, o in enumerate(orderings) if o and o.position == 'outermost']
-    innermost = [i for i, o in enumerate(orderings) if o and o.position == 'innermost']
-
-    if len(outermost) > 1:
-        names = [type(caps[i]).__name__ for i in outermost]
-        raise UserError(f"Multiple capabilities declare position 'outermost': {', '.join(names)}")
-    if len(innermost) > 1:
-        names = [type(caps[i]).__name__ for i in innermost]
-        raise UserError(f"Multiple capabilities declare position 'innermost': {', '.join(names)}")
-
+    """Validate required dependencies."""
     all_leaf_types: set[type] = set[type]().union(*leaf_types)
     for i, ordering in enumerate(orderings):
         if ordering and ordering.requires:
@@ -89,18 +79,21 @@ def _add_position_edges(
     orderings: list[CapabilityOrdering | None],
     add_edge: _AddEdge,
 ) -> None:
-    outermost = [i for i, o in enumerate(orderings) if o and o.position == 'outermost']
-    innermost = [i for i, o in enumerate(orderings) if o and o.position == 'innermost']
+    outermost = {i for i, o in enumerate(orderings) if o and o.position == 'outermost'}
+    innermost = {i for i, o in enumerate(orderings) if o and o.position == 'innermost'}
 
-    if outermost:
-        oi = outermost[0]
+    # Outermost tier: each member gets edges to all non-members.
+    # No edges within the tier — wraps/wrapped_by and the min-heap
+    # tiebreaker (original list index) determine order within.
+    for oi in outermost:
         for j in range(n):
-            if j != oi:
+            if j != oi and j not in outermost:
                 add_edge(oi, j)
-    if innermost:
-        ii = innermost[0]
+
+    # Innermost tier: each member gets edges from all non-members.
+    for ii in innermost:
         for j in range(n):
-            if j != ii:
+            if j != ii and j not in innermost:
                 add_edge(j, ii)
 
 

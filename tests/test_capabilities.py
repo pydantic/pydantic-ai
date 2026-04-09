@@ -8502,26 +8502,55 @@ def test_ordering_both_outermost_and_innermost():
     assert caps[-1].__class__ is InnermostCap
 
 
-def test_ordering_conflict_two_outermost():
+def test_ordering_multiple_outermost_tier():
+    """Multiple outermost capabilities form a tier; original order breaks ties."""
+
     @dataclass
     class OutermostCap2(AbstractCapability[Any]):
         @classmethod
         def get_ordering(cls) -> CapabilityOrdering:
             return CapabilityOrdering(position='outermost')
 
-    with pytest.raises(UserError, match="Multiple capabilities declare position 'outermost'"):
-        sort_capabilities([OutermostCap(), OutermostCap2()])
+    caps = sort_capabilities([PlainCapA(), OutermostCap2(), OutermostCap()])
+    names = [type(c).__name__ for c in caps]
+    # Both outermost caps before PlainCapA; original order (OutermostCap2 before OutermostCap) preserved
+    assert names == ['OutermostCap2', 'OutermostCap', 'PlainCapA']
 
 
-def test_ordering_conflict_two_innermost():
+def test_ordering_multiple_innermost_tier():
+    """Multiple innermost capabilities form a tier; original order breaks ties."""
+
     @dataclass
     class InnermostCap2(AbstractCapability[Any]):
         @classmethod
         def get_ordering(cls) -> CapabilityOrdering:
             return CapabilityOrdering(position='innermost')
 
-    with pytest.raises(UserError, match="Multiple capabilities declare position 'innermost'"):
-        sort_capabilities([InnermostCap(), InnermostCap2()])
+    caps = sort_capabilities([InnermostCap(), InnermostCap2(), PlainCapA()])
+    names = [type(c).__name__ for c in caps]
+    # PlainCapA first, then both innermost in original order
+    assert names == ['PlainCapA', 'InnermostCap', 'InnermostCap2']
+
+
+def test_ordering_outermost_tier_with_wraps():
+    """wraps/wrapped_by refines order within the outermost tier."""
+
+    @dataclass
+    class OuterA(AbstractCapability[Any]):
+        @classmethod
+        def get_ordering(cls) -> CapabilityOrdering:
+            return CapabilityOrdering(position='outermost')
+
+    @dataclass
+    class OuterB(AbstractCapability[Any]):
+        @classmethod
+        def get_ordering(cls) -> CapabilityOrdering:
+            return CapabilityOrdering(position='outermost', wraps=[OuterA])
+
+    # OuterB listed after OuterA, but wraps=[OuterA] overrides tiebreaker
+    caps = sort_capabilities([OuterA(), PlainCapA(), OuterB()])
+    names = [type(c).__name__ for c in caps]
+    assert names == ['OuterB', 'OuterA', 'PlainCapA']
 
 
 def test_ordering_wraps():

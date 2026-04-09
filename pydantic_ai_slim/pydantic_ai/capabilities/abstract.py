@@ -54,10 +54,13 @@ WrapToolExecuteHandler: TypeAlias = 'Callable[[dict[str, Any]], Awaitable[Any]]'
 
 
 CapabilityPosition = Literal['outermost', 'innermost']
-"""Fixed position for a capability in the middleware chain.
+"""Position tier for a capability in the middleware chain.
 
-- ``'outermost'``: first in the chain, wraps all other capabilities (e.g. instrumentation).
-- ``'innermost'``: last in the chain, closest to the handler (e.g. durable execution).
+- ``'outermost'``: in the outermost tier, before all non-outermost capabilities.
+  Multiple capabilities can declare ``'outermost'``; original list order breaks ties
+  within the tier, and ``wraps``/``wrapped_by`` edges refine order further.
+- ``'innermost'``: in the innermost tier, after all non-innermost capabilities.
+  Same tie-breaking rules apply.
 """
 
 
