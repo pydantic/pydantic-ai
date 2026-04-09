@@ -1178,8 +1178,8 @@ class GeminiStreamedResponse(StreamedResponse):
                 if file_search_part is not None:
                     yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=file_search_part)
         except errors.APIError as e:
-            if ctx_exc := _check_context_window_exceeded(e, self._model_name):  # pragma: no branch
-                raise ctx_exc from e
+            if ctx_exc := _check_context_window_exceeded(e, self._model_name):
+                raise ctx_exc from e  # pragma: no cover
             if (status_code := e.code) >= 400:
                 raise ModelHTTPError(
                     status_code=status_code,
