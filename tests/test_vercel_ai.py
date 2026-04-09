@@ -6598,10 +6598,8 @@ async def test_system_prompt_with_vercel_adapter():
     adapter = VercelAIAdapter(agent, request)
 
     with capture_run_messages() as messages:
-        events: list[dict[str, Any]] = []
-        async for event in adapter.encode_stream(adapter.run_stream()):
-            if '[DONE]' not in event:
-                events.append(json.loads(event.removeprefix('data: ')))
+        async for _ in adapter.encode_stream(adapter.run_stream()):
+            pass
 
     assert messages == snapshot(
         [
@@ -6647,10 +6645,8 @@ async def test_dynamic_system_prompt_with_vercel_adapter():
     adapter = VercelAIAdapter(agent, request)
 
     with capture_run_messages() as messages:
-        events: list[dict[str, Any]] = []
-        async for event in adapter.encode_stream(adapter.run_stream()):
-            if '[DONE]' not in event:
-                events.append(json.loads(event.removeprefix('data: ')))
+        async for _ in adapter.encode_stream(adapter.run_stream()):
+            pass
 
     assert messages == snapshot(
         [
@@ -6703,10 +6699,8 @@ async def test_system_prompt_reinjected_with_vercel_history():
     adapter = VercelAIAdapter(agent, request)
 
     with capture_run_messages() as messages:
-        events: list[dict[str, Any]] = []
-        async for event in adapter.encode_stream(adapter.run_stream()):
-            if '[DONE]' not in event:
-                events.append(json.loads(event.removeprefix('data: ')))
+        async for _ in adapter.encode_stream(adapter.run_stream()):
+            pass
 
     assert messages == snapshot(
         [
