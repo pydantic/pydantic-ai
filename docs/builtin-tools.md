@@ -875,7 +875,7 @@ from pydantic_ai import Agent, FileSearchTool
 
 async def main():
     agent = Agent(
-        'xai:grok-3-fast',
+        'xai:grok-4-1-fast',
         builtin_tools=[FileSearchTool(file_store_ids=['collection_abc123'])]
     )
 

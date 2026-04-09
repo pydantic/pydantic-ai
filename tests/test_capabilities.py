@@ -6,6 +6,7 @@ import threading
 from collections.abc import AsyncIterable, AsyncIterator, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +16,14 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
 from pydantic_ai.agent import Agent
 from pydantic_ai.agent.spec import AgentSpec
-from pydantic_ai.builtin_tools import CodeExecutionTool, ImageGenerationTool, MCPServerTool, WebFetchTool, WebSearchTool
+from pydantic_ai.builtin_tools import (
+    CodeExecutionTool,
+    ImageGenerationTool,
+    MCPServerTool,
+    WebFetchTool,
+    WebSearchTool,
+    XSearchTool,
+)
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
@@ -58,6 +66,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.xai import XSearch
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings as _ModelSettings
@@ -3878,6 +3887,54 @@ class TestWebSearchCapability:
 
         cap = WebSearch(local=my_search)
         assert isinstance(cap.local, Tool)
+
+
+class TestXSearchCapability:
+    def test_xsearch_default(self):
+        """XSearch() with defaults → builtin XSearchTool, no local."""
+        cap = XSearch()
+        assert cap.get_builtin_tools() == snapshot([XSearchTool()])
+        assert cap.get_toolset() is None
+
+    def test_xsearch_with_all_constraints(self):
+        """XSearch with all constraint fields → XSearchTool configured."""
+        cap = XSearch(
+            allowed_x_handles=['handle1'],
+            from_date=datetime(2024, 1, 1),
+            to_date=datetime(2024, 12, 31),
+            enable_image_understanding=True,
+            enable_video_understanding=True,
+            include_x_search_output=True,
+        )
+        assert cap.get_builtin_tools() == snapshot(
+            [
+                XSearchTool(
+                    allowed_x_handles=['handle1'],
+                    from_date=datetime(2024, 1, 1),
+                    to_date=datetime(2024, 12, 31),
+                    enable_image_understanding=True,
+                    enable_video_understanding=True,
+                    include_x_search_output=True,
+                )
+            ]
+        )
+
+    def test_xsearch_requires_builtin_with_handles(self):
+        """XSearch with handle constraints requires builtin."""
+        assert XSearch(allowed_x_handles=['h']).get_builtin_tools() == snapshot([XSearchTool(allowed_x_handles=['h'])])
+        assert XSearch(excluded_x_handles=['h']).get_builtin_tools() == snapshot(
+            [XSearchTool(excluded_x_handles=['h'])]
+        )
+
+    def test_xsearch_builtin_false_local_false_raises(self):
+        """XSearch(builtin=False, local=False) → UserError."""
+        with pytest.raises(UserError, match='both builtin and local cannot be False'):
+            XSearch(builtin=False, local=False)
+
+    def test_xsearch_builtin_false_with_constraints_raises(self):
+        """XSearch(builtin=False, allowed_x_handles=...) → UserError."""
+        with pytest.raises(UserError, match='constraint fields require the builtin tool'):
+            XSearch(builtin=False, allowed_x_handles=['handle1'])
 
 
 class TestWebFetchCapability:
