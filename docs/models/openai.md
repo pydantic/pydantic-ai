@@ -100,9 +100,7 @@ agent = Agent(model)
 
 ## OpenAI Responses API
 
-Pydantic AI also supports OpenAI's [Responses API](https://platform.openai.com/docs/api-reference/responses) through the
-
-You can use [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] by name:
+Pydantic AI also supports OpenAI's [Responses API](https://platform.openai.com/docs/api-reference/responses) through [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]:
 
 ```python
 from pydantic_ai import Agent
@@ -213,7 +211,7 @@ print(result2.output)
 Many providers and models are compatible with the OpenAI API, and can be used with `OpenAIChatModel` in Pydantic AI.
 Before getting started, check the [installation and configuration](#install) instructions above.
 
-To use another OpenAI-compatible API, you can make use of the `base_url` and `api_key` arguments from `OpenAIProvider`:
+To use another OpenAI-compatible API, you can set the `OPENAI_BASE_URL` and `OPENAI_API_KEY` environment variables, or make use of the `base_url` and `api_key` arguments from [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider]:
 
 ```python
 from pydantic_ai import Agent
@@ -231,9 +229,9 @@ agent = Agent(model)
 ```
 
 Various providers also have their own provider classes so that you don't need to specify the base URL yourself and you can use the standard `<PROVIDER>_API_KEY` environment variable to set the API key.
-When a provider has its own provider class, you can use the `Agent("<provider>:<model>")` shorthand, e.g. `Agent("deepseek:deepseek-chat")` or `Agent("moonshotai:kimi-k2-0711-preview")`, instead of building the `OpenAIChatModel` explicitly. Similarly, you can pass the provider name as a string to the `provider` argument on `OpenAIChatModel` instead of building instantiating the provider class explicitly.
+When a provider has its own provider class, you can use the `Agent("<provider>:<model>")` shorthand, e.g. `Agent("deepseek:deepseek-chat")` or `Agent("moonshotai:kimi-k2-0711-preview")`, instead of building the `OpenAIChatModel` explicitly. Similarly, you can pass the provider name as a string to the `provider` argument on `OpenAIChatModel` instead of instantiating the provider class explicitly.
 
-#### Model Profile
+### Model Profile
 
 Sometimes, the provider or model you're using will have slightly different requirements than OpenAI's API or models, like having different restrictions on JSON schemas for tool definitions, or not supporting tool definitions to be marked as strict.
 
@@ -542,7 +540,7 @@ GitHub Models supports various model families with different prefixes. You can s
 ### Perplexity
 
 Follow the Perplexity [getting started](https://docs.perplexity.ai/guides/getting-started)
-guide to create an API key.
+guide to create an API key, then initialise the model and provider directly:
 
 ```python
 from pydantic_ai import Agent
@@ -620,7 +618,7 @@ agent = Agent(model)
 
 To use [Heroku AI](https://www.heroku.com/ai), first create an API key.
 
-You can set the `HEROKU_INFERENCE_KEY` and (optionally )`HEROKU_INFERENCE_URL` environment variables and use [`HerokuProvider`][pydantic_ai.providers.heroku.HerokuProvider] by name:
+You can set the `HEROKU_INFERENCE_KEY` and (optionally) `HEROKU_INFERENCE_URL` environment variables and use [`HerokuProvider`][pydantic_ai.providers.heroku.HerokuProvider] by name:
 
 ```python
 from pydantic_ai import Agent

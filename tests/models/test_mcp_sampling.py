@@ -5,7 +5,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from pydantic_ai import BinaryContent, ModelRequest, ModelResponse, SystemPromptPart, TextPart, UserPromptPart
+from pydantic_ai import (
+    BinaryContent,
+    ModelRequest,
+    ModelResponse,
+    SystemPromptPart,
+    TextPart,
+    UserPromptPart,
+)
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 

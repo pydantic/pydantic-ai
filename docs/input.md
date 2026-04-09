@@ -1,6 +1,5 @@
 # Image, Audio, Video & Document Input
 
-Some LLMs are now capable of understanding audio, video, image and document content.
 
 ## Image Input
 
@@ -101,6 +100,40 @@ result = agent.run_sync(
 print(result.output)
 #> The document discusses...
 ```
+
+!!! tip
+    If neither `DocumentUrl` nor `BinaryContent` is suitable for your use case (e.g., the model doesn't support
+    `DocumentUrl`, or you want to provide a document in a non-binary format), you can still provide document content as
+    text input by extracting the text yourself and passing it as a string or [`TextContent`][pydantic_ai.TextContent].
+
+
+## Text Input
+
+You can use [`TextContent`][pydantic_ai.TextContent] to provide text input with additional metadata:
+
+```py {title="text_content_input.py" test="skip" lint="skip"}
+from pydantic_ai import Agent, TextContent
+
+agent = Agent(model='openai:gpt-5.2')
+result = agent.run_sync([
+    'Summarize the key points from this text.',
+    TextContent(
+        content=(
+            'Pydantic AI is a Python agent framework. '
+            'It supports text, image, audio, video, and document input.'
+        ),
+        metadata={'source': 'pydantic_ai_inputs.txt'},
+    ),
+])
+```
+
+This is equivalent to passing the text as a `str`, but allows you to include additional `metadata` that can be accessed
+programmatically in your agent logic.
+
+!!! note
+    The `content` field is treated as input to the model, but the `metadata` is **not sent to the model**.
+    It is preserved in messages for programmatic access.
+
 
 ## User-side download vs. direct file URL
 

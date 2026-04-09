@@ -1,0 +1,41 @@
+name: Gateway Model Health
+
+on:
+  schedule:
+    # Run weekly on Monday at 10:00 UTC.
+    - cron: '0 10 * * 1'
+  workflow_dispatch: {}
+
+env:
+  COLUMNS: 150
+  UV_PYTHON: 3.12
+  UV_FROZEN: "1"
+
+permissions:
+  contents: read
+
+jobs:
+  gateway-model-health:
+    environment:
+      name: gateway-model-health
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CI: true
+      PYDANTIC_AI_GATEWAY_API_KEY: ${{ secrets.PYDANTIC_AI_GATEWAY_API_KEY }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-suffix: gateway-model-health
+
+      - name: Install dependencies
+        run: uv sync --all-extras --no-extra outlines-vllm-offline
+
+      - name: Run gateway model catalog checks
+        run: uv run pytest tests/providers/test_gateway_catalog.py -q --run-gateway-live

@@ -7,6 +7,7 @@ specific LLM being used.
 from __future__ import annotations as _annotations
 
 import base64
+import json
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
@@ -14,10 +15,11 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
-from typing import Any, Generic, Literal, TypeVar, get_args, overload
+from types import TracebackType
+from typing import Any, Generic, Literal, TypeVar, cast, get_args, overload
 
 import httpx
-from typing_extensions import TypeAliasType, TypedDict
+from typing_extensions import Self, TypeAliasType, TypedDict
 
 from .. import _utils
 from .._json_schema import JsonSchemaTransformer
@@ -33,6 +35,7 @@ from ..messages import (
     FileUrl,
     FinalResultEvent,
     FinishReason,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -47,8 +50,8 @@ from ..messages import (
 )
 from ..output import OutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
-from ..providers import Provider, infer_provider, infer_provider_class
-from ..settings import ModelSettings, merge_model_settings
+from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
+from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 
@@ -144,12 +147,8 @@ KnownModelName = TypeAliasType(
         'bedrock:us.meta.llama3-2-90b-instruct-v1:0',
         'bedrock:us.meta.llama3-3-70b-instruct-v1:0',
         'cerebras:gpt-oss-120b',
-        'cerebras:llama-3.3-70b',
         'cerebras:llama3.1-8b',
         'cerebras:qwen-3-235b-a22b-instruct-2507',
-        'cerebras:qwen-3-32b',
-        'cerebras:qwen-3-coder-480b',
-        'cerebras:zai-glm-4.6',
         'cerebras:zai-glm-4.7',
         'cohere:c4ai-aya-expanse-32b',
         'cohere:c4ai-aya-expanse-8b',
@@ -159,13 +158,7 @@ KnownModelName = TypeAliasType(
         'cohere:command-r7b-12-2024',
         'deepseek:deepseek-chat',
         'deepseek:deepseek-reasoner',
-        'gateway/anthropic:claude-3-5-haiku-20241022',
-        'gateway/anthropic:claude-3-5-haiku-latest',
-        'gateway/anthropic:claude-3-7-sonnet-20250219',
-        'gateway/anthropic:claude-3-7-sonnet-latest',
         'gateway/anthropic:claude-3-haiku-20240307',
-        'gateway/anthropic:claude-3-opus-20240229',
-        'gateway/anthropic:claude-3-opus-latest',
         'gateway/anthropic:claude-4-opus-20250514',
         'gateway/anthropic:claude-4-sonnet-20250514',
         'gateway/anthropic:claude-haiku-4-5-20251001',
@@ -181,119 +174,37 @@ KnownModelName = TypeAliasType(
         'gateway/anthropic:claude-sonnet-4-5-20250929',
         'gateway/anthropic:claude-sonnet-4-5',
         'gateway/anthropic:claude-sonnet-4-6',
-        'gateway/bedrock:amazon.titan-text-express-v1',
-        'gateway/bedrock:amazon.titan-text-lite-v1',
-        'gateway/bedrock:amazon.titan-tg1-large',
-        'gateway/bedrock:anthropic.claude-3-5-haiku-20241022-v1:0',
         'gateway/bedrock:anthropic.claude-3-5-sonnet-20240620-v1:0',
-        'gateway/bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0',
-        'gateway/bedrock:anthropic.claude-3-7-sonnet-20250219-v1:0',
         'gateway/bedrock:anthropic.claude-3-haiku-20240307-v1:0',
-        'gateway/bedrock:anthropic.claude-3-opus-20240229-v1:0',
-        'gateway/bedrock:anthropic.claude-3-sonnet-20240229-v1:0',
-        'gateway/bedrock:anthropic.claude-haiku-4-5-20251001-v1:0',
-        'gateway/bedrock:anthropic.claude-instant-v1',
-        'gateway/bedrock:anthropic.claude-opus-4-20250514-v1:0',
-        'gateway/bedrock:anthropic.claude-sonnet-4-20250514-v1:0',
-        'gateway/bedrock:anthropic.claude-sonnet-4-5-20250929-v1:0',
-        'gateway/bedrock:anthropic.claude-sonnet-4-6',
-        'gateway/bedrock:anthropic.claude-v2:1',
-        'gateway/bedrock:anthropic.claude-v2',
-        'gateway/bedrock:cohere.command-light-text-v14',
-        'gateway/bedrock:cohere.command-r-plus-v1:0',
-        'gateway/bedrock:cohere.command-r-v1:0',
-        'gateway/bedrock:cohere.command-text-v14',
         'gateway/bedrock:eu.anthropic.claude-haiku-4-5-20251001-v1:0',
         'gateway/bedrock:eu.anthropic.claude-sonnet-4-20250514-v1:0',
         'gateway/bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
         'gateway/bedrock:eu.anthropic.claude-sonnet-4-6',
         'gateway/bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
-        'gateway/bedrock:meta.llama3-1-405b-instruct-v1:0',
-        'gateway/bedrock:meta.llama3-1-70b-instruct-v1:0',
-        'gateway/bedrock:meta.llama3-1-8b-instruct-v1:0',
-        'gateway/bedrock:meta.llama3-70b-instruct-v1:0',
-        'gateway/bedrock:meta.llama3-8b-instruct-v1:0',
-        'gateway/bedrock:mistral.mistral-7b-instruct-v0:2',
-        'gateway/bedrock:mistral.mistral-large-2402-v1:0',
-        'gateway/bedrock:mistral.mistral-large-2407-v1:0',
-        'gateway/bedrock:mistral.mixtral-8x7b-instruct-v0:1',
-        'gateway/bedrock:us.amazon.nova-2-lite-v1:0',
-        'gateway/bedrock:us.amazon.nova-lite-v1:0',
-        'gateway/bedrock:us.amazon.nova-micro-v1:0',
-        'gateway/bedrock:us.amazon.nova-pro-v1:0',
-        'gateway/bedrock:us.anthropic.claude-3-5-haiku-20241022-v1:0',
-        'gateway/bedrock:us.anthropic.claude-3-5-sonnet-20240620-v1:0',
-        'gateway/bedrock:us.anthropic.claude-3-5-sonnet-20241022-v2:0',
-        'gateway/bedrock:us.anthropic.claude-3-7-sonnet-20250219-v1:0',
-        'gateway/bedrock:us.anthropic.claude-3-haiku-20240307-v1:0',
-        'gateway/bedrock:us.anthropic.claude-3-opus-20240229-v1:0',
-        'gateway/bedrock:us.anthropic.claude-3-sonnet-20240229-v1:0',
-        'gateway/bedrock:us.anthropic.claude-haiku-4-5-20251001-v1:0',
-        'gateway/bedrock:us.anthropic.claude-opus-4-20250514-v1:0',
-        'gateway/bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
-        'gateway/bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
-        'gateway/bedrock:us.anthropic.claude-sonnet-4-6',
-        'gateway/bedrock:us.meta.llama3-1-70b-instruct-v1:0',
-        'gateway/bedrock:us.meta.llama3-1-8b-instruct-v1:0',
-        'gateway/bedrock:us.meta.llama3-2-11b-instruct-v1:0',
-        'gateway/bedrock:us.meta.llama3-2-1b-instruct-v1:0',
-        'gateway/bedrock:us.meta.llama3-2-3b-instruct-v1:0',
-        'gateway/bedrock:us.meta.llama3-2-90b-instruct-v1:0',
-        'gateway/bedrock:us.meta.llama3-3-70b-instruct-v1:0',
-        'gateway/google-vertex:gemini-2.0-flash-lite',
-        'gateway/google-vertex:gemini-2.0-flash',
         'gateway/google-vertex:gemini-2.5-flash-image',
         'gateway/google-vertex:gemini-2.5-flash-lite-preview-09-2025',
         'gateway/google-vertex:gemini-2.5-flash-lite',
-        'gateway/google-vertex:gemini-2.5-flash-preview-09-2025',
         'gateway/google-vertex:gemini-2.5-flash',
         'gateway/google-vertex:gemini-2.5-pro',
         'gateway/google-vertex:gemini-3-flash-preview',
         'gateway/google-vertex:gemini-3-pro-image-preview',
-        'gateway/google-vertex:gemini-3-pro-preview',
         'gateway/google-vertex:gemini-3.1-flash-image-preview',
         'gateway/google-vertex:gemini-3.1-flash-lite-preview',
         'gateway/google-vertex:gemini-3.1-pro-preview',
-        'gateway/google-vertex:gemini-flash-latest',
-        'gateway/google-vertex:gemini-flash-lite-latest',
         'gateway/groq:llama-3.1-8b-instant',
         'gateway/groq:llama-3.3-70b-versatile',
-        'gateway/groq:meta-llama/llama-guard-4-12b',
+        'gateway/groq:meta-llama/llama-4-scout-17b-16e-instruct',
+        'gateway/groq:moonshotai/kimi-k2-instruct-0905',
         'gateway/groq:openai/gpt-oss-120b',
         'gateway/groq:openai/gpt-oss-20b',
-        'gateway/groq:whisper-large-v3',
-        'gateway/groq:whisper-large-v3-turbo',
-        'gateway/groq:meta-llama/llama-4-maverick-17b-128e-instruct',
-        'gateway/groq:meta-llama/llama-4-scout-17b-16e-instruct',
-        'gateway/groq:meta-llama/llama-prompt-guard-2-22m',
-        'gateway/groq:meta-llama/llama-prompt-guard-2-86m',
-        'gateway/groq:moonshotai/kimi-k2-instruct-0905',
         'gateway/groq:openai/gpt-oss-safeguard-20b',
-        'gateway/groq:playai-tts',
-        'gateway/groq:playai-tts-arabic',
-        'gateway/groq:qwen/qwen-3-32b',
-        'gateway/openai:chatgpt-4o-latest',
-        'gateway/openai:codex-mini-latest',
-        'gateway/openai:computer-use-preview-2025-03-11',
-        'gateway/openai:computer-use-preview',
         'gateway/openai:gpt-3.5-turbo-0125',
-        'gateway/openai:gpt-3.5-turbo-0301',
-        'gateway/openai:gpt-3.5-turbo-0613',
         'gateway/openai:gpt-3.5-turbo-1106',
-        'gateway/openai:gpt-3.5-turbo-16k-0613',
         'gateway/openai:gpt-3.5-turbo-16k',
         'gateway/openai:gpt-3.5-turbo',
-        'gateway/openai:gpt-4-0125-preview',
-        'gateway/openai:gpt-4-0314',
         'gateway/openai:gpt-4-0613',
-        'gateway/openai:gpt-4-1106-preview',
-        'gateway/openai:gpt-4-32k-0314',
-        'gateway/openai:gpt-4-32k-0613',
-        'gateway/openai:gpt-4-32k',
         'gateway/openai:gpt-4-turbo-2024-04-09',
-        'gateway/openai:gpt-4-turbo-preview',
         'gateway/openai:gpt-4-turbo',
-        'gateway/openai:gpt-4-vision-preview',
         'gateway/openai:gpt-4.1-2025-04-14',
         'gateway/openai:gpt-4.1-mini-2025-04-14',
         'gateway/openai:gpt-4.1-mini',
@@ -304,13 +215,7 @@ KnownModelName = TypeAliasType(
         'gateway/openai:gpt-4o-2024-05-13',
         'gateway/openai:gpt-4o-2024-08-06',
         'gateway/openai:gpt-4o-2024-11-20',
-        'gateway/openai:gpt-4o-audio-preview-2024-10-01',
-        'gateway/openai:gpt-4o-audio-preview-2024-12-17',
-        'gateway/openai:gpt-4o-audio-preview-2025-06-03',
-        'gateway/openai:gpt-4o-audio-preview',
         'gateway/openai:gpt-4o-mini-2024-07-18',
-        'gateway/openai:gpt-4o-mini-audio-preview-2024-12-17',
-        'gateway/openai:gpt-4o-mini-audio-preview',
         'gateway/openai:gpt-4o-mini-search-preview-2025-03-11',
         'gateway/openai:gpt-4o-mini-search-preview',
         'gateway/openai:gpt-4o-mini',
@@ -319,46 +224,29 @@ KnownModelName = TypeAliasType(
         'gateway/openai:gpt-4o',
         'gateway/openai:gpt-5-2025-08-07',
         'gateway/openai:gpt-5-chat-latest',
-        'gateway/openai:gpt-5-codex',
         'gateway/openai:gpt-5-mini-2025-08-07',
         'gateway/openai:gpt-5-mini',
         'gateway/openai:gpt-5-nano-2025-08-07',
         'gateway/openai:gpt-5-nano',
-        'gateway/openai:gpt-5-pro-2025-10-06',
-        'gateway/openai:gpt-5-pro',
         'gateway/openai:gpt-5.1-2025-11-13',
         'gateway/openai:gpt-5.1-chat-latest',
-        'gateway/openai:gpt-5.1-codex-max',
-        'gateway/openai:gpt-5.1-codex',
-        'gateway/openai:gpt-5.1-mini',
         'gateway/openai:gpt-5.1',
         'gateway/openai:gpt-5.2-2025-12-11',
         'gateway/openai:gpt-5.2-chat-latest',
-        'gateway/openai:gpt-5.2-pro-2025-12-11',
-        'gateway/openai:gpt-5.2-pro',
         'gateway/openai:gpt-5.2',
-        'gateway/openai:gpt-5.3-chat-latest',
+        'gateway/openai:gpt-5.4-mini-2026-03-17',
+        'gateway/openai:gpt-5.4-mini',
+        'gateway/openai:gpt-5.4-nano-2026-03-17',
+        'gateway/openai:gpt-5.4-nano',
         'gateway/openai:gpt-5.4',
         'gateway/openai:gpt-5',
         'gateway/openai:o1-2024-12-17',
-        'gateway/openai:o1-mini-2024-09-12',
-        'gateway/openai:o1-mini',
-        'gateway/openai:o1-preview-2024-09-12',
-        'gateway/openai:o1-preview',
-        'gateway/openai:o1-pro-2025-03-19',
-        'gateway/openai:o1-pro',
         'gateway/openai:o1',
         'gateway/openai:o3-2025-04-16',
-        'gateway/openai:o3-deep-research-2025-06-26',
-        'gateway/openai:o3-deep-research',
         'gateway/openai:o3-mini-2025-01-31',
         'gateway/openai:o3-mini',
-        'gateway/openai:o3-pro-2025-06-10',
-        'gateway/openai:o3-pro',
         'gateway/openai:o3',
         'gateway/openai:o4-mini-2025-04-16',
-        'gateway/openai:o4-mini-deep-research-2025-06-26',
-        'gateway/openai:o4-mini-deep-research',
         'gateway/openai:o4-mini',
         'google-gla:gemini-2.0-flash-lite',
         'google-gla:gemini-2.0-flash',
@@ -451,11 +339,18 @@ KnownModelName = TypeAliasType(
         'heroku:claude-3-haiku',
         'heroku:claude-4-5-haiku',
         'heroku:claude-4-5-sonnet',
+        'heroku:claude-4-6-sonnet',
         'heroku:claude-4-sonnet',
         'heroku:claude-opus-4-5',
+        'heroku:claude-opus-4-6',
+        'heroku:deepseek-v3-2',
+        'heroku:glm-4-7',
+        'heroku:glm-4-7-flash',
         'heroku:gpt-oss-120b',
+        'heroku:kimi-k2-5',
         'heroku:kimi-k2-thinking',
         'heroku:minimax-m2',
+        'heroku:minimax-m2-1',
         'heroku:qwen3-235b',
         'heroku:qwen3-coder-480b',
         'heroku:nova-2-lite',
@@ -482,8 +377,6 @@ KnownModelName = TypeAliasType(
         'moonshotai:moonshot-v1-32k',
         'moonshotai:moonshot-v1-8k-vision-preview',
         'moonshotai:moonshot-v1-8k',
-        'openai:chatgpt-4o-latest',
-        'openai:codex-mini-latest',
         'openai:computer-use-preview-2025-03-11',
         'openai:computer-use-preview',
         'openai:gpt-3.5-turbo-0125',
@@ -493,17 +386,10 @@ KnownModelName = TypeAliasType(
         'openai:gpt-3.5-turbo-16k-0613',
         'openai:gpt-3.5-turbo-16k',
         'openai:gpt-3.5-turbo',
-        'openai:gpt-4-0125-preview',
         'openai:gpt-4-0314',
         'openai:gpt-4-0613',
-        'openai:gpt-4-1106-preview',
-        'openai:gpt-4-32k-0314',
-        'openai:gpt-4-32k-0613',
-        'openai:gpt-4-32k',
         'openai:gpt-4-turbo-2024-04-09',
-        'openai:gpt-4-turbo-preview',
         'openai:gpt-4-turbo',
-        'openai:gpt-4-vision-preview',
         'openai:gpt-4.1-2025-04-14',
         'openai:gpt-4.1-mini-2025-04-14',
         'openai:gpt-4.1-mini',
@@ -514,7 +400,6 @@ KnownModelName = TypeAliasType(
         'openai:gpt-4o-2024-05-13',
         'openai:gpt-4o-2024-08-06',
         'openai:gpt-4o-2024-11-20',
-        'openai:gpt-4o-audio-preview-2024-10-01',
         'openai:gpt-4o-audio-preview-2024-12-17',
         'openai:gpt-4o-audio-preview-2025-06-03',
         'openai:gpt-4o-audio-preview',
@@ -540,7 +425,6 @@ KnownModelName = TypeAliasType(
         'openai:gpt-5.1-chat-latest',
         'openai:gpt-5.1-codex-max',
         'openai:gpt-5.1-codex',
-        'openai:gpt-5.1-mini',
         'openai:gpt-5.1',
         'openai:gpt-5.2-2025-12-11',
         'openai:gpt-5.2-chat-latest',
@@ -548,13 +432,13 @@ KnownModelName = TypeAliasType(
         'openai:gpt-5.2-pro',
         'openai:gpt-5.2',
         'openai:gpt-5.3-chat-latest',
+        'openai:gpt-5.4-mini-2026-03-17',
+        'openai:gpt-5.4-mini',
+        'openai:gpt-5.4-nano-2026-03-17',
+        'openai:gpt-5.4-nano',
         'openai:gpt-5.4',
         'openai:gpt-5',
         'openai:o1-2024-12-17',
-        'openai:o1-mini-2024-09-12',
-        'openai:o1-mini',
-        'openai:o1-preview-2024-09-12',
-        'openai:o1-preview',
         'openai:o1-pro-2025-03-19',
         'openai:o1-pro',
         'openai:o1',
@@ -630,6 +514,25 @@ class ModelRequestParameters:
     allow_text_output: bool = True
     allow_image_output: bool = False
 
+    instruction_parts: list[InstructionPart] | None = None
+    """Structured instruction parts with metadata about their origin (static vs dynamic).
+
+    Static instructions (`dynamic=False`) come from literal strings passed to `Agent(instructions=...)`.
+    Dynamic instructions (`dynamic=True`) come from `@agent.instructions` functions, `TemplateStr`,
+    or toolset `get_instructions()` methods.
+
+    Models that support granular caching (e.g. Anthropic, Bedrock) use this to place cache
+    boundaries at the static/dynamic instruction boundary.
+    """
+
+    thinking: ThinkingLevel | None = None
+    """Resolved thinking/reasoning configuration for this request.
+
+    `None` means the model should use its default behavior. Set by the base
+    `Model.prepare_request()` from the unified `thinking` field in `ModelSettings`,
+    after checking that the model's profile supports thinking.
+    """
+
     @cached_property
     def tool_defs(self) -> dict[str, ToolDefinition]:
         return {tool_def.name: tool_def for tool_def in [*self.function_tools, *self.output_tools]}
@@ -643,9 +546,24 @@ class ModelRequestParameters:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-class Model(ABC):
+@dataclass(kw_only=True)
+class ModelRequestContext:
+    """Context for model request hooks.
+
+    Wrapping these parameters in a dataclass instead of a tuple makes the signature
+    future-proof: new fields can be added without breaking existing implementations.
+    """
+
+    model: Model
+    messages: list[ModelMessage]
+    model_settings: ModelSettings | None
+    model_request_parameters: ModelRequestParameters
+
+
+class Model(ABC, Generic[InterfaceClient]):
     """Abstract class for a model."""
 
+    _provider: Provider[InterfaceClient]
     _profile: ModelProfileSpec | None = None
     _settings: ModelSettings | None = None
 
@@ -663,6 +581,27 @@ class Model(ABC):
         """
         self._settings = settings
         self._profile = profile
+
+    @property
+    def provider(self) -> Provider[InterfaceClient] | None:
+        """The provider for this model, if any."""
+        return self._provider
+
+    async def __aenter__(self) -> Self:
+        """Enter the model context, delegating to the provider to manage its HTTP client lifecycle."""
+        if self.provider is not None:
+            await self.provider.__aenter__()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool | None:
+        """Exit the model context, closing the provider's HTTP client if it owns one."""
+        if self.provider is not None:
+            await self.provider.__aexit__(exc_type, exc_val, exc_tb)
 
     @property
     def settings(self) -> ModelSettings | None:
@@ -728,7 +667,7 @@ class Model(ABC):
 
         return model_request_parameters
 
-    def prepare_request(
+    def prepare_request(  # noqa: C901
         self,
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
@@ -744,6 +683,16 @@ class Model(ABC):
         model_settings = merge_model_settings(self.settings, model_settings)
 
         params = self.customize_request_parameters(model_request_parameters)
+        params = _prepare_return_schemas(params, self.profile)
+
+        # Resolve unified thinking setting and strip from model_settings
+        if model_settings and 'thinking' in model_settings:
+            thinking_value = model_settings['thinking']
+            if self.profile.supports_thinking or self.profile.thinking_always_enabled:
+                if not (thinking_value is False and self.profile.thinking_always_enabled):
+                    params = replace(params, thinking=thinking_value)
+            stripped = {k: v for k, v in model_settings.items() if k != 'thinking'}
+            model_settings = cast(ModelSettings, stripped) if stripped else None
 
         if builtin_tools := params.builtin_tools:
             # Deduplicate builtin tools
@@ -775,6 +724,13 @@ class Model(ABC):
         ) and params.prompted_output_template is None:
             params = replace(params, prompted_output_template=self.profile.prompted_output_template)
 
+        # Append prompted_output_instructions to instruction_parts so models that use structured
+        # instruction parts (for per-part system messages or cache placement) also get them.
+        # Done here (after customize_request_parameters) so it uses the final resolved template.
+        if output_instr := params.prompted_output_instructions:
+            parts = [*(params.instruction_parts or []), InstructionPart(content=output_instr)]
+            params = replace(params, instruction_parts=InstructionPart.sorted(parts))
+
         # Check if output mode is supported
         if params.output_mode == 'native' and not self.profile.supports_json_schema_output:
             raise UserError('Native structured output is not supported by this model.')
@@ -783,16 +739,36 @@ class Model(ABC):
         if params.allow_image_output and not self.profile.supports_image_output:
             raise UserError('Image output is not supported by this model.')
 
-        # Check if builtin tools are supported
-        if params.builtin_tools:
+        # Check builtin tools and handle fallback swap
+        if params.builtin_tools or any(t.prefer_builtin for t in params.function_tools):
             supported_types = self.profile.supported_builtin_tools
-            unsupported = [tool for tool in params.builtin_tools if not isinstance(tool, tuple(supported_types))]
-            if unsupported:
-                unsupported_names = [type(tool).__name__ for tool in unsupported]
+
+            supported_builtins = [t for t in params.builtin_tools if isinstance(t, tuple(supported_types))]
+            unsupported_builtins = [t for t in params.builtin_tools if not isinstance(t, tuple(supported_types))]
+
+            supported_ids = {t.unique_id for t in supported_builtins}
+            unsupported_ids = {t.unique_id for t in unsupported_builtins}
+            fallback_ids = {t.prefer_builtin for t in params.function_tools if t.prefer_builtin}
+
+            # Error only for unsupported builtins that have no local fallback
+            without_fallback = unsupported_ids - fallback_ids
+            if without_fallback:
+                unsupported_names = [type(t).__name__ for t in unsupported_builtins if t.unique_id in without_fallback]
                 supported_names = [t.__name__ for t in supported_types]
                 raise UserError(
-                    f'Builtin tool(s) {unsupported_names} not supported by this model. Supported: {supported_names}'
+                    f'Builtin tool(s) {unsupported_names} not supported by this model. '
+                    f'Supported: {supported_names}. '
+                    f'To use these tools with this model, provide a local fallback via '
+                    f'BuiltinOrLocalTool(builtin=..., local=...) or the `local` parameter '
+                    f'of the capability (e.g. ImageGeneration(local=my_func)).'
                 )
+
+            # Remove local fallback tools whose preferred builtin IS supported (model handles natively)
+            # Remove unsupported builtins (their local fallbacks stay)
+            function_tools = [
+                t for t in params.function_tools if not t.prefer_builtin or t.prefer_builtin not in supported_ids
+            ]
+            params = replace(params, builtin_tools=supported_builtins, function_tools=function_tools)
 
         return model_settings, params
 
@@ -893,12 +869,26 @@ class Model(ABC):
     def _get_instructions(
         messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters | None = None
     ) -> str | None:
-        """Get instructions from the first ModelRequest found when iterating messages in reverse.
+        """Get the joined instructions string for the current request.
 
-        In the case that a "mock" request was generated to include a tool-return part for a result tool,
-        we want to use the instructions from the second-to-most-recent request (which should correspond to the
-        original request that generated the response that resulted in the tool-return part).
+        When `model_request_parameters` is provided (normal model request flow), returns
+        the joined content of `instruction_parts` which already includes prompted output
+        instructions and is properly sorted.
+
+        Falls back to reading `ModelRequest.instructions` from message history when
+        `model_request_parameters` is not available (e.g. OTel span attributes).
         """
+        if model_request_parameters:
+            parts = Model._get_instruction_parts(messages, model_request_parameters)
+            if parts:
+                return InstructionPart.join(parts)
+
+        # Fallback: read from message history (used by OTel when model_request_parameters is unavailable)
+        #
+        # Get instructions from the first ModelRequest found when iterating messages in reverse.
+        # In the case that a "mock" request was generated to include a tool-return part for a result tool,
+        # we want to use the instructions from the second-to-most-recent request (which should correspond to the
+        # original request that generated the response that resulted in the tool-return part).
         instructions = None
 
         last_two_requests: list[ModelRequest] = []
@@ -916,30 +906,61 @@ class Model(ABC):
             most_recent_request = last_two_requests[0]
             second_most_recent_request = last_two_requests[1]
 
-            # If we've gotten this far and the most recent request consists of only tool-return parts or retry-prompt parts,
-            # we use the instructions from the second-to-most-recent request. This is necessary because when handling
-            # result tools, we generate a "mock" ModelRequest with a tool-return part for it, and that ModelRequest will not
-            # have the relevant instructions from the agent.
+            # If we've gotten this far and the most recent request consists of only tool-return parts or retry-prompt
+            # parts, we use the instructions from the second-to-most-recent request. This is necessary because when
+            # handling result tools, we generate a "mock" ModelRequest with a tool-return part for it, and that
+            # ModelRequest will not have the relevant instructions from the agent.
 
-            # While it's possible that you could have a message history where the most recent request has only tool returns,
-            # I believe there is no way to achieve that would _change_ the instructions without manually crafting the most
-            # recent message. That might make sense in principle for some usage pattern, but it's enough of an edge case
-            # that I think it's not worth worrying about, since you can work around this by inserting another ModelRequest
-            # with no parts at all immediately before the request that has the tool calls (that works because we only look
-            # at the two most recent ModelRequests here).
+            # While it's possible that you could have a message history where the most recent request has only tool
+            # returns, I believe there is no way to achieve that would _change_ the instructions without manually
+            # crafting the most recent message. That might make sense in principle for some usage pattern, but it's
+            # enough of an edge case that I think it's not worth worrying about, since you can work around this by
+            # inserting another ModelRequest with no parts at all immediately before the request that has the tool
+            # calls (that works because we only look at the two most recent ModelRequests here).
 
             # If you have a use case where this causes pain, please open a GitHub issue and we can discuss alternatives.
 
             if all(p.part_kind == 'tool-return' or p.part_kind == 'retry-prompt' for p in most_recent_request.parts):
                 instructions = second_most_recent_request.instructions
 
-        if model_request_parameters and (output_instructions := model_request_parameters.prompted_output_instructions):
-            if instructions:
-                instructions = '\n\n'.join([instructions, output_instructions])
-            else:
-                instructions = output_instructions
-
         return instructions
+
+    @staticmethod
+    def _get_instruction_parts(
+        messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters
+    ) -> list[InstructionPart] | None:
+        """Get structured instruction parts for the current request.
+
+        Uses `model_request_parameters.instruction_parts` when set (normal agent flow).
+        Falls back to synthesizing from `ModelRequest.instructions` in message history
+        when `instruction_parts` is `None` (e.g. direct `model.request()` calls).
+        """
+        if model_request_parameters.instruction_parts is not None:
+            return model_request_parameters.instruction_parts or None
+
+        # Fallback: synthesize from message history for direct model.request() callers.
+        # Mirrors the last-two-requests logic from _get_instructions: if the most recent
+        # request only has tool-return/retry-prompt parts (a "mock" request for result tools),
+        # use the instructions from the second-to-most-recent request.
+        last_two_requests: list[ModelRequest] = []
+        for message in reversed(messages):
+            if isinstance(message, ModelRequest):
+                last_two_requests.append(message)
+                if len(last_two_requests) == 2:
+                    break
+                if message.instructions is not None:
+                    return [InstructionPart(content=message.instructions)]
+
+        if len(last_two_requests) == 2:
+            most_recent = last_two_requests[0]
+            second = last_two_requests[1]
+            if (
+                all(p.part_kind == 'tool-return' or p.part_kind == 'retry-prompt' for p in most_recent.parts)
+                and second.instructions is not None
+            ):
+                return [InstructionPart(content=second.instructions)]
+
+        return None
 
 
 @dataclass
@@ -1290,41 +1311,32 @@ def infer_model(  # noqa: C901
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
 
 
-def cached_async_http_client(
-    *, provider: str | None = None, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5
-) -> httpx.AsyncClient:
-    """Cached HTTPX async client that creates a separate client for each provider.
+def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> httpx.AsyncClient:
+    """Create an HTTPX async client.
 
-    The client is cached based on the provider parameter. If provider is None, it's used for non-provider specific
-    requests (like downloading images). Multiple agents and calls can share the same client when they use the same provider.
-
-    Each client will get its own transport with its own connection pool. The default pool size is defined by `httpx.DEFAULT_LIMITS`.
-
-    There are good reasons why in production you should use a `httpx.AsyncClient` as an async context manager as
-    described in [encode/httpx#2026](https://github.com/encode/httpx/pull/2026), but when experimenting or showing
-    examples, it's very useful not to.
+    Each call creates a new client instance. When used via a [`Provider`][pydantic_ai.providers.Provider],
+    the client's lifecycle is managed automatically — it will be closed when the provider (or agent) exits.
 
     The default timeouts match those of OpenAI,
     see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
     """
-    client = _cached_async_http_client(provider=provider, timeout=timeout, connect=connect)
-    if client.is_closed:  # pragma: no cover
-        # This happens if the context manager is used, so we need to create a new client.
-        # Since there is no API from `functools.cache` to clear the cache for a specific
-        #  key, clear the entire cache here as a workaround.
-        _cached_async_http_client.cache_clear()
-        client = _cached_async_http_client(provider=provider, timeout=timeout, connect=connect)
-    return client
-
-
-@cache
-def _cached_async_http_client(
-    provider: str | None, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5
-) -> httpx.AsyncClient:
     return httpx.AsyncClient(
         timeout=httpx.Timeout(timeout=timeout, connect=connect),
         headers={'User-Agent': get_user_agent()},
     )
+
+
+def cached_async_http_client(
+    *, provider: str | None = None, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5
+) -> httpx.AsyncClient:
+    """Deprecated. Use [`create_async_http_client`][pydantic_ai.models.create_async_http_client] instead."""
+    warnings.warn(
+        'cached_async_http_client is deprecated, use create_async_http_client instead. '
+        'Note: the new function creates a new client per call instead of returning a cached one.',
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return create_async_http_client(timeout=timeout, connect=connect)
 
 
 DataT = TypeVar('DataT', str, bytes)
@@ -1451,6 +1463,43 @@ def _customize_output_object(transformer: type[JsonSchemaTransformer], output_ob
         json_schema=json_schema,
         strict=schema_transformer.is_strict_compatible if output_object.strict is None else output_object.strict,
     )
+
+
+def _prepare_return_schemas(params: ModelRequestParameters, profile: ModelProfile) -> ModelRequestParameters:
+    """Resolve return schemas: clear on tools that haven't opted in, inject into descriptions for non-native models.
+
+    For tools with `include_return_schema=True` and a non-empty schema, models that natively support
+    return schemas keep the schema as-is; other models get it injected into the tool description.
+    Tools that haven't opted in have their `return_schema` cleared.
+    """
+    inject = not profile.supports_tool_return_schema
+    resolved: list[ToolDefinition] = []
+    changed = False
+    for td in params.function_tools:
+        if not td.include_return_schema and td.return_schema is not None:
+            td = replace(td, return_schema=None)
+            changed = True
+        elif td.include_return_schema and not td.return_schema:
+            warnings.warn(
+                f'Tool {td.name!r} has `include_return_schema` enabled but no meaningful return schema'
+                f' was generated. Set `include_return_schema=False` on this tool to suppress this warning.',
+                UserWarning,
+                stacklevel=1,
+            )
+            td = replace(td, return_schema=None)
+            changed = True
+        elif inject and td.return_schema:
+            parts: list[str] = []
+            if td.description:
+                parts.append(td.description)
+            parts.append('Return schema:')
+            parts.append(json.dumps(td.return_schema, indent=2))
+            td = replace(td, description='\n\n'.join(parts), return_schema=None)
+            changed = True
+        resolved.append(td)
+    if changed:
+        return replace(params, function_tools=resolved)
+    return params
 
 
 def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestParameters) -> FinalResultEvent | None:

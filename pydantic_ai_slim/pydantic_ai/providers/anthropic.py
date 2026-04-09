@@ -8,8 +8,8 @@ import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client
-from pydantic_ai.profiles.anthropic import anthropic_model_profile
+from pydantic_ai.models import create_async_http_client
+from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
 from pydantic_ai.providers import Provider
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
@@ -44,7 +44,7 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         profile = anthropic_model_profile(model_name)
-        return ModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer).update(profile)
+        return AnthropicModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer).update(profile)
 
     @overload
     def __init__(self, *, anthropic_client: AsyncAnthropicClient | None = None) -> None: ...
@@ -90,8 +90,13 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             if http_client is not None:
                 self._client = AsyncAnthropic(api_key=api_key, base_url=base_url, http_client=http_client)
             else:
-                http_client = cached_async_http_client(provider='anthropic')
+                http_client = create_async_http_client()
+                self._own_http_client = http_client
+                self._http_client_factory = create_async_http_client
                 self._client = AsyncAnthropic(api_key=api_key, base_url=base_url, http_client=http_client)
+
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
 
 
 @dataclass(init=False)
