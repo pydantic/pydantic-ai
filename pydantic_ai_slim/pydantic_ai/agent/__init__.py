@@ -2386,14 +2386,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if self._prepare_tools:
             toolset = PreparedToolset(toolset, self._prepare_tools)
 
+        # Always wraps; short-circuits when no deferred tools.
+        # Wraps between PreparedToolset and capability wrappers. Capabilities are outermost so they can change anything.
+        toolset = ToolSearchToolset(wrapped=toolset)
+
         if run_capability is not None:
             wrapper = run_capability.get_wrapper_toolset(toolset)
             if wrapper is not None:
                 toolset = wrapper
-
-        # Always wraps; short-circuits when no deferred tools.
-        # Wraps outside PreparedToolset and capability wrappers so search_tools is always available.
-        toolset = ToolSearchToolset(wrapped=toolset)
 
         output_toolset = output_toolset if _utils.is_set(output_toolset) else self._output_toolset
         if output_toolset is not None:
