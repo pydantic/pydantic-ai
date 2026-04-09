@@ -17,7 +17,7 @@ from pydantic_ai.profiles.qwen import qwen_model_profile
 try:
     from huggingface_hub import AsyncInferenceClient
     from huggingface_hub.constants import INFERENCE_PROXY_TEMPLATE
-except ImportError as _import_error:  # pragma: no cover
+except ModuleNotFoundError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `huggingface_hub` package to use the HuggingFace provider, '
         "you can use the `huggingface` optional group — `pip install 'pydantic-ai-slim[huggingface]'`"

@@ -15,7 +15,7 @@ try:
     from google.auth.credentials import Credentials
     from google.genai.client import Client
     from google.genai.types import HttpOptions
-except ImportError as _import_error:
+except ModuleNotFoundError as _import_error:
     raise ImportError(
         'Please install the `google-genai` package to use the Google provider, '
         'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'

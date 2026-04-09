@@ -151,7 +151,7 @@ try:
     )
     from anthropic.types.model_param import ModelParam
 
-except ImportError as _import_error:
+except ModuleNotFoundError as _import_error:
     raise ImportError(
         'Please install `anthropic` to use the Anthropic model, '
         'you can use the `anthropic` optional group — `pip install "pydantic-ai-slim[anthropic]"`'

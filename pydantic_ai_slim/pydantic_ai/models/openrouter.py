@@ -32,7 +32,7 @@ try:
         _ChatCompletion,  # pyright: ignore[reportPrivateUsage]
         _ChatCompletionChunk,  # pyright: ignore[reportPrivateUsage]
     )
-except ImportError as _import_error:
+except ModuleNotFoundError as _import_error:
     raise ImportError(
         'Please install `openai` to use the OpenRouter model, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'

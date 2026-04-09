@@ -123,7 +123,7 @@ try:
     from openai.types.shared_params import Reasoning
 
     OMIT = omit
-except ImportError as _import_error:
+except ModuleNotFoundError as _import_error:
     raise ImportError(
         'Please install `openai` to use the OpenAI model, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'

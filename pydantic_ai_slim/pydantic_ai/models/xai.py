@@ -74,7 +74,7 @@ try:
     from xai_sdk.proto import chat_pb2, sample_pb2, usage_pb2
     from xai_sdk.tools import code_execution, get_tool_call_type, mcp, web_search  # x_search not yet supported
     from xai_sdk.types.model import ChatModel
-except ImportError as _import_error:
+except ModuleNotFoundError as _import_error:
     raise ImportError(
         'Please install `xai-sdk` to use the xAI model, '
         'you can use the `xai` optional group — `pip install "pydantic-ai-slim[xai]"`'

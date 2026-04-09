@@ -104,7 +104,7 @@ try:
         UrlContextMetadata,
         VideoMetadataDict,
     )
-except ImportError as _import_error:
+except ModuleNotFoundError as _import_error:
     raise ImportError(
         'Please install `google-genai` to use the Google model, '
         'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'

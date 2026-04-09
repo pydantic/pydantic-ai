@@ -66,7 +66,7 @@ try:
     )
     from outlines.types.dsl import JsonSchema
     from PIL import Image as PILImage
-except ImportError as _import_error:
+except ModuleNotFoundError as _import_error:
     raise ImportError(
         'Please install `outlines` to use the Outlines model, '
         'you can use the `outlines` optional group — `pip install "pydantic-ai-slim[outlines]"`'
@@ -202,7 +202,7 @@ class OutlinesModel(Model):
         """
         try:
             from openai import AsyncOpenAI
-        except ImportError as _import_error:
+        except ModuleNotFoundError as _import_error:
             raise ImportError(
                 'Please install `openai` to use the Outlines SGLang model, '
                 'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'

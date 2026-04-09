@@ -16,7 +16,7 @@ try:
     from openai import AsyncOpenAI
 
     from .openai import OpenAIChatModel, OpenAIChatModelSettings
-except ImportError as _import_error:
+except ModuleNotFoundError as _import_error:
     raise ImportError(
         'Please install the `openai` package to use the Cerebras model, '
         'you can use the `cerebras` optional group — `pip install "pydantic-ai-slim[cerebras]"'

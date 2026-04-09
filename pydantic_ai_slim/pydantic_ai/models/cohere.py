@@ -56,7 +56,7 @@ try:
     )
     from cohere.core.api_error import ApiError
     from cohere.v2.client import OMIT
-except ImportError as _import_error:
+except ModuleNotFoundError as _import_error:
     raise ImportError(
         'Please install `cohere` to use the Cohere model, '
         'you can use the `cohere` optional group — `pip install "pydantic-ai-slim[cohere]"`'

@@ -24,7 +24,7 @@ try:
     from botocore.exceptions import NoRegionError
     from botocore.session import Session
     from botocore.tokens import FrozenAuthToken
-except ImportError as _import_error:
+except ModuleNotFoundError as _import_error:
     raise ImportError(
         'Please install the `boto3` package to use the Bedrock provider, '
         'you can use the `bedrock` optional group — `pip install "pydantic-ai-slim[bedrock]"`'
