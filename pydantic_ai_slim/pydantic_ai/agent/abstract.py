@@ -1052,14 +1052,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         async def event_stream_handler(
             _: RunContext[AgentDepsT], events: AsyncIterable[_messages.AgentStreamEvent]
         ) -> None:
-            # Defensive: catch BrokenResourceError so the producer exits cleanly
-            # when the consumer disconnects, rather than relying on the broad
-            # suppress(BaseException) when awaiting the task.
-            try:
-                async for event in events:
-                    await send_stream.send(event)
-            except anyio.BrokenResourceError:
-                return
+            async for event in events:
+                await send_stream.send(event)
 
         async def run_agent() -> AgentRunResult[Any]:
             async with send_stream:

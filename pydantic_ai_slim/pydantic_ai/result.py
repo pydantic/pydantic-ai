@@ -670,7 +670,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
     def cancelled(self) -> bool:
         if self._stream_response is not None:
             return self._stream_response.cancelled
-        return False
+        return False  # pragma: no cover -- only reachable via wrap_run short-circuit (no stream)
 
 
 @dataclass(init=False)

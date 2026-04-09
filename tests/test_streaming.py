@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import datetime
 import json
 import re
@@ -3881,6 +3882,30 @@ async def test_streamed_response_cancel_not_implemented():
     async with agent.run_stream('') as result:
         with pytest.raises(NotImplementedError, match='FunctionStreamedResponse'):
             await result.cancel()
+
+
+async def test_run_stream_events_external_task_cancellation():
+    """When the outer task is cancelled, the CancelledError handler forwards cancellation to the producer."""
+    never = asyncio.Event()
+
+    async def blocking_stream(
+        _messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[str]:
+        yield 'hello'
+        await never.wait()  # block forever so the consumer is still awaiting when we cancel
+
+    agent = Agent(FunctionModel(stream_function=blocking_stream))
+
+    async def consume() -> None:
+        async with agent.run_stream_events('') as stream:
+            async for _ in stream:
+                pass
+
+    task = asyncio.create_task(consume())
+    await asyncio.sleep(0.05)  # let the task start and block on the stream
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
 
 
 # endregion
