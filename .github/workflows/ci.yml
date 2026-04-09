@@ -301,6 +301,7 @@ jobs:
         with:
           jobs: ${{ toJSON(needs) }}
 
+  # Note: this should match the `deploy-docs-manual` job in manually-deploy-docs.yml
   deploy-docs:
     needs: [check]
     if: success() && startsWith(github.ref, 'refs/tags/')
