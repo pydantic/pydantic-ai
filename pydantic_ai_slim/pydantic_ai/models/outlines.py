@@ -234,6 +234,10 @@ class OutlinesModel(Model):
         return cls(outlines_model, provider=provider, profile=profile, settings=settings)
 
     @property
+    def provider(self) -> None:
+        return None  # pragma: no cover
+
+    @property
     def model_name(self) -> str:
         return self._model_name
 
