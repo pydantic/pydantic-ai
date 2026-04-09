@@ -1,70 +1,89 @@
 We'd love you to contribute to Pydantic AI!
 
-## How we work
+## How we work — the short version
 
-Pydantic AI is maintained by a small team. Here's what to do:
+Pydantic AI is maintained by a small team. We set our own priorities based on what benefits the most users, and we work through issues and PRs in that order — not in the order they arrive.
 
-- **Found a bug?** Open an issue describing what you expected and what you're seeing.
-- **Want a feature, integration, or public API change?** Open an issue, or comment on an existing one, describing the problem you're trying to solve. Do not start with code.
-- **Have a plan or code to share?** Make sure there's a tracked issue a maintainer has signed off on and that you're assigned to it, then open the PR.
+- **Found a bug?** Open an issue with a clear description and a minimal reproducible example. Including a [Logfire](https://logfire.pydantic.dev/) trace link helps us debug dramatically faster.
+- **Want a feature or API change?** Open an issue describing the problem you're solving. Do not start with code.
+- **Want to help build a feature?** Comment on the issue explaining why you need it and what context you bring. We call this being a "champion" — more on that below.
+- **Have a fix or code to share?** Make sure a maintainer has agreed to the approach on the issue and assigned you. Then open a PR.
+
+The rest of this page explains why we work this way and what to expect.
 
 ## Before you write code
 
-For anything non-trivial, please align with a maintainer on the approach before you write the code. A pre-aligned PR is much faster to land than one we're seeing cold.
+For anything non-trivial, align with a maintainer on the approach before writing code. A pre-aligned PR is much faster to land than one we're seeing cold.
 
 ### Trivial fixes
 
-Typos, broken links, small doc improvements, obvious bug fixes, docstring clarifications: just open a PR. No issue needed.
+Typos, broken links, small doc improvements, obvious one-line fixes: just open a PR. No issue needed.
 
-### Bug fixes with a judgment call
+### Bug fixes
 
-If the fix could reasonably be done more than one way, or if you're not sure the behaviour is actually a bug: open an issue, or comment on an existing one, and describe what you plan to do.
+If the fix could reasonably go more than one way, or you're unsure it's actually a bug: open an issue first. Include a minimal reproducible example and ideally a [Logfire trace link](https://logfire.pydantic.dev/) showing the problem. For well-scoped bugs, we may generate a fix internally — the most valuable thing you can do is file a clear report and then validate that the fix works for your use case.
 
-### Features, new integrations, or public API changes
+### Features, integrations, or API changes
 
-Before opening anything, ask whether the change needs to live in core at all. Many additions can be built as a [capability](capabilities.md) on top of existing primitives, published as your own package, and used immediately without waiting on us. Capabilities are the primary extension point for Pydantic AI, and "add support for X" features are often a better fit there than in core. Once your capability has real users and a stable shape, come back and we can talk about upstreaming it.
+Before writing code, ask whether the change needs to live in core at all. Many additions work better as a [capability](capabilities.md) — a self-contained extension you publish as your own package and use immediately without waiting on us. Capabilities are the primary extension point for Pydantic AI. Once yours has real users and a stable shape, come back and we can talk about upstreaming.
 
-Otherwise, please don't start with code. Instead:
+If it does belong in core:
 
-1. Search existing issues and PRs first. If one already covers exactly what you want, comment on it rather than opening a new one. If the closest match is only related and not your specific case, open a new issue and link the one you found, rather than piggy-backing on an unrelated thread.
-2. Propose the shape of the solution before building it, as a comment on the relevant issue or as a draft PR containing only a `PLAN.md` file. For larger features we may ask a community "champion" (someone with real context on the problem and a genuine need for the solution) to drive the plan, rather than taking one cold from a drive-by contributor.
-3. Wait for a maintainer to agree on the approach and for the issue to be assigned to you before you start writing code. PRs from contributors who have not been assigned to the linked issue, and PRs from contributors we have not previously verified, may be auto-closed without review. PRs that duplicate an existing open PR on the same issue are closed automatically by our PR Guard.
-4. For larger features, new provider integrations, or anything that adds public API surface, reach out in [Slack](https://logfire.pydantic.dev/docs/join-slack/) first. We've started doing short plan and spec review calls with contributors on bigger work, because iterating on design in GitHub comments has turned out to be slow. A 20-minute call often saves weeks of review cycles.
+1. **Search first.** If an existing issue covers your need, comment there. If the closest match is only related, open a new issue and link it.
+2. **Describe the problem, not just the solution.** Tell us what you're building, what's blocking you, and what you've tried. This context matters more than code.
+3. **Propose a plan before building.** Post the shape of the solution on the issue, or open a draft PR with just a `PLAN.md`. For larger features, we do short video calls with contributors to iterate on the design — a 20-minute call often saves weeks of async review cycles.
+4. **Wait for assignment.** A maintainer needs to agree on the approach and assign the issue to you before you open a PR. Unassigned PRs may be auto-closed.
 
 !!! warning
-    Writing a large feature PR without prior alignment is the most common way for a contribution to stall.
+    Writing a large feature PR without prior alignment is the most common way for a contribution to stall or be closed.
+
+## Champions
+
+A "champion" is someone who needs a feature, has context on the problem, and is willing to invest time to help us get it right. If you want to champion a feature:
+
+- Comment on the issue explaining: what you're building, why you need this, and what you can contribute (domain knowledge, testing, validation).
+- We prioritize features where one or more champions with production use cases have stepped up. A feature with no champion stays in the backlog until either we prioritize it ourselves or someone with real context shows up.
+- Being a champion doesn't mean writing the code. It means shaping the plan and validating the result. For significant features, we'll set up a call to iterate on the design together.
+
+Champions are credited as co-authors when the feature ships.
 
 ## What to expect during review
 
-### We do not automatically triage every new PR
+### We review PRs in our priority order, not submission order
 
-PRs on issues we have not pre-aligned on are not in our review queue by default, no matter how well written they are. If no maintainer has agreed to the change on an issue and assigned it to you, assume we have not seen your PR and will not see it without a nudge. The nudge belongs in `#pydantic-ai` on [Pydantic Slack](https://logfire.pydantic.dev/docs/join-slack/): Slack is how we route contributor work, not GitHub notifications.
+We do not automatically triage every new PR. PRs on issues we have not pre-aligned on are not in our review queue, regardless of how well written they are. If no maintainer has agreed to the change on an issue and assigned it to you, assume we have not seen your PR.
+
+Even for PRs with code we've previously engaged with: we treat all contributed code as a starting point, not a finished product. We review and prioritize PRs based on the feature's importance to the project, not on how much effort went into the code. This is a change from how open source traditionally worked, and we'd rather be honest about it than leave PRs sitting with no signal.
+
+**If you want to know where your PR stands**, the best thing to do is ping `#pydantic-ai` on [Pydantic Slack](https://logfire.pydantic.dev/docs/join-slack/).
 
 ### We may rewrite or supersede your code
 
-We treat contributed code as illustrative: a starting point that shows us the shape of the change and proves the approach works, not the final form we expect to merge. The most useful artefact you can give us for a non-trivial feature is a plan plus a working example that demonstrates the approach, not a polished, merge-ready implementation. On any PR, not just the small ones, we may push commits directly to your branch, open a follow-up PR that supersedes yours, or rewrite the change from scratch. For security reasons in particular, we lean toward rewriting contributed code rather than merging it as-is, and we have been discussing whether to formalise that as a blanket policy. You will still be credited as the original author. If you would rather drive the iteration yourself, say so on the PR.
+We treat contributed code as illustrative: a starting point that shows the shape of the change and proves the approach works, not the final form we merge. The most useful thing you can give us for a non-trivial change is a plan plus a working example — not a polished, merge-ready implementation.
+
+On any PR, we may push commits to your branch, open a follow-up PR that supersedes yours, or rewrite from scratch. For security reasons, we lean toward rewriting contributed code rather than merging as-is. You will still be credited as the original author.
+
+Please don't spend effort chasing green CI, addressing every automated review comment, or rebasing for merge conflicts on a PR we haven't pre-aligned on. If we take the change forward, that polish gets thrown away when we rewrite. Get the approach working, then stop and ping us on Slack.
 
 ### Automated review is advisory, not a gate
 
-PRs in this repo are automatically reviewed by Devin and by our own tooling. Treat these reviews like a linter, not a merge blocker:
+PRs are automatically reviewed by Devin and our own tooling. These reviews are advisory:
 
-* A "no issues found" comment from a bot does not mean your PR is ready to merge. Only a human maintainer's comment counts as review.
-* A bot finding does not mean you have to act on it. If you disagree, say so on the PR.
-* If automated review is generating noise rather than signal on your PR, please tell us. We use that to retune the tooling.
-
-Please don't spend effort chasing green CI, addressing every Devin comment, or rebasing for merge conflicts on a PR we have not pre-aligned on. If we end up taking the change forward, that polish gets thrown away when we rewrite. If we don't, it didn't change the outcome. Get the change to a state where the approach is demonstrable, then stop and ping us in `#pydantic-ai` on [Slack](https://logfire.pydantic.dev/docs/join-slack/) if you want to know what happens next.
+- A bot approval does not mean your PR is ready to merge. Only a human maintainer's review counts.
+- A bot finding does not mean you must act on it. If you disagree, say so.
+- If automated review is generating noise on your PR, tell us. We use that feedback to retune the tooling.
 
 ### Priority
 
-We receive more contributions than we have time to review and take forward, and we focus our time where it has the most impact. That means we cannot promise to get to every PR, even good ones, and we would rather say so up front than leave your work sitting open indefinitely with no signal.
+We receive far more contributions than we can review, and we focus where it has the most impact. We cannot promise to get to every PR, even good ones, and we'd rather say so up front than leave your work open indefinitely with no signal.
 
-If your change is something that could live as a [capability](capabilities.md) or as a workaround in user code, shipping it yourself is often the fastest path to having it in front of real users. Once it has traction, come back and we can talk about whether upstreaming makes sense.
+Features that align with our roadmap and have active champions get priority. Features that could live as a [capability](capabilities.md) or workaround in user code: shipping it yourself is often the fastest path. Once it has traction, come back and we can talk about upstreaming.
 
 ## If your PR or issue has gone quiet
 
-1. Ping us in `#pydantic-ai` on [Pydantic Slack](https://logfire.pydantic.dev/docs/join-slack/) with a link.
-2. Say what you'd like to happen. "Can you take a look?", "I'm blocked on this and want to know if it's on your radar", and "Do you want me to close this?" are all fine.
-3. If you've been waiting weeks without any human response, please flag it. That's a process failure on our side.
+1. Ping `#pydantic-ai` on [Pydantic Slack](https://logfire.pydantic.dev/docs/join-slack/) with a link.
+2. Say what you need: "Can you take a look?", "I'm blocked — is this on your radar?", or "Should I close this?" are all fine.
+3. If you've been waiting weeks without any human response, flag it. That's a process failure on our side and we want to know.
 
 ## Installation and Setup
 
