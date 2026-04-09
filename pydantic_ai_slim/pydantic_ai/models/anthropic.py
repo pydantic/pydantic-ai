@@ -779,8 +779,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             last_tool = tools[-1]
             last_tool['cache_control'] = self._build_cache_control(ttl)
 
-        if 'parallel_tool_calls' in model_settings and tool_choice.get('type') != 'none':
-            tool_choice['disable_parallel_tool_use'] = not model_settings['parallel_tool_calls']  # pyright: ignore[reportGeneralTypeIssues]
+        if 'parallel_tool_calls' in model_settings and tool_choice['type'] != 'none':
+            tool_choice['disable_parallel_tool_use'] = not model_settings['parallel_tool_calls']
 
         return tools, tool_choice
 
@@ -1666,7 +1666,7 @@ def _support_tool_forcing(
     Otherwise the value may come from the `tool_choice` resolution logic, in which case we fall back softly.
     Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use
     """
-    # Mirror the dual-check pattern from prepare_request (lines 404-410)
+    # Mirror the dual-check pattern from prepare_request()
     thinking_enabled = False
     if anthropic_thinking := model_settings.get('anthropic_thinking'):
         thinking_enabled = anthropic_thinking.get('type') in ('enabled', 'adaptive')

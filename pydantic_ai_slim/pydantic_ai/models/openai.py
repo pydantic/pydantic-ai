@@ -3125,7 +3125,7 @@ def _support_tool_forcing(
     openai_profile: OpenAIModelProfile,
     model_settings: ModelSettings | None,
 ) -> bool:
-    """Raise UserError if user explicitly set tool_choice to force tool use but model doesn't support it."""
+    """Check if the model supports forced tool use, raising UserError if explicitly requested but unsupported."""
     if not openai_profile.openai_supports_tool_choice_required:
         explicit_choice = (model_settings or {}).get('tool_choice')
         if explicit_choice == 'required' or isinstance(explicit_choice, list):

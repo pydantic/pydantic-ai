@@ -31,7 +31,7 @@ from . import _output, _system_prompt, exceptions, messages as _messages, models
 from ._run_context import set_current_run_context
 from .exceptions import ToolRetryError
 from .output import OutputDataT, OutputSpec
-from .settings import ModelSettings, ToolOrOutput
+from .settings import ModelSettings
 from .tools import (
     AgentBuiltinTool,
     DeferredToolCallResult,
@@ -899,9 +899,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         """
         if model_settings:
             tool_choice = model_settings.get('tool_choice')
-            if tool_choice == 'required' or (
-                isinstance(tool_choice, list) and not isinstance(tool_choice, ToolOrOutput)
-            ):
+            if tool_choice == 'required' or isinstance(tool_choice, list):
                 raise exceptions.UserError(
                     f'`tool_choice={tool_choice!r}` prevents the agent from producing a final response '
                     f'because output tools are excluded. Use `ToolOrOutput` to combine specific tools '
