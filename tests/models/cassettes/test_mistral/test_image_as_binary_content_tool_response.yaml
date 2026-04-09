@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '396'
+      - '366'
       content-type:
       - application/json
       host:
@@ -43,11 +43,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '459'
+      - '378'
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019ce0be-2f1c-7fb6-a6df-ede42084010e
+      - 019b4b62-4dc0-7853-9966-6c1f2fbef5e5
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -63,18 +63,16 @@ interactions:
           - function:
               arguments: '{}'
               name: get_image
-            id: jCmzrytwr
+            id: FI5qQGzDE
             index: 0
-      created: 1773297086
-      id: fca3166d00dd4ff89cd2de88256635c3
+      created: 1766496292
+      id: 20c656d7c70e4362858160d9d241ce92
       model: pixtral-12b-latest
       object: chat.completion
       usage:
-        completion_tokens: 6
+        completion_tokens: 16
         prompt_tokens: 65
-        prompt_tokens_details:
-          cached_tokens: 64
-        total_tokens: 71
+        total_tokens: 81
     status:
       code: 200
       message: OK
@@ -87,12 +85,12 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '132321'
+      - '132246'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=2grdPQyo_XM1Y7tBLMoMCxUWEP.Y8FAToq2uvoF9ApM-1773297086-1.0.1.1-pM4rtHuz0LPbg8tdkKC7ZUWppjI8Qx0EV.d11tdQbQKiYQ2ofNavKf3s6oikB6C7O7nL2y4iFFxDLRGX51l_DfQDmpdqsJaWjlXLlgFlntM;
-        _cfuvid=Atf4gMzamRX8paUFV6xxQOiIYki9JsBCV4ZN4yiNjBI-1773297086378-0.0.1.1-604800000
+      - __cf_bm=0X_lB7psgdfUrYU1R_swWXVYah7aE38oU5vAqjFVqDA-1766496292-1.0.1.1-Qowa_OABtK6OH75HOTyRPTc7aQvUfETglKH.mtGruyEMHo4feAU1BE8GUtySiuwE3uvuqrS8KiZPykYoyu00H_xr80ejvqxRSwbsQNvqoTE;
+        _cfuvid=tHWydPJg1gvjQjEy_jnJIqPIsqRqrzQuiESHFzwHCeo-1766496292746-0.0.1.1-604800000
       host:
       - api.mistral.ai
     method: POST
@@ -109,12 +107,12 @@ interactions:
         - function:
             arguments: '{}'
             name: get_image
-          id: jCmzrytwr
+          id: FI5qQGzDE
           index: 0
           type: function
       - content: See file 241a70
         role: tool
-        tool_call_id: jCmzrytwr
+        tool_call_id: FI5qQGzDE
       - content:
         - text: OK
           type: text
@@ -150,11 +148,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '533'
+      - '528'
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019ce0be-3169-7b84-b2ac-947ee2cf0ead
+      - 019b4b62-5046-717f-89d8-2bf58143fa1f
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -164,20 +162,19 @@ interactions:
       - finish_reason: stop
         index: 0
         message:
-          content: The fruit in the image is a **kiwi**. Specifically, it appears to be the inside of a **green kiwi**, showing
-            its distinctive black seeds and bright green flesh.
+          content: The image shows a kiwi fruit that has been cut in half. Kiwis are small, oval-shaped fruits with a bright
+            green flesh and tiny black seeds. They have a sweet and tangy flavor and are known for being rich in vitamin C
+            and fiber.
           role: assistant
           tool_calls: null
-      created: 1773297086
-      id: 3d023b4b1c0a4934b3cd0226136c12fd
+      created: 1766496293
+      id: b9df7d6167a74543aed6c27557ab0a29
       model: pixtral-12b-latest
       object: chat.completion
       usage:
-        completion_tokens: 37
-        prompt_tokens: 580
-        prompt_tokens_details:
-          cached_tokens: 64
-        total_tokens: 617
+        completion_tokens: 54
+        prompt_tokens: 1540
+        total_tokens: 1594
     status:
       code: 200
       message: OK
