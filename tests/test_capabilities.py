@@ -48,6 +48,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    PartStartEvent,
     RetryPromptPart,
     TextPart,
     ToolCallPart,
@@ -589,12 +590,8 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:us.meta.llama3-2-90b-instruct-v1:0',
                         'bedrock:us.meta.llama3-3-70b-instruct-v1:0',
                         'cerebras:gpt-oss-120b',
-                        'cerebras:llama-3.3-70b',
                         'cerebras:llama3.1-8b',
                         'cerebras:qwen-3-235b-a22b-instruct-2507',
-                        'cerebras:qwen-3-32b',
-                        'cerebras:qwen-3-coder-480b',
-                        'cerebras:zai-glm-4.6',
                         'cerebras:zai-glm-4.7',
                         'cohere:c4ai-aya-expanse-32b',
                         'cohere:c4ai-aya-expanse-8b',
@@ -785,11 +782,18 @@ def test_model_json_schema_with_capabilities():
                         'heroku:claude-3-haiku',
                         'heroku:claude-4-5-haiku',
                         'heroku:claude-4-5-sonnet',
+                        'heroku:claude-4-6-sonnet',
                         'heroku:claude-4-sonnet',
                         'heroku:claude-opus-4-5',
+                        'heroku:claude-opus-4-6',
+                        'heroku:deepseek-v3-2',
+                        'heroku:glm-4-7',
+                        'heroku:glm-4-7-flash',
                         'heroku:gpt-oss-120b',
+                        'heroku:kimi-k2-5',
                         'heroku:kimi-k2-thinking',
                         'heroku:minimax-m2',
+                        'heroku:minimax-m2-1',
                         'heroku:qwen3-235b',
                         'heroku:qwen3-coder-480b',
                         'heroku:nova-2-lite',
@@ -1975,6 +1979,121 @@ async def test_combined_capability_for_run_returns_new_when_child_changes():
     new_per_run = result.capabilities[1]
     assert isinstance(new_per_run, PerRunCap)
     assert new_per_run.run_id == 1
+
+
+def test_apply_single_capability():
+    """AbstractCapability.apply() visits just the capability itself."""
+
+    @dataclass
+    class MyCap(AbstractCapability[None]):
+        pass
+
+    cap = MyCap()
+    visited: list[AbstractCapability[None]] = []
+    cap.apply(visited.append)
+    assert visited == [cap]
+
+
+def test_apply_combined_capability():
+    """CombinedCapability.apply() recursively visits all leaf capabilities."""
+
+    @dataclass
+    class CapA(AbstractCapability[None]):
+        pass
+
+    @dataclass
+    class CapB(AbstractCapability[None]):
+        pass
+
+    cap_a = CapA()
+    cap_b = CapB()
+    combined = CombinedCapability([cap_a, cap_b])
+
+    visited: list[AbstractCapability[None]] = []
+    combined.apply(visited.append)
+    assert visited == [cap_a, cap_b]
+
+
+def test_apply_nested_combined_capability():
+    """CombinedCapability.apply() flattens nested CombinedCapabilities."""
+
+    @dataclass
+    class CapA(AbstractCapability[None]):
+        pass
+
+    @dataclass
+    class CapB(AbstractCapability[None]):
+        pass
+
+    @dataclass
+    class CapC(AbstractCapability[None]):
+        pass
+
+    cap_a = CapA()
+    cap_b = CapB()
+    cap_c = CapC()
+    inner = CombinedCapability([cap_a, cap_b])
+    outer = CombinedCapability([inner, cap_c])
+
+    visited: list[AbstractCapability[None]] = []
+    outer.apply(visited.append)
+    assert visited == [cap_a, cap_b, cap_c]
+
+
+def test_apply_wrapper_capability():
+    """WrapperCapability.apply() delegates to the wrapped capability."""
+    inner = Thinking()
+    wrapper = WrapperCapability(wrapped=inner)
+
+    visited: list[AbstractCapability[None]] = []
+    wrapper.apply(visited.append)
+    assert visited == [inner]
+
+
+def test_apply_prefix_tools():
+    """PrefixTools (a WrapperCapability) delegates apply() to the wrapped capability."""
+    thinking = Thinking()
+    prefixed = PrefixTools(wrapped=thinking, prefix='ns')
+
+    visited: list[AbstractCapability[None]] = []
+    prefixed.apply(visited.append)
+    assert visited == [thinking]
+
+
+def test_apply_finds_capability_by_type():
+    """Realistic usage: use apply() to check if a specific capability type is present."""
+    thinking = Thinking()
+    web_search = WebSearch()
+    combined = CombinedCapability([thinking, web_search])
+
+    visited: list[AbstractCapability[None]] = []
+    combined.apply(visited.append)
+
+    assert any(isinstance(c, Thinking) for c in visited)
+    assert any(isinstance(c, WebSearch) for c in visited)
+    assert not any(isinstance(c, WebFetch) for c in visited)
+
+
+def test_apply_finds_wrapped_capability_by_type():
+    """apply() traverses through wrappers, so wrapped capabilities are discoverable by type."""
+    thinking = Thinking()
+    prefixed = PrefixTools(wrapped=thinking, prefix='ns')
+    combined = CombinedCapability([prefixed, WebSearch()])
+
+    visited: list[AbstractCapability[None]] = []
+    combined.apply(visited.append)
+
+    assert any(isinstance(c, Thinking) for c in visited)
+    assert any(isinstance(c, WebSearch) for c in visited)
+    assert not any(isinstance(c, PrefixTools) for c in visited)
+
+
+def test_apply_empty_combined():
+    """CombinedCapability with no children visits nothing."""
+    combined = CombinedCapability[None]([])
+    visited: list[AbstractCapability[None]] = []
+    combined.apply(visited.append)
+    assert visited == []
 
 
 async def test_for_run_with_different_toolset():
@@ -3273,6 +3392,32 @@ class TestWrapRunEventStream:
         async with agent.run_stream('hello') as stream:
             await stream.get_output()
         assert len(observed_events) > 0
+
+    async def test_wrap_run_event_stream_fires_in_run_without_handler(self):
+        """wrap_run_event_stream fires in run() even without an event_stream_handler."""
+        observed_events: list[AgentStreamEvent] = []
+
+        @dataclass
+        class ObserverCap(AbstractCapability[Any]):
+            async def wrap_run_event_stream(
+                self,
+                ctx: RunContext[Any],
+                *,
+                stream: AsyncIterable[AgentStreamEvent],
+            ) -> AsyncIterable[AgentStreamEvent]:
+                async for event in stream:
+                    observed_events.append(event)
+                    yield event
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[ObserverCap()],
+        )
+
+        # No event_stream_handler — hook should still fire via forced streaming
+        result = await agent.run('hello')
+        assert result.output is not None
+        assert any(isinstance(e, PartStartEvent) for e in observed_events)
 
 
 class TestWrapRunShortCircuit:
@@ -6200,6 +6345,45 @@ class TestHooksCapability:
         async with agent.run_stream('hello') as stream:
             await stream.get_output()
         assert len(events_seen) > 0
+
+    async def test_on_event_hook_fires_in_run(self):
+        """on.event fires in run() even without an event_stream_handler."""
+        hooks = Hooks()
+        events_seen: list[str] = []
+
+        @hooks.on.event
+        async def observe(ctx: RunContext[Any], event: AgentStreamEvent) -> AgentStreamEvent:
+            events_seen.append(type(event).__name__)
+            return event
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[hooks],
+        )
+        result = await agent.run('hello')
+        assert result.output is not None
+        assert 'PartStartEvent' in events_seen
+
+    async def test_wrap_run_event_stream_fires_in_run(self):
+        """on.run_event_stream fires in run() even without an event_stream_handler."""
+        hooks = Hooks()
+        events_seen: list[str] = []
+
+        @hooks.on.run_event_stream
+        async def observe_stream(
+            ctx: RunContext[Any], *, stream: AsyncIterable[AgentStreamEvent]
+        ) -> AsyncIterable[AgentStreamEvent]:
+            async for event in stream:
+                events_seen.append(type(event).__name__)
+                yield event
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[hooks],
+        )
+        result = await agent.run('hello')
+        assert result.output is not None
+        assert 'PartStartEvent' in events_seen
 
     async def test_on_event_with_run_event_stream(self):
         """on.event and on.run_event_stream can be used together."""

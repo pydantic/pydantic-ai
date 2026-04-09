@@ -29,12 +29,19 @@ from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolReturnPart, Ins
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel, ResponseRejected
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr, try_import
+
+with try_import() as openai_imports_successful:
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+requires_openai = pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
 
 if sys.version_info < (3, 11):
     from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
@@ -1552,3 +1559,154 @@ async def test_response_rejection_error_message() -> None:
 
     error_msg = str(rejection_errors[0])
     assert 'rejected by fallback_on handler' in error_msg
+
+
+@requires_openai
+async def test_fallback_model_lifecycle_closes_sub_model_clients():
+    """FallbackModel propagates __aenter__/__aexit__ to all sub-models' providers.
+
+    Regression test for PR #4421 (provider lifecycle management).
+    https://github.com/pydantic/pydantic-ai/pull/4421
+    """
+    provider1 = OpenAIProvider(api_key='test-key-1')
+    provider2 = OpenAIProvider(api_key='test-key-2')
+    model1 = OpenAIChatModel('gpt-4o', provider=provider1)
+    model2 = OpenAIChatModel('gpt-4o', provider=provider2)
+
+    fallback = FallbackModel(model1, model2)
+
+    async with fallback:
+        assert provider1._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+        assert provider2._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+        assert not provider1._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+        assert not provider2._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    assert provider1._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    assert provider2._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+
+
+@requires_openai
+async def test_fallback_model_lifecycle_via_agent():
+    """Agent context manager propagates lifecycle through FallbackModel to sub-models' providers.
+
+    Regression test for PR #4421 (provider lifecycle management).
+    https://github.com/pydantic/pydantic-ai/pull/4421
+    """
+    provider1 = OpenAIProvider(api_key='test-key-1')
+    provider2 = OpenAIProvider(api_key='test-key-2')
+    model1 = OpenAIChatModel('gpt-4o', provider=provider1)
+    model2 = OpenAIChatModel('gpt-4o', provider=provider2)
+
+    fallback = FallbackModel(model1, model2)
+    agent = Agent(model=fallback)
+
+    async with agent:
+        assert provider1._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+        assert provider2._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+        assert not provider1._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+        assert not provider2._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    assert provider1._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    assert provider2._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+
+
+@requires_openai
+async def test_fallback_model_reentrant_lifecycle():
+    """Reentrant FallbackModel lifecycle keeps sub-models' clients open until outermost exit.
+
+    Regression test for PR #4421 (provider lifecycle management).
+    https://github.com/pydantic/pydantic-ai/pull/4421
+    """
+    provider1 = OpenAIProvider(api_key='test-key-1')
+    provider2 = OpenAIProvider(api_key='test-key-2')
+    model1 = OpenAIChatModel('gpt-4o', provider=provider1)
+    model2 = OpenAIChatModel('gpt-4o', provider=provider2)
+
+    fallback = FallbackModel(model1, model2)
+
+    async with fallback:
+        http1 = provider1._own_http_client  # pyright: ignore[reportPrivateUsage]
+        http2 = provider2._own_http_client  # pyright: ignore[reportPrivateUsage]
+        assert http1 is not None
+        assert http2 is not None
+        async with fallback:
+            assert not http1.is_closed
+            assert not http2.is_closed
+        assert not http1.is_closed
+        assert not http2.is_closed
+    assert http1.is_closed
+    assert http2.is_closed
+
+
+@requires_openai
+async def test_fallback_model_instrumented_lifecycle():
+    """InstrumentedModel wrapping FallbackModel propagates lifecycle to sub-models.
+
+    Regression test for PR #4421 (provider lifecycle management).
+    https://github.com/pydantic/pydantic-ai/pull/4421
+    """
+    provider1 = OpenAIProvider(api_key='test-key-1')
+    provider2 = OpenAIProvider(api_key='test-key-2')
+    model1 = OpenAIChatModel('gpt-4o', provider=provider1)
+    model2 = OpenAIChatModel('gpt-4o', provider=provider2)
+
+    fallback = FallbackModel(model1, model2)
+    instrumented = InstrumentedModel(fallback, InstrumentationSettings())
+
+    async with instrumented:
+        assert provider1._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+        assert provider2._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+        assert not provider1._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+        assert not provider2._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    assert provider1._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    assert provider2._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+
+
+@requires_openai
+async def test_fallback_model_concurrent_entry():
+    """Concurrent entry to FallbackModel doesn't race on _entered_count / _exit_stack.
+
+    Without a lock, two coroutines can both see _entered_count == 0 when the first
+    yields during sub-model entry, causing one exit stack to be overwritten and leaked.
+
+    Regression test for PR #4421 (provider lifecycle management).
+    https://github.com/pydantic/pydantic-ai/pull/4421
+    """
+    import asyncio
+
+    from pydantic_ai.models.wrapper import WrapperModel
+
+    class SlowEnterModel(WrapperModel):
+        """Wrapper that yields during __aenter__ to widen the race window."""
+
+        async def __aenter__(self) -> SlowEnterModel:
+            await asyncio.sleep(0)
+            await self.wrapped.__aenter__()
+            return self
+
+    provider1 = OpenAIProvider(api_key='test-key-1')
+    provider2 = OpenAIProvider(api_key='test-key-2')
+    model1 = SlowEnterModel(OpenAIChatModel('gpt-4o', provider=provider1))
+    model2 = SlowEnterModel(OpenAIChatModel('gpt-4o', provider=provider2))
+
+    fallback = FallbackModel(model1, model2)
+
+    async def enter_and_hold(event: asyncio.Event) -> None:
+        async with fallback:
+            event.set()
+            await asyncio.sleep(0.1)
+
+    event1 = asyncio.Event()
+    event2 = asyncio.Event()
+    task1 = asyncio.create_task(enter_and_hold(event1))
+    task2 = asyncio.create_task(enter_and_hold(event2))
+
+    await event1.wait()
+    await event2.wait()
+    assert provider1._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+    assert provider2._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+    assert not provider1._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    assert not provider2._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+
+    await task1
+    await task2
+    assert provider1._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    assert provider2._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
