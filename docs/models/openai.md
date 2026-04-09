@@ -426,7 +426,7 @@ agent = Agent(rapid_mlx_model)
 ```
 
 Rapid-MLX includes 18 tool-call parsers (hermes, llama3, qwen, glm47,
-minimax, gemma4, ...), so structured tool use works with PydanticAI's
+minimax, gemma4, ...), so structured tool use works with Pydantic AI's
 typed tool API for the supported open-weight models.
 
 
