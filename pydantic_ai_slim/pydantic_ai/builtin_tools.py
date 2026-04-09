@@ -559,4 +559,6 @@ DEPRECATED_BUILTIN_TOOLS: frozenset[type[AbstractBuiltinTool]] = frozenset({UrlC
 SUPPORTED_BUILTIN_TOOLS = frozenset(cls for cls in BUILTIN_TOOL_TYPES.values() if cls not in DEPRECATED_BUILTIN_TOOLS)
 """Get the set of all builtin tool types (excluding deprecated tools)."""
 
-BUILTIN_TOOLS_REQUIRING_CONFIG: frozenset[type[AbstractBuiltinTool]] = frozenset({MCPServerTool, MemoryTool})
+BUILTIN_TOOLS_REQUIRING_CONFIG: frozenset[type[AbstractBuiltinTool]] = frozenset(
+    {FileSearchTool, MCPServerTool, MemoryTool}
+)

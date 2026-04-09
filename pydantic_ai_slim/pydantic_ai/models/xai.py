@@ -455,12 +455,13 @@ class XaiModel(Model):
                 ),
             )
         elif item.tool_name == XSearchTool.kind:
+            function_name = (item.provider_details or {}).get('function_name', XSearchTool.kind)
             return chat_types.chat_pb2.ToolCall(
                 id=item.tool_call_id,
                 type=chat_types.chat_pb2.TOOL_CALL_TYPE_X_SEARCH_TOOL,
                 status=chat_types.chat_pb2.TOOL_CALL_STATUS_COMPLETED,
                 function=chat_types.chat_pb2.FunctionCall(
-                    name=XSearchTool.kind,
+                    name=function_name,
                     arguments=item.args_as_json_str(),
                 ),
             )
@@ -483,12 +484,13 @@ class XaiModel(Model):
                 ),
             )
         elif item.tool_name == FileSearchTool.kind:
+            function_name = (item.provider_details or {}).get('function_name', FileSearchTool.kind)
             return chat_types.chat_pb2.ToolCall(
                 id=item.tool_call_id,
                 type=chat_types.chat_pb2.TOOL_CALL_TYPE_COLLECTIONS_SEARCH_TOOL,
                 status=chat_types.chat_pb2.TOOL_CALL_STATUS_COMPLETED,
                 function=chat_types.chat_pb2.FunctionCall(
-                    name=FileSearchTool.kind,
+                    name=function_name,
                     arguments=item.args_as_json_str(),
                 ),
             )
@@ -884,7 +886,11 @@ class XaiStreamedResponse(StreamedResponse):
             else:
                 parsed_args = _parse_tool_args(tool_call.function.arguments)
             call_part = BuiltinToolCallPart(
-                tool_name=builtin_tool_name, args=parsed_args, tool_call_id=tool_call.id, provider_name=self.system
+                tool_name=builtin_tool_name,
+                args=parsed_args,
+                tool_call_id=tool_call.id,
+                provider_name=self.system,
+                provider_details={'function_name': tool_call.function.name},
             )
             yield self._parts_manager.handle_part(vendor_part_id=tool_call.id, part=call_part)
             return
@@ -1317,6 +1323,7 @@ def _create_tool_call_part(
                     args=args,
                     tool_call_id=tool_call.id,
                     provider_name=provider_name,
+                    provider_details={'function_name': tool_call.function.name},
                 ),
             )
     else:

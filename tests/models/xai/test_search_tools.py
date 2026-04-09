@@ -180,6 +180,7 @@ async def test_xai_builtin_x_search_tool(allow_model_requests: None, xai_provide
                         args={'query': 'PydanticAI', 'mode': 'Latest'},
                         tool_call_id=IsStr(),
                         provider_name='xai',
+                        provider_details={'function_name': 'x_keyword_search'},
                     ),
                     ThinkingPart(
                         content='',
@@ -266,6 +267,7 @@ async def test_xai_builtin_x_search_tool_stream(allow_model_requests: None, xai_
                         args={'query': 'PydanticAI OR "Pydantic AI"', 'limit': 10, 'mode': 'Latest'},
                         tool_call_id=IsStr(),
                         provider_name='xai',
+                        provider_details={'function_name': 'x_keyword_search'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='x_search',
@@ -416,7 +418,11 @@ async def test_xai_x_search_tool_type_in_response(allow_model_requests: None):
             ModelResponse(
                 parts=[
                     BuiltinToolCallPart(
-                        tool_name='x_search', args={'query': 'test'}, tool_call_id=IsStr(), provider_name='xai'
+                        tool_name='x_search',
+                        args={'query': 'test'},
+                        tool_call_id=IsStr(),
+                        provider_name='xai',
+                        provider_details={'function_name': 'x_search'},
                     ),
                     TextPart(content='Search results here'),
                 ],
@@ -467,7 +473,7 @@ async def test_xai_x_search_builtin_tool_call_in_history(allow_model_requests: N
                                 'id': 'x_search_001',
                                 'type': 'TOOL_CALL_TYPE_X_SEARCH_TOOL',
                                 'status': 'TOOL_CALL_STATUS_COMPLETED',
-                                'function': {'name': 'x_search', 'arguments': '{"query":"pydantic updates"}'},
+                                'function': {'name': 'x_keyword_search', 'arguments': '{"query":"pydantic updates"}'},
                             }
                         ],
                     },
@@ -487,6 +493,37 @@ async def test_xai_x_search_builtin_tool_call_in_history(allow_model_requests: N
     )
 
     assert result2.output == 'The posts were about PydanticAI releases.'
+
+
+async def test_xai_x_search_function_name_round_trip(allow_model_requests: None):
+    """Test that the xAI-specific function name (e.g. 'x_keyword_search') survives the round-trip.
+
+    The xAI API uses function names like 'x_keyword_search' or 'collections_search' that differ
+    from PydanticAI's normalized tool_name ('x_search', 'file_search'). The original function name
+    must be preserved in provider_details and sent back when replaying history.
+    """
+    response1 = create_x_search_response(query='test query', assistant_text='Found results.')
+    response2 = create_response(content='Follow-up answer.')
+
+    mock_client = MockXai.create_mock([response1, response2])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, builtin_tools=[XSearchTool()])
+
+    result1 = await agent.run('Search for something')
+
+    # Verify provider_details stores the original function name
+    call_parts = [p for p in result1.all_messages()[1].parts if isinstance(p, BuiltinToolCallPart)]
+    assert len(call_parts) == 1
+    assert call_parts[0].tool_name == 'x_search'
+    assert call_parts[0].provider_details == snapshot({'function_name': 'x_keyword_search'})
+
+    # Verify round-trip: the original function name is sent back in history
+    result2 = await agent.run('Follow up', message_history=result1.new_messages())
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    history_tool_calls = kwargs[1]['messages'][1]['tool_calls']
+    assert history_tool_calls[0]['function']['name'] == 'x_keyword_search'
+
+    assert result2.output == 'Follow-up answer.'
 
 
 async def test_xai_x_search_include_option(allow_model_requests: None):
@@ -569,6 +606,7 @@ async def test_xai_builtin_file_search_tool(allow_model_requests: None):
                         args={'query': 'quarterly report'},
                         tool_call_id=IsStr(),
                         provider_name='xai',
+                        provider_details={'function_name': 'collections_search'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='file_search',
@@ -666,7 +704,7 @@ async def test_xai_file_search_builtin_tool_call_in_history(allow_model_requests
                                 'type': 'TOOL_CALL_TYPE_COLLECTIONS_SEARCH_TOOL',
                                 'status': 'TOOL_CALL_STATUS_COMPLETED',
                                 'function': {
-                                    'name': 'file_search',
+                                    'name': 'collections_search',
                                     'arguments': '{"query":"quarterly report"}',
                                 },
                             }

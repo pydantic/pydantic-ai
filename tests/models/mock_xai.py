@@ -638,7 +638,7 @@ def create_x_search_response(
     tool_type = chat_pb2.ToolCallType.TOOL_CALL_TYPE_X_SEARCH_TOOL
     actual_content = _get_example_tool_output(tool_type, content)
     outputs = _create_builtin_tool_outputs(
-        tool_name='x_search',
+        tool_name='x_keyword_search',
         arguments={'query': query},
         content=actual_content,
         tool_call_id=tool_call_id,

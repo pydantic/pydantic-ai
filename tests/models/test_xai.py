@@ -1693,6 +1693,7 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_provi
                         args={'query': 'what day of the week is January 1, 2026'},
                         tool_call_id=IsStr(),
                         provider_name='xai',
+                        provider_details={'function_name': 'web_search'},
                     ),
                     ThinkingPart(
                         content='',
@@ -1782,6 +1783,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                         args={'query': 'San Francisco weather today Celsius'},
                         tool_call_id=IsStr(),
                         provider_name='xai',
+                        provider_details={'function_name': 'web_search'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
@@ -1795,6 +1797,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                         args={'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current'},
                         tool_call_id=IsStr(),
                         provider_name='xai',
+                        provider_details={'function_name': 'browse_page'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
@@ -1854,6 +1857,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                     args={'query': 'San Francisco weather today Celsius'},
                     tool_call_id=IsStr(),
                     provider_name='xai',
+                    provider_details={'function_name': 'web_search'},
                 ),
                 previous_part_kind='thinking',
             ),
@@ -1864,6 +1868,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                     args={'query': 'San Francisco weather today Celsius'},
                     tool_call_id=IsStr(),
                     provider_name='xai',
+                    provider_details={'function_name': 'web_search'},
                 ),
                 next_part_kind='builtin-tool-return',
             ),
@@ -1891,6 +1896,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                     args={'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current'},
                     tool_call_id=IsStr(),
                     provider_name='xai',
+                    provider_details={'function_name': 'browse_page'},
                 ),
                 previous_part_kind='builtin-tool-return',
             ),
@@ -1901,6 +1907,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                     args={'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current'},
                     tool_call_id=IsStr(),
                     provider_name='xai',
+                    provider_details={'function_name': 'browse_page'},
                 ),
                 next_part_kind='builtin-tool-return',
             ),
@@ -1967,6 +1974,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                     args={'query': 'San Francisco weather today Celsius'},
                     tool_call_id=IsStr(),
                     provider_name='xai',
+                    provider_details={'function_name': 'web_search'},
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
@@ -1984,6 +1992,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                     args={'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current'},
                     tool_call_id=IsStr(),
                     provider_name='xai',
+                    provider_details={'function_name': 'browse_page'},
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
@@ -2040,6 +2049,7 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None, xai_p
                         args={'code': 'print(65465 - 6544 * 65464 - 6 + 1.02255)'},
                         tool_call_id=IsStr(),
                         provider_name='xai',
+                        provider_details={'function_name': 'code_execution'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
@@ -2117,6 +2127,7 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
                         args={'code': 'print(2 + 2)'},
                         tool_call_id=IsStr(),
                         provider_name='xai',
+                        provider_details={'function_name': 'code_execution'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
@@ -2152,6 +2163,7 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
                     args={'code': 'print(2 + 2)'},
                     tool_call_id=IsStr(),
                     provider_name='xai',
+                    provider_details={'function_name': 'code_execution'},
                 ),
             ),
             PartEndEvent(
@@ -2161,6 +2173,7 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
                     args={'code': 'print(2 + 2)'},
                     tool_call_id=IsStr(),
                     provider_name='xai',
+                    provider_details={'function_name': 'code_execution'},
                 ),
                 next_part_kind='builtin-tool-return',
             ),
@@ -2184,6 +2197,7 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
                     args={'code': 'print(2 + 2)'},
                     tool_call_id=IsStr(),
                     provider_name='xai',
+                    provider_details={'function_name': 'code_execution'},
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
@@ -2246,6 +2260,7 @@ Return just the final number with no other text.\
                         args={'query': 'release year of Python 3.0'},
                         tool_call_id=IsStr(),
                         provider_name='xai',
+                        provider_details={'function_name': 'web_search_with_snippets'},
                     ),
                     ThinkingPart(
                         content='',
@@ -2264,6 +2279,7 @@ Return just the final number with no other text.\
                         args={'code': 'print(2008 + 1)'},
                         tool_call_id=IsStr(),
                         provider_name='xai',
+                        provider_details={'function_name': 'code_execution'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
@@ -2395,6 +2411,7 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                         args={'query': 'famous landmarks in Chicago', 'num_results': 5},
                         tool_call_id=IsStr(),
                         provider_name='xai',
+                        provider_details={'function_name': 'web_search'},
                     ),
                     ThinkingPart(
                         content='',
@@ -2494,6 +2511,7 @@ async def test_xai_builtin_mcp_server_tool(allow_model_requests: None, xai_provi
                         },
                         tool_call_id=IsStr(),
                         provider_name='xai',
+                        provider_details={'function_name': 'deepwiki.ask_question'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='mcp_server:deepwiki',
@@ -2643,6 +2661,7 @@ async def test_xai_builtin_mcp_server_tool_stream(allow_model_requests: None, xa
                         },
                         tool_call_id=IsStr(),
                         provider_name='xai',
+                        provider_details={'function_name': 'deepwiki.ask_question'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='mcp_server:deepwiki',
@@ -2724,6 +2743,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                     },
                     tool_call_id=IsStr(),
                     provider_name='xai',
+                    provider_details={'function_name': 'deepwiki.ask_question'},
                 ),
                 previous_part_kind='thinking',
             ),
@@ -2741,6 +2761,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                     },
                     tool_call_id=IsStr(),
                     provider_name='xai',
+                    provider_details={'function_name': 'deepwiki.ask_question'},
                 ),
                 next_part_kind='builtin-tool-return',
             ),
@@ -2887,6 +2908,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                     },
                     tool_call_id=IsStr(),
                     provider_name='xai',
+                    provider_details={'function_name': 'deepwiki.ask_question'},
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
@@ -3421,6 +3443,7 @@ async def test_xai_code_execution_default_output(allow_model_requests: None) -> 
                         args={'code': 'print(2+2)'},
                         tool_call_id=IsStr(),
                         provider_name='xai',
+                        provider_details={'function_name': 'code_execution'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
@@ -3467,6 +3490,7 @@ async def test_xai_web_search_default_output(allow_model_requests: None) -> None
                         args={'query': 'test query'},
                         tool_call_id=IsStr(),
                         provider_name='xai',
+                        provider_details={'function_name': 'web_search'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
@@ -3518,6 +3542,7 @@ async def test_xai_mcp_server_default_output(allow_model_requests: None) -> None
                         args={'action': 'call_tool', 'tool_name': 'list_issues', 'tool_args': {}},
                         tool_call_id=IsStr(),
                         provider_name='xai',
+                        provider_details={'function_name': 'linear.list_issues'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='mcp_server:linear',
@@ -4008,6 +4033,7 @@ async def test_xai_builtin_tool_call_in_history(allow_model_requests: None):
                         args={'code': 'print(2+2)'},
                         tool_call_id=IsStr(),
                         provider_name='xai',
+                        provider_details={'function_name': 'code_execution'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
@@ -4775,6 +4801,7 @@ async def test_xai_parse_tool_args_invalid_json(allow_model_requests: None):
                         args={},  # Empty due to JSON parse failure
                         tool_call_id=IsStr(),
                         provider_name='xai',
+                        provider_details={'function_name': 'web_search'},
                     ),
                     TextPart(content='Search complete'),
                 ],
@@ -4939,6 +4966,7 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
                         args={'query': 'test query'},
                         tool_call_id=IsStr(),
                         provider_name='xai',
+                        provider_details={'function_name': 'web_search'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
@@ -5052,6 +5080,7 @@ async def test_xai_mcp_server_tool_in_history(allow_model_requests: None):
                         args={'action': 'call_tool', 'tool_name': 'get_data', 'tool_args': {'param': 'value'}},
                         tool_call_id=IsStr(),
                         provider_name='xai',
+                        provider_details={'function_name': 'my-server.get_data'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='mcp_server:my-server',
@@ -5417,6 +5446,7 @@ async def test_xai_unknown_tool_type_uses_function_name(allow_model_requests: No
                         args={'query': 'my attachments'},
                         tool_call_id=IsStr(),
                         provider_name='xai',
+                        provider_details={'function_name': 'attachment_search'},
                     ),
                     TextPart(content='Found your attachments.'),
                 ],
