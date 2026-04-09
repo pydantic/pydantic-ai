@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import contextlib
 import inspect
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
@@ -1074,6 +1075,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 )
 
         task = asyncio.create_task(run_agent())
+        # TODO(#1524): Replace _task_cancel_sent with task.cancelling() when Python 3.10 is dropped (3.11+).
+        _task_cancel_sent: bool = False
+        # TODO(#1524): Add tests for break/cancel cleanup of the producer task.
+        # Verify no BrokenResourceError, no orphan tasks, and that CancelledError
+        # (not BrokenResourceError) reaches the producer on break.
 
         try:
             async with receive_stream:
@@ -1084,7 +1090,15 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
         except asyncio.CancelledError as e:
             task.cancel(msg=e.args[0] if len(e.args) != 0 else None)
+            _task_cancel_sent = True
             raise
+
+        finally:
+            if not task.done() and not _task_cancel_sent:
+                task.cancel()
+
+            with contextlib.suppress(BaseException):
+                await task
 
         yield AgentRunResultEvent(result)
 
