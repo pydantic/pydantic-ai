@@ -7,7 +7,7 @@ import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.groq import groq_model_profile
@@ -20,7 +20,7 @@ from pydantic_ai.providers import Provider
 
 try:
     from groq import AsyncGroq
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `groq` package to use the Groq provider, '
         'you can use the `groq` optional group — `pip install "pydantic-ai-slim[groq]"`'
@@ -127,5 +127,10 @@ class GroqProvider(Provider[AsyncGroq]):
             elif http_client is not None:
                 self._client = AsyncGroq(base_url=base_url, api_key=api_key, http_client=http_client)
             else:
-                http_client = cached_async_http_client(provider='groq')
+                http_client = create_async_http_client()
+                self._own_http_client = http_client
+                self._http_client_factory = create_async_http_client
                 self._client = AsyncGroq(base_url=base_url, api_key=api_key, http_client=http_client)
+
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
