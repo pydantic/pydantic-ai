@@ -13,6 +13,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from dirty_equals import IsDatetime
 from pydantic import BaseModel
 from pydantic_core import ErrorDetails
 
@@ -3797,7 +3798,7 @@ async def test_run_stream_cancel():
     async with agent.run_stream('Hello') as result:
         assert not result.cancelled
         # Consume one chunk to start the stream
-        async for _ in result.stream_text(delta=True, debounce_by=None):
+        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
             break
         await result.cancel()
         assert result.cancelled
@@ -3823,9 +3824,9 @@ async def test_run_stream_events_cancel():
 
     events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
     async with agent.run_stream_events('Hello') as stream:
-        async for event in stream:
+        async for event in stream:  # pragma: no branch
             events.append(event)
-            if isinstance(event, PartStartEvent):
+            if isinstance(event, PartStartEvent):  # pragma: no branch
                 await stream.cancel()
                 break
 
@@ -3856,7 +3857,7 @@ async def test_run_stream_events_standalone_deprecation():
     stream = agent.run_stream_events('Hello')
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always')
-        async for _ in stream:
+        async for _ in stream:  # pragma: no branch
             break
     await stream.cancel()
 
@@ -3885,6 +3886,69 @@ async def test_run_stream_events_external_task_cancellation():
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+async def test_incomplete_tool_call_filtered_from_history():
+    """When a cancelled stream leaves an interrupted response with truncated tool call args,
+    _clean_message_history filters it out before sending to the model."""
+
+    async def my_tool(x: int) -> str:
+        return str(x)
+
+    agent = Agent(TestModel(), tools=[my_tool])
+
+    # Simulate message history from a cancelled stream:
+    # - user prompt
+    # - interrupted response with a tool call whose JSON args are truncated
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='my_tool', args='{"x": ', tool_call_id='call_1')],
+            interrupted=True,
+        ),
+    ]
+
+    # Continue the conversation: the incomplete tool call should be stripped.
+    # The interrupted response had only one part (the incomplete tool call),
+    # so the entire response is dropped from the cleaned history.
+    result = await agent.run('Continue', message_history=history)
+    # The interrupted ModelResponse with incomplete tool call args is dropped entirely
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='Continue', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')],
+                usage=RequestUsage(input_tokens=52, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='my_tool',
+                        content='0',
+                        tool_call_id='pyd_ai_tool_call_id__my_tool',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"my_tool":"0"}')],
+                usage=RequestUsage(input_tokens=53, output_tokens=8),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 # endregion

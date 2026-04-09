@@ -298,6 +298,19 @@ async def test_google_model_structured_output(allow_model_requests: None, google
     )
 
 
+async def test_stream_cancel(allow_model_requests: None, google_provider: GoogleProvider):
+    model = GoogleModel('gemini-2.0-flash', provider=google_provider)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0})
+    async with agent.run_stream('What is the capital of France?') as result:
+        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+            break
+        await result.cancel()
+        await result.cancel()  # double cancel is a no-op
+        assert result.cancelled
+
+    assert result.response.interrupted is True
+
+
 async def test_google_model_stream(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.0-flash-exp', provider=google_provider)
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0})

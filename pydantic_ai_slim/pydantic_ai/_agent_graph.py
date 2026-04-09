@@ -1892,7 +1892,7 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
         if isinstance(message, _messages.ModelRequest):
             for part in message.parts:
                 if isinstance(part, _messages.ToolReturnPart | _messages.RetryPromptPart):
-                    if part.tool_call_id:
+                    if part.tool_call_id:  # pragma: no branch
                         processed_tool_call_ids.add(part.tool_call_id)
 
     clean_messages: list[_messages.ModelMessage] = []

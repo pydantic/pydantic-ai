@@ -663,7 +663,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             await self._on_complete()
 
     async def cancel(self):
-        if self._stream_response is not None:
+        if self._stream_response is not None:  # pragma: no branch
             await self._stream_response.cancel()
 
     @property
