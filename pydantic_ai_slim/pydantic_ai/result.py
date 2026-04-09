@@ -859,7 +859,14 @@ class StreamEventsResult(Generic[OutputDataT]):
     async def __anext__(self) -> _messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]:
         if self._closed:
             raise StopAsyncIteration
-        return await self._generator.__anext__()
+        try:
+            return await self._generator.__anext__()
+        except StopAsyncIteration:
+            # Not strictly necessary (aclose() on an exhausted generator is a no-op),
+            # but keeps _closed accurate after natural exhaustion so __aexit__/cancel()
+            # don't call aclose() unnecessarily.
+            self._closed = True
+            raise
 
     async def cancel(self) -> None:
         """Cancel the stream, stopping token generation.
