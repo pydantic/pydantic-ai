@@ -47,14 +47,14 @@ wheels = [
 
 [[package]]
 name = "ag-ui-protocol"
-version = "0.1.10"
+version = "0.1.15"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/67/bb/5a5ec893eea5805fb9a3db76a9888c3429710dfb6f24bbb37568f2cf7320/ag_ui_protocol-0.1.10.tar.gz", hash = "sha256:3213991c6b2eb24bb1a8c362ee270c16705a07a4c5962267a083d0959ed894f4", size = 6945, upload-time = "2025-11-06T15:17:17.068Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/57/71/96c21ae7e2fb9b610c1a90d38bd2de8b6e5b2900a63001f3882f43e519af/ag_ui_protocol-0.1.15.tar.gz", hash = "sha256:5e23c1042c7d4e364d685e68d2fb74d37c16bc83c66d270102d8eaedce56ad82", size = 6269, upload-time = "2026-04-01T15:44:33.136Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8f/78/eb55fabaab41abc53f52c0918a9a8c0f747807e5306273f51120fd695957/ag_ui_protocol-0.1.10-py3-none-any.whl", hash = "sha256:c81e6981f30aabdf97a7ee312bfd4df0cd38e718d9fc10019c7d438128b93ab5", size = 7889, upload-time = "2025-11-06T15:17:15.325Z" },
+    { url = "https://files.pythonhosted.org/packages/e4/a0/a73398d30bb0f9ad70cd70426151a4a19527a7296e48a3a16a50e1d5db05/ag_ui_protocol-0.1.15-py3-none-any.whl", hash = "sha256:85cde077023ccbc37b5ce2ad953537883c262d210320f201fc2ec4e85408b06a", size = 8661, upload-time = "2026-04-01T15:44:32.079Z" },
 ]
 
 [[package]]
@@ -3096,7 +3096,7 @@ wheels = [
 
 [[package]]
 name = "inline-snapshot"
-version = "0.31.1"
+version = "0.32.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "asttokens" },
@@ -3104,10 +3104,11 @@ dependencies = [
     { name = "pytest" },
     { name = "rich" },
     { name = "tomli", marker = "python_full_version < '3.11' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1c/b1/52b5ee59f73ed31d5fe21b10881bf2d121d07d54b23c0b6b74186792e620/inline_snapshot-0.31.1.tar.gz", hash = "sha256:4ea5ed70aa1d652713bbfd750606b94bd8a42483f7d3680433b3e92994495f64", size = 2606338, upload-time = "2025-11-07T07:36:18.932Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ca/87/62b78b49042c533038ab1bf0931a7b70fdb78d07a11c9bf159be04027df8/inline_snapshot-0.32.5.tar.gz", hash = "sha256:5025074eab5c82a88504975e2655beeb5e96fd57ed2d9ebb38538473748f2065", size = 2626796, upload-time = "2026-03-13T18:35:54.891Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ba/52/945db420380efbda8c69a7a4a16c53df9d7ac50d8217286b9d41e5d825ff/inline_snapshot-0.31.1-py3-none-any.whl", hash = "sha256:7875a73c986a03388c7e758fb5cb8a43d2c3a20328aa1d851bfb4ed536c4496f", size = 71965, upload-time = "2025-11-07T07:36:16.836Z" },
+    { url = "https://files.pythonhosted.org/packages/09/d3/73426dd3da75095fd071ce5c1f8e520e879a582ca04df861575c6feb9166/inline_snapshot-0.32.5-py3-none-any.whl", hash = "sha256:ac617c273e811ed5ca15abd8f8dbd3fa268296bb0642ccb1403a5df61ce2e39e", size = 84993, upload-time = "2026-03-13T18:35:52.955Z" },
 ]
 
 [[package]]
@@ -6734,7 +6735,7 @@ dev = [
     { name = "duckduckgo-search", specifier = ">=7.0.0" },
     { name = "exa-py", specifier = ">=2.0.0" },
     { name = "genai-prices", specifier = ">=0.0.28" },
-    { name = "inline-snapshot", specifier = ">=0.19.3" },
+    { name = "inline-snapshot", specifier = ">=0.32.5" },
     { name = "markdownify", specifier = ">=1.2" },
     { name = "pip", specifier = ">=26.0" },
     { name = "pytest", specifier = ">=9.0.0" },

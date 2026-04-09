@@ -19,23 +19,23 @@ from pydantic_graph import End
 from .. import (
     _agent_graph,
     _instructions,
-    _tool_manager,
     _utils,
     exceptions,
     messages as _messages,
     models,
     result,
+    tool_manager,
     usage as _usage,
 )
 from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
 from .._template import TemplateStr
-from .._tool_manager import ToolManager
 from ..builtin_tools import AbstractBuiltinTool
 from ..output import OutputDataT, OutputSpec
 from ..result import AgentStream, FinalResult, StreamedRunResult, StreamEventsResult
 from ..run import AgentRun, AgentRunResult, AgentRunResultEvent
 from ..settings import ModelSettings
+from ..tool_manager import ToolManager
 from ..tools import (
     AgentBuiltinTool,
     AgentDepsT,
@@ -296,9 +296,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             spec=spec,
         ) as agent_run:
             # Drive via next() so capability hooks fire for each node.
-            # When event_stream_handler is set, streaming must happen AFTER before_node_run
-            # (which may replace the node) and INSIDE wrap_node_run. We achieve this by
-            # passing a custom step function that streams before advancing the graph.
+            # When event_stream_handler is set or a capability overrides wrap_run_event_stream,
+            # streaming must happen AFTER before_node_run (which may replace the node) and
+            # INSIDE wrap_node_run. We achieve this by passing a custom step function that
+            # streams before advancing the graph.
             _stream_step: (
                 Callable[
                     [_agent_graph.AgentNode[AgentDepsT, Any]],
@@ -306,7 +307,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 ]
                 | None
             ) = None
-            if event_stream_handler is not None:
+            _needs_streaming = (
+                event_stream_handler is not None or agent_run.ctx.deps.root_capability.has_wrap_run_event_stream
+            )
+            if _needs_streaming:
                 _handler = event_stream_handler
 
                 async def _stream_and_advance(
@@ -316,7 +320,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                         async with n.stream(agent_run.ctx) as stream:
                             run_ctx = _agent_graph.build_run_context(agent_run.ctx)
                             wrapped = agent_run.ctx.deps.root_capability.wrap_run_event_stream(run_ctx, stream=stream)
-                            await _handler(run_ctx, wrapped)
+                            if _handler is not None:
+                                await _handler(run_ctx, wrapped)
+                            else:
+                                async for _ in wrapped:
+                                    pass
                     return await agent_run._advance_graph(n)  # pyright: ignore[reportPrivateUsage]
 
                 _stream_step = _stream_and_advance
@@ -1309,7 +1317,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
     @staticmethod
     @contextmanager
-    def parallel_tool_call_execution_mode(mode: _tool_manager.ParallelExecutionMode = 'parallel') -> Iterator[None]:
+    def parallel_tool_call_execution_mode(mode: tool_manager.ParallelExecutionMode = 'parallel') -> Iterator[None]:
         """Set the parallel execution mode during the context.
 
         Args:

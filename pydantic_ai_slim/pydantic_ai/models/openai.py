@@ -547,7 +547,7 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
 
 
 @dataclass(init=False)
-class OpenAIChatModel(Model):
+class OpenAIChatModel(Model[AsyncOpenAI]):
     """A model that uses the OpenAI API.
 
     Internally, this uses the [OpenAI Python client](https://github.com/openai/openai-python) to interact with the API.
@@ -1448,7 +1448,7 @@ responses_output_text_annotations_ta = TypeAdapter(list[responses.response_outpu
 
 
 @dataclass(init=False)
-class OpenAIResponsesModel(Model):
+class OpenAIResponsesModel(Model[AsyncOpenAI]):
     """A model that uses the OpenAI Responses API.
 
     The [OpenAI Responses API](https://platform.openai.com/docs/api-reference/responses) is the

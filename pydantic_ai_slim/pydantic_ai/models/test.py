@@ -149,6 +149,10 @@ class TestModel(Model):
         )
 
     @property
+    def provider(self) -> None:
+        return None
+
+    @property
     def model_name(self) -> str:
         """The model name."""
         return self._model_name

@@ -136,7 +136,7 @@ class MistralModelSettings(ModelSettings, total=False):
 
 
 @dataclass(init=False)
-class MistralModel(Model):
+class MistralModel(Model[Mistral]):
     """A model that uses Mistral.
 
     Internally, this uses the [Mistral Python client](https://github.com/mistralai/client-python) to interact with the API.
@@ -259,7 +259,7 @@ class MistralModel(Model):
                 http_headers={'User-Agent': get_user_agent()},
             )
 
-        assert response, 'A unexpected empty response from Mistral.'
+        assert response, 'An unexpected empty response from Mistral.'
         return response
 
     async def _stream_completions_create(
@@ -324,7 +324,7 @@ class MistralModel(Model):
                 stream=True,
                 http_headers={'User-Agent': get_user_agent()},
             )
-        assert response, 'A unexpected empty response from Mistral.'
+        assert response, 'An unexpected empty response from Mistral.'
         return response
 
     def _get_tool_choice(self, model_request_parameters: ModelRequestParameters) -> MistralToolChoiceEnum | None:

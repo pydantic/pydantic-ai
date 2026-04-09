@@ -7,6 +7,7 @@ specific LLM being used.
 from __future__ import annotations as _annotations
 
 import base64
+import json
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
@@ -14,10 +15,11 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
+from types import TracebackType
 from typing import Any, Generic, Literal, TypeVar, cast, get_args, overload
 
 import httpx
-from typing_extensions import TypeAliasType, TypedDict
+from typing_extensions import Self, TypeAliasType, TypedDict
 
 from .. import _utils
 from .._json_schema import JsonSchemaTransformer
@@ -48,7 +50,7 @@ from ..messages import (
 )
 from ..output import OutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
-from ..providers import Provider, infer_provider, infer_provider_class
+from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
 from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
@@ -145,12 +147,8 @@ KnownModelName = TypeAliasType(
         'bedrock:us.meta.llama3-2-90b-instruct-v1:0',
         'bedrock:us.meta.llama3-3-70b-instruct-v1:0',
         'cerebras:gpt-oss-120b',
-        'cerebras:llama-3.3-70b',
         'cerebras:llama3.1-8b',
         'cerebras:qwen-3-235b-a22b-instruct-2507',
-        'cerebras:qwen-3-32b',
-        'cerebras:qwen-3-coder-480b',
-        'cerebras:zai-glm-4.6',
         'cerebras:zai-glm-4.7',
         'cohere:c4ai-aya-expanse-32b',
         'cohere:c4ai-aya-expanse-8b',
@@ -160,13 +158,7 @@ KnownModelName = TypeAliasType(
         'cohere:command-r7b-12-2024',
         'deepseek:deepseek-chat',
         'deepseek:deepseek-reasoner',
-        'gateway/anthropic:claude-3-5-haiku-20241022',
-        'gateway/anthropic:claude-3-5-haiku-latest',
-        'gateway/anthropic:claude-3-7-sonnet-20250219',
-        'gateway/anthropic:claude-3-7-sonnet-latest',
         'gateway/anthropic:claude-3-haiku-20240307',
-        'gateway/anthropic:claude-3-opus-20240229',
-        'gateway/anthropic:claude-3-opus-latest',
         'gateway/anthropic:claude-4-opus-20250514',
         'gateway/anthropic:claude-4-sonnet-20250514',
         'gateway/anthropic:claude-haiku-4-5-20251001',
@@ -182,107 +174,34 @@ KnownModelName = TypeAliasType(
         'gateway/anthropic:claude-sonnet-4-5-20250929',
         'gateway/anthropic:claude-sonnet-4-5',
         'gateway/anthropic:claude-sonnet-4-6',
-        'gateway/bedrock:amazon.titan-text-express-v1',
-        'gateway/bedrock:amazon.titan-text-lite-v1',
-        'gateway/bedrock:amazon.titan-tg1-large',
-        'gateway/bedrock:anthropic.claude-3-5-haiku-20241022-v1:0',
         'gateway/bedrock:anthropic.claude-3-5-sonnet-20240620-v1:0',
-        'gateway/bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0',
-        'gateway/bedrock:anthropic.claude-3-7-sonnet-20250219-v1:0',
         'gateway/bedrock:anthropic.claude-3-haiku-20240307-v1:0',
-        'gateway/bedrock:anthropic.claude-3-opus-20240229-v1:0',
-        'gateway/bedrock:anthropic.claude-3-sonnet-20240229-v1:0',
-        'gateway/bedrock:anthropic.claude-haiku-4-5-20251001-v1:0',
-        'gateway/bedrock:anthropic.claude-instant-v1',
-        'gateway/bedrock:anthropic.claude-opus-4-20250514-v1:0',
-        'gateway/bedrock:anthropic.claude-sonnet-4-20250514-v1:0',
-        'gateway/bedrock:anthropic.claude-sonnet-4-5-20250929-v1:0',
-        'gateway/bedrock:anthropic.claude-sonnet-4-6',
-        'gateway/bedrock:anthropic.claude-v2:1',
-        'gateway/bedrock:anthropic.claude-v2',
-        'gateway/bedrock:cohere.command-light-text-v14',
-        'gateway/bedrock:cohere.command-r-plus-v1:0',
-        'gateway/bedrock:cohere.command-r-v1:0',
-        'gateway/bedrock:cohere.command-text-v14',
         'gateway/bedrock:eu.anthropic.claude-haiku-4-5-20251001-v1:0',
         'gateway/bedrock:eu.anthropic.claude-sonnet-4-20250514-v1:0',
         'gateway/bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
         'gateway/bedrock:eu.anthropic.claude-sonnet-4-6',
         'gateway/bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
-        'gateway/bedrock:meta.llama3-1-405b-instruct-v1:0',
-        'gateway/bedrock:meta.llama3-1-70b-instruct-v1:0',
-        'gateway/bedrock:meta.llama3-1-8b-instruct-v1:0',
-        'gateway/bedrock:meta.llama3-70b-instruct-v1:0',
-        'gateway/bedrock:meta.llama3-8b-instruct-v1:0',
-        'gateway/bedrock:mistral.mistral-7b-instruct-v0:2',
-        'gateway/bedrock:mistral.mistral-large-2402-v1:0',
-        'gateway/bedrock:mistral.mistral-large-2407-v1:0',
-        'gateway/bedrock:mistral.mixtral-8x7b-instruct-v0:1',
-        'gateway/bedrock:us.amazon.nova-2-lite-v1:0',
-        'gateway/bedrock:us.amazon.nova-lite-v1:0',
-        'gateway/bedrock:us.amazon.nova-micro-v1:0',
-        'gateway/bedrock:us.amazon.nova-pro-v1:0',
-        'gateway/bedrock:us.anthropic.claude-3-5-haiku-20241022-v1:0',
-        'gateway/bedrock:us.anthropic.claude-3-5-sonnet-20240620-v1:0',
-        'gateway/bedrock:us.anthropic.claude-3-5-sonnet-20241022-v2:0',
-        'gateway/bedrock:us.anthropic.claude-3-7-sonnet-20250219-v1:0',
-        'gateway/bedrock:us.anthropic.claude-3-haiku-20240307-v1:0',
-        'gateway/bedrock:us.anthropic.claude-3-opus-20240229-v1:0',
-        'gateway/bedrock:us.anthropic.claude-3-sonnet-20240229-v1:0',
-        'gateway/bedrock:us.anthropic.claude-haiku-4-5-20251001-v1:0',
-        'gateway/bedrock:us.anthropic.claude-opus-4-20250514-v1:0',
-        'gateway/bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
-        'gateway/bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
-        'gateway/bedrock:us.anthropic.claude-sonnet-4-6',
-        'gateway/bedrock:us.meta.llama3-1-70b-instruct-v1:0',
-        'gateway/bedrock:us.meta.llama3-1-8b-instruct-v1:0',
-        'gateway/bedrock:us.meta.llama3-2-11b-instruct-v1:0',
-        'gateway/bedrock:us.meta.llama3-2-1b-instruct-v1:0',
-        'gateway/bedrock:us.meta.llama3-2-3b-instruct-v1:0',
-        'gateway/bedrock:us.meta.llama3-2-90b-instruct-v1:0',
-        'gateway/bedrock:us.meta.llama3-3-70b-instruct-v1:0',
-        'gateway/google-vertex:gemini-2.0-flash-lite',
-        'gateway/google-vertex:gemini-2.0-flash',
         'gateway/google-vertex:gemini-2.5-flash-image',
         'gateway/google-vertex:gemini-2.5-flash-lite-preview-09-2025',
         'gateway/google-vertex:gemini-2.5-flash-lite',
-        'gateway/google-vertex:gemini-2.5-flash-preview-09-2025',
         'gateway/google-vertex:gemini-2.5-flash',
         'gateway/google-vertex:gemini-2.5-pro',
         'gateway/google-vertex:gemini-3-flash-preview',
         'gateway/google-vertex:gemini-3-pro-image-preview',
-        'gateway/google-vertex:gemini-3-pro-preview',
         'gateway/google-vertex:gemini-3.1-flash-image-preview',
         'gateway/google-vertex:gemini-3.1-flash-lite-preview',
         'gateway/google-vertex:gemini-3.1-pro-preview',
-        'gateway/google-vertex:gemini-flash-latest',
-        'gateway/google-vertex:gemini-flash-lite-latest',
         'gateway/groq:llama-3.1-8b-instant',
         'gateway/groq:llama-3.3-70b-versatile',
-        'gateway/groq:meta-llama/llama-guard-4-12b',
+        'gateway/groq:meta-llama/llama-4-scout-17b-16e-instruct',
+        'gateway/groq:moonshotai/kimi-k2-instruct-0905',
         'gateway/groq:openai/gpt-oss-120b',
         'gateway/groq:openai/gpt-oss-20b',
-        'gateway/groq:whisper-large-v3',
-        'gateway/groq:whisper-large-v3-turbo',
-        'gateway/groq:meta-llama/llama-4-maverick-17b-128e-instruct',
-        'gateway/groq:meta-llama/llama-4-scout-17b-16e-instruct',
-        'gateway/groq:meta-llama/llama-prompt-guard-2-22m',
-        'gateway/groq:meta-llama/llama-prompt-guard-2-86m',
-        'gateway/groq:moonshotai/kimi-k2-instruct-0905',
         'gateway/groq:openai/gpt-oss-safeguard-20b',
-        'gateway/groq:playai-tts',
-        'gateway/groq:playai-tts-arabic',
-        'gateway/groq:qwen/qwen-3-32b',
-        'gateway/openai:computer-use-preview-2025-03-11',
-        'gateway/openai:computer-use-preview',
         'gateway/openai:gpt-3.5-turbo-0125',
-        'gateway/openai:gpt-3.5-turbo-0301',
-        'gateway/openai:gpt-3.5-turbo-0613',
         'gateway/openai:gpt-3.5-turbo-1106',
-        'gateway/openai:gpt-3.5-turbo-16k-0613',
         'gateway/openai:gpt-3.5-turbo-16k',
         'gateway/openai:gpt-3.5-turbo',
-        'gateway/openai:gpt-4-0314',
         'gateway/openai:gpt-4-0613',
         'gateway/openai:gpt-4-turbo-2024-04-09',
         'gateway/openai:gpt-4-turbo',
@@ -296,12 +215,7 @@ KnownModelName = TypeAliasType(
         'gateway/openai:gpt-4o-2024-05-13',
         'gateway/openai:gpt-4o-2024-08-06',
         'gateway/openai:gpt-4o-2024-11-20',
-        'gateway/openai:gpt-4o-audio-preview-2024-12-17',
-        'gateway/openai:gpt-4o-audio-preview-2025-06-03',
-        'gateway/openai:gpt-4o-audio-preview',
         'gateway/openai:gpt-4o-mini-2024-07-18',
-        'gateway/openai:gpt-4o-mini-audio-preview-2024-12-17',
-        'gateway/openai:gpt-4o-mini-audio-preview',
         'gateway/openai:gpt-4o-mini-search-preview-2025-03-11',
         'gateway/openai:gpt-4o-mini-search-preview',
         'gateway/openai:gpt-4o-mini',
@@ -310,24 +224,16 @@ KnownModelName = TypeAliasType(
         'gateway/openai:gpt-4o',
         'gateway/openai:gpt-5-2025-08-07',
         'gateway/openai:gpt-5-chat-latest',
-        'gateway/openai:gpt-5-codex',
         'gateway/openai:gpt-5-mini-2025-08-07',
         'gateway/openai:gpt-5-mini',
         'gateway/openai:gpt-5-nano-2025-08-07',
         'gateway/openai:gpt-5-nano',
-        'gateway/openai:gpt-5-pro-2025-10-06',
-        'gateway/openai:gpt-5-pro',
         'gateway/openai:gpt-5.1-2025-11-13',
         'gateway/openai:gpt-5.1-chat-latest',
-        'gateway/openai:gpt-5.1-codex-max',
-        'gateway/openai:gpt-5.1-codex',
         'gateway/openai:gpt-5.1',
         'gateway/openai:gpt-5.2-2025-12-11',
         'gateway/openai:gpt-5.2-chat-latest',
-        'gateway/openai:gpt-5.2-pro-2025-12-11',
-        'gateway/openai:gpt-5.2-pro',
         'gateway/openai:gpt-5.2',
-        'gateway/openai:gpt-5.3-chat-latest',
         'gateway/openai:gpt-5.4-mini-2026-03-17',
         'gateway/openai:gpt-5.4-mini',
         'gateway/openai:gpt-5.4-nano-2026-03-17',
@@ -335,20 +241,12 @@ KnownModelName = TypeAliasType(
         'gateway/openai:gpt-5.4',
         'gateway/openai:gpt-5',
         'gateway/openai:o1-2024-12-17',
-        'gateway/openai:o1-pro-2025-03-19',
-        'gateway/openai:o1-pro',
         'gateway/openai:o1',
         'gateway/openai:o3-2025-04-16',
-        'gateway/openai:o3-deep-research-2025-06-26',
-        'gateway/openai:o3-deep-research',
         'gateway/openai:o3-mini-2025-01-31',
         'gateway/openai:o3-mini',
-        'gateway/openai:o3-pro-2025-06-10',
-        'gateway/openai:o3-pro',
         'gateway/openai:o3',
         'gateway/openai:o4-mini-2025-04-16',
-        'gateway/openai:o4-mini-deep-research-2025-06-26',
-        'gateway/openai:o4-mini-deep-research',
         'gateway/openai:o4-mini',
         'google-gla:gemini-2.0-flash-lite',
         'google-gla:gemini-2.0-flash',
@@ -441,11 +339,18 @@ KnownModelName = TypeAliasType(
         'heroku:claude-3-haiku',
         'heroku:claude-4-5-haiku',
         'heroku:claude-4-5-sonnet',
+        'heroku:claude-4-6-sonnet',
         'heroku:claude-4-sonnet',
         'heroku:claude-opus-4-5',
+        'heroku:claude-opus-4-6',
+        'heroku:deepseek-v3-2',
+        'heroku:glm-4-7',
+        'heroku:glm-4-7-flash',
         'heroku:gpt-oss-120b',
+        'heroku:kimi-k2-5',
         'heroku:kimi-k2-thinking',
         'heroku:minimax-m2',
+        'heroku:minimax-m2-1',
         'heroku:qwen3-235b',
         'heroku:qwen3-coder-480b',
         'heroku:nova-2-lite',
@@ -655,9 +560,10 @@ class ModelRequestContext:
     model_request_parameters: ModelRequestParameters
 
 
-class Model(ABC):
+class Model(ABC, Generic[InterfaceClient]):
     """Abstract class for a model."""
 
+    _provider: Provider[InterfaceClient]
     _profile: ModelProfileSpec | None = None
     _settings: ModelSettings | None = None
 
@@ -675,6 +581,27 @@ class Model(ABC):
         """
         self._settings = settings
         self._profile = profile
+
+    @property
+    def provider(self) -> Provider[InterfaceClient] | None:
+        """The provider for this model, if any."""
+        return self._provider
+
+    async def __aenter__(self) -> Self:
+        """Enter the model context, delegating to the provider to manage its HTTP client lifecycle."""
+        if self.provider is not None:
+            await self.provider.__aenter__()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool | None:
+        """Exit the model context, closing the provider's HTTP client if it owns one."""
+        if self.provider is not None:
+            await self.provider.__aexit__(exc_type, exc_val, exc_tb)
 
     @property
     def settings(self) -> ModelSettings | None:
@@ -756,6 +683,7 @@ class Model(ABC):
         model_settings = merge_model_settings(self.settings, model_settings)
 
         params = self.customize_request_parameters(model_request_parameters)
+        params = _prepare_return_schemas(params, self.profile)
 
         # Resolve unified thinking setting and strip from model_settings
         if model_settings and 'thinking' in model_settings:
@@ -1400,41 +1328,32 @@ def infer_model(  # noqa: C901
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
 
 
-def cached_async_http_client(
-    *, provider: str | None = None, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5
-) -> httpx.AsyncClient:
-    """Cached HTTPX async client that creates a separate client for each provider.
+def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> httpx.AsyncClient:
+    """Create an HTTPX async client.
 
-    The client is cached based on the provider parameter. If provider is None, it's used for non-provider specific
-    requests (like downloading images). Multiple agents and calls can share the same client when they use the same provider.
-
-    Each client will get its own transport with its own connection pool. The default pool size is defined by `httpx.DEFAULT_LIMITS`.
-
-    There are good reasons why in production you should use a `httpx.AsyncClient` as an async context manager as
-    described in [encode/httpx#2026](https://github.com/encode/httpx/pull/2026), but when experimenting or showing
-    examples, it's very useful not to.
+    Each call creates a new client instance. When used via a [`Provider`][pydantic_ai.providers.Provider],
+    the client's lifecycle is managed automatically — it will be closed when the provider (or agent) exits.
 
     The default timeouts match those of OpenAI,
     see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
     """
-    client = _cached_async_http_client(provider=provider, timeout=timeout, connect=connect)
-    if client.is_closed:  # pragma: no cover
-        # This happens if the context manager is used, so we need to create a new client.
-        # Since there is no API from `functools.cache` to clear the cache for a specific
-        #  key, clear the entire cache here as a workaround.
-        _cached_async_http_client.cache_clear()
-        client = _cached_async_http_client(provider=provider, timeout=timeout, connect=connect)
-    return client
-
-
-@cache
-def _cached_async_http_client(
-    provider: str | None, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5
-) -> httpx.AsyncClient:
     return httpx.AsyncClient(
         timeout=httpx.Timeout(timeout=timeout, connect=connect),
         headers={'User-Agent': get_user_agent()},
     )
+
+
+def cached_async_http_client(
+    *, provider: str | None = None, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5
+) -> httpx.AsyncClient:
+    """Deprecated. Use [`create_async_http_client`][pydantic_ai.models.create_async_http_client] instead."""
+    warnings.warn(
+        'cached_async_http_client is deprecated, use create_async_http_client instead. '
+        'Note: the new function creates a new client per call instead of returning a cached one.',
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return create_async_http_client(timeout=timeout, connect=connect)
 
 
 DataT = TypeVar('DataT', str, bytes)
@@ -1561,6 +1480,43 @@ def _customize_output_object(transformer: type[JsonSchemaTransformer], output_ob
         json_schema=json_schema,
         strict=schema_transformer.is_strict_compatible if output_object.strict is None else output_object.strict,
     )
+
+
+def _prepare_return_schemas(params: ModelRequestParameters, profile: ModelProfile) -> ModelRequestParameters:
+    """Resolve return schemas: clear on tools that haven't opted in, inject into descriptions for non-native models.
+
+    For tools with `include_return_schema=True` and a non-empty schema, models that natively support
+    return schemas keep the schema as-is; other models get it injected into the tool description.
+    Tools that haven't opted in have their `return_schema` cleared.
+    """
+    inject = not profile.supports_tool_return_schema
+    resolved: list[ToolDefinition] = []
+    changed = False
+    for td in params.function_tools:
+        if not td.include_return_schema and td.return_schema is not None:
+            td = replace(td, return_schema=None)
+            changed = True
+        elif td.include_return_schema and not td.return_schema:
+            warnings.warn(
+                f'Tool {td.name!r} has `include_return_schema` enabled but no meaningful return schema'
+                f' was generated. Set `include_return_schema=False` on this tool to suppress this warning.',
+                UserWarning,
+                stacklevel=1,
+            )
+            td = replace(td, return_schema=None)
+            changed = True
+        elif inject and td.return_schema:
+            parts: list[str] = []
+            if td.description:
+                parts.append(td.description)
+            parts.append('Return schema:')
+            parts.append(json.dumps(td.return_schema, indent=2))
+            td = replace(td, description='\n\n'.join(parts), return_schema=None)
+            changed = True
+        resolved.append(td)
+    if changed:
+        return replace(params, function_tools=resolved)
+    return params
 
 
 def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestParameters) -> FinalResultEvent | None:

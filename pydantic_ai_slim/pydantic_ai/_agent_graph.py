@@ -17,12 +17,12 @@ from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
-from pydantic_ai._tool_manager import ToolManager, ValidatedToolCall
 from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, now_utc
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.tool_manager import ToolManager, ValidatedToolCall
 from pydantic_graph import BaseNode, GraphRunContext
 from pydantic_graph.beta import Graph, GraphBuilder
 from pydantic_graph.nodes import End, NodeRunEndT
@@ -1246,6 +1246,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         run_step=ctx.state.run_step,
         run_id=ctx.state.run_id,
         metadata=ctx.state.metadata,
+        tool_manager=ctx.deps.tool_manager,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     run_context = replace(run_context, validation_context=validation_context)
@@ -1694,6 +1695,7 @@ async def _call_tool(
         validated = None
         call = tool_call
 
+    tool_result: Any
     try:
         if tool_call_result is None or isinstance(tool_call_result, ToolApproved):
             if validated is not None:
@@ -1724,14 +1726,16 @@ async def _call_tool(
         return e.tool_retry, None
 
     if isinstance(tool_result, _messages.ToolReturn):
-        tool_return = tool_result
-    elif isinstance(tool_result, list) and any(isinstance(i, _messages.ToolReturn) for i in tool_result):  # pyright: ignore[reportUnknownVariableType]
+        tool_return = cast(_messages.ToolReturn[Any], tool_result)
+    elif isinstance(tool_result, list) and any(
+        isinstance(i, _messages.ToolReturn) for i in cast(list[Any], tool_result)
+    ):
         raise exceptions.UserError(
             f'The return value of tool {call.tool_name!r} contains invalid nested `ToolReturn` objects. '
             f'`ToolReturn` should be used directly.'
         )
     else:
-        tool_return = _messages.ToolReturn(return_value=tool_result)  # pyright: ignore[reportUnknownArgumentType]
+        tool_return = _messages.ToolReturn[Any](return_value=cast(Any, tool_result))
 
     return_part = _messages.ToolReturnPart(
         tool_name=call.tool_name,
