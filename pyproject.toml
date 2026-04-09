@@ -91,7 +91,9 @@ members = [
 
 [tool.uv]
 default-groups = ["dev", "lint", "docs"]
-constraint-dependencies = ["ray>=2.54.0", "authlib>=1.6.7"]
+# pydocket: fastmcp imports docket.dependencies.current_execution which requires >=0.18.0,
+# but prefect pulls in pydocket>=0.16.2 unconstrained (PrefectHQ/fastmcp#3803)
+constraint-dependencies = ["ray>=2.54.0", "authlib>=1.6.7", "pydocket>=0.18.0"]
 
 [dependency-groups]
 dev = [
