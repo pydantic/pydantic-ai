@@ -7,6 +7,7 @@ from dbos import DBOS
 
 from pydantic_ai import messages as _messages
 from pydantic_ai.agent import EventStreamHandler
+from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     CapabilityOrdering,
@@ -34,15 +35,16 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
     optionally wraps MCP toolsets to route their I/O through DBOS steps.
     Outside of DBOS workflows, the capability is transparent.
 
+    The capability discovers the agent's model, name, and toolsets
+    automatically via ``for_agent()``.
+
     Example:
         ```python
         from pydantic_ai import Agent
         from pydantic_ai.durable_exec.dbos import DBOSDurability
-        from pydantic_ai.models.openai import OpenAIChatModel
 
-        model = OpenAIChatModel('gpt-5.2')
-        durability = DBOSDurability(name='my_agent', model=model)
-        agent = Agent(model=durability.model, capabilities=[durability])
+        durability = DBOSDurability()
+        agent = Agent('openai:gpt-5.2', name='my_agent', capabilities=[durability])
         ```
     """
 
@@ -52,39 +54,41 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
     def __init__(
         self,
         *,
-        name: str,
-        model: Model,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         model_step_config: StepConfig | None = None,
         mcp_step_config: StepConfig | None = None,
-        toolsets: list[AbstractToolset[AgentDepsT]] | None = None,
     ):
         """Create a DBOSDurability capability.
 
+        The agent's model, name, and toolsets are discovered automatically.
+
         Args:
-            name: Unique agent name used as a prefix for DBOS step names.
-            model: The model instance to use for requests. DBOS requires a
-                single concrete model (no runtime model switching).
-            event_stream_handler: Optional handler for streaming events. When
-                set, model requests use a streaming step that invokes this
-                handler inside the step.
+            event_stream_handler: Optional handler for streaming events.
             model_step_config: DBOS step config for model request steps.
             mcp_step_config: DBOS step config for MCP server steps.
-            toolsets: Agent toolsets to wrap for DBOS step execution. Only MCP
-                toolsets are wrapped; function toolsets pass through unchanged.
-                The capability provides these to the agent via ``get_toolset()``,
-                so they don't need to be passed to ``Agent(toolsets=...)`` separately.
         """
-        self.name = name
-        self.model = model
+        self.name = ''
         self._event_stream_handler = event_stream_handler
         self._model_step_config = model_step_config or {}
         self._mcp_step_config = mcp_step_config or {}
-        self._toolsets = list(toolsets) if toolsets else []
+        self._dbos_toolsets_by_id: dict[str, AbstractToolset[Any]] = {}
+
+    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> DBOSDurability[AgentDepsT]:
+        """Bind to the agent: discover model, name, toolsets and register DBOS steps."""
+        from pydantic_ai.exceptions import UserError
+
+        if not agent.name:
+            raise UserError('An agent needs to have a unique `name` in order to be used with DBOS.')
+        if not isinstance(agent.model, Model):
+            raise UserError('An agent needs to have a concrete `model` in order to be used with DBOS.')
+
+        self.name = agent.name
+        model = agent.model
+        event_stream_handler = self._event_stream_handler
 
         # --- Model request steps ---
 
-        @DBOS.step(name=f'{name}__model.request', **self._model_step_config)
+        @DBOS.step(name=f'{self.name}__model.request', **self._model_step_config)
         async def request_step(
             messages: list[_messages.ModelMessage],
             model_settings: ModelSettings | None,
@@ -94,7 +98,7 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
 
         self._request_step = request_step
 
-        @DBOS.step(name=f'{name}__model.request_stream', **self._model_step_config)
+        @DBOS.step(name=f'{self.name}__model.request_stream', **self._model_step_config)
         async def request_stream_step(
             messages: list[_messages.ModelMessage],
             model_settings: ModelSettings | None,
@@ -114,11 +118,10 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
         self._request_stream_step = request_stream_step
 
         # --- MCP toolset wrapping ---
-        self._dbos_toolsets_by_id: dict[str, AbstractToolset[Any]] = {}
+        for toolset in agent.toolsets:
+            self._dbosify_leaf_toolsets(toolset)
 
-        if toolsets:
-            for toolset in toolsets:
-                self._dbosify_leaf_toolsets(toolset)
+        return self
 
     def _dbosify_leaf_toolsets(self, toolset: AbstractToolset[AgentDepsT]) -> None:
         """Wrap MCP leaf toolsets as DBOS steps."""
@@ -170,7 +173,6 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
-        """No-op outside DBOS workflows; inside, just delegates."""
         return await handler()
 
     async def wrap_model_request(
@@ -181,11 +183,9 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
         handler: WrapModelRequestHandler,
     ) -> ModelResponse:
         """Route model requests through DBOS steps when inside a workflow."""
-        # If not in a workflow, or already in a step, delegate to the real model
         if DBOS.workflow_id is None or DBOS.step_id is not None:
             return await handler(request_context)
 
-        # Use streaming step when event_stream_handler is set
         if self._event_stream_handler is not None:
             return await self._request_stream_step(
                 request_context.messages,
@@ -199,16 +199,6 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
             request_context.model_settings,
             request_context.model_request_parameters,
         )
-
-    def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
-        """Provide the registered toolsets to the agent."""
-        if not self._toolsets:
-            return None
-        if len(self._toolsets) == 1:
-            return self._toolsets[0]
-        from pydantic_ai.toolsets.combined import CombinedToolset
-
-        return CombinedToolset(self._toolsets)
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Replace MCP leaf toolsets with their DBOS-wrapped versions."""

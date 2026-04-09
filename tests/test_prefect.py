@@ -1255,11 +1255,7 @@ _durability_fn_model = FunctionModel(_durability_model_fn)
 
 async def test_prefect_durability_simple_agent(prefect_harness: None) -> None:
     """PrefectDurability routes model requests through Prefect tasks."""
-    durability = PrefectDurability(
-        name='durability_simple',
-        model=_durability_fn_model,
-    )
-    agent = Agent(_durability_fn_model, name='durability_simple', capabilities=[durability])
+    agent = Agent(_durability_fn_model, name='durability_simple', capabilities=[PrefectDurability()])
 
     @flow
     async def run_durable_agent() -> str:
@@ -1272,11 +1268,7 @@ async def test_prefect_durability_simple_agent(prefect_harness: None) -> None:
 
 async def test_prefect_durability_outside_flow() -> None:
     """PrefectDurability is transparent outside a Prefect flow."""
-    durability = PrefectDurability(
-        name='durability_outside',
-        model=_durability_fn_model,
-    )
-    agent = Agent(_durability_fn_model, name='durability_outside', capabilities=[durability])
+    agent = Agent(_durability_fn_model, name='durability_outside', capabilities=[PrefectDurability()])
 
     result = await agent.run('Hello outside')
     assert result.output == 'Echo: Hello outside'

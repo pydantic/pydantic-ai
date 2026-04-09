@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import functools
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Literal, cast
@@ -52,19 +52,20 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
     """Capability that makes an agent durable by routing I/O through Temporal activities.
 
     When added to an agent, this capability intercepts model requests and
-    optionally wraps toolsets to route their I/O through Temporal activities.
-    Outside of workflows, the capability is transparent — all calls pass
-    through to the real model and toolsets unchanged.
+    wraps toolsets to route their I/O through Temporal activities.
+    Outside of workflows, the capability is transparent.
+
+    The capability discovers the agent's model, name, and toolsets
+    automatically via ``for_agent()``. Only Temporal-specific configuration
+    needs to be passed to the constructor.
 
     Example:
         ```python
         from pydantic_ai import Agent
         from pydantic_ai.durable_exec.temporal import TemporalDurability
-        from pydantic_ai.models.openai import OpenAIChatModel
 
-        model = OpenAIChatModel('gpt-5.2')
-        durability = TemporalDurability(name='my_agent', model=model)
-        agent = Agent(model=durability.model, capabilities=[durability])
+        durability = TemporalDurability()
+        agent = Agent('openai:gpt-5.2', name='my_agent', capabilities=[durability])
         ```
     """
 
@@ -80,19 +81,15 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
     def __init__(
         self,
         *,
-        name: str,
-        model: Model,
         models: Mapping[str, Model] | None = None,
         deps_type: type[AgentDepsT] = type(None),
         provider_factory: TemporalProviderFactory[AgentDepsT] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         activity_config: ActivityConfig | None = None,
         model_activity_config: ActivityConfig | None = None,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         toolset_activity_config: dict[str, ActivityConfig] | None = None,
         tool_activity_config: dict[str, dict[str, ActivityConfig | Literal[False]]] | None = None,
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
-        agent: AbstractAgent[Any, Any] | None = None,
         temporalize_toolset_func: Callable[
             [
                 AbstractToolset[AgentDepsT],
@@ -107,16 +104,17 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
     ):
         """Create a TemporalDurability capability.
 
+        The agent's model, name, and toolsets are discovered automatically
+        when the capability is attached to an agent (via ``for_agent()``).
+
         Args:
-            name: Unique agent name used as a prefix for Temporal activity names.
-            model: The primary model instance. Also used as the agent's model when
-                passed via ``Agent(model=durability.model, ...)``.
-            models: Optional additional models keyed by ID for runtime model switching.
-                The primary ``model`` is registered as ``'default'``.
+            models: Optional additional models keyed by ID for runtime model
+                switching. The agent's primary model is always registered as
+                ``'default'``.
             deps_type: The type of the agent's dependencies, needed for Temporal
                 serialization of activity parameters.
-            provider_factory: Optional callable for instantiating models from provider
-                strings at runtime inside activities.
+            provider_factory: Optional callable for instantiating models from
+                provider strings at runtime inside activities.
             event_stream_handler: Optional handler for streaming events. When set,
                 model requests use a streaming activity that invokes this handler
                 inside the activity.
@@ -124,10 +122,6 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
                 Defaults to a 60-second ``start_to_close_timeout``.
             model_activity_config: Activity config merged on top of the base for
                 model request activities.
-            toolsets: Agent toolsets to wrap for Temporal activity execution. Each
-                leaf toolset must have a unique ``id``. The capability also provides
-                these to the agent via ``get_toolset()``, so they don't need to be
-                passed to ``Agent(toolsets=...)`` separately.
             toolset_activity_config: Per-toolset activity configs keyed by toolset ID,
                 merged on top of the base config.
             tool_activity_config: Per-tool activity configs keyed by toolset ID then
@@ -135,20 +129,17 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
                 (only valid for async tool functions).
             run_context_type: The `TemporalRunContext` subclass for run context
                 serialization/deserialization.
-            agent: Optional agent instance attached to deserialized run contexts
-                inside activities, enabling ``ctx.agent`` access.
             temporalize_toolset_func: Custom function for wrapping leaf toolsets.
                 Defaults to the built-in ``temporalize_toolset``.
         """
-        self.name = name
-        self.model = model
         self.run_context_type = run_context_type
         self._provider_factory = provider_factory
         self._event_stream_handler = event_stream_handler
-        self._agent = agent
-        self._toolsets = list(toolsets) if toolsets else []
+        self._extra_models = dict(models) if models else {}
+        self._deps_type = deps_type
+        self._temporalize_toolset_func = temporalize_toolset_func
 
-        # --- Normalize activity config ---
+        # Normalize activity config
         activity_config = activity_config or ActivityConfig(start_to_close_timeout=timedelta(seconds=60))
         retry_policy = activity_config.get('retry_policy') or RetryPolicy()
         retry_policy.non_retryable_error_types = [
@@ -158,24 +149,54 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         ]
         activity_config['retry_policy'] = retry_policy
         self.activity_config = activity_config
+        self._model_activity_config: ActivityConfig = {**activity_config, **(model_activity_config or {})}
+        self._toolset_activity_config = toolset_activity_config or {}
+        self._tool_activity_config = tool_activity_config or {}
 
-        model_activity_config = model_activity_config or {}
-        toolset_activity_config = toolset_activity_config or {}
-        tool_activity_config = tool_activity_config or {}
+        # These are populated by for_agent()
+        self.name = ''
+        self._agent: AbstractAgent[Any, Any] | None = None
+        self._models_by_id: dict[str, Model] = {}
+        self._temporal_toolsets_by_id: dict[str, AbstractToolset[AgentDepsT]] = {}
+        self._temporal_activities: list[Callable[..., Any]] = []
 
-        activity_name_prefix = f'agent__{name}'
+    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> TemporalDurability[AgentDepsT]:
+        """Bind to the agent: discover model, name, toolsets and register Temporal activities."""
+        if not agent.name:
+            raise UserError(
+                'An agent needs to have a unique `name` in order to be used with Temporal. '
+                "The name will be used to identify the agent's activities within the workflow."
+            )
+        if not isinstance(agent.model, Model):
+            raise UserError(
+                'An agent needs to have a concrete `model` in order to be used with Temporal, '
+                'it cannot be set at agent run time.'
+            )
+
+        self.name = agent.name
+        self._agent = agent
+
+        # Build model registry
+        self._models_by_id = {'default': agent.model}
+        for model_id, model_instance in self._extra_models.items():
+            if model_id == 'default':
+                raise UserError("Model ID 'default' is reserved for the agent's primary model.")
+            self._models_by_id[model_id] = model_instance
+
+        # Register activities
+        self._register_activities(agent)
+
+        return self
+
+    def _register_activities(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
+        """Register all Temporal activities for model requests, event streaming, and toolsets."""
+        activity_name_prefix = f'agent__{self.name}'
+        deps_type = self._deps_type
+        run_context_type = self.run_context_type
+        event_stream_handler = self._event_stream_handler
         activities: list[Callable[..., Any]] = []
 
-        # --- Build model registry ---
-        self._models_by_id: dict[str, Model] = {'default': model}
-        if models:
-            for model_id, model_instance in models.items():
-                if model_id == 'default':
-                    raise UserError("Model ID 'default' is reserved for the primary model.")
-                self._models_by_id[model_id] = model_instance
-
         # --- Model request activities ---
-        self._model_activity_config: ActivityConfig = {**activity_config, **model_activity_config}
 
         async def request_activity(params: RequestParams, deps: Any | None = None) -> ModelResponse:
             run_context = deserialize_run_context(
@@ -235,21 +256,12 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         activities.append(self.event_stream_handler_activity)
 
         # --- Toolset wrapping ---
-        self._temporal_toolsets_by_id: dict[str, AbstractToolset[AgentDepsT]] = {}
-
-        if self._toolsets:
-            for toolset in self._toolsets:
-                self._temporalize_leaf_toolsets(
-                    toolset,
-                    activity_name_prefix=activity_name_prefix,
-                    base_activity_config=activity_config,
-                    toolset_activity_config=toolset_activity_config,
-                    tool_activity_config=tool_activity_config,
-                    deps_type=deps_type,
-                    run_context_type=run_context_type,
-                    temporalize_toolset_func=temporalize_toolset_func,
-                    activities=activities,
-                )
+        for toolset in agent.toolsets:
+            self._temporalize_leaf_toolsets(
+                toolset,
+                activity_name_prefix=activity_name_prefix,
+                activities=activities,
+            )
 
         self._temporal_activities = activities
 
@@ -258,12 +270,6 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         toolset: AbstractToolset[AgentDepsT],
         *,
         activity_name_prefix: str,
-        base_activity_config: ActivityConfig,
-        toolset_activity_config: dict[str, ActivityConfig],
-        tool_activity_config: dict[str, dict[str, ActivityConfig | Literal[False]]],
-        deps_type: type[AgentDepsT],
-        run_context_type: type[TemporalRunContext[AgentDepsT]],
-        temporalize_toolset_func: Callable[..., AbstractToolset[AgentDepsT]],
         activities: list[Callable[..., Any]],
     ) -> None:
         """Wrap each leaf toolset in a Temporal wrapper and collect activities."""
@@ -277,13 +283,13 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
                     "The ID will be used to identify the toolset's activities within the workflow."
                 )
 
-            wrapped = temporalize_toolset_func(
+            wrapped = self._temporalize_toolset_func(
                 ts,
                 activity_name_prefix,
-                {**base_activity_config, **toolset_activity_config.get(ts_id, {})},
-                tool_activity_config.get(ts_id, {}),
-                deps_type,
-                run_context_type,
+                {**self.activity_config, **self._toolset_activity_config.get(ts_id, {})},
+                self._tool_activity_config.get(ts_id, {}),
+                self._deps_type,
+                self.run_context_type,
             )
             if isinstance(wrapped, TemporalWrapperToolset):
                 activities.extend(wrapped.temporal_activities)
@@ -297,29 +303,23 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         """All Temporal activities registered by this capability.
 
         Register these with the Temporal worker, either directly or via
-        `PydanticAIPlugin`/`AgentPlugin`.
+        ``DurabilityPlugin``.
         """
         return self._temporal_activities
 
     # --- Model resolution ---
 
     def _find_model_id(self, model: Model) -> str | None:
-        """Find the registry key for a Model instance.
-
-        Returns ``None`` to indicate the default model.
-        """
-        # Identity match against registered models
+        """Find the registry key for a Model instance. Returns None for default."""
         for model_id, registered in self._models_by_id.items():
             if registered is model:
                 return None if model_id == 'default' else model_id
 
-        # Fallback: match by model_id string
         target = model.model_id
         for model_id, registered in self._models_by_id.items():
             if registered.model_id == target:
                 return None if model_id == 'default' else model_id
 
-        # Not registered — pass the model_id string so the activity can infer it
         return target
 
     def _resolve_model_id(self, model_id: str | None, run_context: RunContext[Any] | None = None) -> Model:
@@ -378,7 +378,6 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         model_name = model_id or ctx.model.model_id
 
-        # Use streaming activity when event_stream_handler is set
         if self._event_stream_handler is not None:
             activity_config: ActivityConfig = {
                 'summary': f'request model: {model_name} (stream)',
@@ -419,20 +418,6 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         if model_request_parameters.allow_image_output:
             raise UserError('Image output is not supported with Temporal because of the 2MB payload size limit.')
 
-    def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
-        """Provide the registered toolsets to the agent.
-
-        The agent automatically includes these in its toolset tree, so they
-        don't need to be passed to ``Agent(toolsets=...)`` separately.
-        """
-        if not self._toolsets:
-            return None
-        if len(self._toolsets) == 1:
-            return self._toolsets[0]
-        from pydantic_ai.toolsets.combined import CombinedToolset
-
-        return CombinedToolset(self._toolsets)
-
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Replace leaf toolsets with their Temporal-wrapped versions."""
         if not self._temporal_toolsets_by_id:
@@ -452,5 +437,4 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
-        """Opt out of spec-based construction (requires Temporal-specific config)."""
         return None

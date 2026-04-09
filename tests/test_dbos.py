@@ -1663,11 +1663,7 @@ _durability_fn_model = FunctionModel(_durability_model_fn)
 
 async def test_dbos_durability_simple_agent(dbos: DBOS) -> None:
     """DBOSDurability routes model requests through DBOS steps."""
-    durability = DBOSDurability(
-        name='durability_simple',
-        model=_durability_fn_model,
-    )
-    agent = Agent(_durability_fn_model, name='durability_simple', capabilities=[durability])
+    agent = Agent(_durability_fn_model, name='durability_simple', capabilities=[DBOSDurability()])
 
     @DBOS.workflow()
     async def run_durable_agent() -> str:
@@ -1680,11 +1676,7 @@ async def test_dbos_durability_simple_agent(dbos: DBOS) -> None:
 
 async def test_dbos_durability_outside_workflow() -> None:
     """DBOSDurability is transparent outside a DBOS workflow."""
-    durability = DBOSDurability(
-        name='durability_outside',
-        model=_durability_fn_model,
-    )
-    agent = Agent(_durability_fn_model, name='durability_outside', capabilities=[durability])
+    agent = Agent(_durability_fn_model, name='durability_outside', capabilities=[DBOSDurability()])
 
     result = await agent.run('Hello outside')
     assert result.output == 'Echo: Hello outside'
@@ -1692,11 +1684,7 @@ async def test_dbos_durability_outside_workflow() -> None:
 
 async def test_dbos_durability_step_verification(dbos: DBOS) -> None:
     """Verify that model requests become DBOS steps."""
-    durability = DBOSDurability(
-        name='durability_steps',
-        model=_durability_fn_model,
-    )
-    agent = Agent(_durability_fn_model, name='durability_steps', capabilities=[durability])
+    agent = Agent(_durability_fn_model, name='durability_steps', capabilities=[DBOSDurability()])
 
     wfid = str(uuid.uuid4())
 

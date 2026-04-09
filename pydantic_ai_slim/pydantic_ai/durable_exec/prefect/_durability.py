@@ -9,6 +9,7 @@ from prefect.context import FlowRunContext
 
 from pydantic_ai import messages as _messages
 from pydantic_ai.agent import EventStreamHandler
+from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     CapabilityOrdering,
@@ -29,18 +30,19 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
     """Capability that makes an agent durable by routing I/O through Prefect tasks.
 
     When added to an agent, this capability intercepts model requests and
-    optionally wraps toolsets to route their I/O through Prefect tasks.
+    wraps toolsets to route their I/O through Prefect tasks.
     Outside of Prefect flows, the capability is transparent.
+
+    The capability discovers the agent's model, name, and toolsets
+    automatically via ``for_agent()``.
 
     Example:
         ```python
         from pydantic_ai import Agent
         from pydantic_ai.durable_exec.prefect import PrefectDurability
-        from pydantic_ai.models.openai import OpenAIChatModel
 
-        model = OpenAIChatModel('gpt-5.2')
-        durability = PrefectDurability(name='my_agent', model=model)
-        agent = Agent(model=durability.model, capabilities=[durability])
+        durability = PrefectDurability()
+        agent = Agent('openai:gpt-5.2', name='my_agent', capabilities=[durability])
         ```
     """
 
@@ -50,15 +52,12 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
     def __init__(
         self,
         *,
-        name: str,
-        model: Model,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         model_task_config: TaskConfig | None = None,
         mcp_task_config: TaskConfig | None = None,
         tool_task_config: TaskConfig | None = None,
         tool_task_config_by_name: dict[str, TaskConfig | None] | None = None,
         event_stream_handler_task_config: TaskConfig | None = None,
-        toolsets: list[AbstractToolset[AgentDepsT]] | None = None,
         prefectify_toolset_func: Callable[
             [AbstractToolset[AgentDepsT], TaskConfig, TaskConfig, dict[str, TaskConfig | None]],
             AbstractToolset[AgentDepsT],
@@ -66,36 +65,41 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
     ):
         """Create a PrefectDurability capability.
 
+        The agent's model, name, and toolsets are discovered automatically.
+
         Args:
-            name: Unique agent name used as a prefix for Prefect task names.
-            model: The model instance to use for requests. Prefect requires a
-                single concrete model (no runtime model switching).
-            event_stream_handler: Optional handler for streaming events. When
-                set, model requests use a streaming task that invokes this
-                handler inside the task.
+            event_stream_handler: Optional handler for streaming events.
             model_task_config: Prefect task config for model request tasks.
             mcp_task_config: Prefect task config for MCP server tasks.
             tool_task_config: Default Prefect task config for tool call tasks.
             tool_task_config_by_name: Per-tool task configs keyed by tool name.
-                Set a tool's config to ``None`` to skip task wrapping.
-            event_stream_handler_task_config: Prefect task config for event
-                stream handler tasks.
-            toolsets: Agent toolsets to wrap for Prefect task execution.
-                The capability provides these to the agent via ``get_toolset()``,
-                so they don't need to be passed to ``Agent(toolsets=...)`` separately.
+            event_stream_handler_task_config: Prefect task config for event handler tasks.
             prefectify_toolset_func: Custom function for wrapping leaf toolsets.
         """
-        self.name = name
-        self.model = model
+        self.name = ''
         self._event_stream_handler = event_stream_handler
-        self._toolsets = list(toolsets) if toolsets else []
+        self._prefectify_toolset_func = prefectify_toolset_func
 
-        # Merge configs with defaults
         self._model_task_config = default_task_config | (model_task_config or {})
         self._mcp_task_config = default_task_config | (mcp_task_config or {})
         self._tool_task_config = default_task_config | (tool_task_config or {})
         self._tool_task_config_by_name = tool_task_config_by_name or {}
         self._event_stream_handler_task_config = default_task_config | (event_stream_handler_task_config or {})
+
+        self._prefect_toolsets_by_id: dict[str, AbstractToolset[AgentDepsT]] = {}
+
+    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> PrefectDurability[AgentDepsT]:
+        """Bind to the agent: discover model, name, toolsets and register Prefect tasks."""
+        from pydantic_ai.exceptions import UserError
+
+        if not agent.name:
+            raise UserError('An agent needs to have a unique `name` in order to be used with Prefect.')
+        if not isinstance(agent.model, Model):
+            raise UserError('An agent needs to have a concrete `model` in order to be used with Prefect.')
+
+        self.name = agent.name
+        model = agent.model
+        event_stream_handler = self._event_stream_handler
 
         # --- Model request tasks ---
 
@@ -129,21 +133,16 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
         self._request_stream_task = request_stream_task
 
         # --- Toolset wrapping ---
-        self._prefect_toolsets_by_id: dict[str, AbstractToolset[AgentDepsT]] = {}
+        for toolset in agent.toolsets:
+            self._prefectify_leaf_toolsets(toolset)
 
-        if toolsets:
-            for ts in toolsets:
-                self._prefectify_leaf_toolsets(ts, prefectify_toolset_func)
+        return self
 
-    def _prefectify_leaf_toolsets(
-        self,
-        toolset: AbstractToolset[AgentDepsT],
-        prefectify_func: Callable[..., AbstractToolset[AgentDepsT]],
-    ) -> None:
+    def _prefectify_leaf_toolsets(self, toolset: AbstractToolset[AgentDepsT]) -> None:
         """Wrap leaf toolsets as Prefect tasks."""
 
         def prefectify(ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-            wrapped = prefectify_func(
+            wrapped = self._prefectify_toolset_func(
                 ts,
                 self._mcp_task_config,
                 self._tool_task_config,
@@ -170,9 +169,8 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
         if FlowRunContext.get() is None:
             return await handler(request_context)
 
-        model_name = self.model.model_name
+        model_name = ctx.model.model_name
 
-        # Use streaming task when event_stream_handler is set
         if self._event_stream_handler is not None:
             return await self._request_stream_task.with_options(
                 name=f'Model Request (Streaming): {model_name}', **self._model_task_config
@@ -188,16 +186,6 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
             request_context.model_settings,
             request_context.model_request_parameters,
         )
-
-    def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
-        """Provide the registered toolsets to the agent."""
-        if not self._toolsets:
-            return None
-        if len(self._toolsets) == 1:
-            return self._toolsets[0]
-        from pydantic_ai.toolsets.combined import CombinedToolset
-
-        return CombinedToolset(self._toolsets)
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Replace leaf toolsets with their Prefect-wrapped versions."""

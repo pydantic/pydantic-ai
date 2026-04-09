@@ -20,6 +20,7 @@ from .abstract import AbstractCapability, WrapGetToolsHandler
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
+    from pydantic_ai.agent.abstract import AbstractAgent
     from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
@@ -41,6 +42,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     @property
     def has_wrap_node_run(self) -> bool:
         return any(c.has_wrap_node_run for c in self.capabilities)
+
+    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> CombinedCapability[AgentDepsT]:
+        new_caps = [c.for_agent(agent) for c in self.capabilities]
+        if all(new is old for new, old in zip(new_caps, self.capabilities)):
+            return self
+        return replace(self, capabilities=list(new_caps))
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         new_caps = await asyncio.gather(*(c.for_run(ctx) for c in self.capabilities))

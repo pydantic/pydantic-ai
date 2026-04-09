@@ -4062,11 +4062,7 @@ def _durability_model_fn(messages: list[ModelMessage], info: AgentInfo) -> Model
 
 _durability_fn_model = FunctionModel(_durability_model_fn)
 
-simple_durability = TemporalDurability(
-    name='durability_simple_agent',
-    model=_durability_fn_model,
-    activity_config=BASE_ACTIVITY_CONFIG,
-)
+simple_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)
 simple_durable_agent = Agent(_durability_fn_model, name='durability_simple_agent', capabilities=[simple_durability])
 
 
@@ -4117,16 +4113,11 @@ durability_country_toolset = FunctionToolset[Deps](tools=[get_country], id='dura
 
 _tool_fn_model = FunctionModel(_tool_model_fn)
 
-complex_durability = TemporalDurability[Deps](
-    name='durability_complex_agent',
-    model=_tool_fn_model,
-    deps_type=Deps,
-    activity_config=BASE_ACTIVITY_CONFIG,
-    toolsets=[durability_country_toolset],
-)
+complex_durability = TemporalDurability[Deps](deps_type=Deps, activity_config=BASE_ACTIVITY_CONFIG)
 complex_durable_agent = Agent(
-    complex_durability.model,
+    _tool_fn_model,
     deps_type=Deps,
+    toolsets=[durability_country_toolset],
     capabilities=[complex_durability],
     name='durability_complex_agent',
 )
@@ -4169,11 +4160,7 @@ async def test_durability_outside_workflow_is_transparent():
 # --- Durability wrap_run disables threads ---
 
 
-_threads_durability = TemporalDurability(
-    name='sync_tool_test',
-    model=_durability_fn_model,
-    activity_config=BASE_ACTIVITY_CONFIG,
-)
+_threads_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)
 _threads_agent = Agent(_durability_fn_model, name='sync_tool_test', capabilities=[_threads_durability])
 
 
@@ -4205,18 +4192,34 @@ async def test_durability_wrap_run_disables_threads(client: Client):
 # --- Durability validation ---
 
 
+def test_durability_requires_agent_name():
+    """TemporalDurability raises UserError when agent has no name."""
+    durability = TemporalDurability()
+    with pytest.raises(UserError, match='unique `name`'):
+        Agent(_durability_fn_model, capabilities=[durability])
+
+
+def test_durability_requires_concrete_model():
+    """TemporalDurability raises UserError when agent has no concrete model."""
+    durability = TemporalDurability()
+    with pytest.raises(UserError, match='concrete `model`'):
+        Agent(name='test', capabilities=[durability])
+
+
 def test_durability_rejects_default_model_key():
     """TemporalDurability raises UserError when 'default' is used in the models dict."""
     with pytest.raises(UserError, match="'default' is reserved"):
-        TemporalDurability(name='test', model=_durability_fn_model, models={'default': _durability_fn_model})
+        Agent(
+            _durability_fn_model,
+            name='test',
+            capabilities=[TemporalDurability(models={'default': _durability_fn_model})],
+        )
 
 
 def test_durability_image_output_rejected():
     """TemporalDurability rejects image output because of the 2MB payload limit."""
-    durability = TemporalDurability(
-        name='test',
-        model=_durability_fn_model,
-    )
+    durability = TemporalDurability()
+    Agent(_durability_fn_model, name='test', capabilities=[durability])
     with pytest.raises(UserError, match='Image output is not supported'):
         durability._validate_model_request_parameters(  # pyright: ignore[reportPrivateUsage]
             ModelRequestParameters(allow_image_output=True),
@@ -4230,34 +4233,28 @@ def test_durability_find_model_id_by_identity():
     """_find_model_id matches models by identity."""
     m1 = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart(content='hi')]))
     m2 = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart(content='hi')]))
-    durability = TemporalDurability(
-        name='test',
-        model=m1,
-        models={'alt': m2},
-    )
+    durability = TemporalDurability(models={'alt': m2})
+    Agent(m1, name='test', capabilities=[durability])
     assert durability._find_model_id(m1) is None  # default → None  # pyright: ignore[reportPrivateUsage]
     assert durability._find_model_id(m2) == 'alt'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_durability_temporal_activities():
-    """temporal_activities returns all registered activities."""
-    durability = TemporalDurability(
-        name='test',
-        model=_durability_fn_model,
-    )
-    activities = durability.temporal_activities
-    # Should have: request_activity, request_stream_activity, event_stream_handler_activity
-    assert len(activities) == 3
+    """temporal_activities returns all registered activities after for_agent."""
+    durability = TemporalDurability()
+    Agent(_durability_fn_model, name='test', capabilities=[durability])
+    # 3 base activities + 1 for the agent's <agent> FunctionToolset
+    assert len(durability.temporal_activities) == 4
 
 
 def test_durability_temporal_activities_with_toolsets():
-    """temporal_activities includes toolset activities when toolsets are provided."""
-    toolset = FunctionToolset(id='test_toolset')
-    durability = TemporalDurability(
+    """temporal_activities includes toolset activities for agent's toolsets."""
+    durability = TemporalDurability()
+    Agent(
+        _durability_fn_model,
         name='test',
-        model=_durability_fn_model,
-        toolsets=[toolset],
+        toolsets=[FunctionToolset(id='test_toolset')],
+        capabilities=[durability],
     )
-    activities = durability.temporal_activities
-    # 3 base activities + 1 call_tool activity from the function toolset
-    assert len(activities) == 4
+    # 3 base activities + 1 for <agent> FunctionToolset + 1 for test_toolset
+    assert len(durability.temporal_activities) == 5
