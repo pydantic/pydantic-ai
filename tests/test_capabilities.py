@@ -5465,6 +5465,13 @@ def test_web_fetch_unique_id():
     assert cap._builtin_unique_id() == 'web_fetch'  # pyright: ignore[reportPrivateUsage]
 
 
+@pytest.mark.skipif(not xai_imports(), reason='xai_sdk not installed')
+def test_xsearch_unique_id():
+    """XSearch returns the correct builtin unique_id."""
+    cap = XSearch()
+    assert cap._builtin_unique_id() == 'x_search'  # pyright: ignore[reportPrivateUsage]
+
+
 def test_web_search_with_constraints():
     """WebSearch capability populates builtin tool with all constraint kwargs."""
     from pydantic_ai.builtin_tools import WebSearchUserLocation
