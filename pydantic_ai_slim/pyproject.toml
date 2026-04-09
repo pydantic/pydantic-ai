@@ -112,7 +112,7 @@ cli = [
 # MCP
 mcp = ["mcp>=1.25.0,<2.0"]
 # FastMCP
-fastmcp = ["fastmcp>=3.2.0"]
+fastmcp = ["fastmcp>=3.2.1"]
 # Evals
 evals = ["pydantic-evals=={{ version }}"]
 # UI
