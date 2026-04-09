@@ -32,14 +32,14 @@ interactions:
     body:
       string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"The\"}],\"role\": \"model\"}}],\"usageMetadata\":
         {\"promptTokenCount\": 15,\"totalTokenCount\": 15,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
-        15}]},\"modelVersion\": \"gemini-2.0-flash\",\"responseId\": \"G9PXaYKqKs2ulu8PipzDmAc\"}\r\n\r\ndata: {\"candidates\":
+        15}]},\"modelVersion\": \"gemini-2.0-flash\",\"responseId\": \"zdTXaZiJGuC3vPEPpdXT-Ac\"}\r\n\r\ndata: {\"candidates\":
         [{\"content\": {\"parts\": [{\"text\": \" capital of France\"}],\"role\": \"model\"}}],\"usageMetadata\": {\"promptTokenCount\":
         15,\"totalTokenCount\": 15,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 15}]},\"modelVersion\":
-        \"gemini-2.0-flash\",\"responseId\": \"G9PXaYKqKs2ulu8PipzDmAc\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\":
+        \"gemini-2.0-flash\",\"responseId\": \"zdTXaZiJGuC3vPEPpdXT-Ac\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\":
         [{\"text\": \" is Paris.\\n\"}],\"role\": \"model\"},\"finishReason\": \"STOP\"}],\"usageMetadata\": {\"promptTokenCount\":
         13,\"candidatesTokenCount\": 8,\"totalTokenCount\": 21,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
         13}],\"candidatesTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 8}]},\"modelVersion\": \"gemini-2.0-flash\",\"responseId\":
-        \"G9PXaYKqKs2ulu8PipzDmAc\"}\r\n\r\n"
+        \"zdTXaZiJGuC3vPEPpdXT-Ac\"}\r\n\r\n"
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -48,7 +48,7 @@ interactions:
       content-type:
       - text/event-stream
       server-timing:
-      - gfet4t7; dur=887
+      - gfet4t7; dur=851
       transfer-encoding:
       - chunked
       vary:
