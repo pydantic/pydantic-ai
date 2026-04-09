@@ -9,7 +9,6 @@ from typing_extensions import Never
 
 from pydantic_ai import (
     AbstractToolset,
-    AgentRunResultEvent,
     _instructions,
     _utils,
     messages as _messages,
@@ -28,7 +27,7 @@ from pydantic_ai.agent.abstract import AgentMetadata, AgentModelSettings, RunOut
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
-from pydantic_ai.result import StreamedRunResult
+from pydantic_ai.result import StreamedRunResult, StreamEventsResult
 from pydantic_ai.tools import (
     AgentBuiltinTool,
     AgentDepsT,
@@ -691,7 +690,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]: ...
+    ) -> StreamEventsResult[OutputDataT]: ...
 
     @overload
     def run_stream_events(
@@ -712,7 +711,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]: ...
+    ) -> StreamEventsResult[RunOutputDataT]: ...
 
     def run_stream_events(
         self,
@@ -732,7 +731,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
+    ) -> StreamEventsResult[Any]:
         """Run the agent with a user prompt in async mode and stream events from the run.
 
         This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run] and

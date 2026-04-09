@@ -3268,37 +3268,37 @@ async def test_run_stream_events():
 
     async with test_agent.run_stream_events('Hello') as stream:
         events = [event async for event in stream]
-    assert test_agent.name == 'test_agent'
+        assert test_agent.name == 'test_agent'
 
-    assert events == snapshot(
-        [
-            PartStartEvent(
-                index=0,
-                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
-            ),
-            PartEndEvent(
-                index=0,
-                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
-            ),
-            FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
-            ),
-            FunctionToolResultEvent(
-                result=ToolReturnPart(
-                    tool_name='ret_a',
-                    content='a-apple',
-                    tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
-                )
-            ),
-            PartStartEvent(index=0, part=TextPart(content='')),
-            FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"ret_a":')),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='"a-apple"}')),
-            PartEndEvent(index=0, part=TextPart(content='{"ret_a":"a-apple"}')),
-            AgentRunResultEvent(result=AgentRunResult(output='{"ret_a":"a-apple"}')),
-        ]
-    )
+        assert events == snapshot(
+            [
+                PartStartEvent(
+                    index=0,
+                    part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
+                ),
+                PartEndEvent(
+                    index=0,
+                    part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
+                ),
+                FunctionToolCallEvent(
+                    part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
+                ),
+                FunctionToolResultEvent(
+                    result=ToolReturnPart(
+                        tool_name='ret_a',
+                        content='a-apple',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ),
+                PartStartEvent(index=0, part=TextPart(content='')),
+                FinalResultEvent(tool_name=None, tool_call_id=None),
+                PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"ret_a":')),
+                PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='"a-apple"}')),
+                PartEndEvent(index=0, part=TextPart(content='{"ret_a":"a-apple"}')),
+                AgentRunResultEvent(result=AgentRunResult(output='{"ret_a":"a-apple"}')),
+            ]
+        )
 
 
 def test_structured_response_sync_validation():
