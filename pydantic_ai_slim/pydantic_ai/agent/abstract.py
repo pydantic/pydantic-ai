@@ -8,7 +8,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, I
 from concurrent.futures import Executor
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from types import FrameType
-from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Generic, TypeAlias, cast, overload
 
 import anyio
 from pydantic import TypeAdapter
@@ -33,7 +33,7 @@ from .._template import TemplateStr
 from .._tool_manager import ToolManager
 from ..builtin_tools import AbstractBuiltinTool
 from ..output import OutputDataT, OutputSpec
-from ..result import AgentStream, FinalResult, StreamedRunResult
+from ..result import AgentStream, FinalResult, StreamedRunResult, StreamEventsResult
 from ..run import AgentRun, AgentRunResult, AgentRunResultEvent
 from ..settings import ModelSettings
 from ..tools import (
@@ -901,7 +901,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]: ...
+    ) -> StreamEventsResult[OutputDataT]: ...
 
     @overload
     def run_stream_events(
@@ -922,7 +922,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]: ...
+    ) -> StreamEventsResult[RunOutputDataT]: ...
 
     def run_stream_events(
         self,
@@ -942,7 +942,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
+    ) -> StreamEventsResult[Any]:
         """Run the agent with a user prompt in async mode and stream events from the run.
 
         This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run] and
@@ -1008,21 +1008,23 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         # unfortunately this hack of returning a generator rather than defining it right here is
         # required to allow overloads of this method to work in python's typing system, or at least with pyright
         # or at least I couldn't make it work without
-        return self._run_stream_events(
-            user_prompt,
-            output_type=output_type,
-            message_history=message_history,
-            deferred_tool_results=deferred_tool_results,
-            model=model,
-            instructions=instructions,
-            deps=deps,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-            usage=usage,
-            metadata=metadata,
-            toolsets=toolsets,
-            builtin_tools=builtin_tools,
-            spec=spec,
+        return StreamEventsResult(
+            generator=self._run_stream_events(
+                user_prompt,
+                output_type=output_type,
+                message_history=message_history,
+                deferred_tool_results=deferred_tool_results,
+                model=model,
+                instructions=instructions,
+                deps=deps,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                usage=usage,
+                metadata=metadata,
+                toolsets=toolsets,
+                builtin_tools=builtin_tools,
+                spec=spec,
+            )
         )
 
     async def _run_stream_events(
@@ -1042,7 +1044,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
+    ) -> AsyncGenerator[_messages.AgentStreamEvent | AgentRunResultEvent[Any], None]:
         send_stream, receive_stream = anyio.create_memory_object_stream[
             _messages.AgentStreamEvent | AgentRunResultEvent[Any]
         ]()

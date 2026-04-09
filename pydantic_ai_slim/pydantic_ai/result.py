@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from contextlib import aclosing
 from copy import deepcopy
@@ -21,7 +22,7 @@ from ._output import (
 )
 from ._run_context import AgentDepsT, RunContext
 from ._tool_manager import ToolManager
-from .messages import ModelResponseStreamEvent
+from .messages import AgentStreamEvent, ModelResponseStreamEvent
 from .output import (
     DeferredToolRequests,
     OutputDataT,
@@ -829,20 +830,46 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
 
 
 class StreamEventsResult(Generic[OutputDataT]):
+    def __init__(self, generator: AsyncGenerator[AgentStreamEvent | AgentRunResultEvent[Any], None]) -> None:
+        self._generator = generator
+        self._managed = False
+        self._closed = False
+
     async def __aenter__(self) -> StreamEventsResult[OutputDataT]:
+        self._managed = True
         return self
 
     async def __aexit__(self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: Any) -> bool:
+        if not self._closed:
+            self._closed = True
+            await self._generator.aclose()
         return False
 
     def __aiter__(self) -> StreamEventsResult[OutputDataT]:
+        if not self._managed:
+            warnings.warn(
+                'Iterating `StreamEventsResult` directly is deprecated. '
+                'Use `async with agent.run_stream_events(...) as stream:` instead '
+                'to ensure proper cleanup.',
+                DeprecationWarning,
+                stacklevel=2,
+            )
         return self
 
     async def __anext__(self) -> _messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]:
-        raise StopAsyncIteration
+        if self._closed:
+            raise StopAsyncIteration
+        return await self._generator.__anext__()
 
     async def cancel(self) -> None:
-        pass
+        """Cancel the stream, stopping token generation.
+
+        Closes the underlying generator, which triggers task cancellation
+        and HTTP connection cleanup via the generator's finally block.
+        """
+        if not self._closed:
+            self._closed = True
+            await self._generator.aclose()
 
 
 @dataclass(repr=False)
