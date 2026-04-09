@@ -2,7 +2,7 @@
 
 import json
 from collections import defaultdict
-from collections.abc import AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -14,6 +14,7 @@ from .. import ModelHTTPError, _utils
 from .._output import OutputObjectDefinition
 from .._run_context import RunContext
 from ..builtin_tools import CodeExecutionTool, FileSearchTool, MCPServerTool, WebSearchTool, XSearchTool
+from ..capabilities.builtin_or_local import BuiltinOrLocalTool
 from ..exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from ..messages import (
     AudioUrl,
@@ -54,6 +55,8 @@ from ..profiles import ModelProfileSpec
 from ..profiles.grok import GrokModelProfile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ThinkingLevel
+from ..tools import AgentDepsT, Tool
+from ..toolsets import AbstractToolset
 from ..usage import RequestUsage
 
 XAI_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'high']] = {
@@ -192,6 +195,90 @@ class XaiModelSettings(ModelSettings, total=False):
 
     See https://docs.x.ai for details.
     """
+
+
+@dataclass(init=False)
+class XSearch(BuiltinOrLocalTool[AgentDepsT]):
+    """X (Twitter) search capability for xAI models.
+
+    Uses the xAI model's native x_search builtin tool. Only works with xAI models.
+    """
+
+    allowed_x_handles: list[str] | None
+    """If provided, only posts from these X handles will be included (max 10). Requires builtin support."""
+
+    excluded_x_handles: list[str] | None
+    """If provided, posts from these X handles will be excluded (max 10). Requires builtin support."""
+
+    from_date: datetime | None
+    """If provided, only posts created on or after this datetime will be included."""
+
+    to_date: datetime | None
+    """If provided, only posts created on or before this datetime will be included."""
+
+    enable_image_understanding: bool | None
+    """Enable image analysis from X posts."""
+
+    enable_video_understanding: bool | None
+    """Enable video analysis from X content."""
+
+    include_x_search_output: bool | None
+    """Include raw X search results in the response as
+    [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart].
+    """
+
+    def __init__(
+        self,
+        *,
+        builtin: XSearchTool
+        | Callable[[RunContext[AgentDepsT]], Awaitable[XSearchTool | None] | XSearchTool | None]
+        | bool = True,
+        local: Tool[AgentDepsT] | Callable[..., Any] | Literal[False] | None = None,
+        allowed_x_handles: list[str] | None = None,
+        excluded_x_handles: list[str] | None = None,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+        enable_image_understanding: bool | None = None,
+        enable_video_understanding: bool | None = None,
+        include_x_search_output: bool | None = None,
+    ) -> None:
+        self.builtin = builtin
+        self.local = local
+        self.allowed_x_handles = allowed_x_handles
+        self.excluded_x_handles = excluded_x_handles
+        self.from_date = from_date
+        self.to_date = to_date
+        self.enable_image_understanding = enable_image_understanding
+        self.enable_video_understanding = enable_video_understanding
+        self.include_x_search_output = include_x_search_output
+        self.__post_init__()
+
+    def _default_builtin(self) -> XSearchTool:
+        kwargs: dict[str, Any] = {}
+        if self.allowed_x_handles is not None:
+            kwargs['allowed_x_handles'] = self.allowed_x_handles
+        if self.excluded_x_handles is not None:
+            kwargs['excluded_x_handles'] = self.excluded_x_handles
+        if self.from_date is not None:
+            kwargs['from_date'] = self.from_date
+        if self.to_date is not None:
+            kwargs['to_date'] = self.to_date
+        if self.enable_image_understanding is not None:
+            kwargs['enable_image_understanding'] = self.enable_image_understanding
+        if self.enable_video_understanding is not None:
+            kwargs['enable_video_understanding'] = self.enable_video_understanding
+        if self.include_x_search_output is not None:
+            kwargs['include_x_search_output'] = self.include_x_search_output
+        return XSearchTool(**kwargs)
+
+    def _builtin_unique_id(self) -> str:
+        return XSearchTool.kind
+
+    def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
+        return None
+
+    def _requires_builtin(self) -> bool:
+        return self.allowed_x_handles is not None or self.excluded_x_handles is not None
 
 
 # Mapping of XaiModelSettings keys to xAI SDK parameter names.
@@ -641,7 +728,9 @@ class XaiModel(Model):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_WEB_SEARCH_CALL_OUTPUT)
         if model_settings.get('xai_include_inline_citations'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_INLINE_CITATIONS)
-        if model_settings.get('xai_include_x_search_output'):
+        if model_settings.get('xai_include_x_search_output') or any(
+            isinstance(bt, XSearchTool) and bt.include_x_search_output for bt in model_request_parameters.builtin_tools
+        ):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_X_SEARCH_CALL_OUTPUT)
         if model_settings.get('xai_include_collections_search_output'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_COLLECTIONS_SEARCH_CALL_OUTPUT)

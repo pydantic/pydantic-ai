@@ -242,6 +242,22 @@ class XSearchTool(AbstractBuiltinTool):
     * xAI, see <https://docs.x.ai/developers/tools/x-search>
     """
 
+    include_x_search_output: bool = False
+    """Include raw X search results in the response as
+    [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart].
+
+    Without this, the model uses the search results internally but only returns
+    its text summary. Enabling it gives programmatic access to searched posts,
+    sources, and metadata.
+
+    Can also be set via
+    [`XaiModelSettings.xai_include_x_search_output`][pydantic_ai.models.xai.XaiModelSettings.xai_include_x_search_output].
+
+    Supported by:
+
+    * xAI, see <https://docs.x.ai/developers/tools/x-search>
+    """
+
     kind: str = 'x_search'
     """The kind of tool."""
 

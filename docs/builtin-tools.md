@@ -778,6 +778,7 @@ The [`FileSearchTool`][pydantic_ai.builtin_tools.FileSearchTool] enables your ag
 |----------|-----------|-------|
 | OpenAI Responses | ✅ | Full feature support. Requires files to be uploaded to vector stores via the [OpenAI Files API](https://platform.openai.com/docs/api-reference/files). To include search results on the [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] available via [`ModelResponse.builtin_tool_calls`][pydantic_ai.messages.ModelResponse.builtin_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_file_search_results`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_file_search_results] [model setting](agent.md#model-run-settings). |
 | Google (Gemini) | ✅ | Requires files to be uploaded via the [Gemini Files API](https://ai.google.dev/gemini-api/docs/files). Files are automatically deleted after 48 hours. Supports up to 2 GB per file and 20 GB per project. Using built-in tools and function tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
+| xAI | ✅ | Mapped to xAI collections search. Requires collection IDs. To include search results on the [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart], enable the [`XaiModelSettings.xai_include_collections_search_output`][pydantic_ai.models.xai.XaiModelSettings.xai_include_collections_search_output] [model setting](agent.md#model-run-settings). |
 || Google (Vertex AI) | ❌ | Not supported |
 | Anthropic | ❌ | Not supported |
 | Groq | ❌ | Not supported |
@@ -858,6 +859,29 @@ async def main():
     result = await agent.run('Summarize the key points from my uploaded documents.')
     print(result.output)
     #> The documents discuss the following key points: ...
+
+asyncio.run(main())
+```
+
+#### xAI
+
+With xAI, `FileSearchTool` maps to the [collections search](https://docs.x.ai/developers/tools/collection-search) tool. Pass collection IDs as `file_store_ids`.
+
+```py {title="file_search_xai.py" test="skip"}
+import asyncio
+
+from pydantic_ai import Agent, FileSearchTool
+
+
+async def main():
+    agent = Agent(
+        'xai:grok-3-fast',
+        builtin_tools=[FileSearchTool(file_store_ids=['collection_abc123'])]
+    )
+
+    result = await agent.run('What does the collection say about pydantic?')
+    print(result.output)
+    #> Based on the collection, Pydantic is ...
 
 asyncio.run(main())
 ```
