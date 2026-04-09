@@ -5974,3 +5974,18 @@ async def test_groq_prompted_output(allow_model_requests: None, groq_api_key: st
             ),
         ]
     )
+
+
+async def test_stream_cancel(allow_model_requests: None):
+    stream = text_chunk('hello '), text_chunk('world'), chunk([])
+    mock_client = MockGroq.create_mock_stream(stream)
+    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        async for _ in result.stream_text(delta=True, debounce_by=None):
+            break
+        await result.cancel()
+        assert result.cancelled
+
+    assert result.response.interrupted is True

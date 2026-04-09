@@ -666,6 +666,12 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         if self._stream_response is not None:
             await self._stream_response.cancel()
 
+    @property
+    def cancelled(self) -> bool:
+        if self._stream_response is not None:
+            return self._stream_response.cancelled
+        return False
+
 
 @dataclass(init=False)
 class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):

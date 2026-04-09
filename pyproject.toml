@@ -249,6 +249,8 @@ filterwarnings = [
     # uvicorn (mcp server)
     "ignore:websockets.legacy is deprecated.*:DeprecationWarning:websockets.legacy",
     "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning",
+    # StreamEventsResult standalone iteration deprecation — existing tests will be migrated to `async with` incrementally
+    "ignore:Iterating `StreamEventsResult` directly is deprecated:DeprecationWarning",
     # random resource warnings; I suspect these are coming from vendor SDKs when running examples..
     "ignore:unclosed <socket:ResourceWarning",
     "ignore:unclosed <ssl.SSLSocket:ResourceWarning",

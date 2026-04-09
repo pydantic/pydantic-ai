@@ -2718,3 +2718,18 @@ def test_map_content_handles_reference_chunk() -> None:
 
     assert text == 'Hello world'
     assert thinking == []
+
+
+async def test_stream_cancel(allow_model_requests: None):
+    stream = [text_chunk('hello '), text_chunk('world'), chunk([])]
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        async for _ in result.stream_text(delta=True, debounce_by=None):
+            break
+        await result.cancel()
+        assert result.cancelled
+
+    assert result.response.interrupted is True

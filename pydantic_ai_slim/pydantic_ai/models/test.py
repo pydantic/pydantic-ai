@@ -358,6 +358,9 @@ class TestStreamedResponse(StreamedResponse):
         """Get the provider base URL."""
         return self._provider_url
 
+    async def cancel(self) -> None:
+        self._cancelled = True
+
     @property
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""

@@ -5473,4 +5473,19 @@ role: ROLE_USER
 """)
 
 
+async def test_stream_cancel(allow_model_requests: None):
+    stream = [get_grok_text_chunk('hello '), get_grok_text_chunk('world')]
+    mock_client = MockXai.create_mock_stream([stream])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        async for _ in result.stream_text(delta=True, debounce_by=None):
+            break
+        await result.cancel()
+        assert result.cancelled
+
+    assert result.response.interrupted is True
+
+
 # End of tests
