@@ -1050,6 +1050,7 @@ class StreamedResponse(ABC):
     _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
+    _cancelled: bool = field(default=False, init=False)
 
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Stream the response as an async iterable of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
@@ -1117,6 +1118,12 @@ class StreamedResponse(ABC):
             self._event_iterator = iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
         return self._event_iterator
 
+    async def cancel(self) -> None:
+        raise NotImplementedError(
+            f'Stream cancellation is not implemented for {type(self).__name__}. '
+            'This provider must override `cancel()` to support streaming cancellation.'
+        )
+
     @abstractmethod
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Return an async iterator of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
@@ -1172,6 +1179,10 @@ class StreamedResponse(ABC):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         raise NotImplementedError()
+
+    @property
+    def cancelled(self) -> bool:
+        return self._cancelled
 
 
 ALLOW_MODEL_REQUESTS = True

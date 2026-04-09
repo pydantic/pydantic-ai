@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from contextlib import aclosing
 from copy import deepcopy
@@ -58,6 +59,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _agent_stream_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _initial_run_ctx_usage: RunUsage = field(init=False)
     _cached_output: OutputDataT | None = field(default=None, init=False)
+
+    _anext_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
 
     def __post_init__(self):
         self._initial_run_ctx_usage = deepcopy(self._run_ctx.usage)
@@ -135,6 +138,17 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 for validator in self._output_validators:
                     text = await validator.validate(text, replace(self._run_ctx, partial_output=True))
                 yield text
+
+    async def cancel(self):
+        await self._raw_stream_response.cancel()
+
+    async def drain(self):
+        async for _ in self:
+            pass
+
+    @property
+    def cancelled(self) -> bool:
+        return self._raw_stream_response.cancelled
 
     @property
     def run_id(self) -> str:
@@ -272,7 +286,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     yield part.content, i
 
             last_text_index: int | None = None
-            async for event in self._raw_stream_response:
+            async for event in self:
                 if (
                     isinstance(event, _messages.PartStartEvent)
                     and isinstance(event.part, _messages.TextPart)
@@ -321,7 +335,22 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 self._raw_stream_response, self._usage_limits, self.usage
             )
 
-        return self._agent_stream_iterator
+        base_iter = self._agent_stream_iterator
+
+        return self._events_iter(base_iter)
+
+    async def _events_iter(
+        self, base_iter: AsyncIterator[ModelResponseStreamEvent]
+    ) -> AsyncIterator[ModelResponseStreamEvent]:
+        while True:
+            async with self._anext_lock:
+                try:
+                    event = await anext(base_iter)
+
+                except StopAsyncIteration:
+                    return
+
+            yield event
 
 
 @dataclass(init=False)
@@ -631,6 +660,10 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             self._all_messages.append(message)
         if self._on_complete is not None:
             await self._on_complete()
+
+    async def cancel(self):
+        if self._stream_response is not None:
+            await self._stream_response.cancel()
 
 
 @dataclass(init=False)

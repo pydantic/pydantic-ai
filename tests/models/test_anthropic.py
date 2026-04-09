@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import json
 import os
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -105,6 +105,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import (
         AnthropicModel,
         AnthropicModelSettings,
+        AnthropicStreamedResponse,
         _map_usage,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
@@ -137,6 +138,56 @@ def test_init():
     assert m.model_name == 'claude-haiku-4-5'
     assert m.system == 'anthropic'
     assert m.base_url == 'https://api.anthropic.com'
+
+
+class _BrokenReadResponse:
+    def __aiter__(self) -> _BrokenReadResponse:
+        return self
+
+    async def __anext__(self) -> BetaRawMessageStreamEvent:
+        raise httpx.ReadError('stream closed')
+
+
+@dataclass
+class _ClosableStream:
+    closed: bool = False
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+async def test_anthropic_cancelled_read_error_is_suppressed():
+    stream = _ClosableStream()
+    response = AnthropicStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='claude-haiku-4-5',
+        _response=cast(AsyncIterable[BetaRawMessageStreamEvent], _BrokenReadResponse()),
+        _provider_name='anthropic',
+        _provider_url='https://api.anthropic.com',
+        _stream=cast(Any, stream),
+    )
+
+    await response.cancel()
+    assert stream.closed is True
+    assert response.cancelled is True
+
+    events = [event async for event in response]
+    assert events == []
+
+
+async def test_anthropic_read_error_is_raised_when_not_cancelled():
+    response = AnthropicStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='claude-haiku-4-5',
+        _response=cast(AsyncIterable[BetaRawMessageStreamEvent], _BrokenReadResponse()),
+        _provider_name='anthropic',
+        _provider_url='https://api.anthropic.com',
+        _stream=cast(Any, _ClosableStream()),
+    )
+
+    with pytest.raises(httpx.ReadError):
+        async for _event in response:
+            pass
 
 
 @dataclass
