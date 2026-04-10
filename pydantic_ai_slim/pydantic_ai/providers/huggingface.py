@@ -48,7 +48,8 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
     def client(self) -> AsyncInferenceClient:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         provider_to_profile = {
             'deepseek-ai': deepseek_model_profile,
             'google': google_model_profile,
@@ -108,7 +109,7 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
         if api_key is None:
             raise UserError(
                 'Set the `HF_TOKEN` environment variable or pass it via `HuggingFaceProvider(api_key=...)`'
-                'to use the HuggingFace provider.'
+                ' to use the HuggingFace provider.'
             )
 
         if http_client is not None:

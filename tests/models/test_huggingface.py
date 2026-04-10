@@ -23,10 +23,12 @@ from pydantic_ai import (
     ModelRetry,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -969,6 +971,7 @@ text 2\
         (AudioUrl(url='url'), 'AudioUrl is not supported for Hugging Face'),
         (DocumentUrl(url='url'), 'DocumentUrl is not supported for Hugging Face'),
         (VideoUrl(url='url'), 'VideoUrl is not supported for Hugging Face'),
+        (UploadedFile(file_id='file-123', provider_name='anthropic'), 'UploadedFile is not supported for Hugging Face'),
     ],
 )
 async def test_unsupported_media_types(allow_model_requests: None, content_item: Any, error_message: str):
@@ -1117,3 +1120,13 @@ async def test_cache_point_filtering():
     # CachePoint should be filtered out
     assert msg['role'] == 'user'
     assert len(msg['content']) == 1  # pyright: ignore[reportUnknownArgumentType]
+
+
+async def test_map_user_prompt_with_text_content():
+    """Test that UserPromptPart with text content is mapped correctly."""
+    msg = await HuggingFaceModel._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        UserPromptPart(content=['hello', TextContent(content='there', metadata={'id': 'h01'})])
+    )
+
+    assert msg.content[0].text == snapshot('hello')  # pyright: ignore
+    assert msg.content[1].text == snapshot('there')  # pyright: ignore
