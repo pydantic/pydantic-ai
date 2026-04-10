@@ -59,7 +59,7 @@ from pydantic_ai.usage import RequestUsage
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsNow, IsStr
+from .conftest import IsInt, IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
 
@@ -3967,7 +3967,7 @@ async def test_partial_incomplete_tool_call_filtered_from_history():
     """When an interrupted response has a mix of valid and incomplete parts,
     the incomplete tool calls are stripped but valid parts are kept."""
 
-    async def my_tool(x: int) -> str:
+    async def my_tool(x: int) -> str:  # pragma: no cover
         return str(x)
 
     agent = Agent(TestModel(), tools=[my_tool])
