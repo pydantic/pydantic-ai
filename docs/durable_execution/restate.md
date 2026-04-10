@@ -236,7 +236,7 @@ restate deployments register http://agent-v2:9080
 
 On FaaS platforms like AWS Lambda, Vercel, or Deno Deploy, versioning is automatic via version-specific URLs or ARNs. For containers, register new endpoints and Restate handles traffic routing. See the [Restate versioning documentation](https://docs.restate.dev/services/versioning) for more details.
 
-## Observability
+## Observability with Logfire
 
 Restate exports OpenTelemetry traces for all executions. Pydantic AI emits traces for all LLM calls and tool executions.
 You can combine Restate and Pydantic AI traces to get a complete view of your agent's behavior in Logfire:
