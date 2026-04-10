@@ -60,7 +60,10 @@ from pydantic_graph import End
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInt, IsNow, IsStr
 
-pytestmark = pytest.mark.anyio
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.filterwarnings('ignore:Iterating `StreamEventsResult` directly is deprecated:DeprecationWarning'),
+]
 
 
 class Foo(BaseModel):
@@ -3266,39 +3269,38 @@ async def test_run_stream_events():
     async def ret_a(x: str) -> str:
         return f'{x}-apple'
 
-    async with test_agent.run_stream_events('Hello') as stream:
-        events = [event async for event in stream]
-        assert test_agent.name == 'test_agent'
+    events = [event async for event in test_agent.run_stream_events('Hello')]
+    assert test_agent.name == 'test_agent'
 
-        assert events == snapshot(
-            [
-                PartStartEvent(
-                    index=0,
-                    part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
-                ),
-                PartEndEvent(
-                    index=0,
-                    part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
-                ),
-                FunctionToolCallEvent(
-                    part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
-                ),
-                FunctionToolResultEvent(
-                    result=ToolReturnPart(
-                        tool_name='ret_a',
-                        content='a-apple',
-                        tool_call_id=IsStr(),
-                        timestamp=IsNow(tz=timezone.utc),
-                    )
-                ),
-                PartStartEvent(index=0, part=TextPart(content='')),
-                FinalResultEvent(tool_name=None, tool_call_id=None),
-                PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"ret_a":')),
-                PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='"a-apple"}')),
-                PartEndEvent(index=0, part=TextPart(content='{"ret_a":"a-apple"}')),
-                AgentRunResultEvent(result=AgentRunResult(output='{"ret_a":"a-apple"}')),
-            ]
-        )
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
+            ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
+            ),
+            FunctionToolCallEvent(
+                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
+            ),
+            FunctionToolResultEvent(
+                result=ToolReturnPart(
+                    tool_name='ret_a',
+                    content='a-apple',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                )
+            ),
+            PartStartEvent(index=0, part=TextPart(content='')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"ret_a":')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='"a-apple"}')),
+            PartEndEvent(index=0, part=TextPart(content='{"ret_a":"a-apple"}')),
+            AgentRunResultEvent(result=AgentRunResult(output='{"ret_a":"a-apple"}')),
+        ]
+    )
 
 
 def test_structured_response_sync_validation():
@@ -3433,9 +3435,8 @@ async def test_args_validator_failure_events():
         return x + y
 
     events: list[Any] = []
-    async with agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42) as stream:
-        async for event in stream:
-            events.append(event)
+    async for event in agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42):
+        events.append(event)
 
     assert events == snapshot(
         [
@@ -3506,9 +3507,8 @@ async def test_args_validator_event_args_valid_field():
         return x + y
 
     events: list[Any] = []
-    async with agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42) as stream:
-        async for event in stream:
-            events.append(event)
+    async for event in agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42):
+        events.append(event)
 
     assert events == snapshot(
         [
@@ -3561,9 +3561,8 @@ async def test_args_validator_event_args_valid_no_custom_validator():
         return x + y
 
     events: list[Any] = []
-    async with agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42) as stream:
-        async for event in stream:
-            events.append(event)
+    async for event in agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42):
+        events.append(event)
 
     tool_call_events: list[FunctionToolCallEvent] = [e for e in events if isinstance(e, FunctionToolCallEvent)]
     assert len(tool_call_events) >= 1
@@ -3595,9 +3594,8 @@ async def test_schema_validation_failure_args_valid_false():
 
     events: list[Any] = []
     try:
-        async with agent.run_stream_events('call add_numbers', deps=42) as stream:  # pragma: no branch
-            async for event in stream:
-                events.append(event)
+        async for event in agent.run_stream_events('call add_numbers', deps=42):  # pragma: no branch
+            events.append(event)
     except UnexpectedModelBehavior:
         pass  # Expected when max retries exceeded
 
@@ -3654,9 +3652,8 @@ async def test_event_ordering_call_before_result():
         return x * 2
 
     events: list[Any] = []
-    async with agent.run_stream_events('test') as stream:
-        async for event in stream:
-            events.append(event)
+    async for event in agent.run_stream_events('test'):
+        events.append(event)
 
     call_ids_seen: set[str] = set()
     result_ids_seen: set[str] = set()
@@ -3703,13 +3700,12 @@ async def test_args_valid_true_for_presupplied_tool_approved():
     # Second run with ToolApproved: collect events
     messages = result.all_messages()
     events: list[Any] = []
-    async with agent.run_stream_events(
+    async for event in agent.run_stream_events(
         message_history=messages,
         deferred_tool_results=DeferredToolResults(approvals={tool_call_id: ToolApproved()}),
         deps=42,
-    ) as stream:
-        async for event in stream:
-            events.append(event)
+    ):
+        events.append(event)
 
     # The FunctionToolCallEvent for the pre-supplied result should have args_valid=True
     tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool']
@@ -3743,13 +3739,12 @@ async def test_args_valid_none_for_tool_denied():
     # Second run with ToolDenied
     messages = result.all_messages()
     events: list[Any] = []
-    async with agent.run_stream_events(
+    async for event in agent.run_stream_events(
         message_history=messages,
         deferred_tool_results=DeferredToolResults(approvals={tool_call_id: ToolDenied('User denied this tool call')}),
         deps=42,
-    ) as stream:
-        async for event in stream:
-            events.append(event)
+    ):
+        events.append(event)
 
     # FunctionToolCallEvent should have args_valid=None (pre-supplied result, no upfront validation)
     tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool']
@@ -3778,9 +3773,8 @@ async def test_deferred_tool_validation_event_in_stream():
         raise ApprovalRequired()
 
     events: list[Any] = []
-    async with agent.run_stream_events('test') as stream:
-        async for event in stream:
-            events.append(event)
+    async for event in agent.run_stream_events('test'):
+        events.append(event)
 
     tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool']
     assert tool_call_events
@@ -3857,7 +3851,24 @@ async def test_run_stream_cancel_guard_suppresses_transport_error():
 
     assert result.cancelled
     assert result.response.interrupted is True
-    assert len(chunks) >= 1
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success ')],
+                usage=RequestUsage(input_tokens=51, output_tokens=1),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+                interrupted=True,
+            ),
+        ]
+    )
 
 
 async def test_run_stream_cancel_after_complete():
