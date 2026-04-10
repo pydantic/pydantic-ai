@@ -11,9 +11,16 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 from urllib.parse import parse_qs, urlparse
 
 import anyio.to_thread
-from botocore.client import BaseClient
-from botocore.exceptions import ClientError
 from typing_extensions import ParamSpec, assert_never
+
+try:
+    from botocore.client import BaseClient
+    from botocore.exceptions import ClientError
+except ImportError as _import_error:
+    raise ImportError(
+        'Please install `boto3` to use the Bedrock model, '
+        'you can use the `bedrock` optional group — `pip install "pydantic-ai-slim[bedrock]"`'
+    ) from _import_error
 
 from pydantic_ai import (
     AudioUrl,
