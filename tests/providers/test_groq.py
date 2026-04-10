@@ -42,7 +42,7 @@ def test_groq_provider_need_api_key(env: TestEnv) -> None:
         UserError,
         match=re.escape(
             'Set the `GROQ_API_KEY` environment variable or pass it via `GroqProvider(api_key=...)`'
-            'to use the Groq provider.'
+            ' to use the Groq provider.'
         ),
     ):
         GroqProvider()

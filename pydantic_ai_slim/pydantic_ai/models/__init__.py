@@ -15,10 +15,11 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
+from types import TracebackType
 from typing import Any, Generic, Literal, TypeVar, cast, get_args, overload
 
 import httpx
-from typing_extensions import TypeAliasType, TypedDict
+from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 
 from .. import _utils
 from .._json_schema import JsonSchemaTransformer
@@ -49,7 +50,7 @@ from ..messages import (
 )
 from ..output import OutputMode, StructuredOutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
-from ..providers import Provider, infer_provider, infer_provider_class
+from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
 from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
@@ -146,12 +147,8 @@ KnownModelName = TypeAliasType(
         'bedrock:us.meta.llama3-2-90b-instruct-v1:0',
         'bedrock:us.meta.llama3-3-70b-instruct-v1:0',
         'cerebras:gpt-oss-120b',
-        'cerebras:llama-3.3-70b',
         'cerebras:llama3.1-8b',
         'cerebras:qwen-3-235b-a22b-instruct-2507',
-        'cerebras:qwen-3-32b',
-        'cerebras:qwen-3-coder-480b',
-        'cerebras:zai-glm-4.6',
         'cerebras:zai-glm-4.7',
         'cohere:c4ai-aya-expanse-32b',
         'cohere:c4ai-aya-expanse-8b',
@@ -342,11 +339,18 @@ KnownModelName = TypeAliasType(
         'heroku:claude-3-haiku',
         'heroku:claude-4-5-haiku',
         'heroku:claude-4-5-sonnet',
+        'heroku:claude-4-6-sonnet',
         'heroku:claude-4-sonnet',
         'heroku:claude-opus-4-5',
+        'heroku:claude-opus-4-6',
+        'heroku:deepseek-v3-2',
+        'heroku:glm-4-7',
+        'heroku:glm-4-7-flash',
         'heroku:gpt-oss-120b',
+        'heroku:kimi-k2-5',
         'heroku:kimi-k2-thinking',
         'heroku:minimax-m2',
+        'heroku:minimax-m2-1',
         'heroku:qwen3-235b',
         'heroku:qwen3-coder-480b',
         'heroku:nova-2-lite',
@@ -539,12 +543,15 @@ class ModelRequestParameters:
             return StructuredTextOutputSchema.build_instructions(self.prompted_output_template, self.output_object)
         return None
 
-    def resolve_auto_output_mode(self, output_mode: StructuredOutputMode) -> ModelRequestParameters:
-        """Resolve 'auto' output mode, atomically setting both output_mode and allow_text_output.
+    def with_default_output_mode(self, output_mode: StructuredOutputMode) -> ModelRequestParameters:
+        """Set the default output mode if the current mode is 'auto', atomically updating allow_text_output.
 
-        This ensures the two fields stay in sync — output_mode='tool' implies allow_text_output=False,
-        while 'native' and 'prompted' imply allow_text_output=True.
+        No-op if the current output_mode is not 'auto'. This ensures the two fields stay in sync —
+        output_mode='tool' implies allow_text_output=False, while 'native' and 'prompted' imply
+        allow_text_output=True.
         """
+        if self.output_mode != 'auto':
+            return self
         return replace(self, output_mode=output_mode, allow_text_output=output_mode in ('native', 'prompted'))
 
     __repr__ = _utils.dataclasses_no_defaults_repr
@@ -564,9 +571,10 @@ class ModelRequestContext:
     model_request_parameters: ModelRequestParameters
 
 
-class Model(ABC):
+class Model(ABC, Generic[InterfaceClient]):
     """Abstract class for a model."""
 
+    _provider: Provider[InterfaceClient]
     _profile: ModelProfileSpec | None = None
     _settings: ModelSettings | None = None
 
@@ -584,6 +592,27 @@ class Model(ABC):
         """
         self._settings = settings
         self._profile = profile
+
+    @property
+    def provider(self) -> Provider[InterfaceClient] | None:
+        """The provider for this model, if any."""
+        return self._provider
+
+    async def __aenter__(self) -> Self:
+        """Enter the model context, delegating to the provider to manage its HTTP client lifecycle."""
+        if self.provider is not None:
+            await self.provider.__aenter__()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool | None:
+        """Exit the model context, closing the provider's HTTP client if it owns one."""
+        if self.provider is not None:
+            await self.provider.__aexit__(exc_type, exc_val, exc_tb)
 
     @property
     def settings(self) -> ModelSettings | None:
@@ -612,6 +641,20 @@ class Model(ABC):
         """Make a request to the model for counting tokens."""
         # This method is not required, but you need to implement it if you want to support `UsageLimits.count_tokens_before_request`.
         raise NotImplementedError(f'Token counting ahead of the request is not supported by {self.__class__.__name__}')
+
+    async def compact_messages(
+        self,
+        request_context: ModelRequestContext,
+        *,
+        instructions: str | None = None,
+    ) -> ModelResponse:
+        """Compact messages to reduce conversation context size.
+
+        This method is optional and only supported by specific providers
+        (e.g. OpenAI Responses API). Providers that support compaction
+        override this method with their implementation.
+        """
+        raise NotImplementedError(f'Message compaction is not supported by {self.__class__.__name__}')
 
     @asynccontextmanager
     async def request_stream(
@@ -649,7 +692,7 @@ class Model(ABC):
 
         return model_request_parameters
 
-    def prepare_request(  # noqa: C901
+    def prepare_request(
         self,
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
@@ -683,8 +726,7 @@ class Model(ABC):
                 builtin_tools=list({tool.unique_id: tool for tool in builtin_tools}.values()),
             )
 
-        if params.output_mode == 'auto':
-            params = params.resolve_auto_output_mode(self.profile.default_structured_output_mode)
+        params = params.with_default_output_mode(self.profile.default_structured_output_mode)
 
         # Reset irrelevant fields
         if params.output_tools and params.output_mode != 'tool':
@@ -1288,41 +1330,27 @@ def infer_model(  # noqa: C901
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
 
 
-def cached_async_http_client(
-    *, provider: str | None = None, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5
-) -> httpx.AsyncClient:
-    """Cached HTTPX async client that creates a separate client for each provider.
+def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> httpx.AsyncClient:
+    """Create an HTTPX async client.
 
-    The client is cached based on the provider parameter. If provider is None, it's used for non-provider specific
-    requests (like downloading images). Multiple agents and calls can share the same client when they use the same provider.
-
-    Each client will get its own transport with its own connection pool. The default pool size is defined by `httpx.DEFAULT_LIMITS`.
-
-    There are good reasons why in production you should use a `httpx.AsyncClient` as an async context manager as
-    described in [encode/httpx#2026](https://github.com/encode/httpx/pull/2026), but when experimenting or showing
-    examples, it's very useful not to.
+    Each call creates a new client instance. When used via a [`Provider`][pydantic_ai.providers.Provider],
+    the client's lifecycle is managed automatically — it will be closed when the provider (or agent) exits.
 
     The default timeouts match those of OpenAI,
     see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
     """
-    client = _cached_async_http_client(provider=provider, timeout=timeout, connect=connect)
-    if client.is_closed:  # pragma: no cover
-        # This happens if the context manager is used, so we need to create a new client.
-        # Since there is no API from `functools.cache` to clear the cache for a specific
-        #  key, clear the entire cache here as a workaround.
-        _cached_async_http_client.cache_clear()
-        client = _cached_async_http_client(provider=provider, timeout=timeout, connect=connect)
-    return client
-
-
-@cache
-def _cached_async_http_client(
-    provider: str | None, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5
-) -> httpx.AsyncClient:
     return httpx.AsyncClient(
         timeout=httpx.Timeout(timeout=timeout, connect=connect),
         headers={'User-Agent': get_user_agent()},
     )
+
+
+@deprecated('`cached_async_http_client` is deprecated, use `create_async_http_client` instead.')
+def cached_async_http_client(
+    *, provider: str | None = None, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5
+) -> httpx.AsyncClient:
+    """Use [`create_async_http_client`][pydantic_ai.models.create_async_http_client] instead."""
+    return create_async_http_client(timeout=timeout, connect=connect)
 
 
 DataT = TypeVar('DataT', str, bytes)
