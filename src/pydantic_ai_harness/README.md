@@ -15,6 +15,8 @@ Pydantic AI's [capabilities](https://ai.pydantic.dev/capabilities/) and [hooks](
 
 The [capability matrix](#capability-matrix) tracks where we are. [Tell us what to prioritize.](#help-us-prioritize)
 
+**Contents:** [Installation](#installation) · [Quick start](#quick-start) · [Capability matrix](#capability-matrix) · [Help us prioritize](#help-us-prioritize) · [Build your own](#build-your-own) · [Contributing](#contributing) · [Version policy](#version-policy) · [Pydantic AI references](#pydantic-ai-references) · [License](#license)
+
 ## Installation
 
 ```bash
@@ -126,6 +128,17 @@ make typecheck # pyright strict
 make test      # pytest
 make testcov   # pytest with 100% branch coverage
 ```
+
+## Version policy
+
+Pydantic Harness uses **0.x versioning** to signal that APIs are still stabilizing. During 0.x:
+
+- **Minor releases** (0.1 → 0.2) may include breaking changes — renamed parameters, changed defaults, restructured APIs. As the library grows, especially as capabilities gain provider-native support (starting as a local implementation, then auto-switching to the provider's built-in API when available), we may need to reshape APIs we couldn't fully anticipate in the initial design.
+- **Patch releases** (0.1.0 → 0.1.1) will not intentionally break existing behavior.
+- **All breaking changes** are documented in release notes with migration guidance.
+- Where practical, we'll keep the previous behavior available under a deprecated name or configuration option before removing it.
+
+This is why Pydantic Harness is a separate package from [Pydantic AI](https://github.com/pydantic/pydantic-ai), which has a [stricter version policy](https://ai.pydantic.dev/version-policy/). As the core capabilities stabilize, we'll move toward 1.0 with stability guarantees to match.
 
 ## Pydantic AI references
 
