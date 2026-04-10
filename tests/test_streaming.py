@@ -3849,7 +3849,7 @@ async def test_run_stream_cancel_guard_suppresses_transport_error():
         chunks: list[str] = []
         async for text in result.stream_text(delta=True, debounce_by=None):
             chunks.append(text)
-            if not result.cancelled:
+            if not result.cancelled:  # pragma: no branch
                 await result.cancel()
                 # Don't break: let the loop call anext() again, which resumes
                 # the generator into the _cancelled check and exercises the

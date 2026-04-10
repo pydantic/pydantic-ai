@@ -6357,10 +6357,10 @@ async def test_agent_context_manager_no_model():
 
 
 def test_cached_async_http_client_deprecated():
-    from pydantic_ai.models import cached_async_http_client
+    from pydantic_ai.models import cached_async_http_client  # pyright: ignore[reportDeprecated]
 
-    with pytest.warns(DeprecationWarning, match='cached_async_http_client is deprecated'):
-        cached_async_http_client()
+    with pytest.warns(DeprecationWarning, match='cached_async_http_client.*is deprecated'):
+        cached_async_http_client()  # pyright: ignore[reportDeprecated]
 
 
 @requires_openai
