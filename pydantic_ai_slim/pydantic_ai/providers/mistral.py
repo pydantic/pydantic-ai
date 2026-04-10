@@ -7,13 +7,13 @@ import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.providers import Provider
 
 try:
-    from mistralai import Mistral
-except ImportError as e:  # pragma: no cover
+    from mistralai.client import Mistral
+except ImportError as e:
     raise ImportError(
         'Please install the `mistral` package to use the Mistral provider, '
         'you can use the `mistral` optional group — `pip install "pydantic-ai-slim[mistral]"`'
@@ -35,7 +35,8 @@ class MistralProvider(Provider[Mistral]):
     def client(self) -> Mistral:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         return mistral_model_profile(model_name)
 
     @overload
@@ -72,10 +73,15 @@ class MistralProvider(Provider[Mistral]):
             if not api_key:
                 raise UserError(
                     'Set the `MISTRAL_API_KEY` environment variable or pass it via `MistralProvider(api_key=...)`'
-                    'to use the Mistral provider.'
+                    ' to use the Mistral provider.'
                 )
             elif http_client is not None:
                 self._client = Mistral(api_key=api_key, async_client=http_client, server_url=base_url)
             else:
-                http_client = cached_async_http_client(provider='mistral')
+                http_client = create_async_http_client()
+                self._own_http_client = http_client
+                self._http_client_factory = create_async_http_client
                 self._client = Mistral(api_key=api_key, async_client=http_client, server_url=base_url)
+
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client.sdk_configuration.async_client = http_client

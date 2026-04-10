@@ -38,17 +38,19 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
 from ..profiles import ModelProfileSpec
 from ..profiles.google import GoogleModelProfile
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ThinkingEffort
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -77,6 +79,10 @@ try:
         FunctionCallingConfigDict,
         FunctionCallingConfigMode,
         FunctionDeclarationDict,
+        FunctionResponseBlobDict,
+        FunctionResponseDict,
+        FunctionResponseFileDataDict,
+        FunctionResponsePartDict,
         GenerateContentConfigDict,
         GenerateContentResponse,
         GenerationConfigDict,
@@ -120,8 +126,10 @@ LatestGoogleModelNames = Literal[
     'gemini-2.5-flash-lite-preview-09-2025',
     'gemini-2.5-pro',
     'gemini-3-flash-preview',
-    'gemini-3-pro-preview',
     'gemini-3-pro-image-preview',
+    'gemini-3-pro-preview',
+    'gemini-3.1-flash-image-preview',
+    'gemini-3.1-flash-lite-preview',
     'gemini-3.1-pro-preview',
 ]
 """Latest Gemini models."""
@@ -152,11 +160,31 @@ _FINISH_REASON_MAP: dict[GoogleFinishReason, FinishReason | None] = {
     GoogleFinishReason.NO_IMAGE: 'error',
 }
 
-_GOOGLE_IMAGE_SIZE = Literal['1K', '2K', '4K']
+_GOOGLE_IMAGE_SIZE = Literal['512', '1K', '2K', '4K']
 _GOOGLE_IMAGE_SIZES: tuple[_GOOGLE_IMAGE_SIZE, ...] = _utils.get_args(_GOOGLE_IMAGE_SIZE)
 
 _GOOGLE_IMAGE_OUTPUT_FORMAT = Literal['png', 'jpeg', 'webp']
 _GOOGLE_IMAGE_OUTPUT_FORMATS: tuple[_GOOGLE_IMAGE_OUTPUT_FORMAT, ...] = _utils.get_args(_GOOGLE_IMAGE_OUTPUT_FORMAT)
+
+
+GoogleServiceTier = Literal['pt_then_on_demand', 'pt_only', 'pt_then_flex', 'on_demand', 'flex_only']
+"""Values for the `google_service_tier` field on [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings].
+
+Controls Vertex AI HTTP headers for [Provisioned Throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput/use-provisioned-throughput)
+(PT) and [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo). Only applies when using the Vertex AI API.
+
+**Values:**
+
+- `'pt_then_on_demand'` (**default**): PT when quota allows, then standard on-demand spillover. No headers sent.
+- `'pt_only'`: PT only (`X-Vertex-AI-LLM-Request-Type: dedicated`). No on-demand spillover; returns 429 when over quota.
+- `'pt_then_flex'`: PT when quota allows, then [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) spillover (`X-Vertex-AI-LLM-Shared-Request-Type: flex`).
+- `'on_demand'`: Standard on-demand only (`X-Vertex-AI-LLM-Request-Type: shared`). Bypasses PT for this request.
+- `'flex_only'`: [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) only (`X-Vertex-AI-LLM-Request-Type: shared` and `X-Vertex-AI-LLM-Shared-Request-Type: flex`). Bypasses PT.
+
+Not every model or region supports every value; see the linked Google docs.
+
+Note: these headers only affect Vertex AI. When using the GLA API they are silently ignored.
+"""
 
 
 class GoogleModelSettings(ModelSettings, total=False):
@@ -214,9 +242,33 @@ class GoogleModelSettings(ModelSettings, total=False):
     These will be included in `ModelResponse.provider_details['logprobs']`.
     """
 
+    google_service_tier: GoogleServiceTier
+    """Vertex AI routing for Provisioned Throughput and Flex PayGo. Defaults to `'pt_then_on_demand'`.
+
+    See [`GoogleServiceTier`][pydantic_ai.models.google.GoogleServiceTier] for all values, headers sent, and links to Google docs.
+    """
+
+
+def _google_vertex_service_tier_headers(service_tier: GoogleServiceTier) -> dict[str, str]:
+    """HTTP headers for Vertex AI Provisioned Throughput and Flex PayGo routing."""
+    if service_tier == 'pt_then_on_demand':
+        return {}
+    if service_tier == 'pt_only':
+        return {'X-Vertex-AI-LLM-Request-Type': 'dedicated'}
+    if service_tier == 'on_demand':
+        return {'X-Vertex-AI-LLM-Request-Type': 'shared'}
+    if service_tier == 'pt_then_flex':
+        return {'X-Vertex-AI-LLM-Shared-Request-Type': 'flex'}
+    if service_tier == 'flex_only':
+        return {
+            'X-Vertex-AI-LLM-Request-Type': 'shared',
+            'X-Vertex-AI-LLM-Shared-Request-Type': 'flex',
+        }
+    assert_never(service_tier)  # pragma: no cover
+
 
 @dataclass(init=False)
-class GoogleModel(Model):
+class GoogleModel(Model[Client]):
     """A model that uses Gemini via `generativelanguage.googleapis.com` API.
 
     This is implemented from scratch rather than using a dedicated SDK, good API documentation is
@@ -515,6 +567,45 @@ class GoogleModel(Model):
                 ) from e
             raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
 
+    def _translate_thinking(
+        self,
+        model_settings: GoogleModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ThinkingConfigDict | None:
+        """Get thinking config, falling back to unified thinking when provider-specific setting is not set."""
+        if config := model_settings.get('google_thinking_config'):
+            return config
+        thinking = model_request_parameters.thinking
+        if thinking is None:
+            return None
+        profile = GoogleModelProfile.from_profile(self.profile)
+        if thinking is False:
+            if profile.google_supports_thinking_level:
+                return ThinkingConfigDict(thinking_level=cast(Any, 'MINIMAL'))
+            return ThinkingConfigDict(thinking_budget=0)
+        if profile.google_supports_thinking_level:
+            if thinking is True:
+                return ThinkingConfigDict(include_thoughts=True)
+            level_map: dict[ThinkingEffort, str] = {
+                'minimal': 'MINIMAL',
+                'low': 'LOW',
+                'medium': 'MEDIUM',
+                'high': 'HIGH',
+                'xhigh': 'HIGH',  # no higher level available
+            }
+            return ThinkingConfigDict(include_thoughts=True, thinking_level=cast(Any, level_map[thinking]))
+        else:
+            if thinking is True:
+                return ThinkingConfigDict(include_thoughts=True)
+            budget_map: dict[ThinkingEffort, int] = {
+                'minimal': 128,  # minimum for Gemini 2.5 Pro
+                'low': 2048,
+                'medium': 8192,
+                'high': 24576,
+                'xhigh': 24576,  # max for Flash; Pro goes to 32768 but we use a safe common max
+            }
+            return ThinkingConfigDict(include_thoughts=True, thinking_budget=budget_map[thinking])
+
     async def _build_content_and_config(
         self,
         messages: list[ModelMessage],
@@ -551,6 +642,10 @@ class GoogleModel(Model):
         headers: dict[str, str] = {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
         if extra_headers := model_settings.get('extra_headers'):
             headers.update(extra_headers)
+
+        service_tier = model_settings.get('google_service_tier', 'pt_then_on_demand')
+        headers.update(_google_vertex_service_tier_headers(service_tier))
+
         http_options: HttpOptionsDict = {'headers': headers}
         if timeout := model_settings.get('timeout'):
             if isinstance(timeout, int | float):
@@ -569,7 +664,7 @@ class GoogleModel(Model):
             frequency_penalty=model_settings.get('frequency_penalty'),
             seed=model_settings.get('seed'),
             safety_settings=model_settings.get('google_safety_settings'),
-            thinking_config=model_settings.get('google_thinking_config'),
+            thinking_config=self._translate_thinking(model_settings, model_request_parameters),
             labels=model_settings.get('google_labels'),
             media_resolution=model_settings.get('google_video_resolution'),
             cached_content=model_settings.get('google_cached_content'),
@@ -618,6 +713,10 @@ class GoogleModel(Model):
 
         if response.create_time is not None:  # pragma: no branch
             vendor_details['timestamp'] = response.create_time
+
+        # Add traffic_type to provider_details for Flex PayGo verification
+        if response.usage_metadata and response.usage_metadata.traffic_type:
+            vendor_details['traffic_type'] = response.usage_metadata.traffic_type.value
 
         if candidate is None or candidate.content is None or candidate.content.parts is None:
             parts = []
@@ -679,15 +778,7 @@ class GoogleModel(Model):
                     elif isinstance(part, UserPromptPart):
                         message_parts.extend(await self._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
-                        message_parts.append(
-                            {
-                                'function_response': {
-                                    'name': part.tool_name,
-                                    'response': part.model_response_object(),
-                                    'id': part.tool_call_id,
-                                }
-                            }
-                        )
+                        message_parts.extend(await self._map_tool_return(part))
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
                             message_parts.append({'text': part.model_response()})
@@ -738,11 +829,133 @@ class GoogleModel(Model):
         if not contents or contents[0].get('role') == 'model':  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
             contents.insert(0, {'role': 'user', 'parts': [{'text': ''}]})
 
-        if instructions := self._get_instructions(messages, model_request_parameters):
-            system_parts.append({'text': instructions})
+        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
+            for part in instruction_parts:
+                system_parts.append({'text': part.content})
         system_instruction = ContentDict(role='user', parts=system_parts) if system_parts else None
 
         return system_instruction, contents
+
+    async def _map_tool_return(self, part: ToolReturnPart) -> list[PartDict]:
+        """Map a `ToolReturnPart` to Google API format, handling multimodal content.
+
+        For Gemini 3+ models with supported MIME types, files are sent inside
+        `function_response.parts` for efficiency. Unsupported types become separate
+        parts after the function_response (fallback strategy).
+        See: https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#multimodal
+        """
+        supported_mime_types = GoogleModelProfile.from_profile(self.profile).google_supported_mime_types_in_tool_returns
+
+        function_response_parts: list[FunctionResponsePartDict] = []
+        fallback_parts: list[PartDict] = []
+        fallback_refs: list[str] = []
+
+        for file in part.files:
+            if file.media_type in supported_mime_types:
+                fr_part = await self._map_file_to_function_response_part(file)
+                function_response_parts.append(fr_part)
+            else:
+                fallback_refs.append(f'See file {file.identifier}.')
+                fallback_parts.append({'text': f'This is file {file.identifier}:'})
+                file_part = await self._map_file_to_part(file)
+                fallback_parts.append(file_part)
+
+        response = part.model_response_object()
+        if fallback_refs:
+            response = {'output': [response, *fallback_refs]}
+
+        function_response_dict: FunctionResponseDict = {
+            'name': part.tool_name,
+            'response': response,
+            'id': part.tool_call_id,
+        }
+        if function_response_parts:
+            function_response_dict['parts'] = function_response_parts
+
+        result: list[PartDict] = [{'function_response': function_response_dict}]
+        result.extend(fallback_parts)
+
+        return result
+
+    def _validate_uploaded_file(self, file: UploadedFile) -> tuple[str, str]:
+        """Validate an `UploadedFile` and return (`file_uri`, `mime_type`).
+
+        GLA uses the Files API (https:// URIs). Vertex uses GCS (gs:// URIs).
+        The Files API is not available on Vertex AI.
+        """
+        if file.provider_name != self.system:
+            raise UserError(
+                f'UploadedFile with `provider_name={file.provider_name!r}` cannot be used with GoogleModel. '
+                f'Expected `provider_name` to be `{self.system!r}`.'
+            )
+        if self.system == 'google-vertex':
+            if not file.file_id.startswith('gs://'):
+                raise UserError(
+                    f'UploadedFile for GoogleModel (Vertex) must use a GCS URI (gs://bucket/path), got: {file.file_id}'
+                )
+        elif not file.file_id.startswith('https://'):
+            raise UserError(
+                f'UploadedFile for GoogleModel (GLA) must use a file URI from the Google Files API '
+                f'(https://generativelanguage.googleapis.com/...), got: {file.file_id}'
+            )
+        return file.file_id, file.media_type
+
+    async def _resolve_file(
+        self, file: FileUrl | BinaryContent | UploadedFile
+    ) -> tuple[Literal['inline'], bytes, str] | tuple[Literal['file'], str, str]:
+        """Resolve a file to either inline data `('inline', data, mime_type)` or a file reference `('file', uri, mime_type)`.
+
+        Shared resolution logic for both `_map_file_to_part` and `_map_file_to_function_response_part`.
+        """
+        if isinstance(file, BinaryContent):
+            return ('inline', file.data, file.media_type)
+        elif isinstance(file, UploadedFile):
+            file_uri, mime_type = self._validate_uploaded_file(file)
+            return ('file', file_uri, mime_type)
+        elif isinstance(file, VideoUrl) and (
+            file.is_youtube or (file.url.startswith('gs://') and self.system == 'google-vertex')
+        ):
+            return ('file', file.url, file.media_type)
+        elif isinstance(file, FileUrl):
+            if file.force_download or (
+                self.system == 'google-gla'
+                and not file.url.startswith(r'https://generativelanguage.googleapis.com/v1beta/files')
+            ):
+                downloaded_item = await download_item(file, data_format='bytes')
+                return ('inline', downloaded_item['data'], downloaded_item['data_type'])
+            else:
+                return ('file', file.url, file.media_type)  # pragma: lax no cover
+        else:
+            assert_never(file)
+
+    async def _map_file_to_part(self, file: FileUrl | BinaryContent | UploadedFile) -> PartDict:
+        """Map a multimodal file directly to a Google API `PartDict`."""
+        resolved = await self._resolve_file(file)
+        part_dict: PartDict
+        if resolved[0] == 'inline':
+            part_dict = {'inline_data': BlobDict(data=resolved[1], mime_type=resolved[2])}
+        else:
+            part_dict = {'file_data': FileDataDict(file_uri=resolved[1], mime_type=resolved[2])}
+        if isinstance(file, (BinaryContent, VideoUrl, UploadedFile)) and file.vendor_metadata:
+            part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
+        return part_dict
+
+    async def _map_file_to_function_response_part(
+        self, file: FileUrl | BinaryContent | UploadedFile
+    ) -> FunctionResponsePartDict:
+        """Map a multimodal file to `FunctionResponsePartDict` for Gemini 3+ native tool returns.
+
+        Note: `FunctionResponseBlobDict`/`FunctionResponseFileDataDict` declare `display_name` but
+        the google-genai SDK's `_live_converters.py` rejects it at runtime. We omit it until the
+        SDK supports it, at which point we could also add `$ref` identifiers in the response dict.
+        """
+        resolved = await self._resolve_file(file)
+        if resolved[0] == 'inline':
+            blob_dict: FunctionResponseBlobDict = {'data': resolved[1], 'mime_type': resolved[2]}
+            return FunctionResponsePartDict(inline_data=blob_dict)
+        else:
+            file_data_dict: FunctionResponseFileDataDict = {'file_uri': resolved[1], 'mime_type': resolved[2]}
+            return FunctionResponsePartDict(file_data=file_data_dict)
 
     async def _map_user_prompt(self, part: UserPromptPart) -> list[PartDict]:
         if isinstance(part.content, str):
@@ -750,52 +963,12 @@ class GoogleModel(Model):
         else:
             content: list[PartDict] = []
             for item in part.content:
-                if isinstance(item, str):
-                    content.append({'text': item})
-                elif isinstance(item, BinaryContent):
-                    inline_data_dict: BlobDict = {'data': item.data, 'mime_type': item.media_type}
-                    part_dict: PartDict = {'inline_data': inline_data_dict}
-                    if item.vendor_metadata:
-                        part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
-                    content.append(part_dict)
-                elif isinstance(item, VideoUrl) and (
-                    item.is_youtube or (item.url.startswith('gs://') and self.system == 'google-vertex')
-                ):
-                    # YouTube URLs work on both google-gla and google-vertex
-                    # GCS URIs (gs://...) only work on google-vertex (Vertex AI can access GCS buckets)
-                    # GCS on google-gla falls through to FileUrl which raises clear error on download attempt
-                    # Other URLs fall through to FileUrl handling (download for google-gla)
-                    # Note: force_download is not checked here, mirroring the original YouTube behavior.
-                    # GCS URIs cannot be downloaded anyway ("gs://" protocol not supported for download).
-                    file_data_dict: FileDataDict = {'file_uri': item.url, 'mime_type': item.media_type}
-                    part_dict: PartDict = {'file_data': file_data_dict}
-                    if item.vendor_metadata:
-                        part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
-                    content.append(part_dict)
-                elif isinstance(item, FileUrl):
-                    if item.force_download or (
-                        # google-gla does not support passing file urls directly, except for youtube videos
-                        # (see above) and files uploaded to the file API (which cannot be downloaded anyway)
-                        self.system == 'google-gla'
-                        and not item.url.startswith(r'https://generativelanguage.googleapis.com/v1beta/files')
-                    ):
-                        downloaded_item = await download_item(item, data_format='bytes')
-                        inline_data: BlobDict = {
-                            'data': downloaded_item['data'],
-                            'mime_type': downloaded_item['data_type'],
-                        }
-                        part_dict: PartDict = {'inline_data': inline_data}
-                        # VideoUrl is a subclass of FileUrl - include video_metadata if present
-                        if isinstance(item, VideoUrl) and item.vendor_metadata:
-                            part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
-                        content.append(part_dict)
-                    else:
-                        file_data_dict: FileDataDict = {'file_uri': item.url, 'mime_type': item.media_type}
-                        part_dict: PartDict = {'file_data': file_data_dict}
-                        # VideoUrl is a subclass of FileUrl - include video_metadata if present
-                        if isinstance(item, VideoUrl) and item.vendor_metadata:
-                            part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
-                        content.append(part_dict)  # pragma: lax no cover
+                if isinstance(item, str | TextContent):
+                    text = item if isinstance(item, str) else item.content
+                    content.append({'text': text})
+                elif isinstance(item, (BinaryContent, FileUrl, UploadedFile)):
+                    file_part = await self._map_file_to_part(item)
+                    content.append(file_part)
                 elif isinstance(item, CachePoint):
                     # Google doesn't support inline CachePoint markers. Google's caching requires
                     # pre-creating cache objects via the API, then referencing them by name using
@@ -835,6 +1008,14 @@ class GeminiStreamedResponse(StreamedResponse):
         try:
             async for chunk in self._response:
                 self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url)
+
+                # Capture traffic_type before the candidates guard, since usage_metadata
+                # may be present on chunks without candidates.
+                if chunk.usage_metadata and chunk.usage_metadata.traffic_type:
+                    self.provider_details = {
+                        **(self.provider_details or {}),
+                        'traffic_type': chunk.usage_metadata.traffic_type.value,
+                    }
 
                 if not chunk.candidates:
                     if chunk.prompt_feedback and chunk.prompt_feedback.block_reason:
@@ -1174,7 +1355,7 @@ def _process_part(
         assert part.function_call.name is not None
         item = ToolCallPart(tool_name=part.function_call.name, args=part.function_call.args)
         if part.function_call.id is not None:
-            item.tool_call_id = part.function_call.id  # pragma: no cover
+            item.tool_call_id = part.function_call.id
     elif inline_data := part.inline_data:
         data = inline_data.data
         mime_type = inline_data.mime_type
@@ -1245,6 +1426,8 @@ def _function_declaration_from_tool(tool: ToolDefinition) -> FunctionDeclaration
         description=tool.description or '',
         parameters_json_schema=json_schema,
     )
+    if tool.return_schema:
+        f['response_json_schema'] = tool.return_schema
     return f
 
 
@@ -1295,7 +1478,7 @@ def _map_executable_code(executable_code: ExecutableCode, provider_name: str, to
     return BuiltinToolCallPart(
         provider_name=provider_name,
         tool_name=CodeExecutionTool.kind,
-        args=executable_code.model_dump(mode='json'),
+        args=executable_code.model_dump(mode='json', exclude_none=True),
         tool_call_id=tool_call_id,
     )
 
@@ -1306,7 +1489,7 @@ def _map_code_execution_result(
     return BuiltinToolReturnPart(
         provider_name=provider_name,
         tool_name=CodeExecutionTool.kind,
-        content=code_execution_result.model_dump(mode='json'),
+        content=code_execution_result.model_dump(mode='json', exclude_none=True),
         tool_call_id=tool_call_id,
     )
 

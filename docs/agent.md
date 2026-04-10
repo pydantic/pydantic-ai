@@ -15,6 +15,9 @@ The [`Agent`][pydantic_ai.Agent] class has full API documentation, but conceptua
 | [Dependency type constraint](dependencies.md)             | Dynamic instructions functions, tools, and output functions may all use dependencies when they're run.          |
 | [LLM model](api/models/base.md)                           | Optional default LLM model associated with the agent. Can also be specified when running the agent.       |
 | [Model Settings](#additional-configuration)               | Optional default model settings to help fine tune requests. Can also be specified when running the agent. |
+| [Capabilities](capabilities.md)                           | Reusable bundles of tools, hooks, instructions, and model settings that extend agent behavior.            |
+
+While each of these can be configured individually, [capabilities](capabilities.md) let you bundle related behavior into reusable units that are easier to compose, share, and [load from configuration files](agent-spec.md).
 
 In typing terms, agents are generic in their dependency and output types, e.g., an agent which required dependencies of type `#!python Foobar` and produced outputs of type `#!python list[str]` would have type `Agent[Foobar, list[str]]`. In practice, you shouldn't need to care about this, it should just mean your IDE can tell you when you have the right type, and if you choose to use [static type checking](#static-type-checking) it should work well with Pydantic AI.
 
@@ -712,6 +715,33 @@ print(result_sync.output)
 
 The final request uses `temperature=0.0` (run-time), `max_tokens=500` (from model), demonstrating how settings merge with run-time taking precedence.
 
+##### Dynamic model settings
+
+Both agent-level and run-level `model_settings` accept a callable that receives a
+[`RunContext`][pydantic_ai.tools.RunContext] and returns [`ModelSettings`][pydantic_ai.settings.ModelSettings].
+The callable is invoked before each model request, so settings can vary per step.
+The current resolved settings so far are available via `ctx.model_settings` inside the callable.
+
+Settings are resolved in layers, each merged on top of the previous:
+
+1. **Model defaults** (`model.settings`)
+2. **Agent-level** (`Agent(model_settings=...)`)
+3. **Capability-level** (e.g. from [`Thinking()`][pydantic_ai.capabilities.Thinking] — see [Capabilities](capabilities.md#providing-model-settings))
+4. **Run-level** (`agent.run(model_settings=...)`)
+
+Inside a callable, `ctx.model_settings` contains the merged result of all *previous* layers (position-dependent). For example, an agent-level callable sees only model defaults, while a run-level callable sees model defaults + agent-level + capability-level settings. To reset a field set by a previous layer, set it explicitly (e.g. `{'temperature': None}`).
+
+```python
+from pydantic_ai import Agent, ModelSettings
+
+agent = Agent(
+    'test',
+    model_settings=lambda ctx: ModelSettings(
+        temperature=0.0 if ctx.run_step <= 1 else 0.7,
+    ),
+)
+```
+
 !!! note "Model Settings Support"
     Model-level settings are supported by all concrete model implementations (OpenAI, Anthropic, Google, etc.). Wrapper models like [`FallbackModel`](models/overview.md#fallback-model), [`WrapperModel`][pydantic_ai.models.wrapper.WrapperModel], and [`InstrumentedModel`][pydantic_ai.models.instrumented.InstrumentedModel] don't have their own settings - they use the settings of their underlying models.
 
@@ -999,7 +1029,7 @@ Instructions, like system prompts, can be specified at different times:
 2. **Dynamic instructions**: These rely on context that is only available at runtime and should be defined using functions decorated with [`@agent.instructions`][pydantic_ai.agent.Agent.instructions]. Unlike dynamic system prompts, which may be reused when `message_history` is present, dynamic instructions are always reevaluated.
 3. **Runtime instructions**: These are additional instructions for a specific run that can be passed to one of the [run methods](#running-agents) using the `instructions` argument.
 
-All three types of instructions can be added to a single agent, and they are appended in the order they are defined at runtime.
+All three types of instructions can be added to a single agent, and they are appended in the order they are defined at runtime. Each instruction is internally classified as either **static** (literal strings from the `instructions` parameter) or **dynamic** (from `@agent.instructions` functions, runtime instructions, or [toolset](toolsets.md) instructions). Static instructions are always sorted before dynamic ones. This ordering enables providers that support prompt caching (like [Anthropic](models/anthropic.md#smart-instruction-caching) and [Bedrock](models/bedrock.md#prompt-caching)) to cache the stable static prefix while leaving dynamic instructions outside the cache boundary.
 
 Here's an example using a static instruction as well as dynamic instructions:
 
@@ -1040,6 +1070,8 @@ print(result.output)
 _(This example is complete, it can be run "as is")_
 
 Note that returning an empty string will result in no instruction message added.
+
+Instructions can also come from [capabilities](capabilities.md) via [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions], or from [template strings](agent-spec.md#template-strings) rendered against the agent's dependencies.
 
 ## Reflection and self-correction
 
@@ -1135,6 +1167,7 @@ For systematic evaluation of agent behavior beyond runtime debugging, [Pydantic 
 from pydantic_evals import Case, Dataset
 
 dataset = Dataset(
+    name='agent_eval',
     cases=[
         Case(name='capital_question', inputs='What is the capital of France?', expected_output='Paris'),
     ]
@@ -1243,3 +1276,24 @@ _(This example is complete, it can be run "as is")_
 
 !!! note
     If you call [`run`][pydantic_ai.agent.AbstractAgent.run], [`run_sync`][pydantic_ai.agent.AbstractAgent.run_sync], or [`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] more than once within a single `capture_run_messages` context, `messages` will represent the messages exchanged during the first call only.
+
+## Agent Specs
+
+Agents can also be defined declaratively in YAML or JSON using [agent specs](agent-spec.md). This separates agent configuration from application code:
+
+```yaml {test="skip"}
+model: anthropic:claude-opus-4-6
+instructions: You are a helpful assistant.
+capabilities:
+  - WebSearch
+  - Thinking:
+      effort: high
+```
+
+```python {test="skip" lint="skip"}
+from pydantic_ai import Agent
+
+agent = Agent.from_file('agent.yaml')
+```
+
+See [Agent Specs](agent-spec.md) for the full spec format, template strings, and custom capability registration.

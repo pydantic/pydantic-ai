@@ -11,7 +11,7 @@ import pytest
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import BinaryContent
+from pydantic_ai.messages import BinaryContent, InstructionPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
@@ -225,6 +225,48 @@ class TestFastMCPToolsetContextManagement:
             # Should still work after inner context exits
             tools3 = await toolset.get_tools(run_context)
             assert tools1 == tools3
+
+
+class TestFastMCPToolsetInstructions:
+    """Test FastMCP instructions handling and include_instructions behavior."""
+
+    async def test_get_instructions_disabled_returns_none(
+        self,
+        fastmcp_client: Client[FastMCPTransport],
+        run_context: RunContext[None],
+    ):
+        """When include_instructions is disabled, get_instructions returns None."""
+        toolset = FastMCPToolset(fastmcp_client, include_instructions=False)
+
+        assert await toolset.get_instructions(run_context) is None
+
+    async def test_get_instructions_enabled_tracks_context_lifecycle(self, run_context: RunContext[None]):
+        """When include_instructions is enabled, expose server instructions while entered only."""
+        instruction_server = FastMCP('instruction_server', instructions='Be a helpful assistant.')
+        instruction_client = Client(transport=instruction_server)
+        toolset = FastMCPToolset(instruction_client, include_instructions=True)
+
+        # Before entering, no initialization has happened — returns None gracefully.
+        assert await toolset.get_instructions(run_context) is None
+
+        async with toolset:
+            assert toolset.instructions == 'Be a helpful assistant.'
+            assert await toolset.get_instructions(run_context) == InstructionPart(
+                content='Be a helpful assistant.', dynamic=True
+            )
+
+        # After exiting, cached instructions are reset.
+        assert await toolset.get_instructions(run_context) is None
+
+    async def test_get_instructions_enabled_no_server_instructions(self, run_context: RunContext[None]):
+        """When include_instructions is enabled but server provides no instructions, returns None."""
+        no_instruction_server = FastMCP('no_instructions_server')
+        no_instruction_client = Client(transport=no_instruction_server)
+        toolset = FastMCPToolset(no_instruction_client, include_instructions=True)
+
+        async with toolset:
+            assert toolset.instructions is None
+            assert await toolset.get_instructions(run_context) is None
 
 
 class TestFastMCPToolsetToolDiscovery:

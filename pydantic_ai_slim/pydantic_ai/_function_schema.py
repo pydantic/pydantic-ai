@@ -5,24 +5,34 @@ This module has to use numerous internal Pydantic APIs and is therefore brittle 
 
 from __future__ import annotations as _annotations
 
+import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import partial
 from inspect import Parameter, signature
-from typing import TYPE_CHECKING, Any, Concatenate, Literal, cast, get_origin
+from typing import TYPE_CHECKING, Any, Concatenate, Literal, cast, get_args, get_origin
 
-from pydantic import ConfigDict
-from pydantic._internal import _decorators, _generate_schema, _typing_extra
+from pydantic import ConfigDict, TypeAdapter
+from pydantic._internal import _decorators, _generate_schema
 from pydantic._internal._config import ConfigWrapper
+from pydantic.errors import PydanticSchemaGenerationError, PydanticUserError
 from pydantic.fields import FieldInfo
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic.plugin._schema_validator import create_schema_validator
 from pydantic_core import SchemaValidator, core_schema
-from typing_extensions import ParamSpec, TypeIs, TypeVar, get_type_hints
+from typing_extensions import ParamSpec, Self, TypeIs, TypeVar, get_type_hints
 
 from ._griffe import doc_descriptions
 from ._run_context import RunContext
-from ._utils import check_object_json_schema, is_async_callable, is_model_like, run_in_executor
+from ._utils import (
+    check_object_json_schema,
+    is_async_callable,
+    is_model_like,
+    run_in_executor,
+    takes_run_context,
+)
+from .function_signature import FunctionSignature
+from .messages import ToolReturn
 
 if TYPE_CHECKING:
     from .tools import DocstringFormat, ObjectJsonSchema
@@ -36,6 +46,7 @@ class FunctionSchema:
     """Internal information about a function schema."""
 
     function: Callable[..., Any]
+    name: str
     description: str | None
     validator: SchemaValidator
     json_schema: ObjectJsonSchema
@@ -45,6 +56,10 @@ class FunctionSchema:
     single_arg_name: str | None = None
     positional_fields: list[str] = field(default_factory=list[str])
     var_positional_field: str | None = None
+    return_schema: ObjectJsonSchema = field(default_factory=dict[str, Any])
+    """JSON schema for the function's return type. At minimum `{}` (equivalent to `Any`)."""
+    function_signature: FunctionSignature | None = None
+    """Function signature shape for this function. `None` for output tools."""
 
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
         args, kwargs = self._call_args(args_dict, ctx)
@@ -75,6 +90,8 @@ class FunctionSchema:
 def function_schema(  # noqa: C901
     function: Callable[..., Any],
     schema_generator: type[GenerateJsonSchema],
+    *,
+    tool_name: str | None = None,
     takes_ctx: bool | None = None,
     docstring_format: DocstringFormat = 'auto',
     require_parameter_descriptions: bool = False,
@@ -83,6 +100,7 @@ def function_schema(  # noqa: C901
 
     Args:
         function: The function to build a validator and JSON schema for.
+        tool_name: The tool name. Defaults to `function.__name__`.
         takes_ctx: Whether the function takes a `RunContext` first argument.
         docstring_format: The docstring format to use.
         require_parameter_descriptions: Whether to require descriptions for all tool function parameters.
@@ -209,16 +227,45 @@ def function_schema(  # noqa: C901
         # and set it on the tool
         description = json_schema.pop('description', None)
 
+    name = tool_name or function.__name__
+    checked_json_schema = check_object_json_schema(json_schema)
+
+    # Compute return schema eagerly (before Temporal sandbox where TypeAdapter is too slow)
+    return_annotation = type_hints.get('return')
+    return_schema_type = _extract_return_schema_type(return_annotation, function)
+    try:
+        return_schema: ObjectJsonSchema = TypeAdapter(return_schema_type).json_schema(
+            schema_generator=schema_generator, mode='serialization'
+        )
+    except (PydanticSchemaGenerationError, PydanticUserError):
+        warnings.warn(
+            f'Could not generate return schema for {original_func.__qualname__!r}: '
+            f'unsupported return type {return_annotation!r}. Falling back to unconstrained schema.',
+            UserWarning,
+            stacklevel=2,
+        )
+        return_schema = {}
+
+    # Compute function signature eagerly alongside the other schemas
+    func_sig = FunctionSignature.from_schema(
+        name=name,
+        parameters_schema=checked_json_schema,
+        return_schema=return_schema,
+    )
+
     return FunctionSchema(
+        name=name,
         description=description,
         validator=schema_validator,
-        json_schema=check_object_json_schema(json_schema),
+        json_schema=checked_json_schema,
         single_arg_name=single_arg_name,
         positional_fields=positional_fields,
         var_positional_field=var_positional_field,
         takes_ctx=bool(takes_ctx),
         is_async=is_async_callable(function),
         function=function,
+        return_schema=return_schema,
+        function_signature=func_sig,
     )
 
 
@@ -240,28 +287,7 @@ def _takes_ctx(callable_obj: TargetCallable[P, R]) -> TypeIs[WithCtx[P, R]]:  # 
     Returns:
         `True` if the callable takes a `RunContext` as first argument, `False` otherwise.
     """
-    try:
-        sig = signature(callable_obj)
-    except ValueError:
-        return False
-    try:
-        first_param_name = next(iter(sig.parameters.keys()))
-    except StopIteration:
-        return False
-    else:
-        # See https://github.com/pydantic/pydantic/pull/11451 for a similar implementation in Pydantic
-        if not isinstance(callable_obj, _decorators._function_like):  # pyright: ignore[reportPrivateUsage]
-            call_func = getattr(type(callable_obj), '__call__', None)
-            if call_func is not None:
-                callable_obj = call_func
-            else:
-                return False  # pragma: no cover
-
-        type_hints = _typing_extra.get_function_type_hints(_decorators.unwrap_wrapped_function(callable_obj))
-        annotation = type_hints.get(first_param_name)
-        if annotation is None:
-            return False
-        return True is not sig.empty and _is_call_ctx(annotation)
+    return takes_run_context(callable_obj)
 
 
 def _build_schema(
@@ -293,6 +319,43 @@ def _build_schema(
         extras_schema=var_kwargs_schema,
     )
     return td_schema, None
+
+
+def _extract_return_schema_type(return_annotation: Any, function: Callable[..., Any]) -> Any:
+    """Extract the type to generate a return schema for.
+
+    Always returns a type — every function has a return schema:
+    - No annotation (`None` from `get()`) → `Any` (produces `{}`)
+    - `-> None` (`type(None)`) → `type(None)` (produces `{"type": "null"}`)
+    - `-> Any` → `Any` (produces `{}`)
+    - `-> Self` → resolved to owning class for bound methods
+    - Bare `ToolReturn` → `Any` (pre-generic legacy form)
+    - `ToolReturn[Any]` → `Any` (produces `{}`)
+    - `ToolReturn[T]` → `T`
+    - Other types → the type itself
+    """
+    if return_annotation is None:
+        # No annotation — untyped, same as Any
+        return Any
+    if return_annotation is type(None):
+        return type(None)
+    # Bare ToolReturn without type parameter — pre-generic legacy form
+    if return_annotation is ToolReturn:
+        return Any
+    # Resolve Self to the owning class for bound methods.
+    # Only works when the function is already bound (e.g. instance.method);
+    # unbound methods and classmethods fall back to Any since there's no
+    # instance to infer the class from.
+    if return_annotation is Self:
+        self_obj = getattr(function, '__self__', None)
+        if self_obj is not None:
+            return cast(type[Any], type(self_obj))
+        return Any
+    if get_origin(return_annotation) is ToolReturn:
+        type_args = get_args(return_annotation)
+        inner_type = type_args[0] if type_args else Any
+        return inner_type
+    return return_annotation
 
 
 def _is_call_ctx(annotation: Any) -> bool:

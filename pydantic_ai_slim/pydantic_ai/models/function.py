@@ -26,6 +26,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -190,6 +191,10 @@ class FunctionModel(Model):
             _model_name=self._model_name,
             _iter=response_stream,
         )
+
+    @property
+    def provider(self) -> None:
+        return None
 
     @property
     def model_name(self) -> str:
@@ -418,8 +423,9 @@ def _estimate_string_tokens(content: str | Sequence[UserContent]) -> int:
 
     tokens = 0
     for part in content:
-        if isinstance(part, str):
-            tokens += len(_TOKEN_SPLIT_RE.split(part.strip()))
+        if isinstance(part, str | TextContent):
+            text = part if isinstance(part, str) else part.content
+            tokens += len(_TOKEN_SPLIT_RE.split(text.strip()))
         elif isinstance(part, BinaryContent):
             tokens += len(part.data)
         # TODO(Marcelo): We need to study how we can estimate the tokens for AudioUrl or ImageUrl.

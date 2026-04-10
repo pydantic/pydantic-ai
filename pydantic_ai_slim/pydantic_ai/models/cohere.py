@@ -13,6 +13,7 @@ from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool
 from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     FilePart,
     FinishReason,
     ModelMessage,
@@ -21,6 +22,7 @@ from ..messages import (
     ModelResponsePart,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -39,8 +41,10 @@ try:
         AsyncClientV2,
         ChatFinishReason,
         ChatMessageV2,
+        Content as CohereContent,
         SystemChatMessageV2,
         TextAssistantMessageV2ContentOneItem,
+        TextContent as CohereTextContent,
         ThinkingAssistantMessageV2ContentOneItem,
         ToolCallV2,
         ToolCallV2Function,
@@ -94,7 +98,7 @@ class CohereModelSettings(ModelSettings, total=False):
 
 
 @dataclass(init=False)
-class CohereModel(Model):
+class CohereModel(Model[AsyncClientV2]):
     """A model that uses the Cohere API.
 
     Internally, this uses the [Cohere Python client](
@@ -267,9 +271,13 @@ class CohereModel(Model):
                 cohere_messages.append(message_param)
             else:
                 assert_never(message)
-        if instructions := self._get_instructions(messages, model_request_parameters):
-            system_prompt_count = sum(1 for m in cohere_messages if isinstance(m, SystemChatMessageV2))
-            cohere_messages.insert(system_prompt_count, SystemChatMessageV2(role='system', content=instructions))
+        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
+            system_prompt_count = next(
+                (i for i, m in enumerate(cohere_messages) if not isinstance(m, SystemChatMessageV2)),
+                len(cohere_messages),
+            )
+            instruction_messages = [SystemChatMessageV2(role='system', content=p.content) for p in instruction_parts]
+            cohere_messages[system_prompt_count:system_prompt_count] = instruction_messages
         return cohere_messages
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolV2]:
@@ -306,7 +314,15 @@ class CohereModel(Model):
                 if isinstance(part.content, str):
                     yield UserChatMessageV2(role='user', content=part.content)
                 else:
-                    raise RuntimeError('Cohere does not yet support multi-modal inputs.')
+                    cohere_content: list[CohereContent] = []
+                    for c in part.content:
+                        if isinstance(c, str | TextContent):
+                            cohere_content.append(CohereTextContent(text=c if isinstance(c, str) else c.content))
+                        elif isinstance(c, CachePoint):
+                            continue
+                        else:
+                            raise RuntimeError('Cohere does not yet support multi-modal inputs.')
+                    yield UserChatMessageV2(role='user', content=cohere_content)
             elif isinstance(part, ToolReturnPart):
                 yield ToolChatMessageV2(
                     role='tool',
