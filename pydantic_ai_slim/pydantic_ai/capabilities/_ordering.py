@@ -147,10 +147,15 @@ def _topo_sort(
 
 
 def _effective_ordering(cap: AbstractCapability[Any]) -> CapabilityOrdering | None:
-    """Get the effective ordering for a capability, merging from leaves for nested groups."""
-    from .combined import CombinedCapability
+    """Get the effective ordering for a capability, merging from leaves for nested groups.
 
-    if not isinstance(cap, CombinedCapability):
+    For plain capabilities, returns ``get_ordering()`` directly. For containers
+    (``CombinedCapability``, ``WrapperCapability``), merges constraints from all leaves.
+    """
+    from .combined import CombinedCapability
+    from .wrapper import WrapperCapability
+
+    if not isinstance(cap, (CombinedCapability, WrapperCapability)):
         return type(cap).get_ordering()
 
     merged_position: CapabilityPosition | None = None
@@ -165,6 +170,10 @@ def _effective_ordering(cap: AbstractCapability[Any]) -> CapabilityOrdering | No
             continue
         has_any = True
         if ordering.position is not None:
+            if merged_position is not None and merged_position != ordering.position:
+                raise UserError(
+                    f'Conflicting positions in nested CombinedCapability: {merged_position!r} and {ordering.position!r}'
+                )
             merged_position = ordering.position
         merged_wraps.extend(ordering.wraps)
         merged_wrapped_by.extend(ordering.wrapped_by)
@@ -181,12 +190,21 @@ def _effective_ordering(cap: AbstractCapability[Any]) -> CapabilityOrdering | No
 
 
 def iter_leaves(cap: AbstractCapability[Any]) -> Iterator[AbstractCapability[Any]]:
-    """Recursively yield all leaf capabilities."""
+    """Recursively yield all leaf capabilities.
+
+    Recurses through both [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability]
+    (which aggregates children) and [`WrapperCapability`][pydantic_ai.capabilities.WrapperCapability]
+    (which delegates to a wrapped capability), consistent with
+    [`apply`][pydantic_ai.capabilities.AbstractCapability.apply].
+    """
     from .combined import CombinedCapability
+    from .wrapper import WrapperCapability
 
     if isinstance(cap, CombinedCapability):
         for child in cap.capabilities:
             yield from iter_leaves(child)
+    elif isinstance(cap, WrapperCapability):
+        yield from iter_leaves(cap.wrapped)
     else:
         yield cap
 

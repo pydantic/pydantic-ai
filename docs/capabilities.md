@@ -875,11 +875,12 @@ This means the first capability in the list has the first and last say on the op
 
 By default, capabilities are composed in the order you list them. When a capability needs to be at a specific position regardless of where the user lists it, override [`get_ordering`][pydantic_ai.capabilities.AbstractCapability.get_ordering] to return a [`CapabilityOrdering`][pydantic_ai.capabilities.CapabilityOrdering]:
 
-```python {test="skip" lint="skip"}
+```python {title="capability_ordering_example.py"}
 from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
+from pydantic_ai.capabilities.combined import CombinedCapability
 
 
 @dataclass
@@ -889,6 +890,16 @@ class InstrumentationCapability(AbstractCapability[Any]):
     @classmethod
     def get_ordering(cls) -> CapabilityOrdering:
         return CapabilityOrdering(position='outermost')
+
+
+@dataclass
+class PlainCapability(AbstractCapability[Any]):
+    pass
+
+
+# InstrumentationCapability ends up first regardless of list order
+combined = CombinedCapability([PlainCapability(), InstrumentationCapability()])
+assert type(combined.capabilities[0]) is InstrumentationCapability
 ```
 
 The available constraints are:

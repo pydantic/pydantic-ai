@@ -1,5 +1,6 @@
 from typing import Any
 
+from ._ordering import sort_capabilities
 from .abstract import (
     AbstractCapability,
     AgentNode,
@@ -84,4 +85,5 @@ __all__ = [
     'CombinedCapability',
     'HookTimeoutError',
     'Hooks',
+    'sort_capabilities',
 ]

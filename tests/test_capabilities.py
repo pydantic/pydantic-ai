@@ -30,8 +30,8 @@ from pydantic_ai.capabilities import (
     WebFetch,
     WebSearch,
     WrapperCapability,
+    sort_capabilities,
 )
-from pydantic_ai.capabilities._ordering import sort_capabilities
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering
 from pydantic_ai.capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
 from pydantic_ai.capabilities.combined import CombinedCapability
@@ -8660,6 +8660,22 @@ def test_ordering_via_combined_capability():
     names = [type(c).__name__ for c in combined.capabilities]
     assert names[0] == 'OutermostCap'
     assert names[-1] == 'InnermostCap'
+
+
+def test_ordering_conflicting_positions_in_nested():
+    """Conflicting positions in a nested CombinedCapability raise UserError."""
+    inner = CombinedCapability([OutermostCap(), InnermostCap()])
+    with pytest.raises(UserError, match='Conflicting positions in nested CombinedCapability'):
+        sort_capabilities([inner, PlainCapA()])
+
+
+def test_ordering_wrapper_capability_recurses():
+    """iter_leaves recurses through WrapperCapability, so ordering constraints are preserved."""
+    wrapped = WrapperCapability(wrapped=OutermostCap())
+    # The WrapperCapability wraps an OutermostCap; iter_leaves should see through
+    # and pick up OutermostCap's position='outermost' constraint.
+    caps = sort_capabilities([PlainCapA(), wrapped])
+    assert caps[0] is wrapped
 
 
 # --- Hook recovery tests (after_node_run End→node, ErrorMarker in next_node) ---
