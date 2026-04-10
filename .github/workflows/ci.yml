@@ -116,6 +116,8 @@ jobs:
         install:
           - name: pydantic-ai-slim
             command: "--package pydantic-ai-slim"
+          - name: pydantic-evals
+            command: "--package pydantic-evals"
           - name: standard
             command: ""
           - name: all-extras
@@ -301,46 +303,29 @@ jobs:
         with:
           jobs: ${{ toJSON(needs) }}
 
+  # Note: this should match the `deploy-docs-manual` job in manually-deploy-docs.yml
   deploy-docs:
     needs: [check]
     if: success() && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
-    environment:
-      name: deploy-docs
-      url: https://ai.pydantic.dev
-
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Generate app token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        id: app-token
         with:
-          persist-credentials: false
+          app-id: ${{ vars.DOCS_APP_ID }}
+          private-key: ${{ secrets.DOCS_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: unified-docs
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-      - run: npm install
-        working-directory: docs-site
-
-      - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
-        with:
-          enable-cache: true
-          cache-suffix: docs-upload
-
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: site
-          path: site
-
-      - uses: cloudflare/wrangler-action@da0e0dfe58b7a431659754fdf3f186c529afbe65 # v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          workingDirectory: docs-site
-          command: >
-            deploy
-            --var GIT_COMMIT_SHA:${{ github.sha }}
-            --var GIT_BRANCH:main
-
-      - run: uv sync --group docs-upload
-      - run: uv run python docs/.hooks/algolia.py upload
+      - name: Trigger unified-docs deployment
         env:
-          ALGOLIA_WRITE_API_KEY: ${{ secrets.ALGOLIA_WRITE_API_KEY }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh api repos/pydantic/unified-docs/dispatches \
+            --method POST \
+            -f event_type=docs-update \
+            -f "client_payload[source]=pydantic/pydantic-ai@${{ github.sha }}"
 
   deploy-docs-preview:
     needs: [check]

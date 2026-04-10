@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, Sequence
+from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
@@ -45,6 +45,9 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     wrapped: AbstractCapability[AgentDepsT]
 
+    def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
+        self.wrapped.apply(visitor)
+
     @classmethod
     def get_serialization_name(cls) -> str | None:
         return None
@@ -52,6 +55,13 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     @property
     def has_wrap_node_run(self) -> bool:
         return type(self).wrap_node_run is not WrapperCapability.wrap_node_run or self.wrapped.has_wrap_node_run
+
+    @property
+    def has_wrap_run_event_stream(self) -> bool:
+        return (
+            type(self).wrap_run_event_stream is not WrapperCapability.wrap_run_event_stream
+            or self.wrapped.has_wrap_run_event_stream
+        )
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         new_wrapped = await self.wrapped.for_run(ctx)

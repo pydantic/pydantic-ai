@@ -36,6 +36,7 @@ def test_model_request_parameters_are_serializable():
             'prompted_output_template': None,
             'allow_text_output': True,
             'allow_image_output': False,
+            'instruction_parts': None,
             'thinking': None,
         }
     )
@@ -73,6 +74,17 @@ def test_model_request_parameters_are_serializable():
                     'timeout': None,
                     'defer_loading': False,
                     'prefer_builtin': None,
+                    'return_schema': None,
+                    'include_return_schema': None,
+                    'function_signature': {
+                        'kind': 'function',
+                        'name': 'test',
+                        'description': None,
+                        'params': {},
+                        'return_type': {'name': 'Any', 'kind': 'simple'},
+                        'referenced_types': [],
+                        'is_async': False,
+                    },
                 }
             ],
             'builtin_tools': [
@@ -140,11 +152,23 @@ def test_model_request_parameters_are_serializable():
                     'timeout': None,
                     'defer_loading': False,
                     'prefer_builtin': None,
+                    'return_schema': None,
+                    'include_return_schema': None,
+                    'function_signature': {
+                        'kind': 'function',
+                        'name': 'final_result',
+                        'description': None,
+                        'params': {},
+                        'return_type': {'name': 'Any', 'kind': 'simple'},
+                        'referenced_types': [],
+                        'is_async': False,
+                    },
                 }
             ],
             'prompted_output_template': None,
             'allow_text_output': True,
             'allow_image_output': False,
+            'instruction_parts': None,
             'thinking': None,
         }
     )

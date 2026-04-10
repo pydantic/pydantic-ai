@@ -27,6 +27,8 @@ Pydantic AI ships with several capabilities that cover common needs:
 | [`PrefixTools`][pydantic_ai.capabilities.PrefixTools] | Wraps a capability and prefixes its tool names | Yes |
 | [`BuiltinTool`][pydantic_ai.capabilities.BuiltinTool] | Registers a [builtin tool](builtin-tools.md) with the agent | Yes |
 | [`Toolset`][pydantic_ai.capabilities.Toolset] | Wraps an [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] | — |
+| [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] | Includes return type schemas in tool definitions sent to the model | Yes |
+| [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] | Merges metadata key-value pairs onto selected tools | Yes |
 | [`HistoryProcessor`][pydantic_ai.capabilities.HistoryProcessor] | Wraps a [history processor](message-history.md#processing-message-history) | — |
 | [`ThreadExecutor`][pydantic_ai.capabilities.ThreadExecutor] | Uses a custom thread executor for [sync functions](tools-advanced.md#thread-executor-for-long-running-servers) | — |
 
@@ -216,6 +218,117 @@ Every [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] has a 
 ```python {title="prefix_convenience.py" test="skip" lint="skip"}
 MCP(url='https://mcp.example.com/api').prefix_tools('mcp')
 ```
+
+### IncludeToolReturnSchemas
+
+[`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] includes return type schemas in tool definitions sent to the model. For models that natively support return schemas (e.g. Google Gemini), the schema is passed as a structured field in the API request. For other models, it is injected into the tool description as JSON text.
+
+```python {title="include_return_schemas.py" lint="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import IncludeToolReturnSchemas
+from pydantic_ai.models.test import TestModel
+
+
+test_model = TestModel()
+agent = Agent(test_model, capabilities=[IncludeToolReturnSchemas()])
+
+
+@agent.tool_plain
+def get_temperature(city: str) -> float:
+    """Get the temperature for a city."""
+    return 21.0
+
+
+result = agent.run_sync('What is the temperature in Paris?')
+params = test_model.last_model_request_parameters
+assert params is not None
+td = params.function_tools[0]
+assert td.include_return_schema is True
+```
+
+_(This example is complete, it can be run "as is")_
+
+Use the `tools` parameter to select which tools should include return schemas. It accepts a list of tool names, a metadata dict for matching, or a callable predicate:
+
+```python {title="include_return_schemas_selective.py" lint="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import IncludeToolReturnSchemas
+from pydantic_ai.models.test import TestModel
+
+
+test_model = TestModel()
+agent = Agent(
+    test_model,
+    capabilities=[IncludeToolReturnSchemas(tools=['get_temperature'])],
+)
+
+
+@agent.tool_plain
+def get_temperature(city: str) -> float:
+    """Get the temperature for a city."""
+    return 21.0
+
+
+@agent.tool_plain
+def get_greeting(name: str) -> str:
+    """Get a greeting."""
+    return f'Hello, {name}!'
+
+
+result = agent.run_sync('Hello')
+params = test_model.last_model_request_parameters
+assert params is not None
+temp_tool = next(t for t in params.function_tools if t.name == 'get_temperature')
+greet_tool = next(t for t in params.function_tools if t.name == 'get_greeting')
+assert temp_tool.include_return_schema is True
+assert greet_tool.include_return_schema is None
+```
+
+_(This example is complete, it can be run "as is")_
+
+The same effect can be achieved at the toolset level using [`.include_return_schemas()`][pydantic_ai.toolsets.AbstractToolset.include_return_schemas] — see [toolset composition](toolsets.md#including-return-schemas).
+
+### SetToolMetadata
+
+[`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] merges metadata key-value pairs onto selected tools. This is useful for tagging tools with configuration that other capabilities or custom logic can inspect:
+
+```python {title="set_tool_metadata.py" lint="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import SetToolMetadata
+from pydantic_ai.models.test import TestModel
+
+
+test_model = TestModel()
+agent = Agent(
+    test_model,
+    capabilities=[SetToolMetadata(tools=['search'], sensitive=True)],
+)
+
+
+@agent.tool_plain
+def search(query: str) -> str:
+    """Search for information."""
+    return f'Results for: {query}'
+
+
+@agent.tool_plain
+def greet(name: str) -> str:
+    """Greet someone."""
+    return f'Hello, {name}!'
+
+
+result = agent.run_sync('Search for pydantic')
+params = test_model.last_model_request_parameters
+assert params is not None
+search_tool = next(t for t in params.function_tools if t.name == 'search')
+greet_tool = next(t for t in params.function_tools if t.name == 'greet')
+assert search_tool.metadata is not None and search_tool.metadata.get('sensitive') is True
+assert greet_tool.metadata is None or greet_tool.metadata.get('sensitive') is None
+```
+
+_(This example is complete, it can be run "as is")_
+
+The same effect can be achieved at the toolset level using [`.with_metadata()`][pydantic_ai.toolsets.AbstractToolset.with_metadata] — see [toolset composition](toolsets.md#setting-tool-metadata).
 
 ## Building custom capabilities
 
@@ -775,16 +888,73 @@ print(counter.count)
 #> 0
 ```
 
-### Composition
+### Composition and middleware semantics
 
-When multiple capabilities are passed to an agent, they are composed into a single [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability]:
+When multiple capabilities are passed to an agent, they are composed into a single [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] that follows **middleware semantics** — the same pattern used by web frameworks like Django and Starlette:
 
 * **Configuration** is merged: instructions concatenate, model settings merge additively (later capabilities override earlier ones), toolsets combine, builtin tools collect.
-* **`before_*`** hooks fire in capability order: `cap1 → cap2 → cap3`.
-* **`after_*`** hooks fire in reverse order: `cap3 → cap2 → cap1`.
-* **`wrap_*`** hooks nest as middleware: `cap1` wraps `cap2` wraps `cap3` wraps the actual operation. The first capability is the outermost layer.
+* **`before_*`** hooks fire in capability order (outermost to innermost): `cap1 → cap2 → cap3`.
+* **`after_*`** hooks fire in reverse order (innermost to outermost): `cap3 → cap2 → cap1`.
+* **`wrap_*`** hooks nest as middleware: `cap1` wraps `cap2` wraps `cap3` wraps the actual operation. The first capability is the **outermost** layer.
+* **`get_wrapper_toolset`** follows the same nesting: the first capability's wrapper is outermost.
 
-This means the first capability in the list has the first and last say on the operation — it sees the original input in its `wrap_*` before handler, and it sees the final output after handler returns.
+This means the first capability in the list has the first and last say on the operation — it sees the original input before any other capability, and it sees the final output after all inner capabilities have processed it.
+
+### Ordering
+
+By default, capabilities are composed in the order you list them. When a capability needs to be at a specific position regardless of where the user lists it, override [`get_ordering`][pydantic_ai.capabilities.AbstractCapability.get_ordering] to return a [`CapabilityOrdering`][pydantic_ai.capabilities.CapabilityOrdering]:
+
+```python {title="capability_ordering_example.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    CapabilityOrdering,
+    CombinedCapability,
+)
+
+
+@dataclass
+class InstrumentationCapability(AbstractCapability[Any]):
+    """Must wrap all other capabilities to trace everything."""
+
+    def get_ordering(self) -> CapabilityOrdering:
+        return CapabilityOrdering(position='outermost')
+
+
+@dataclass
+class PlainCapability(AbstractCapability[Any]):
+    pass
+
+
+# InstrumentationCapability ends up first regardless of list order
+combined = CombinedCapability([PlainCapability(), InstrumentationCapability()])
+assert type(combined.capabilities[0]) is InstrumentationCapability
+```
+
+The available constraints are:
+
+* **`position`** — `'outermost'` or `'innermost'`. Places the capability in a tier before (or after) all capabilities without that position. Multiple capabilities can share a tier; original list order breaks ties within it.
+* **`wraps`** — list of capabilities this one wraps around (is outside of). Each entry can be a capability **type** (matches all instances via `issubclass`) or a specific **instance** (matches by identity). Use when your capability needs to see the output of another: `CapabilityOrdering(wraps=[OtherCapability])`.
+* **`wrapped_by`** — list of capabilities that wrap around this one (are outside of it). Accepts types or instances, like `wraps`. The inverse of `wraps`.
+* **`requires`** — list of capability types that must be present. Raises [`UserError`][pydantic_ai.exceptions.UserError] if any are missing. Does not imply ordering.
+
+When constraints are declared, [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] topologically sorts its children at construction time, preserving user-provided order as a tiebreaker.
+
+[`Hooks`][pydantic_ai.capabilities.Hooks] supports ordering via the `ordering` parameter, so you can declare ordering constraints without subclassing:
+
+```python {title="hooks_ordering_example.py"}
+from pydantic_ai.capabilities import CapabilityOrdering, CombinedCapability, Hooks
+
+logging_hooks = Hooks(ordering=CapabilityOrdering(position='outermost'))
+rate_limit_hooks = Hooks(ordering=CapabilityOrdering(wrapped_by=[logging_hooks]))
+
+# logging_hooks ends up outermost; rate_limit_hooks is wrapped by it
+combined = CombinedCapability([rate_limit_hooks, logging_hooks])
+assert combined.capabilities[0] is logging_hooks
+assert combined.capabilities[1] is rate_limit_hooks
+```
 
 ## Examples
 
@@ -895,6 +1065,36 @@ print(f'Output: {result.output}')
 ## Third-party capabilities
 
 Capabilities are the recommended way for third-party packages to extend Pydantic AI, since they can bundle tools with hooks, instructions, and model settings. See [Extensibility](extensibility.md) for the full ecosystem, including [third-party toolsets](toolsets.md#third-party-toolsets) that can also be wrapped as capabilities.
+
+### Task Management
+
+Capabilities for task planning and progress tracking help agents organize complex work:
+
+* [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo) - `TodoCapability` with `add_todo`, `read_todos`, `write_todos`, `update_todo_status`, and `remove_todo` tools. Supports subtasks, dependencies, and PostgreSQL persistence. Also available as a lower-level `TodoToolset`.
+
+### Context Management
+
+Capabilities for managing long conversations help agents stay within context limits:
+
+* [`summarization-pydantic-ai`](https://github.com/vstorm-co/summarization-pydantic-ai) - Four capabilities for managing long conversations: `ContextManagerCapability` (real-time token tracking, auto-compression at a configurable threshold, and large tool-output truncation); `SummarizationCapability` (LLM-powered history compression); `SlidingWindowCapability` (zero-cost message trimming); `LimitWarnerCapability` (injects a finish-soon hint before hard context limits). Also available as standalone `history_processors`: `SummarizationProcessor`, `SlidingWindowProcessor`, and `LimitWarnerProcessor`.
+
+### Multi-Agent Orchestration
+
+Capabilities for spawning and delegating to specialized subagents help agents tackle complex, parallelizable work:
+
+* [`subagents-pydantic-ai`](https://github.com/vstorm-co/subagents-pydantic-ai) - `SubAgentCapability` adds tools for multi-agent delegation: `task` (spawn a subagent), `check_task`, `wait_tasks`, `list_active_tasks`, `soft_cancel_task`, `hard_cancel_task`, and `answer_subagent`. Supports sync, async, and auto execution modes, nested subagents, and runtime agent creation. Also available as a lower-level toolset via `create_subagent_toolset`.
+
+### Guardrails & Safety
+
+Capabilities for cost control, input/output filtering, and tool permissions help keep agents safe and within budget:
+
+* [`pydantic-ai-shields`](https://github.com/vstorm-co/pydantic-ai-shields) - Ready-to-use guardrail capabilities: `CostTracking` (tracks token usage and USD cost per run, raises `BudgetExceededError` on budget overrun); `ToolGuard` (block or require approval for specific tools); `InputGuard` and `OutputGuard` (custom sync or async validation functions); `PromptInjection`, `PiiDetector`, `SecretRedaction`, `BlockedKeywords`, and `NoRefusals` content shields.
+
+### File Operations & Sandboxing
+
+Capabilities for filesystem access and sandboxed code execution help agents work with files and run code safely:
+
+* [`pydantic-ai-backend`](https://github.com/vstorm-co/pydantic-ai-backend) - `ConsoleCapability` registers `ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`, and `execute` tools with a fine-grained permission system. Backends include `StateBackend` (in-memory, for testing), `LocalBackend` (real filesystem), `DockerSandbox` (isolated container execution), and `CompositeBackend` (routing across backends). Also available as a lower-level `ConsoleToolset`.
 
 ### Agent Skills
 

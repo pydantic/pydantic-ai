@@ -34,6 +34,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from .abstract import (
     AbstractCapability,
     AgentNode,
+    CapabilityOrdering,
     NodeResult,
     RawOutput,
     RawToolArgs,
@@ -738,12 +739,15 @@ class Hooks(AbstractCapability[AgentDepsT]):
         after_output_validate: AfterOutputValidateHookFunc | None = None,
         output_validate: WrapOutputValidateHookFunc | None = None,
         output_validate_error: OnOutputValidateErrorHookFunc | None = None,
-        # Output execution
+        # Output processing
         before_output_process: BeforeOutputProcessHookFunc | None = None,
         after_output_process: AfterOutputProcessHookFunc | None = None,
         output_process: WrapOutputProcessHookFunc | None = None,
         output_process_error: OnOutputProcessErrorHookFunc | None = None,
+        # Ordering
+        ordering: CapabilityOrdering | None = None,
     ):
+        self._ordering = ordering
         self._registry = {}
         # Map constructor kwarg names to internal registry keys (AbstractCapability method names)
         _kwargs: dict[str, Any] = {
@@ -794,6 +798,13 @@ class Hooks(AbstractCapability[AgentDepsT]):
     @property
     def has_wrap_node_run(self) -> bool:
         return bool(self._get('wrap_node_run'))
+
+    @property
+    def has_wrap_run_event_stream(self) -> bool:
+        return bool(self._get('wrap_run_event_stream') or self._get('_on_event'))
+
+    def get_ordering(self) -> CapabilityOrdering | None:
+        return self._ordering
 
     @classmethod
     def get_serialization_name(cls) -> str | None:

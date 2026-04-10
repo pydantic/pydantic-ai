@@ -21,13 +21,13 @@ from ._output import (
     run_output_with_hooks,
 )
 from ._run_context import AgentDepsT, RunContext
-from ._tool_manager import ToolManager
 from .messages import ModelResponseStreamEvent
 from .output import (
     DeferredToolRequests,
     OutputDataT,
     ToolOutput,
 )
+from .tool_manager import ToolManager
 from .usage import RunUsage, UsageLimits
 
 if TYPE_CHECKING:

@@ -17,12 +17,12 @@ from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
-from pydantic_ai._tool_manager import ToolManager, ValidatedToolCall
 from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, now_utc
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.tool_manager import ToolManager, ValidatedToolCall
 from pydantic_graph import BaseNode, GraphRunContext
 from pydantic_graph.beta import Graph, GraphBuilder
 from pydantic_graph.nodes import End, NodeRunEndT
@@ -82,6 +82,8 @@ class GraphAgentState:
     metadata: dict[str, Any] | None = None
     last_max_tokens: int | None = None
     """Last-resolved `max_tokens` from model settings, used only in error messages."""
+    last_model_request_parameters: models.ModelRequestParameters | None = None
+    """Last-resolved model request parameters, used for OTel span attributes."""
 
     def check_incomplete_tool_call(self) -> None:
         """Raise `IncompleteToolCall` if the last model response was truncated mid-tool-call."""
@@ -126,7 +128,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     usage_limits: _usage.UsageLimits
     max_result_retries: int
     end_strategy: EndStrategy
-    get_instructions: Callable[[RunContext[DepsT]], Awaitable[str | None]]
+    get_instructions: Callable[[RunContext[DepsT]], Awaitable[list[_messages.InstructionPart] | None]]
 
     output_schema: _output.OutputSchema[OutputDataT]
     output_validators: list[_output.OutputValidator[DepsT, OutputDataT]]
@@ -216,7 +218,6 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         is_resuming_without_prompt = False
 
         run_context: RunContext[DepsT] | None = None
-        instructions: str | None = None
 
         if messages and (last_message := messages[-1]):
             if isinstance(last_message, _messages.ModelRequest) and self.user_prompt is None:
@@ -252,8 +253,8 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                         # of instructions.  Instructions will be applied by ModelRequestNode.run() on
                         # the subsequent request after tool results are collected.
                         return CallToolsNode[DepsT, NodeRunEndT](last_message)
-                    instructions = await _get_instructions(ctx, run_context)
-                    if not instructions:
+                    instruction_parts = await _get_instructions(ctx, run_context)
+                    if not instruction_parts:
                         # No pending tool calls and no instructions — nothing new to send to the model.
                         return CallToolsNode[DepsT, NodeRunEndT](last_message)
                 elif last_message.tool_calls:
@@ -391,30 +392,38 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 async def _get_instructions(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     run_context: RunContext[DepsT],
-) -> str | None:
+) -> list[_messages.InstructionPart] | None:
     """Combine base instructions (from agent/capabilities) with toolset instructions.
 
     Toolset instructions are fetched from the current tool manager's toolset,
     which reflects any changes from for_run_step.
     """
-    parts: list[str] = []
+    parts: list[_messages.InstructionPart] = []
 
     base = await ctx.deps.get_instructions(run_context)
     if base:
-        parts.append(base)
+        parts.extend(base)
 
     toolset_result = await ctx.deps.tool_manager.toolset.get_instructions(run_context)
     if toolset_result:
-        if isinstance(toolset_result, list):
-            parts.extend(toolset_result)
-        else:  # pragma: no cover — top-level toolset is always CombinedToolset which returns list[str]
-            parts.append(toolset_result)
+        # The top-level toolset is always a CombinedToolset which returns a list,
+        # but the return type also allows a single str or InstructionPart for custom subclasses.
+        items = [toolset_result] if isinstance(toolset_result, (str, _messages.InstructionPart)) else toolset_result
+        for item in items:
+            if isinstance(item, _messages.InstructionPart):
+                if item.content.strip():
+                    parts.append(item)
+            else:
+                # Plain str from toolsets: treat as dynamic (external/changeable source)
+                if item.strip():
+                    parts.append(_messages.InstructionPart(content=item, dynamic=True))
 
-    return '\n\n'.join(parts).strip() if parts else None
+    return parts or None
 
 
 async def _prepare_request_parameters(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+    instruction_parts: list[_messages.InstructionPart] | None,
 ) -> models.ModelRequestParameters:
     """Build tools and create an agent model."""
     output_schema = ctx.deps.output_schema
@@ -459,6 +468,7 @@ async def _prepare_request_parameters(
         prompted_output_template=prompted_output_template,
         allow_text_output=output_schema.allows_text,
         allow_image_output=output_schema.allows_image,
+        instruction_parts=instruction_parts,
     )
 
 
@@ -542,7 +552,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             )
             self._did_stream = True
             ctx.state.usage.requests += 1
-            skip_mrp = await _prepare_request_parameters(ctx)
+            # instruction_parts=None is fine here: the model isn't called, we just need MRP for the wrapper
+            skip_mrp = await _prepare_request_parameters(ctx, instruction_parts=None)
             skip_sr = _SkipStreamedResponse(model_request_parameters=skip_mrp, _response=e.response)
             agent_stream = self._build_agent_stream(ctx, skip_sr, skip_mrp)
             yield agent_stream
@@ -774,14 +785,17 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # resume-without-prompt path; ToolManager.for_run_step is a no-op for the same step.
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
-        # Fetch instructions now that dynamic toolsets have been resolved by for_run_step
-        self.request.instructions = await _get_instructions(ctx, run_context)
+        # Fetch instructions now that dynamic toolsets have been resolved by for_run_step.
+        instruction_parts = await _get_instructions(ctx, run_context)
+        if instruction_parts:
+            instruction_parts = _messages.InstructionPart.sorted(instruction_parts) or None
+        self.request.instructions = _messages.InstructionPart.join(instruction_parts) if instruction_parts else None
 
         # Validate after instructions are resolved; self.request was appended above so [:-1] is prior history
         if not ctx.state.message_history[:-1] and not self.request.parts and not self.request.instructions:
             raise exceptions.UserError('No message history, user prompt, or instructions provided')
 
-        model_request_parameters = await _prepare_request_parameters(ctx)
+        model_request_parameters = await _prepare_request_parameters(ctx, instruction_parts)
         model_settings = ctx.deps.get_model_settings(run_context) or ModelSettings()
         run_context.model_settings = model_settings
 
@@ -830,6 +844,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         messages = _clean_message_history(messages)
 
         ctx.state.last_max_tokens = model_settings.get('max_tokens') if model_settings else None
+        ctx.state.last_model_request_parameters = model_request_parameters
         usage = ctx.state.usage
         if ctx.deps.usage_limits.count_tokens_before_request:
             # Copy to avoid modifying the original usage object with the counted usage
@@ -1236,6 +1251,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         run_step=ctx.state.run_step,
         run_id=ctx.state.run_id,
         metadata=ctx.state.metadata,
+        tool_manager=ctx.deps.tool_manager,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     run_context = replace(run_context, validation_context=validation_context)
@@ -1683,6 +1699,7 @@ async def _call_tool(
         validated = None
         call = tool_call
 
+    tool_result: Any
     try:
         if tool_call_result is None or isinstance(tool_call_result, ToolApproved):
             if validated is not None:
@@ -1713,14 +1730,16 @@ async def _call_tool(
         return e.tool_retry, None
 
     if isinstance(tool_result, _messages.ToolReturn):
-        tool_return = tool_result
-    elif isinstance(tool_result, list) and any(isinstance(i, _messages.ToolReturn) for i in tool_result):  # pyright: ignore[reportUnknownVariableType]
+        tool_return = cast(_messages.ToolReturn[Any], tool_result)
+    elif isinstance(tool_result, list) and any(
+        isinstance(i, _messages.ToolReturn) for i in cast(list[Any], tool_result)
+    ):
         raise exceptions.UserError(
             f'The return value of tool {call.tool_name!r} contains invalid nested `ToolReturn` objects. '
             f'`ToolReturn` should be used directly.'
         )
     else:
-        tool_return = _messages.ToolReturn(return_value=tool_result)  # pyright: ignore[reportUnknownArgumentType]
+        tool_return = _messages.ToolReturn[Any](return_value=cast(Any, tool_result))
 
     return_part = _messages.ToolReturnPart(
         tool_name=call.tool_name,

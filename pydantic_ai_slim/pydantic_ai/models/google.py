@@ -268,7 +268,7 @@ def _google_vertex_service_tier_headers(service_tier: GoogleServiceTier) -> dict
 
 
 @dataclass(init=False)
-class GoogleModel(Model):
+class GoogleModel(Model[Client]):
     """A model that uses Gemini via `generativelanguage.googleapis.com` API.
 
     This is implemented from scratch rather than using a dedicated SDK, good API documentation is
@@ -829,8 +829,9 @@ class GoogleModel(Model):
         if not contents or contents[0].get('role') == 'model':  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
             contents.insert(0, {'role': 'user', 'parts': [{'text': ''}]})
 
-        if instructions := self._get_instructions(messages, model_request_parameters):
-            system_parts.append({'text': instructions})
+        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
+            for part in instruction_parts:
+                system_parts.append({'text': part.content})
         system_instruction = ContentDict(role='user', parts=system_parts) if system_parts else None
 
         return system_instruction, contents
@@ -1425,6 +1426,8 @@ def _function_declaration_from_tool(tool: ToolDefinition) -> FunctionDeclaration
         description=tool.description or '',
         parameters_json_schema=json_schema,
     )
+    if tool.return_schema:
+        f['response_json_schema'] = tool.return_schema
     return f
 
 
@@ -1475,7 +1478,7 @@ def _map_executable_code(executable_code: ExecutableCode, provider_name: str, to
     return BuiltinToolCallPart(
         provider_name=provider_name,
         tool_name=CodeExecutionTool.kind,
-        args=executable_code.model_dump(mode='json'),
+        args=executable_code.model_dump(mode='json', exclude_none=True),
         tool_call_id=tool_call_id,
     )
 
@@ -1486,7 +1489,7 @@ def _map_code_execution_result(
     return BuiltinToolReturnPart(
         provider_name=provider_name,
         tool_name=CodeExecutionTool.kind,
-        content=code_execution_result.model_dump(mode='json'),
+        content=code_execution_result.model_dump(mode='json', exclude_none=True),
         tool_call_id=tool_call_id,
     )
 
