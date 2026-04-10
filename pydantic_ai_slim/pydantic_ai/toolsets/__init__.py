@@ -9,9 +9,11 @@ from .deferred_loading import DeferredLoadingToolset
 from .external import DeferredToolset, ExternalToolset  # pyright: ignore[reportDeprecated]
 from .filtered import FilteredToolset
 from .function import FunctionToolset
+from .include_return_schemas import IncludeReturnSchemasToolset
 from .prefixed import PrefixedToolset
 from .prepared import PreparedToolset
 from .renamed import RenamedToolset
+from .set_metadata import SetMetadataToolset
 from .wrapper import WrapperToolset
 
 AgentToolset = Union[AbstractToolset[AgentDepsT], ToolsetFunc[AgentDepsT]]  # noqa: UP007 — Union needed at runtime (no future annotations)
@@ -29,8 +31,10 @@ __all__ = (
     'ExternalToolset',
     'FilteredToolset',
     'FunctionToolset',
+    'IncludeReturnSchemasToolset',
     'PrefixedToolset',
     'PreparedToolset',
     'RenamedToolset',
+    'SetMetadataToolset',
     'WrapperToolset',
 )

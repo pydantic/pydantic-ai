@@ -99,7 +99,7 @@ class CohereModelSettings(ModelSettings, total=False):
 
 
 @dataclass(init=False)
-class CohereModel(Model):
+class CohereModel(Model[AsyncClientV2]):
     """A model that uses the Cohere API.
 
     Internally, this uses the [Cohere Python client](

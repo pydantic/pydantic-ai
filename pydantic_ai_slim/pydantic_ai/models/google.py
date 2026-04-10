@@ -269,7 +269,7 @@ def _google_vertex_service_tier_headers(service_tier: GoogleServiceTier) -> dict
 
 
 @dataclass(init=False)
-class GoogleModel(Model):
+class GoogleModel(Model[Client]):
     """A model that uses Gemini via `generativelanguage.googleapis.com` API.
 
     This is implemented from scratch rather than using a dedicated SDK, good API documentation is
@@ -1430,6 +1430,8 @@ def _function_declaration_from_tool(tool: ToolDefinition) -> FunctionDeclaration
         description=tool.description or '',
         parameters_json_schema=json_schema,
     )
+    if tool.return_schema:
+        f['response_json_schema'] = tool.return_schema
     return f
 
 
@@ -1480,7 +1482,7 @@ def _map_executable_code(executable_code: ExecutableCode, provider_name: str, to
     return BuiltinToolCallPart(
         provider_name=provider_name,
         tool_name=CodeExecutionTool.kind,
-        args=executable_code.model_dump(mode='json'),
+        args=executable_code.model_dump(mode='json', exclude_none=True),
         tool_call_id=tool_call_id,
     )
 
@@ -1491,7 +1493,7 @@ def _map_code_execution_result(
     return BuiltinToolReturnPart(
         provider_name=provider_name,
         tool_name=CodeExecutionTool.kind,
-        content=code_execution_result.model_dump(mode='json'),
+        content=code_execution_result.model_dump(mode='json', exclude_none=True),
         tool_call_id=tool_call_id,
     )
 

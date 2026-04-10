@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from .models import Model
     from .result import RunUsage
     from .settings import ModelSettings
+    from .tool_manager import ToolManager
 
 # TODO (v2): Change the default for all typevars like this from `None` to `object`
 AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
@@ -90,6 +91,17 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Available in model request hooks (`before_model_request`, `wrap_model_request`,
     `after_model_request`). Currently `None` in tool hooks, output validators,
     and during agent construction.
+    """
+
+    tool_manager: ToolManager[RunContextAgentDepsT] | None = None
+    """The tool manager for the current run step.
+
+    Provides access to tool validation and execution, including tracing and
+    capability hooks. Useful for toolsets that need to dispatch tool calls
+    programmatically (e.g. code execution sandboxes).
+
+    Not available in `TemporalRunContext` — it is not serializable across
+    Temporal activity boundaries.
     """
 
     @property
