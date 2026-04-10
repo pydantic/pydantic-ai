@@ -418,10 +418,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 thinking_enabled = True
 
         if model_request_parameters.output_tools and thinking_enabled:
-            if model_request_parameters.output_mode == 'auto':
-                output_mode = 'native' if self.profile.supports_json_schema_output else 'prompted'
-                model_request_parameters = replace(model_request_parameters, output_mode=output_mode)
-            elif (
+            output_mode = 'native' if self.profile.supports_json_schema_output else 'prompted'
+            model_request_parameters = model_request_parameters.with_default_output_mode(output_mode)
+            if (
                 model_request_parameters.output_mode == 'tool' and not model_request_parameters.allow_text_output
             ):  # pragma: no branch
                 # This would result in `tool_choice=required`, which Anthropic does not support with thinking.
