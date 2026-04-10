@@ -20,6 +20,7 @@ from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
     BuiltinTool,
+    CapabilityOrdering,
     ImageGeneration,
     IncludeToolReturnSchemas,
     PrefixTools,
@@ -30,9 +31,8 @@ from pydantic_ai.capabilities import (
     WebFetch,
     WebSearch,
     WrapperCapability,
-    sort_capabilities,
 )
-from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering
+from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
@@ -8483,23 +8483,27 @@ class RequiresOutermostCap(AbstractCapability[Any]):
         return CapabilityOrdering(requires=[OutermostCap])
 
 
+def _cap_names(combined: CombinedCapability) -> list[str]:
+    return [type(c).__name__ for c in combined.capabilities]
+
+
 def test_ordering_outermost():
     """Capability declaring 'outermost' ends up at index 0."""
-    caps = sort_capabilities([PlainCapA(), OutermostCap(), PlainCapB()])
-    assert [type(c).__name__ for c in caps] == ['OutermostCap', 'PlainCapA', 'PlainCapB']
+    combined = CombinedCapability([PlainCapA(), OutermostCap(), PlainCapB()])
+    assert _cap_names(combined) == ['OutermostCap', 'PlainCapA', 'PlainCapB']
 
 
 def test_ordering_innermost():
     """Capability declaring 'innermost' ends up last."""
-    caps = sort_capabilities([InnermostCap(), PlainCapA(), PlainCapB()])
-    assert [type(c).__name__ for c in caps] == ['PlainCapA', 'PlainCapB', 'InnermostCap']
+    combined = CombinedCapability([InnermostCap(), PlainCapA(), PlainCapB()])
+    assert _cap_names(combined) == ['PlainCapA', 'PlainCapB', 'InnermostCap']
 
 
 def test_ordering_both_outermost_and_innermost():
     """Both outermost and innermost present."""
-    caps = sort_capabilities([PlainCapA(), InnermostCap(), OutermostCap()])
-    assert caps[0].__class__ is OutermostCap
-    assert caps[-1].__class__ is InnermostCap
+    combined = CombinedCapability([PlainCapA(), InnermostCap(), OutermostCap()])
+    assert combined.capabilities[0].__class__ is OutermostCap
+    assert combined.capabilities[-1].__class__ is InnermostCap
 
 
 def test_ordering_multiple_outermost_tier():
@@ -8511,10 +8515,9 @@ def test_ordering_multiple_outermost_tier():
         def get_ordering(cls) -> CapabilityOrdering:
             return CapabilityOrdering(position='outermost')
 
-    caps = sort_capabilities([PlainCapA(), OutermostCap2(), OutermostCap()])
-    names = [type(c).__name__ for c in caps]
+    combined = CombinedCapability([PlainCapA(), OutermostCap2(), OutermostCap()])
     # Both outermost caps before PlainCapA; original order (OutermostCap2 before OutermostCap) preserved
-    assert names == ['OutermostCap2', 'OutermostCap', 'PlainCapA']
+    assert _cap_names(combined) == ['OutermostCap2', 'OutermostCap', 'PlainCapA']
 
 
 def test_ordering_multiple_innermost_tier():
@@ -8526,10 +8529,9 @@ def test_ordering_multiple_innermost_tier():
         def get_ordering(cls) -> CapabilityOrdering:
             return CapabilityOrdering(position='innermost')
 
-    caps = sort_capabilities([InnermostCap(), InnermostCap2(), PlainCapA()])
-    names = [type(c).__name__ for c in caps]
+    combined = CombinedCapability([InnermostCap(), InnermostCap2(), PlainCapA()])
     # PlainCapA first, then both innermost in original order
-    assert names == ['PlainCapA', 'InnermostCap', 'InnermostCap2']
+    assert _cap_names(combined) == ['PlainCapA', 'InnermostCap', 'InnermostCap2']
 
 
 def test_ordering_outermost_tier_with_wraps():
@@ -8548,15 +8550,14 @@ def test_ordering_outermost_tier_with_wraps():
             return CapabilityOrdering(position='outermost', wraps=[OuterA])
 
     # OuterB listed after OuterA, but wraps=[OuterA] overrides tiebreaker
-    caps = sort_capabilities([OuterA(), PlainCapA(), OuterB()])
-    names = [type(c).__name__ for c in caps]
-    assert names == ['OuterB', 'OuterA', 'PlainCapA']
+    combined = CombinedCapability([OuterA(), PlainCapA(), OuterB()])
+    assert _cap_names(combined) == ['OuterB', 'OuterA', 'PlainCapA']
 
 
 def test_ordering_wraps():
     """Explicit 'wraps' edge is respected."""
-    caps = sort_capabilities([PlainCapA(), WrapsACap()])
-    assert [type(c).__name__ for c in caps] == ['WrapsACap', 'PlainCapA']
+    combined = CombinedCapability([PlainCapA(), WrapsACap()])
+    assert _cap_names(combined) == ['WrapsACap', 'PlainCapA']
 
 
 def test_ordering_wrapped_by():
@@ -8568,25 +8569,26 @@ def test_ordering_wrapped_by():
         def get_ordering(cls) -> CapabilityOrdering:
             return CapabilityOrdering(wrapped_by=[PlainCapA])
 
-    caps = sort_capabilities([WrappedByACap(), PlainCapA()])
-    assert [type(c).__name__ for c in caps] == ['PlainCapA', 'WrappedByACap']
+    combined = CombinedCapability([WrappedByACap(), PlainCapA()])
+    assert _cap_names(combined) == ['PlainCapA', 'WrappedByACap']
 
 
 def test_ordering_requires_present():
     """No error when required capability is present."""
-    caps = sort_capabilities([RequiresOutermostCap(), OutermostCap()])
-    assert len(caps) == 2
+    combined = CombinedCapability([RequiresOutermostCap(), OutermostCap()])
+    assert len(combined.capabilities) == 2
 
 
 def test_ordering_requires_missing():
     with pytest.raises(UserError, match='`RequiresOutermostCap` requires `OutermostCap`'):
-        sort_capabilities([RequiresOutermostCap(), PlainCapA()])
+        CombinedCapability([RequiresOutermostCap(), PlainCapA()])
 
 
 def test_ordering_preserves_user_order():
     """Capabilities without constraints keep their relative order."""
-    caps = sort_capabilities([PlainCapB(), PlainCapA()])
-    assert [type(c).__name__ for c in caps] == ['PlainCapB', 'PlainCapA']
+    a, b = PlainCapB(), PlainCapA()
+    combined = CombinedCapability([a, b])
+    assert list(combined.capabilities) == [a, b]
 
 
 def test_ordering_nested_combined():
@@ -8600,17 +8602,17 @@ def test_ordering_nested_combined():
     # The merged effective ordering for 'inner' should be position='outermost',
     # placing it before PlainCapA despite being listed second.
     inner = CombinedCapability([PlainCapB(), OutermostCap()])
-    caps = sort_capabilities([PlainCapA(), inner])
-    assert caps[0] is inner
+    combined = CombinedCapability([PlainCapA(), inner])
+    assert combined.capabilities[0] is inner
 
 
 def test_ordering_nested_combined_no_constraints():
     """A nested CombinedCapability with no ordering leaves is treated as unconstrained."""
     inner = CombinedCapability([PlainCapA(), PlainCapB()])
-    outer_caps = sort_capabilities([inner, OutermostCap()])
+    combined = CombinedCapability([inner, OutermostCap()])
     # OutermostCap first (has ordering), inner second (no constraints → unconstrained)
-    assert outer_caps[0].__class__ is OutermostCap
-    assert outer_caps[1] is inner
+    assert combined.capabilities[0].__class__ is OutermostCap
+    assert combined.capabilities[1] is inner
 
 
 def test_ordering_nested_combined_wraps_without_position():
@@ -8618,23 +8620,23 @@ def test_ordering_nested_combined_wraps_without_position():
     inner = CombinedCapability([PlainCapB(), WrapsACap()])
     # WrapsACap has wraps=[PlainCapA] but no position.
     # The nested group inherits that constraint, so it sorts before PlainCapA.
-    caps = sort_capabilities([PlainCapA(), inner])
-    assert caps[0] is inner
-    assert caps[1].__class__ is PlainCapA
+    combined = CombinedCapability([PlainCapA(), inner])
+    assert combined.capabilities[0] is inner
+    assert combined.capabilities[1].__class__ is PlainCapA
 
 
 def test_ordering_single_capability():
-    """sort_capabilities with a single capability returns it unchanged."""
+    """Single capability in CombinedCapability is unchanged."""
     cap = OutermostCap()
-    caps = sort_capabilities([cap])
-    assert caps == [cap]
+    combined = CombinedCapability([cap])
+    assert list(combined.capabilities) == [cap]
 
 
 def test_ordering_no_constraints_noop():
     """When no capability declares ordering, list is unchanged."""
     a, b = PlainCapA(), PlainCapB()
-    caps = sort_capabilities([a, b])
-    assert caps == [a, b]
+    combined = CombinedCapability([a, b])
+    assert list(combined.capabilities) == [a, b]
 
 
 def test_ordering_cycle_detection():
@@ -8651,22 +8653,14 @@ def test_ordering_cycle_detection():
             return CapabilityOrdering(wraps=[CycleA])
 
     with pytest.raises(UserError, match='Circular ordering constraints'):
-        sort_capabilities([CycleA(), CycleB()])
-
-
-def test_ordering_via_combined_capability():
-    """CombinedCapability.__post_init__ auto-sorts when constraints exist."""
-    combined = CombinedCapability([PlainCapA(), InnermostCap(), OutermostCap()])
-    names = [type(c).__name__ for c in combined.capabilities]
-    assert names[0] == 'OutermostCap'
-    assert names[-1] == 'InnermostCap'
+        CombinedCapability([CycleA(), CycleB()])
 
 
 def test_ordering_conflicting_positions_in_nested():
     """Conflicting positions in a nested CombinedCapability raise UserError."""
     inner = CombinedCapability([OutermostCap(), InnermostCap()])
     with pytest.raises(UserError, match='Conflicting positions in nested CombinedCapability'):
-        sort_capabilities([inner, PlainCapA()])
+        CombinedCapability([inner, PlainCapA()])
 
 
 def test_ordering_wrapper_capability_recurses():
@@ -8674,8 +8668,8 @@ def test_ordering_wrapper_capability_recurses():
     wrapped = WrapperCapability(wrapped=OutermostCap())
     # The WrapperCapability wraps an OutermostCap; ordering sees through via apply()
     # and picks up OutermostCap's position='outermost' constraint.
-    caps = sort_capabilities([PlainCapA(), wrapped])
-    assert caps[0] is wrapped
+    combined = CombinedCapability([PlainCapA(), wrapped])
+    assert combined.capabilities[0] is wrapped
 
 
 # --- Hook recovery tests (after_node_run End→node, ErrorMarker in next_node) ---

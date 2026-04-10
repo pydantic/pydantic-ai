@@ -879,8 +879,11 @@ By default, capabilities are composed in the order you list them. When a capabil
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
-from pydantic_ai.capabilities.combined import CombinedCapability
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    CapabilityOrdering,
+    CombinedCapability,
+)
 
 
 @dataclass

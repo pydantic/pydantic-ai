@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import heapq
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic_ai.exceptions import UserError
 
-from .abstract import AbstractCapability, CapabilityOrdering, CapabilityPosition
+from .abstract import AbstractCapability, CapabilityOrdering
+
+if TYPE_CHECKING:
+    from .abstract import CapabilityPosition
 
 _AddEdge = Callable[[int, int], None]
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias
 
 from pydantic import ValidationError
@@ -81,13 +81,13 @@ class CapabilityOrdering:
     position: CapabilityPosition | None = None
     """Fixed position in the chain, or `None` for user-provided order."""
 
-    wraps: Sequence[type[AbstractCapability[Any]]] = field(default_factory=tuple)
+    wraps: Sequence[type[AbstractCapability[Any]]] = ()
     """This capability wraps around (is outside of) these types in the middleware chain."""
 
-    wrapped_by: Sequence[type[AbstractCapability[Any]]] = field(default_factory=tuple)
+    wrapped_by: Sequence[type[AbstractCapability[Any]]] = ()
     """This capability is wrapped by (is inside of) these types in the middleware chain."""
 
-    requires: Sequence[type[AbstractCapability[Any]]] = field(default_factory=tuple)
+    requires: Sequence[type[AbstractCapability[Any]]] = ()
     """These types must be present in the chain (no ordering implied)."""
 
 
