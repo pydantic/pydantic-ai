@@ -102,7 +102,7 @@ agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 
 ## Semantix — Semantic Output Validation {#semantix}
 
-[Semantix](https://github.com/labrat-akhona/semantix-ai) adds semantic validation to Pydantic AI agents — validating that outputs match a **natural language intent**, not just a structural schema. It uses local NLI (Natural Language Inference) models for fast, offline evaluation and integrates with Pydantic AI's output validator and `ModelRetry` mechanism.
+[Semantix](https://github.com/labrat-akhona/semantix-ai) adds semantic validation to Pydantic AI agents — validating that outputs match a **natural language intent**, not just a structural schema. It uses local NLI (Natural Language Inference) models for fast, offline evaluation and integrates with Pydantic AI's [`output_validator`][pydantic_ai.agent.Agent.output_validator] and [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] mechanism.
 
 Install with:
 
@@ -110,7 +110,7 @@ Install with:
 pip install 'semantix-ai[pydantic-ai]'
 ```
 
-Define an intent (what the output should *mean*) and attach it as an output validator:
+Define an intent (what the output should *mean*) and attach it as an [output validator](output.md#output-validator-functions):
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -127,7 +127,7 @@ async def validate_polite(ctx, output):
     return await semantix_validator(Polite)(ctx, output)
 ```
 
-When the output fails semantic validation, the adapter raises `ModelRetry` with a detailed explanation, which Pydantic AI feeds back to the model for self-correction. The NLI judge runs locally (~15ms per evaluation), so no additional API calls are needed for validation.
+When the output fails semantic validation, the adapter raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] with a detailed explanation, which Pydantic AI feeds back to the model for self-correction. The NLI judge runs locally (~15ms per evaluation), so no additional API calls are needed for validation.
 
 Semantix also supports composite intents (`AllOf`, `AnyOf`), custom score thresholds, and pluggable judge backends (NLI, LLM, embedding-based).
 
