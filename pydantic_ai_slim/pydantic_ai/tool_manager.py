@@ -542,8 +542,7 @@ class ToolManager(Generic[AgentDepsT]):
             try:
                 return await processor.call(output, validated.ctx, wrap_validation_errors=False)
             except ModelRetry as e:
-                self._check_max_retries(name, tool.max_retries, e)
-                self.failed_tools.add(name)
+                # Wrap as ToolRetryError; retry tracking is done by the outer handler
                 raise self._wrap_error_as_retry(name, validated.call, e) from e
 
         cap = self.root_capability
