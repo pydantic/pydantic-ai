@@ -8670,10 +8670,10 @@ def test_ordering_conflicting_positions_in_nested():
 
 
 def test_ordering_wrapper_capability_recurses():
-    """iter_leaves recurses through WrapperCapability, so ordering constraints are preserved."""
+    """Ordering constraints on capabilities inside a WrapperCapability are preserved."""
     wrapped = WrapperCapability(wrapped=OutermostCap())
-    # The WrapperCapability wraps an OutermostCap; iter_leaves should see through
-    # and pick up OutermostCap's position='outermost' constraint.
+    # The WrapperCapability wraps an OutermostCap; ordering sees through via apply()
+    # and picks up OutermostCap's position='outermost' constraint.
     caps = sort_capabilities([PlainCapA(), wrapped])
     assert caps[0] is wrapped
 

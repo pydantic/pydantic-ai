@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import heapq
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from pydantic_ai.exceptions import UserError
@@ -19,7 +19,7 @@ def sort_capabilities(
     """Sort capabilities to satisfy ordering constraints.
 
     Preserves the original order as a tiebreaker when constraints allow.
-    Raises ``UserError`` on conflicts (duplicate positions, missing requirements, cycles).
+    Raises `UserError` on conflicts (duplicate positions, missing requirements, cycles).
     """
     caps = list(capabilities)
     n = len(caps)
@@ -147,24 +147,19 @@ def _topo_sort(
 
 
 def _effective_ordering(cap: AbstractCapability[Any]) -> CapabilityOrdering | None:
-    """Get the effective ordering for a capability, merging from leaves for nested groups.
+    """Get the effective ordering for a capability, merging from all leaves.
 
-    For plain capabilities, returns ``get_ordering()`` directly. For containers
-    (``CombinedCapability``, ``WrapperCapability``), merges constraints from all leaves.
+    For plain capabilities (single leaf), returns `get_ordering()` directly.
+    For containers (`CombinedCapability`, `WrapperCapability`), merges
+    constraints from all leaves via `apply`.
     """
-    from .combined import CombinedCapability
-    from .wrapper import WrapperCapability
-
-    if not isinstance(cap, (CombinedCapability, WrapperCapability)):
-        return type(cap).get_ordering()
-
     merged_position: CapabilityPosition | None = None
     merged_wraps: list[type[AbstractCapability[Any]]] = []
     merged_wrapped_by: list[type[AbstractCapability[Any]]] = []
     merged_requires: list[type[AbstractCapability[Any]]] = []
     has_any = False
 
-    for leaf in iter_leaves(cap):
+    for leaf in collect_leaves(cap):
         ordering = type(leaf).get_ordering()
         if ordering is None:
             continue
@@ -189,25 +184,12 @@ def _effective_ordering(cap: AbstractCapability[Any]) -> CapabilityOrdering | No
     )
 
 
-def iter_leaves(cap: AbstractCapability[Any]) -> Iterator[AbstractCapability[Any]]:
-    """Recursively yield all leaf capabilities.
-
-    Recurses through both [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability]
-    (which aggregates children) and [`WrapperCapability`][pydantic_ai.capabilities.WrapperCapability]
-    (which delegates to a wrapped capability), consistent with
-    [`apply`][pydantic_ai.capabilities.AbstractCapability.apply].
-    """
-    from .combined import CombinedCapability
-    from .wrapper import WrapperCapability
-
-    if isinstance(cap, CombinedCapability):
-        for child in cap.capabilities:
-            yield from iter_leaves(child)
-    elif isinstance(cap, WrapperCapability):
-        yield from iter_leaves(cap.wrapped)
-    else:
-        yield cap
+def collect_leaves(cap: AbstractCapability[Any]) -> list[AbstractCapability[Any]]:
+    """Collect all leaf capabilities using the `apply` visitor pattern."""
+    leaves: list[AbstractCapability[Any]] = []
+    cap.apply(leaves.append)
+    return leaves
 
 
 def _collect_leaf_types(cap: AbstractCapability[Any]) -> set[type]:
-    return {type(leaf) for leaf in iter_leaves(cap)}
+    return {type(leaf) for leaf in collect_leaves(cap)}
