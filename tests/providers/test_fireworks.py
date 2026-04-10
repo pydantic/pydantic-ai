@@ -42,7 +42,7 @@ def test_fireworks_provider_need_api_key(env: TestEnv) -> None:
         UserError,
         match=re.escape(
             'Set the `FIREWORKS_API_KEY` environment variable or pass it via `FireworksProvider(api_key=...)`'
-            'to use the Fireworks AI provider.'
+            ' to use the Fireworks AI provider.'
         ),
     ):
         FireworksProvider()

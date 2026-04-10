@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias
 
 from pydantic import ValidationError
@@ -11,7 +11,7 @@ from pydantic_ai._instructions import AgentInstructions
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, RunContext, ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset, AgentToolset, ToolsetTool
+from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
@@ -52,15 +52,15 @@ WrapToolValidateHandler: TypeAlias = 'Callable[[str | dict[str, Any]], Awaitable
 WrapToolExecuteHandler: TypeAlias = 'Callable[[dict[str, Any]], Awaitable[Any]]'
 """Handler type for [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute]."""
 
-WrapGetToolsHandler: TypeAlias = 'Callable[[], Awaitable[dict[str, ToolsetTool[AgentDepsT]]]]'
-"""Handler type for [`wrap_get_tools`][pydantic_ai.capabilities.AbstractCapability.wrap_get_tools]."""
-
 
 CapabilityPosition = Literal['outermost', 'innermost']
-"""Fixed position for a capability in the middleware chain.
+"""Position tier for a capability in the middleware chain.
 
-- ``'outermost'``: first in the chain, wraps all other capabilities (e.g. instrumentation).
-- ``'innermost'``: last in the chain, closest to the handler (e.g. durable execution).
+- `'outermost'`: in the outermost tier, before all non-outermost capabilities.
+  Multiple capabilities can declare `'outermost'`; original list order breaks ties
+  within the tier, and `wraps`/`wrapped_by` edges refine order further.
+- `'innermost'`: in the innermost tier, after all non-innermost capabilities.
+  Same tie-breaking rules apply.
 """
 
 
@@ -68,22 +68,26 @@ CapabilityPosition = Literal['outermost', 'innermost']
 class CapabilityOrdering:
     """Ordering constraints for a capability within a combined capability chain.
 
-    Capabilities declare ordering via
-    [`get_ordering`][pydantic_ai.capabilities.AbstractCapability.get_ordering].
+    Capabilities follow middleware semantics: the first capability in the list is the
+    **outermost** layer, wrapping all others. Declare ordering constraints via
+    [`get_ordering`][pydantic_ai.capabilities.AbstractCapability.get_ordering]
+    to control a capability's position in the chain regardless of how the user lists them.
+
     When a [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] is
-    constructed, it sorts its children to satisfy these constraints.
+    constructed, it topologically sorts its children to satisfy these constraints,
+    preserving user-provided order as a tiebreaker.
     """
 
     position: CapabilityPosition | None = None
-    """Fixed position in the chain, or ``None`` for user-provided order."""
+    """Fixed position in the chain, or `None` for user-provided order."""
 
-    before: Sequence[type[AbstractCapability[Any]]] = field(default_factory=tuple)
-    """This capability must come before (wrap around) these types."""
+    wraps: Sequence[type[AbstractCapability[Any]]] = ()
+    """This capability wraps around (is outside of) these types in the middleware chain."""
 
-    after: Sequence[type[AbstractCapability[Any]]] = field(default_factory=tuple)
-    """This capability must come after (be wrapped by) these types."""
+    wrapped_by: Sequence[type[AbstractCapability[Any]]] = ()
+    """This capability is wrapped by (is inside of) these types in the middleware chain."""
 
-    requires: Sequence[type[AbstractCapability[Any]]] = field(default_factory=tuple)
+    requires: Sequence[type[AbstractCapability[Any]]] = ()
     """These types must be present in the chain (no ordering implied)."""
 
 
@@ -111,10 +115,26 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     sensible defaults and typically don't need to be overridden.
     """
 
+    def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
+        """Run a visitor function on all leaf capabilities in this tree.
+
+        For a single capability, calls the visitor on itself.
+        Overridden by [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability]
+        to recursively visit all child capabilities, and by
+        [`WrapperCapability`][pydantic_ai.capabilities.WrapperCapability]
+        to delegate to the wrapped capability.
+        """
+        visitor(self)
+
     @property
     def has_wrap_node_run(self) -> bool:
         """Whether this capability (or any sub-capability) overrides wrap_node_run."""
         return type(self).wrap_node_run is not AbstractCapability.wrap_node_run
+
+    @property
+    def has_wrap_run_event_stream(self) -> bool:
+        """Whether this capability (or any sub-capability) overrides wrap_run_event_stream."""
+        return type(self).wrap_run_event_stream is not AbstractCapability.wrap_run_event_stream
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
@@ -134,11 +154,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     @classmethod
     def get_ordering(cls) -> CapabilityOrdering | None:
-        """Return ordering constraints for this capability, or ``None`` for default behavior.
+        """Return ordering constraints for this capability, or `None` for default behavior.
 
-        Override to declare a fixed position (``'outermost'`` / ``'innermost'``),
-        relative ordering (``before`` / ``after`` other capability types),
-        or dependency requirements (``requires``).
+        Override to declare a fixed position (`'outermost'` / `'innermost'`),
+        relative ordering (`wraps` / `wrapped_by` other capability types),
+        or dependency requirements (`requires`).
 
         [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] uses
         these to topologically sort its children at construction time.
@@ -150,7 +170,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Called once at agent construction time, after the agent is fully
         initialized (model, name, toolsets are all available). Override to
-        discover agent configuration and return a new instance bound to it.
+        discover agent configuration and return a bound instance.
 
         This runs before ``get_*()`` methods are called, so the returned
         instance's ``get_toolset()``, ``get_instructions()``, etc. will be
@@ -210,8 +230,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Unlike the other `get_*` methods which are called once at agent construction,
         this is called each run (after [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]).
-        When multiple capabilities provide wrappers, each receives the already-wrapped
-        toolset from earlier capabilities (first capability wraps innermost).
+        When multiple capabilities provide wrappers, they follow middleware semantics:
+        the first capability in the list wraps outermost (matching `wrap_*` hooks).
 
         Use this to apply cross-cutting toolset wrappers like
         [`PreparedToolset`][pydantic_ai.toolsets.PreparedToolset],
@@ -219,26 +239,6 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         or custom [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] subclasses.
         """
         return None
-
-    # --- Toolset I/O hooks ---
-
-    async def wrap_get_tools(
-        self,
-        ctx: RunContext[AgentDepsT],
-        *,
-        toolset: AbstractToolset[AgentDepsT],
-        handler: WrapGetToolsHandler[AgentDepsT],
-    ) -> dict[str, ToolsetTool[AgentDepsT]]:
-        """Wraps toolset tool listing. handler() fetches the tools.
-
-        Called per leaf toolset during each run step's tool preparation. The `toolset`
-        parameter identifies which toolset's tools are being fetched (use `toolset.id`
-        for per-toolset configuration).
-
-        Override to intercept tool listing I/O — for example, to route MCP server
-        ``list_tools`` calls through durable execution framework activities.
-        """
-        return await handler()
 
     # --- Tool preparation hook ---
 
@@ -398,7 +398,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         *,
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
-        """Wraps the event stream for a streamed node. Can observe or transform events."""
+        """Wraps the event stream for a streamed node. Can observe or transform events.
+
+        Note: when this method is overridden (or [`Hooks.on.event`][pydantic_ai.capabilities.hooks.Hooks.on]
+        / [`Hooks.on.run_event_stream`][pydantic_ai.capabilities.hooks.Hooks.on] are registered),
+        [`agent.run()`][pydantic_ai.Agent.run] automatically enables streaming mode so this hook
+        fires even without an explicit `event_stream_handler`.
+        """
         async for event in stream:
             yield event
 

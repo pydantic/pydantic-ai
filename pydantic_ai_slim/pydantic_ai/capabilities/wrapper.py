@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, Sequence
+from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
@@ -10,7 +10,7 @@ from pydantic_ai._instructions import AgentInstructions
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, RunContext, ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset, AgentToolset, ToolsetTool
+from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 
 from .abstract import (
     AbstractCapability,
@@ -18,7 +18,6 @@ from .abstract import (
     NodeResult,
     RawToolArgs,
     ValidatedToolArgs,
-    WrapGetToolsHandler,
     WrapModelRequestHandler,
     WrapNodeRunHandler,
     WrapRunHandler,
@@ -42,6 +41,9 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     wrapped: AbstractCapability[AgentDepsT]
 
+    def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
+        self.wrapped.apply(visitor)
+
     @classmethod
     def get_serialization_name(cls) -> str | None:
         return None
@@ -49,6 +51,13 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     @property
     def has_wrap_node_run(self) -> bool:
         return type(self).wrap_node_run is not WrapperCapability.wrap_node_run or self.wrapped.has_wrap_node_run
+
+    @property
+    def has_wrap_run_event_stream(self) -> bool:
+        return (
+            type(self).wrap_run_event_stream is not WrapperCapability.wrap_run_event_stream
+            or self.wrapped.has_wrap_run_event_stream
+        )
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
         new_wrapped = self.wrapped.for_agent(agent)
@@ -78,15 +87,6 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         return self.wrapped.get_wrapper_toolset(toolset)
-
-    async def wrap_get_tools(
-        self,
-        ctx: RunContext[AgentDepsT],
-        *,
-        toolset: AbstractToolset[AgentDepsT],
-        handler: WrapGetToolsHandler[AgentDepsT],
-    ) -> dict[str, ToolsetTool[AgentDepsT]]:
-        return await self.wrapped.wrap_get_tools(ctx, toolset=toolset, handler=handler)
 
     async def prepare_tools(
         self,

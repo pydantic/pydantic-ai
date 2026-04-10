@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from typing_extensions import Self
+
 from .._run_context import RunContext
 from ..messages import (
     ModelMessage,
@@ -21,6 +23,7 @@ from ..messages import (
     ToolCallPartDelta,
 )
 from ..profiles import ModelProfile
+from ..providers import Provider
 from ..settings import ModelSettings
 from ..usage import RequestUsage
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
@@ -141,6 +144,13 @@ class WrapperModel(Model):
         super().__init__()
         self.wrapped = infer_model(wrapped)
 
+    async def __aenter__(self) -> Self:
+        await self.wrapped.__aenter__()
+        return self
+
+    async def __aexit__(self, *args: Any) -> bool | None:
+        return await self.wrapped.__aexit__(*args)
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -179,6 +189,10 @@ class WrapperModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         return self.wrapped.prepare_request(model_settings, model_request_parameters)
+
+    @property
+    def provider(self) -> Provider[Any] | None:
+        return self.wrapped.provider  # pragma: no cover
 
     @property
     def model_name(self) -> str:

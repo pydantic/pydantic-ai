@@ -27,6 +27,8 @@ Pydantic AI ships with several capabilities that cover common needs:
 | [`PrefixTools`][pydantic_ai.capabilities.PrefixTools] | Wraps a capability and prefixes its tool names | Yes |
 | [`BuiltinTool`][pydantic_ai.capabilities.BuiltinTool] | Registers a [builtin tool](builtin-tools.md) with the agent | Yes |
 | [`Toolset`][pydantic_ai.capabilities.Toolset] | Wraps an [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] | — |
+| [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] | Includes return type schemas in tool definitions sent to the model | Yes |
+| [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] | Merges metadata key-value pairs onto selected tools | Yes |
 | [`HistoryProcessor`][pydantic_ai.capabilities.HistoryProcessor] | Wraps a [history processor](message-history.md#processing-message-history) | — |
 | [`ThreadExecutor`][pydantic_ai.capabilities.ThreadExecutor] | Uses a custom thread executor for [sync functions](tools-advanced.md#thread-executor-for-long-running-servers) | — |
 
@@ -216,6 +218,117 @@ Every [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] has a 
 ```python {title="prefix_convenience.py" test="skip" lint="skip"}
 MCP(url='https://mcp.example.com/api').prefix_tools('mcp')
 ```
+
+### IncludeToolReturnSchemas
+
+[`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] includes return type schemas in tool definitions sent to the model. For models that natively support return schemas (e.g. Google Gemini), the schema is passed as a structured field in the API request. For other models, it is injected into the tool description as JSON text.
+
+```python {title="include_return_schemas.py" lint="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import IncludeToolReturnSchemas
+from pydantic_ai.models.test import TestModel
+
+
+test_model = TestModel()
+agent = Agent(test_model, capabilities=[IncludeToolReturnSchemas()])
+
+
+@agent.tool_plain
+def get_temperature(city: str) -> float:
+    """Get the temperature for a city."""
+    return 21.0
+
+
+result = agent.run_sync('What is the temperature in Paris?')
+params = test_model.last_model_request_parameters
+assert params is not None
+td = params.function_tools[0]
+assert td.include_return_schema is True
+```
+
+_(This example is complete, it can be run "as is")_
+
+Use the `tools` parameter to select which tools should include return schemas. It accepts a list of tool names, a metadata dict for matching, or a callable predicate:
+
+```python {title="include_return_schemas_selective.py" lint="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import IncludeToolReturnSchemas
+from pydantic_ai.models.test import TestModel
+
+
+test_model = TestModel()
+agent = Agent(
+    test_model,
+    capabilities=[IncludeToolReturnSchemas(tools=['get_temperature'])],
+)
+
+
+@agent.tool_plain
+def get_temperature(city: str) -> float:
+    """Get the temperature for a city."""
+    return 21.0
+
+
+@agent.tool_plain
+def get_greeting(name: str) -> str:
+    """Get a greeting."""
+    return f'Hello, {name}!'
+
+
+result = agent.run_sync('Hello')
+params = test_model.last_model_request_parameters
+assert params is not None
+temp_tool = next(t for t in params.function_tools if t.name == 'get_temperature')
+greet_tool = next(t for t in params.function_tools if t.name == 'get_greeting')
+assert temp_tool.include_return_schema is True
+assert greet_tool.include_return_schema is None
+```
+
+_(This example is complete, it can be run "as is")_
+
+The same effect can be achieved at the toolset level using [`.include_return_schemas()`][pydantic_ai.toolsets.AbstractToolset.include_return_schemas] — see [toolset composition](toolsets.md#including-return-schemas).
+
+### SetToolMetadata
+
+[`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] merges metadata key-value pairs onto selected tools. This is useful for tagging tools with configuration that other capabilities or custom logic can inspect:
+
+```python {title="set_tool_metadata.py" lint="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import SetToolMetadata
+from pydantic_ai.models.test import TestModel
+
+
+test_model = TestModel()
+agent = Agent(
+    test_model,
+    capabilities=[SetToolMetadata(tools=['search'], sensitive=True)],
+)
+
+
+@agent.tool_plain
+def search(query: str) -> str:
+    """Search for information."""
+    return f'Results for: {query}'
+
+
+@agent.tool_plain
+def greet(name: str) -> str:
+    """Greet someone."""
+    return f'Hello, {name}!'
+
+
+result = agent.run_sync('Search for pydantic')
+params = test_model.last_model_request_parameters
+assert params is not None
+search_tool = next(t for t in params.function_tools if t.name == 'search')
+greet_tool = next(t for t in params.function_tools if t.name == 'greet')
+assert search_tool.metadata is not None and search_tool.metadata.get('sensitive') is True
+assert greet_tool.metadata is None or greet_tool.metadata.get('sensitive') is None
+```
+
+_(This example is complete, it can be run "as is")_
+
+The same effect can be achieved at the toolset level using [`.with_metadata()`][pydantic_ai.toolsets.AbstractToolset.with_metadata] — see [toolset composition](toolsets.md#setting-tool-metadata).
 
 ## Building custom capabilities
 
@@ -747,16 +860,60 @@ print(counter.count)
 #> 0
 ```
 
-### Composition
+### Composition and middleware semantics
 
-When multiple capabilities are passed to an agent, they are composed into a single [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability]:
+When multiple capabilities are passed to an agent, they are composed into a single [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] that follows **middleware semantics** — the same pattern used by web frameworks like Django and Starlette:
 
 * **Configuration** is merged: instructions concatenate, model settings merge additively (later capabilities override earlier ones), toolsets combine, builtin tools collect.
-* **`before_*`** hooks fire in capability order: `cap1 → cap2 → cap3`.
-* **`after_*`** hooks fire in reverse order: `cap3 → cap2 → cap1`.
-* **`wrap_*`** hooks nest as middleware: `cap1` wraps `cap2` wraps `cap3` wraps the actual operation. The first capability is the outermost layer.
+* **`before_*`** hooks fire in capability order (outermost to innermost): `cap1 → cap2 → cap3`.
+* **`after_*`** hooks fire in reverse order (innermost to outermost): `cap3 → cap2 → cap1`.
+* **`wrap_*`** hooks nest as middleware: `cap1` wraps `cap2` wraps `cap3` wraps the actual operation. The first capability is the **outermost** layer.
+* **`get_wrapper_toolset`** follows the same nesting: the first capability's wrapper is outermost.
 
-This means the first capability in the list has the first and last say on the operation — it sees the original input in its `wrap_*` before handler, and it sees the final output after handler returns.
+This means the first capability in the list has the first and last say on the operation — it sees the original input before any other capability, and it sees the final output after all inner capabilities have processed it.
+
+### Ordering
+
+By default, capabilities are composed in the order you list them. When a capability needs to be at a specific position regardless of where the user lists it, override [`get_ordering`][pydantic_ai.capabilities.AbstractCapability.get_ordering] to return a [`CapabilityOrdering`][pydantic_ai.capabilities.CapabilityOrdering]:
+
+```python {title="capability_ordering_example.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    CapabilityOrdering,
+    CombinedCapability,
+)
+
+
+@dataclass
+class InstrumentationCapability(AbstractCapability[Any]):
+    """Must wrap all other capabilities to trace everything."""
+
+    @classmethod
+    def get_ordering(cls) -> CapabilityOrdering:
+        return CapabilityOrdering(position='outermost')
+
+
+@dataclass
+class PlainCapability(AbstractCapability[Any]):
+    pass
+
+
+# InstrumentationCapability ends up first regardless of list order
+combined = CombinedCapability([PlainCapability(), InstrumentationCapability()])
+assert type(combined.capabilities[0]) is InstrumentationCapability
+```
+
+The available constraints are:
+
+* **`position`** — `'outermost'` or `'innermost'`. Places the capability in a tier before (or after) all capabilities without that position. Multiple capabilities can share a tier; original list order breaks ties within it.
+* **`wraps`** — list of capability types this one wraps around (is outside of). Use when your capability needs to see the output of another: `CapabilityOrdering(wraps=[OtherCapability])`.
+* **`wrapped_by`** — list of capability types that wrap around this one (are outside of it). The inverse of `wraps`.
+* **`requires`** — list of capability types that must be present. Raises [`UserError`][pydantic_ai.exceptions.UserError] if any are missing. Does not imply ordering.
+
+When constraints are declared, [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] topologically sorts its children at construction time, preserving user-provided order as a tiebreaker.
 
 ## Examples
 

@@ -53,7 +53,7 @@ from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import UploadedFile
-from pydantic_ai.models import Model, ModelRequestParameters, cached_async_http_client, infer_model_profile
+from pydantic_ai.models import Model, ModelRequestParameters, create_async_http_client, infer_model_profile
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import DEFAULT_PROFILE
@@ -157,7 +157,7 @@ pytestmark = [
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
 # at the end of each test, but we need this one to live longer.
-http_client = cached_async_http_client(provider='temporal')
+http_client = create_async_http_client()
 
 
 @pytest.fixture(autouse=True, scope='module')

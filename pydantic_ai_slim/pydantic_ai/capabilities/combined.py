@@ -13,10 +13,11 @@ from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, RunContext, ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset, ToolsetTool
+from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
-from .abstract import AbstractCapability, WrapGetToolsHandler
+from ._ordering import collect_leaves, sort_capabilities
+from .abstract import AbstractCapability
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
@@ -34,14 +35,20 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     capabilities: Sequence[AbstractCapability[AgentDepsT]]
 
     def __post_init__(self) -> None:
-        from ._ordering import iter_leaves, sort_capabilities
-
-        if any(type(leaf).get_ordering() is not None for leaf in iter_leaves(self)):
+        if any(type(leaf).get_ordering() is not None for leaf in collect_leaves(self)):
             self.capabilities = sort_capabilities(list(self.capabilities))
+
+    def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
+        for cap in self.capabilities:
+            cap.apply(visitor)
 
     @property
     def has_wrap_node_run(self) -> bool:
         return any(c.has_wrap_node_run for c in self.capabilities)
+
+    @property
+    def has_wrap_run_event_stream(self) -> bool:
+        return any(c.has_wrap_run_event_stream for c in self.capabilities)
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> CombinedCapability[AgentDepsT]:
         new_caps = [c.for_agent(agent) for c in self.capabilities]
@@ -114,26 +121,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         wrapped = toolset
         any_wrapped = False
-        for capability in self.capabilities:
+        for capability in reversed(self.capabilities):
             result = capability.get_wrapper_toolset(wrapped)
             if result is not None:
                 wrapped = result
                 any_wrapped = True
         return wrapped if any_wrapped else None
-
-    # --- Toolset I/O hooks ---
-
-    async def wrap_get_tools(
-        self,
-        ctx: RunContext[AgentDepsT],
-        *,
-        toolset: AbstractToolset[AgentDepsT],
-        handler: WrapGetToolsHandler[AgentDepsT],
-    ) -> dict[str, ToolsetTool[AgentDepsT]]:
-        chain = handler
-        for cap in reversed(self.capabilities):
-            chain = _make_get_tools_wrap(cap, ctx, toolset, chain)
-        return await chain()
 
     # --- Tool preparation hook ---
 
@@ -494,17 +487,5 @@ def _make_tool_execute_wrap(
 ) -> Callable[[dict[str, Any]], Awaitable[Any]]:
     async def wrapped(args: dict[str, Any]) -> Any:
         return await cap.wrap_tool_execute(ctx, call=call, tool_def=tool_def, args=args, handler=inner)
-
-    return wrapped
-
-
-def _make_get_tools_wrap(
-    cap: AbstractCapability[AgentDepsT],
-    ctx: RunContext[AgentDepsT],
-    toolset: AbstractToolset[AgentDepsT],
-    inner: Callable[[], Awaitable[dict[str, ToolsetTool[AgentDepsT]]]],
-) -> Callable[[], Awaitable[dict[str, ToolsetTool[AgentDepsT]]]]:
-    async def wrapped() -> dict[str, ToolsetTool[AgentDepsT]]:
-        return await cap.wrap_get_tools(ctx, toolset=toolset, handler=inner)
 
     return wrapped

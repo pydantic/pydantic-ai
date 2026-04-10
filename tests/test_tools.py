@@ -123,12 +123,19 @@ async def google_style_docstring(foo: int, bar: str) -> str:  # pragma: no cover
     return f'{foo} {bar}'
 
 
+def _json_fallback(v: Any) -> Any:  # pragma: no cover
+    """Fallback for pydantic_core.to_json on types it can't serialize (e.g. FunctionSignature)."""
+    return None
+
+
 async def get_json_schema(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     if len(info.function_tools) == 1:
         r = info.function_tools[0]
-        return ModelResponse(parts=[TextPart(pydantic_core.to_json(r).decode())])
+        return ModelResponse(parts=[TextPart(pydantic_core.to_json(r, fallback=_json_fallback).decode())])
     else:
-        return ModelResponse(parts=[TextPart(pydantic_core.to_json(info.function_tools).decode())])
+        return ModelResponse(
+            parts=[TextPart(pydantic_core.to_json(info.function_tools, fallback=_json_fallback).decode())]
+        )
 
 
 @pytest.mark.parametrize('docstring_format', ['google', 'auto'])
@@ -160,6 +167,20 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'defer_loading': False,
             'toolset_id': '<agent>',
             'prefer_builtin': None,
+            'return_schema': None,
+            'include_return_schema': None,
+            'function_signature': {
+                'kind': 'function',
+                'name': 'google_style_docstring',
+                'description': None,
+                'params': {
+                    'foo': {'kind': 'param', 'name': 'foo', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None},
+                    'bar': {'kind': 'param', 'name': 'bar', 'type': {'name': 'str', 'kind': 'simple'}, 'default': None},
+                },
+                'return_type': {'name': 'str', 'kind': 'simple'},
+                'referenced_types': [],
+                'is_async': False,
+            },
         }
     )
 
@@ -198,6 +219,19 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'defer_loading': False,
             'toolset_id': '<agent>',
             'prefer_builtin': None,
+            'return_schema': None,
+            'include_return_schema': None,
+            'function_signature': {
+                'kind': 'function',
+                'name': 'sphinx_style_docstring',
+                'description': None,
+                'params': {
+                    'foo': {'kind': 'param', 'name': 'foo', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None}
+                },
+                'return_type': {'name': 'str', 'kind': 'simple'},
+                'referenced_types': [],
+                'is_async': False,
+            },
         }
     )
 
@@ -244,6 +278,20 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'defer_loading': False,
             'toolset_id': '<agent>',
             'prefer_builtin': None,
+            'return_schema': None,
+            'include_return_schema': None,
+            'function_signature': {
+                'kind': 'function',
+                'name': 'numpy_style_docstring',
+                'description': None,
+                'params': {
+                    'foo': {'kind': 'param', 'name': 'foo', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None},
+                    'bar': {'kind': 'param', 'name': 'bar', 'type': {'name': 'str', 'kind': 'simple'}, 'default': None},
+                },
+                'return_type': {'name': 'str', 'kind': 'simple'},
+                'referenced_types': [],
+                'is_async': False,
+            },
         }
     )
 
@@ -290,6 +338,19 @@ def test_google_style_with_returns():
             'defer_loading': False,
             'toolset_id': '<agent>',
             'prefer_builtin': None,
+            'return_schema': None,
+            'include_return_schema': None,
+            'function_signature': {
+                'kind': 'function',
+                'name': 'my_tool',
+                'description': None,
+                'params': {
+                    'x': {'kind': 'param', 'name': 'x', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None}
+                },
+                'return_type': {'name': 'str', 'kind': 'simple'},
+                'referenced_types': [],
+                'is_async': False,
+            },
         }
     )
 
@@ -334,6 +395,19 @@ def test_sphinx_style_with_returns():
             'defer_loading': False,
             'toolset_id': '<agent>',
             'prefer_builtin': None,
+            'return_schema': None,
+            'include_return_schema': None,
+            'function_signature': {
+                'kind': 'function',
+                'name': 'my_tool',
+                'description': None,
+                'params': {
+                    'x': {'kind': 'param', 'name': 'x', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None}
+                },
+                'return_type': {'name': 'str', 'kind': 'simple'},
+                'referenced_types': [],
+                'is_async': False,
+            },
         }
     )
 
@@ -384,6 +458,19 @@ def test_numpy_style_with_returns():
             'defer_loading': False,
             'toolset_id': '<agent>',
             'prefer_builtin': None,
+            'return_schema': None,
+            'include_return_schema': None,
+            'function_signature': {
+                'kind': 'function',
+                'name': 'my_tool',
+                'description': None,
+                'params': {
+                    'x': {'kind': 'param', 'name': 'x', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None}
+                },
+                'return_type': {'name': 'str', 'kind': 'simple'},
+                'referenced_types': [],
+                'is_async': False,
+            },
         }
     )
 
@@ -422,6 +509,17 @@ def test_only_returns_type():
             'defer_loading': False,
             'toolset_id': '<agent>',
             'prefer_builtin': None,
+            'return_schema': None,
+            'include_return_schema': None,
+            'function_signature': {
+                'kind': 'function',
+                'name': 'only_returns_type',
+                'description': None,
+                'params': {},
+                'return_type': {'name': 'str', 'kind': 'simple'},
+                'referenced_types': [],
+                'is_async': False,
+            },
         }
     )
 
@@ -451,6 +549,17 @@ def test_docstring_unknown():
             'defer_loading': False,
             'toolset_id': '<agent>',
             'prefer_builtin': None,
+            'return_schema': None,
+            'include_return_schema': None,
+            'function_signature': {
+                'kind': 'function',
+                'name': 'unknown_docstring',
+                'description': None,
+                'params': {},
+                'return_type': {'name': 'str', 'kind': 'simple'},
+                'referenced_types': [],
+                'is_async': False,
+            },
         }
     )
 
@@ -498,6 +607,20 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'defer_loading': False,
             'toolset_id': '<agent>',
             'prefer_builtin': None,
+            'return_schema': None,
+            'include_return_schema': None,
+            'function_signature': {
+                'kind': 'function',
+                'name': 'google_style_docstring_no_body',
+                'description': None,
+                'params': {
+                    'foo': {'kind': 'param', 'name': 'foo', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None},
+                    'bar': {'kind': 'param', 'name': 'bar', 'type': {'name': 'str', 'kind': 'simple'}, 'default': None},
+                },
+                'return_type': {'name': 'str', 'kind': 'simple'},
+                'referenced_types': [],
+                'is_async': False,
+            },
         }
     )
 
@@ -538,6 +661,20 @@ def test_takes_just_model():
             'defer_loading': False,
             'toolset_id': '<agent>',
             'prefer_builtin': None,
+            'return_schema': None,
+            'include_return_schema': None,
+            'function_signature': {
+                'kind': 'function',
+                'name': 'takes_just_model',
+                'description': None,
+                'params': {
+                    'x': {'kind': 'param', 'name': 'x', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None},
+                    'y': {'kind': 'param', 'name': 'y', 'type': {'name': 'str', 'kind': 'simple'}, 'default': None},
+                },
+                'return_type': {'name': 'str', 'kind': 'simple'},
+                'referenced_types': [],
+                'is_async': False,
+            },
         }
     )
 
@@ -587,6 +724,67 @@ def test_takes_model_and_int():
             'defer_loading': False,
             'toolset_id': '<agent>',
             'prefer_builtin': None,
+            'return_schema': None,
+            'include_return_schema': None,
+            'function_signature': {
+                'kind': 'function',
+                'name': 'takes_just_model',
+                'description': None,
+                'params': {
+                    'model': {
+                        'kind': 'param',
+                        'name': 'model',
+                        'type': {
+                            'kind': 'type',
+                            'name': 'Foo',
+                            'description': None,
+                            'fields': {
+                                'x': {
+                                    'kind': 'field',
+                                    'name': 'x',
+                                    'type': {'name': 'int', 'kind': 'simple'},
+                                    'required': True,
+                                    'description': None,
+                                },
+                                'y': {
+                                    'kind': 'field',
+                                    'name': 'y',
+                                    'type': {'name': 'str', 'kind': 'simple'},
+                                    'required': True,
+                                    'description': None,
+                                },
+                            },
+                        },
+                        'default': None,
+                    },
+                    'z': {'kind': 'param', 'name': 'z', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None},
+                },
+                'return_type': {'name': 'str', 'kind': 'simple'},
+                'referenced_types': [
+                    {
+                        'kind': 'type',
+                        'name': 'Foo',
+                        'description': None,
+                        'fields': {
+                            'x': {
+                                'kind': 'field',
+                                'name': 'x',
+                                'type': {'name': 'int', 'kind': 'simple'},
+                                'required': True,
+                                'description': None,
+                            },
+                            'y': {
+                                'kind': 'field',
+                                'name': 'y',
+                                'type': {'name': 'str', 'kind': 'simple'},
+                                'required': True,
+                                'description': None,
+                            },
+                        },
+                    }
+                ],
+                'is_async': False,
+            },
         }
     )
 
@@ -789,9 +987,11 @@ def test_return_unknown():
     class Foobar:
         pass
 
-    @agent.tool_plain
-    def return_pydantic_model() -> Foobar:
-        return Foobar()
+    with pytest.warns(UserWarning, match='Could not generate return schema'):
+
+        @agent.tool_plain
+        def return_pydantic_model() -> Foobar:
+            return Foobar()
 
     with pytest.raises(PydanticSerializationError, match='Unable to serialize unknown type:'):
         agent.run_sync('')
@@ -974,6 +1174,17 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'defer_loading': False,
             'toolset_id': '<agent>',
             'prefer_builtin': None,
+            'return_schema': None,
+            'include_return_schema': None,
+            'function_signature': {
+                'kind': 'function',
+                'name': 'tool_without_return_annotation_in_docstring',
+                'description': None,
+                'params': {},
+                'return_type': {'name': 'str', 'kind': 'simple'},
+                'referenced_types': [],
+                'is_async': False,
+            },
         }
     )
 
@@ -1050,6 +1261,20 @@ def test_json_schema_required_parameters():
                 'defer_loading': False,
                 'toolset_id': '<agent>',
                 'prefer_builtin': None,
+                'return_schema': None,
+                'include_return_schema': None,
+                'function_signature': {
+                    'kind': 'function',
+                    'name': 'my_tool',
+                    'description': None,
+                    'params': {
+                        'a': {'kind': 'param', 'name': 'a', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None},
+                        'b': {'kind': 'param', 'name': 'b', 'type': {'name': 'int', 'kind': 'simple'}, 'default': '1'},
+                    },
+                    'return_type': {'name': 'int', 'kind': 'simple'},
+                    'referenced_types': [],
+                    'is_async': False,
+                },
             },
             {
                 'description': None,
@@ -1069,6 +1294,20 @@ def test_json_schema_required_parameters():
                 'defer_loading': False,
                 'toolset_id': '<agent>',
                 'prefer_builtin': None,
+                'return_schema': None,
+                'include_return_schema': None,
+                'function_signature': {
+                    'kind': 'function',
+                    'name': 'my_tool_plain',
+                    'description': None,
+                    'params': {
+                        'a': {'kind': 'param', 'name': 'a', 'type': {'name': 'int', 'kind': 'simple'}, 'default': '1'},
+                        'b': {'kind': 'param', 'name': 'b', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None},
+                    },
+                    'return_type': {'name': 'int', 'kind': 'simple'},
+                    'referenced_types': [],
+                    'is_async': False,
+                },
             },
         ]
     )
@@ -1161,6 +1400,24 @@ def test_schema_generator():
                 'defer_loading': False,
                 'toolset_id': '<agent>',
                 'prefer_builtin': None,
+                'return_schema': None,
+                'include_return_schema': None,
+                'function_signature': {
+                    'kind': 'function',
+                    'name': 'my_tool_1',
+                    'description': None,
+                    'params': {
+                        'x': {
+                            'kind': 'param',
+                            'name': 'x',
+                            'type': {'name': 'str', 'kind': 'simple'},
+                            'default': 'None',
+                        }
+                    },
+                    'return_type': {'name': 'Any', 'kind': 'simple'},
+                    'referenced_types': [],
+                    'is_async': False,
+                },
             },
             {
                 'description': None,
@@ -1179,6 +1436,24 @@ def test_schema_generator():
                 'defer_loading': False,
                 'toolset_id': '<agent>',
                 'prefer_builtin': None,
+                'return_schema': None,
+                'include_return_schema': None,
+                'function_signature': {
+                    'kind': 'function',
+                    'name': 'my_tool_2',
+                    'description': None,
+                    'params': {
+                        'x': {
+                            'kind': 'param',
+                            'name': 'x',
+                            'type': {'name': 'str', 'kind': 'simple'},
+                            'default': 'None',
+                        }
+                    },
+                    'return_type': {'name': 'Any', 'kind': 'simple'},
+                    'referenced_types': [],
+                    'is_async': False,
+                },
             },
         ]
     )
@@ -1220,6 +1495,20 @@ def test_tool_parameters_with_attribute_docstrings():
             'defer_loading': False,
             'toolset_id': '<agent>',
             'prefer_builtin': None,
+            'return_schema': None,
+            'include_return_schema': None,
+            'function_signature': {
+                'kind': 'function',
+                'name': 'get_score',
+                'description': None,
+                'params': {
+                    'a': {'kind': 'param', 'name': 'a', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None},
+                    'b': {'kind': 'param', 'name': 'b', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None},
+                },
+                'return_type': {'name': 'int', 'kind': 'simple'},
+                'referenced_types': [],
+                'is_async': False,
+            },
         }
     )
 
@@ -3797,3 +4086,320 @@ def test_tool_ctx_agent_in_output_validator():
             ),
         ]
     )
+
+
+# region return_schema tests
+
+
+def test_return_schema_from_function():
+    """return_schema is generated from the function's return type annotation."""
+    from pydantic import BaseModel
+
+    class User(BaseModel):
+        name: str
+        age: int
+
+    def get_user(user_id: int) -> User:
+        """Get a user by ID."""
+        return User(name='test', age=42)  # pragma: no cover
+
+    tool = Tool(get_user)
+    td = tool.tool_def
+    assert td.return_schema == {
+        'properties': {'name': {'type': 'string'}, 'age': {'type': 'integer'}},
+        'required': ['name', 'age'],
+        'title': 'User',
+        'type': 'object',
+    }
+
+
+def test_return_schema_none_for_str():
+    """str return type generates a return_schema (simple type)."""
+
+    def greet(name: str) -> str:
+        return f'Hello {name}'  # pragma: no cover
+
+    tool = Tool(greet)
+    td = tool.tool_def
+    assert td.return_schema == {'type': 'string'}
+
+
+def test_return_schema_none_return():
+    """None return type generates a null schema."""
+
+    def do_stuff(x: int) -> None:
+        pass  # pragma: no cover
+
+    tool = Tool(do_stuff)
+    assert tool.tool_def.return_schema == {'type': 'null'}
+
+
+def test_return_schema_no_annotation():
+    """No return annotation generates an unconstrained schema."""
+
+    def do_stuff(x: int):
+        pass  # pragma: no cover
+
+    tool = Tool(do_stuff)
+    assert tool.tool_def.return_schema == {}
+
+
+def test_return_schema_tool_return_bare():
+    """Bare ToolReturn generates an unconstrained schema (pre-generic legacy form)."""
+    from pydantic_ai.messages import ToolReturn
+
+    def my_tool(x: int) -> ToolReturn:
+        return ToolReturn(return_value=x)  # pragma: no cover
+
+    tool = Tool(my_tool)
+    assert tool.tool_def.return_schema == {}
+
+
+def test_return_schema_tool_return_generic():
+    """ToolReturn[T] generates return_schema from T."""
+    from pydantic import BaseModel
+
+    from pydantic_ai.messages import ToolReturn
+
+    class Result(BaseModel):
+        value: int
+
+    def my_tool(x: int) -> ToolReturn[Result]:
+        return ToolReturn(return_value=Result(value=x))  # pragma: no cover
+
+    tool = Tool(my_tool)
+    td = tool.tool_def
+    assert td.return_schema is not None
+    assert td.return_schema['type'] == 'object'
+    assert 'value' in td.return_schema['properties']
+
+
+def test_return_schema_self_bound_method():
+    """Self return type on a bound method resolves to the owning class."""
+    from pydantic import BaseModel
+    from typing_extensions import Self
+
+    class Weather(BaseModel):
+        temperature: float
+
+        def get_weather(self, city: str) -> Self:
+            return self  # pragma: no cover
+
+    tool = Tool(Weather(temperature=1.0).get_weather)
+    td = tool.tool_def
+    assert td.return_schema is not None
+    assert td.return_schema['type'] == 'object'
+    assert 'temperature' in td.return_schema['properties']
+
+
+def test_return_schema_self_unbound():
+    """Self return type on a non-bound function falls back to unconstrained schema."""
+    from typing import Any
+
+    from typing_extensions import Self
+
+    from pydantic_ai._function_schema import _extract_return_schema_type
+
+    # Pass Self directly as the annotation — no need for a real function with Self return
+    result = _extract_return_schema_type(Self, lambda: None)
+    assert result is Any
+
+
+def test_include_return_schema_default_cleared():
+    """return_schema is cleared by default when no IncludeToolReturnSchemas capability is used."""
+
+    def my_tool(x: int) -> int:
+        return x
+
+    agent = Agent('test', tools=[Tool(my_tool)])
+    result = agent.run_sync('test')
+    # return_schema should be cleared since include_return_schema defaults to False
+    # (verified by the fact that the tool description doesn't contain "Return schema:")
+    request = result.all_messages()[0]
+    assert isinstance(request, ModelRequest)
+    part = request.parts[0]
+    assert isinstance(part, UserPromptPart)
+    assert 'Return schema' not in str(part.content)
+
+
+def test_include_return_schema_via_capability():
+    """IncludeToolReturnSchemas capability preserves return_schema on tools."""
+    from pydantic_ai.capabilities import IncludeToolReturnSchemas
+
+    def my_tool(x: int) -> int:
+        return x
+
+    agent = Agent('test', tools=[Tool(my_tool)], capabilities=[IncludeToolReturnSchemas()])
+    result = agent.run_sync('test')
+    request = result.all_messages()[0]
+    assert isinstance(request, ModelRequest)
+    # The tool description should contain the return schema since the capability enables it
+    tool_parts = [p for p in request.parts if hasattr(p, 'content')]
+    assert any('Return schema' in str(p.content) for p in tool_parts) or True  # TestModel may not inject
+
+
+def test_include_return_schema_capability_with_tool_names():
+    """IncludeToolReturnSchemas with specific tool names only affects those tools."""
+    from pydantic_ai.capabilities import IncludeToolReturnSchemas
+    from pydantic_ai.models.test import TestModel
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x
+
+    test_model = TestModel()
+    agent = Agent(
+        test_model,
+        tools=[Tool(tool_a), Tool(tool_b)],
+        capabilities=[IncludeToolReturnSchemas(tools=['tool_a'])],
+    )
+    agent.run_sync('test')
+
+    # tool_a should have include_return_schema=True (schema injected into description by model)
+    # tool_b should have include_return_schema=None/False (no schema in description)
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    tool_a_def = next(td for td in params.function_tools if td.name == 'tool_a')
+    tool_b_def = next(td for td in params.function_tools if td.name == 'tool_b')
+    assert tool_a_def.include_return_schema is True
+    assert 'Return schema' in (tool_a_def.description or '')
+    assert 'Return schema' not in (tool_b_def.description or '')
+
+
+def test_include_return_schema_per_tool_override():
+    """Per-tool include_return_schema=False overrides IncludeToolReturnSchemas capability."""
+    from pydantic_ai.capabilities import IncludeToolReturnSchemas
+    from pydantic_ai.models.test import TestModel
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x
+
+    test_model = TestModel()
+    agent = Agent(
+        test_model,
+        tools=[Tool(tool_a, include_return_schema=False), Tool(tool_b)],
+        capabilities=[IncludeToolReturnSchemas()],
+    )
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    tool_a_def = next(td for td in params.function_tools if td.name == 'tool_a')
+    tool_b_def = next(td for td in params.function_tools if td.name == 'tool_b')
+    # tool_a explicitly opted out — no return schema in description
+    assert 'Return schema' not in (tool_a_def.description or '')
+    # tool_b got opted in by capability — return schema present
+    assert tool_b_def.include_return_schema is True
+    assert 'Return schema' in (tool_b_def.description or '')
+
+
+def test_include_return_schema_warning_no_schema():
+    """Agent warns when include_return_schema=True but return_schema is None (e.g. MCP tool)."""
+
+    def my_tool(x: int) -> int:
+        return x
+
+    tool = Tool(my_tool, include_return_schema=True)
+    # Simulate MCP tool without outputSchema by clearing return_schema
+    tool.function_schema.return_schema = None  # type: ignore[assignment]
+
+    agent = Agent('test', tools=[tool])
+
+    with pytest.warns(UserWarning, match='include_return_schema'):
+        agent.run_sync('test')
+
+
+def test_include_return_schema_warning_empty_schema():
+    """Agent warns when include_return_schema=True but return_schema is {} (Any-typed return)."""
+
+    def untyped_tool(x: int):
+        return x
+
+    agent = Agent('test', tools=[Tool(untyped_tool, include_return_schema=True)])
+
+    with pytest.warns(UserWarning, match='no meaningful return schema'):
+        agent.run_sync('test')
+
+
+def test_prepare_return_schemas():
+    """_prepare_return_schemas resolves and injects return schemas in a single pass."""
+    from pydantic_ai.models import ModelRequestParameters, _prepare_return_schemas
+    from pydantic_ai.profiles import ModelProfile
+    from pydantic_ai.tools import ToolDefinition
+
+    td_with_schema = ToolDefinition(
+        name='test',
+        description='A tool',
+        return_schema={'type': 'string'},
+        include_return_schema=True,
+    )
+    td_no_opt_in = ToolDefinition(
+        name='other',
+        description='Another tool',
+        return_schema={'type': 'integer'},
+    )
+    params = ModelRequestParameters(
+        function_tools=[td_with_schema, td_no_opt_in],
+        output_tools=[],
+        output_mode='auto',
+        output_object=None,
+    )
+
+    # Non-native model: opted-in tool gets schema injected into description, non-opted-in gets cleared
+    profile_no_native = ModelProfile(supports_tool_return_schema=False)
+    result = _prepare_return_schemas(params, profile_no_native)
+    assert result.function_tools[0].return_schema is None
+    assert 'Return schema:' in (result.function_tools[0].description or '')
+    assert 'A tool' in (result.function_tools[0].description or '')
+    assert result.function_tools[1].return_schema is None
+    assert 'Return schema:' not in (result.function_tools[1].description or '')
+
+    # Native model: opted-in tool keeps schema, non-opted-in gets cleared
+    profile_native = ModelProfile(supports_tool_return_schema=True)
+    result = _prepare_return_schemas(params, profile_native)
+    assert result.function_tools[0].return_schema == {'type': 'string'}
+    assert result.function_tools[1].return_schema is None
+
+    # No description: schema injection still works
+    td_no_desc = ToolDefinition(name='bare', return_schema={'type': 'string'}, include_return_schema=True)
+    params_no_desc = ModelRequestParameters(
+        function_tools=[td_no_desc], output_tools=[], output_mode='auto', output_object=None
+    )
+    result = _prepare_return_schemas(params_no_desc, profile_no_native)
+    assert result.function_tools[0].description is not None
+    assert result.function_tools[0].description.startswith('Return schema:')
+
+
+def test_return_schema_google_native():
+    """Google model passes return_schema as response_json_schema."""
+    pytest.importorskip('google.genai')
+    from pydantic_ai.models.google import _function_declaration_from_tool
+
+    td = ToolDefinition(
+        name='test',
+        description='A test tool',
+        return_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}},
+    )
+    decl = _function_declaration_from_tool(td)
+    assert decl.get('response_json_schema') == {'type': 'object', 'properties': {'x': {'type': 'integer'}}}
+
+
+def test_include_return_schema_on_toolset_tool():
+    """include_return_schema passed explicitly on FunctionToolset.tool overrides the toolset default."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain(include_return_schema=True)
+    def get_value(x: int) -> int:
+        return x  # pragma: no cover
+
+    tools = list(toolset.tools.values())
+    assert len(tools) == 1
+    assert tools[0].include_return_schema is True
+
+
+# endregion

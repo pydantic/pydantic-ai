@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-import heapq
-from collections.abc import Callable, Iterator, Sequence
-from typing import Any
+from collections.abc import Sequence
+from graphlib import CycleError, TopologicalSorter
+from typing import TYPE_CHECKING, Any
 
 from pydantic_ai.exceptions import UserError
 
-from .abstract import AbstractCapability, CapabilityOrdering, CapabilityPosition
+from .abstract import AbstractCapability, CapabilityOrdering
 
-_AddEdge = Callable[[int, int], None]
+if TYPE_CHECKING:
+    from .abstract import CapabilityPosition
 
 
 def sort_capabilities(
@@ -19,7 +20,7 @@ def sort_capabilities(
     """Sort capabilities to satisfy ordering constraints.
 
     Preserves the original order as a tiebreaker when constraints allow.
-    Raises ``UserError`` on conflicts (duplicate positions, missing requirements, cycles).
+    Raises `UserError` on conflicts (missing requirements, cycles).
     """
     caps = list(capabilities)
     n = len(caps)
@@ -29,29 +30,17 @@ def sort_capabilities(
     orderings: list[CapabilityOrdering | None] = [_effective_ordering(cap) for cap in caps]
     leaf_types: list[set[type]] = [_collect_leaf_types(cap) for cap in caps]
 
-    _validate_constraints(caps, orderings, leaf_types)
+    _validate_requires(caps, orderings, leaf_types)
 
-    edges, in_degree = _build_dag(caps, orderings, leaf_types)
-
-    return _topo_sort(caps, edges, in_degree)
+    return _topo_sort(caps, orderings, leaf_types)
 
 
-def _validate_constraints(
+def _validate_requires(
     caps: list[AbstractCapability[Any]],
     orderings: list[CapabilityOrdering | None],
     leaf_types: list[set[type]],
 ) -> None:
-    """Validate position uniqueness and required dependencies."""
-    outermost = [i for i, o in enumerate(orderings) if o and o.position == 'outermost']
-    innermost = [i for i, o in enumerate(orderings) if o and o.position == 'innermost']
-
-    if len(outermost) > 1:
-        names = [type(caps[i]).__name__ for i in outermost]
-        raise UserError(f"Multiple capabilities declare position 'outermost': {', '.join(names)}")
-    if len(innermost) > 1:
-        names = [type(caps[i]).__name__ for i in innermost]
-        raise UserError(f"Multiple capabilities declare position 'innermost': {', '.join(names)}")
-
+    """Validate required dependencies."""
     all_leaf_types: set[type] = set[type]().union(*leaf_types)
     for i, ordering in enumerate(orderings):
         if ordering and ordering.requires:
@@ -63,138 +52,120 @@ def _validate_constraints(
                     )
 
 
-def _build_dag(
+def _topo_sort(
     caps: list[AbstractCapability[Any]],
     orderings: list[CapabilityOrdering | None],
     leaf_types: list[set[type]],
-) -> tuple[dict[int, set[int]], dict[int, int]]:
-    """Build a DAG from position and before/after constraints."""
+) -> list[AbstractCapability[Any]]:
+    """Topological sort using graphlib.TopologicalSorter.
+
+    Edges go from outer (earlier) to inner (later). TopologicalSorter
+    preserves insertion order as tiebreaker for unconstrained nodes.
+    """
     n = len(caps)
-    edges: dict[int, set[int]] = {i: set() for i in range(n)}
-    in_degree: dict[int, int] = {i: 0 for i in range(n)}
+    ts: TopologicalSorter[int] = TopologicalSorter()
 
-    def add_edge(before: int, after: int) -> None:
-        if after not in edges[before]:
-            edges[before].add(after)
-            in_degree[after] += 1
+    # Add all nodes in original order (establishes tiebreaker)
+    for i in range(n):
+        ts.add(i)
 
-    _add_position_edges(n, orderings, add_edge)
-    _add_relative_edges(n, orderings, leaf_types, add_edge)
+    _add_position_edges(ts, n, orderings)
+    _add_relative_edges(ts, n, orderings, leaf_types)
 
-    return edges, in_degree
+    try:
+        sorted_indices = list(ts.static_order())
+    except CycleError:
+        raise UserError('Circular ordering constraints among capabilities')
+
+    return [caps[i] for i in sorted_indices]
 
 
 def _add_position_edges(
+    ts: TopologicalSorter[int],
     n: int,
     orderings: list[CapabilityOrdering | None],
-    add_edge: _AddEdge,
 ) -> None:
-    outermost = [i for i, o in enumerate(orderings) if o and o.position == 'outermost']
-    innermost = [i for i, o in enumerate(orderings) if o and o.position == 'innermost']
+    outermost = {i for i, o in enumerate(orderings) if o and o.position == 'outermost'}
+    innermost = {i for i, o in enumerate(orderings) if o and o.position == 'innermost'}
 
-    if outermost:
-        oi = outermost[0]
+    # Outermost tier: each member must come before all non-members.
+    for oi in outermost:
         for j in range(n):
-            if j != oi:
-                add_edge(oi, j)
-    if innermost:
-        ii = innermost[0]
+            if j != oi and j not in outermost:
+                ts.add(j, oi)  # j depends on oi (oi comes first)
+
+    # Innermost tier: each member must come after all non-members.
+    for ii in innermost:
         for j in range(n):
-            if j != ii:
-                add_edge(j, ii)
+            if j != ii and j not in innermost:
+                ts.add(ii, j)  # ii depends on j (j comes first)
 
 
 def _add_relative_edges(
+    ts: TopologicalSorter[int],
     n: int,
     orderings: list[CapabilityOrdering | None],
     leaf_types: list[set[type]],
-    add_edge: _AddEdge,
 ) -> None:
     for i, ordering in enumerate(orderings):
         if not ordering:
             continue
-        for before_type in ordering.before:
+        # wraps=[X] → I come before X
+        for wraps_type in ordering.wraps:
             for j in range(n):
-                if i != j and any(issubclass(t, before_type) for t in leaf_types[j]):
-                    add_edge(i, j)
-        for after_type in ordering.after:
+                if i != j and any(issubclass(t, wraps_type) for t in leaf_types[j]):
+                    ts.add(j, i)  # j depends on i (i comes first)
+        # wrapped_by=[X] → X comes before me
+        for wrapped_by_type in ordering.wrapped_by:
             for j in range(n):
-                if i != j and any(issubclass(t, after_type) for t in leaf_types[j]):
-                    add_edge(j, i)
-
-
-def _topo_sort(
-    caps: list[AbstractCapability[Any]],
-    edges: dict[int, set[int]],
-    in_degree: dict[int, int],
-) -> list[AbstractCapability[Any]]:
-    """Kahn's algorithm with original-index tiebreaking for stability."""
-    n = len(caps)
-    queue: list[int] = []
-    for i in range(n):
-        if in_degree[i] == 0:
-            heapq.heappush(queue, i)
-
-    result: list[AbstractCapability[Any]] = []
-    while queue:
-        i = heapq.heappop(queue)
-        result.append(caps[i])
-        for j in edges[i]:
-            in_degree[j] -= 1
-            if in_degree[j] == 0:
-                heapq.heappush(queue, j)
-
-    if len(result) != n:
-        remaining = [type(caps[i]).__name__ for i in range(n) if in_degree[i] > 0]
-        raise UserError(f'Circular ordering constraints among capabilities: {", ".join(remaining)}')
-
-    return result
+                if i != j and any(issubclass(t, wrapped_by_type) for t in leaf_types[j]):
+                    ts.add(i, j)  # i depends on j (j comes first)
 
 
 def _effective_ordering(cap: AbstractCapability[Any]) -> CapabilityOrdering | None:
-    """Get the effective ordering for a capability, merging from leaves for nested groups."""
-    from .combined import CombinedCapability
+    """Get the effective ordering for a capability, merging from all leaves.
 
-    if not isinstance(cap, CombinedCapability):
-        return type(cap).get_ordering()
-
+    For plain capabilities (single leaf), returns `get_ordering()` directly.
+    For containers (`CombinedCapability`, `WrapperCapability`), merges
+    constraints from all leaves via `apply`.
+    """
     merged_position: CapabilityPosition | None = None
-    merged_before: list[type[AbstractCapability[Any]]] = []
-    merged_after: list[type[AbstractCapability[Any]]] = []
+    merged_wraps: list[type[AbstractCapability[Any]]] = []
+    merged_wrapped_by: list[type[AbstractCapability[Any]]] = []
     merged_requires: list[type[AbstractCapability[Any]]] = []
     has_any = False
 
-    for leaf in iter_leaves(cap):
+    for leaf in collect_leaves(cap):
         ordering = type(leaf).get_ordering()
         if ordering is None:
             continue
         has_any = True
         if ordering.position is not None:
+            if merged_position is not None and merged_position != ordering.position:
+                raise UserError(
+                    f'Conflicting positions in nested CombinedCapability: {merged_position!r} and {ordering.position!r}'
+                )
             merged_position = ordering.position
-        merged_before.extend(ordering.before)
-        merged_after.extend(ordering.after)
+        merged_wraps.extend(ordering.wraps)
+        merged_wrapped_by.extend(ordering.wrapped_by)
         merged_requires.extend(ordering.requires)
 
     if not has_any:
         return None
     return CapabilityOrdering(
         position=merged_position,
-        before=merged_before,
-        after=merged_after,
+        wraps=merged_wraps,
+        wrapped_by=merged_wrapped_by,
         requires=merged_requires,
     )
 
 
-def iter_leaves(cap: AbstractCapability[Any]) -> Iterator[AbstractCapability[Any]]:
-    """Recursively yield all leaf capabilities."""
-    from .combined import CombinedCapability
-
-    if isinstance(cap, CombinedCapability):
-        for child in cap.capabilities:
-            yield from iter_leaves(child)
-    else:
-        yield cap
+def collect_leaves(cap: AbstractCapability[Any]) -> list[AbstractCapability[Any]]:
+    """Collect all leaf capabilities using the `apply` visitor pattern."""
+    leaves: list[AbstractCapability[Any]] = []
+    cap.apply(leaves.append)
+    return leaves
 
 
 def _collect_leaf_types(cap: AbstractCapability[Any]) -> set[type]:
-    return {type(leaf) for leaf in iter_leaves(cap)}
+    return {type(leaf) for leaf in collect_leaves(cap)}
