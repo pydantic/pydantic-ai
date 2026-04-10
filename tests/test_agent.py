@@ -3511,7 +3511,7 @@ def test_unknown_tool():
     agent = Agent(FunctionModel(empty))
 
     with capture_run_messages() as messages:
-        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for output validation'):
+        with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'foobar' exceeded max retries count of 1"):
             agent.run_sync('Hello')
     assert messages == snapshot(
         [
@@ -3607,7 +3607,7 @@ def test_unknown_tool_multiple_retries():
     agent = Agent(FunctionModel(empty), retries=num_retries)
 
     with capture_run_messages() as messages:
-        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(2\) for output validation'):
+        with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'foobar' exceeded max retries count of 2"):
             agent.run_sync('Hello')
     assert messages == snapshot(
         [
@@ -9147,6 +9147,44 @@ class TestOverrideWithModelSettings:
 
         result = agent.run_sync('Hello')
         assert result.output == 'max_tokens=100 temperature=None'
+
+
+def test_unknown_tool_with_valid_tool_does_not_exhaust_retries():
+    """Unknown tool calls should not increment the global retry counter.
+
+    When the model returns both an unknown tool and a valid tool in the same
+    response, the unknown tool is handled via per-tool retries (ModelRetry)
+    downstream. The global retry counter should only reflect output validation
+    retries, not unknown-tool retries, so valid tools keep working.
+
+    We set retries=2 (per-tool max for unknown tools) and output_retries=1
+    (global max for output validation) to isolate the bug: per-tool retries
+    allow 2 rounds of the unknown tool, but the old code's global increment
+    would exhaust output_retries after just 2 rounds.
+    """
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count <= 2:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('nonexistent_tool', '{}'),
+                    ToolCallPart('valid_tool', '{"x": 1}'),
+                ]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_function), retries=2, output_retries=1)
+
+    @agent.tool_plain
+    def valid_tool(x: int) -> str:
+        return f'result={x}'
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'done'
+    assert call_count == 3
 
 
 # endregion

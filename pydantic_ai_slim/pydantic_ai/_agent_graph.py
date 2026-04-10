@@ -1436,9 +1436,8 @@ async def process_tool_calls(  # noqa: C901
     else:
         calls_to_run.extend(tool_calls_by_kind['function'])
 
-    # Then, we handle unknown tool calls
+    # Unknown tools use per-tool retry handling via ModelRetry in ToolManager
     if tool_calls_by_kind['unknown']:
-        ctx.state.increment_retries(ctx.deps.max_result_retries)
         calls_to_run.extend(tool_calls_by_kind['unknown'])
 
     calls_to_run_results: dict[str, DeferredToolResult] = {}
@@ -1489,6 +1488,7 @@ async def process_tool_calls(  # noqa: C901
                 else:
                     validated = await tool_manager.validate_tool_call(call)
             except exceptions.UnexpectedModelBehavior:
+                ctx.state.check_incomplete_tool_call()
                 yield _messages.FunctionToolCallEvent(call, args_valid=False)
                 raise
             validated_calls[call.tool_call_id] = validated
