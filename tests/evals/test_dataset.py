@@ -1512,6 +1512,7 @@ def test_import_generate_dataset():
     assert generate_dataset
 
 
+@needs_logfire
 def test_evaluate_non_serializable_inputs():
     @dataclass
     class MyInputs:
