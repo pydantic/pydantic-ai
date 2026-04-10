@@ -651,25 +651,30 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
-    async def _marked_completed(
-        self, message: _messages.ModelResponse | None = None, *, on_complete: bool = True
-    ) -> None:
+    def _record_response(self, message: _messages.ModelResponse) -> None:
+        """Append a model response to the message history with the correct run_id."""
+        if self._stream_response:  # pragma: no branch
+            message.run_id = self._stream_response.run_id
+        self._all_messages.append(message)
+
+    async def _marked_completed(self, message: _messages.ModelResponse | None = None) -> None:
         if self.is_complete:
             return
         self.is_complete = True
         if message is not None:
-            if self._stream_response:  # pragma: no branch
-                message.run_id = self._stream_response.run_id
-            self._all_messages.append(message)
-        if on_complete and self._on_complete is not None:
+            self._record_response(message)
+        if self._on_complete is not None:
             await self._on_complete()
 
     async def cancel(self):
         if self._stream_response is not None:  # pragma: no branch
             await self._stream_response.cancel()
-            # Append the interrupted response to _all_messages so all_messages()
-            # includes it. Skip on_complete -- no tool processing for cancelled streams.
-            await self._marked_completed(self.response, on_complete=False)
+            # Record the interrupted response in _all_messages so all_messages()
+            # includes it. is_complete guard prevents double-append if the stream
+            # was already fully consumed before cancel was called.
+            if not self.is_complete:
+                self.is_complete = True
+                self._record_response(self.response)
 
     @property
     def cancelled(self) -> bool:
