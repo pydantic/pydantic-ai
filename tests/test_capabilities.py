@@ -8698,7 +8698,7 @@ def test_ordering_hooks_ordering_requires():
 
 
 def test_ordering_wraps_instance_ref():
-    """wraps= can reference a specific capability instance instead of a type."""
+    """wraps= with an instance ref only constrains the specific instance, not all instances of that type."""
     target = PlainCapA()
     other_a = PlainCapA()
 
@@ -8707,10 +8707,14 @@ def test_ordering_wraps_instance_ref():
         def get_ordering(self) -> CapabilityOrdering:
             return CapabilityOrdering(wraps=[target])
 
-    # WrapsInstance should come before `target` but not necessarily before `other_a`
-    combined = CombinedCapability([target, WrapsInstance(), other_a])
-    names = _cap_names(combined)
-    assert names.index('WrapsInstance') < names.index('PlainCapA')  # before first PlainCapA (target)
+    # Arrange so that instance ref vs type ref produces a distinguishable result:
+    # - Instance ref wraps=[target] → only target must come after WrapsInstance
+    # - A type ref wraps=[PlainCapA] would constrain both other_a and target
+    combined = CombinedCapability([other_a, target, WrapsInstance()])
+    # other_a stays before WrapsInstance (no constraint), WrapsInstance before target
+    assert combined.capabilities[0] is other_a
+    assert combined.capabilities[1].__class__ is WrapsInstance
+    assert combined.capabilities[2] is target
 
 
 def test_ordering_wrapped_by_instance_ref():
