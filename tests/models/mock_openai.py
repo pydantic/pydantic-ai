@@ -14,6 +14,7 @@ with try_import() as imports_successful:
     from openai.types.chat.chat_completion import Choice, ChoiceLogprobs
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
     from openai.types.completion_usage import CompletionUsage
+    from openai.types.responses.input_token_count_response import InputTokenCountResponse
     from openai.types.responses.response import ResponseUsage
     from openai.types.responses.response_output_item import ResponseOutputItem
 
@@ -99,13 +100,21 @@ def completion_message(
 class MockOpenAIResponses:
     response: MockResponse | Sequence[MockResponse] | None = None
     stream: Sequence[MockResponseStreamEvent] | Sequence[Sequence[MockResponseStreamEvent]] | None = None
+    input_token_count: int | None = None
     index: int = 0
     response_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    input_token_count_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     base_url: str = 'https://api.openai.com/v1'
 
     @cached_property
     def responses(self) -> Any:
-        return type('Responses', (), {'create': self.responses_create})
+        input_tokens = type('InputTokens', (), {'count': self.input_tokens_count})
+        return type('Responses', (), {'create': self.responses_create, 'input_tokens': input_tokens})
+
+    async def input_tokens_count(self, *_args: Any, **kwargs: Any) -> InputTokenCountResponse:
+        self.input_token_count_kwargs.append({k: v for k, v in kwargs.items() if v not in (NOT_GIVEN, OMIT)})
+        token_count = self.input_token_count if self.input_token_count is not None else 0
+        return InputTokenCountResponse(input_tokens=token_count, object='response.input_tokens')
 
     @classmethod
     def create_mock(cls, responses: MockResponse | Sequence[MockResponse]) -> AsyncOpenAI:
@@ -117,6 +126,14 @@ class MockOpenAIResponses:
         stream: Sequence[MockResponseStreamEvent] | Sequence[Sequence[MockResponseStreamEvent]],
     ) -> AsyncOpenAI:
         return cast(AsyncOpenAI, cls(stream=stream))  # pragma: lax no cover
+
+    @classmethod
+    def create_mock_with_token_count(
+        cls,
+        responses: MockResponse | Sequence[MockResponse],
+        input_token_count: int,
+    ) -> AsyncOpenAI:
+        return cast(AsyncOpenAI, cls(response=responses, input_token_count=input_token_count))
 
     async def responses_create(  # pragma: lax no cover
         self, *_args: Any, stream: bool = False, **kwargs: Any
@@ -144,6 +161,13 @@ class MockOpenAIResponses:
 def get_mock_responses_kwargs(async_open_ai: AsyncOpenAI) -> list[dict[str, Any]]:
     if isinstance(async_open_ai, MockOpenAIResponses):  # pragma: lax no cover
         return async_open_ai.response_kwargs
+    else:  # pragma: no cover
+        raise RuntimeError('Not a MockOpenAIResponses instance')
+
+
+def get_mock_input_token_count_kwargs(async_open_ai: AsyncOpenAI) -> list[dict[str, Any]]:
+    if isinstance(async_open_ai, MockOpenAIResponses):
+        return async_open_ai.input_token_count_kwargs
     else:  # pragma: no cover
         raise RuntimeError('Not a MockOpenAIResponses instance')
 

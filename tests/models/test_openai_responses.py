@@ -51,11 +51,11 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimitExceeded, UsageLimits
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsFloat, IsInstance, IsInt, IsNow, IsStr, TestEnv, try_import
-from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
+from .mock_openai import MockOpenAIResponses, get_mock_input_token_count_kwargs, get_mock_responses_kwargs, response_message
 
 with try_import() as imports_successful:
     from openai import AsyncOpenAI
@@ -10923,3 +10923,464 @@ async def test_openai_responses_compact_stateful_mode(allow_model_requests: None
     assert compaction.provider_name == 'openai'
     assert compaction.provider_details is not None
     assert 'encrypted_content' in compaction.provider_details
+
+# ============================
+# count_tokens tests
+# ============================
+
+
+async def test_openai_responses_count_tokens_basic(allow_model_requests: None):
+    """Test basic count_tokens call returns the correct token count."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='Hello!', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock_with_token_count(c, input_token_count=42)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    result = await agent.run(
+        'Hello, world!',
+        usage_limits=UsageLimits(input_tokens_limit=100, count_tokens_before_request=True),
+    )
+    assert result.output == 'Hello!'
+
+
+async def test_openai_responses_count_tokens_exceeded(allow_model_requests: None):
+    """Test that count_tokens raises UsageLimitExceeded when token count exceeds limit."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='Hello!', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock_with_token_count(c, input_token_count=50)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    with pytest.raises(
+        UsageLimitExceeded,
+        match='The next request would exceed the input_tokens_limit of 10 \\(input_tokens=50\\)',
+    ):
+        await agent.run(
+            'Hello, world!',
+            usage_limits=UsageLimits(input_tokens_limit=10, count_tokens_before_request=True),
+        )
+
+
+async def test_openai_responses_count_tokens_exact_limit(allow_model_requests: None):
+    """Test that count_tokens passes when token count equals the limit exactly."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='OK', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock_with_token_count(c, input_token_count=10)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    # Exact match should not raise
+    result = await agent.run(
+        'Test',
+        usage_limits=UsageLimits(input_tokens_limit=10, count_tokens_before_request=True),
+    )
+    assert result.output == 'OK'
+
+
+async def test_openai_responses_count_tokens_returns_request_usage(allow_model_requests: None):
+    """Test that count_tokens returns a proper RequestUsage object."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock_with_token_count(c, input_token_count=25)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    from pydantic_ai.models import ModelRequestParameters
+
+    result = await model.count_tokens(
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[],
+            output_tools=[],
+            builtin_tools=[],
+        ),
+    )
+    assert result == RequestUsage(input_tokens=25)
+
+
+async def test_openai_responses_count_tokens_kwargs_passed(allow_model_requests: None):
+    """Test that count_tokens passes correct kwargs to the API."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock_with_token_count(c, input_token_count=15)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    from pydantic_ai.models import ModelRequestParameters
+
+    await model.count_tokens(
+        messages=[ModelRequest(parts=[UserPromptPart(content='Test message')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[],
+            output_tools=[],
+            builtin_tools=[],
+        ),
+    )
+    kwargs_list = get_mock_input_token_count_kwargs(mock_client)
+    assert len(kwargs_list) == 1
+    kwargs = kwargs_list[0]
+    assert kwargs['model'] == 'gpt-4o'
+    assert 'input' in kwargs
+
+
+async def test_openai_responses_count_tokens_with_system_prompt(allow_model_requests: None):
+    """Test count_tokens with system prompt (instructions)."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock_with_token_count(c, input_token_count=30)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model, instructions='You are a helpful assistant.')
+
+    result = await agent.run(
+        'Hello',
+        usage_limits=UsageLimits(input_tokens_limit=50, count_tokens_before_request=True),
+    )
+    assert result.output == 'done'
+    kwargs_list = get_mock_input_token_count_kwargs(mock_client)
+    assert len(kwargs_list) == 1
+    assert kwargs_list[0].get('instructions') == 'You are a helpful assistant.'
+
+
+async def test_openai_responses_count_tokens_with_tools(allow_model_requests: None):
+    """Test count_tokens with function tools."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock_with_token_count(c, input_token_count=40)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    from pydantic_ai.models import ModelRequestParameters
+
+    tool_def = ToolDefinition(
+        name='get_weather',
+        description='Get the weather',
+        parameters_json_schema={'type': 'object', 'properties': {'city': {'type': 'string'}}, 'required': ['city']},
+    )
+
+    await model.count_tokens(
+        messages=[ModelRequest(parts=[UserPromptPart(content='What is the weather?')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[tool_def],
+            output_tools=[],
+            builtin_tools=[],
+        ),
+    )
+    kwargs_list = get_mock_input_token_count_kwargs(mock_client)
+    assert len(kwargs_list) == 1
+    assert 'tools' in kwargs_list[0]
+
+
+async def test_openai_responses_count_tokens_zero(allow_model_requests: None):
+    """Test count_tokens with zero tokens returned."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='ok', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock_with_token_count(c, input_token_count=0)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    from pydantic_ai.models import ModelRequestParameters
+
+    result = await model.count_tokens(
+        messages=[ModelRequest(parts=[UserPromptPart(content='')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[],
+            output_tools=[],
+            builtin_tools=[],
+        ),
+    )
+    assert result == RequestUsage(input_tokens=0)
+
+
+async def test_openai_responses_count_tokens_large_count(allow_model_requests: None):
+    """Test count_tokens with a large token count."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='ok', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock_with_token_count(c, input_token_count=128000)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    from pydantic_ai.models import ModelRequestParameters
+
+    result = await model.count_tokens(
+        messages=[ModelRequest(parts=[UserPromptPart(content='A very long prompt...')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[],
+            output_tools=[],
+            builtin_tools=[],
+        ),
+    )
+    assert result == RequestUsage(input_tokens=128000)
+
+
+async def test_openai_responses_count_tokens_total_limit_exceeded(allow_model_requests: None):
+    """Test count_tokens with total_tokens_limit exceeded."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock_with_token_count(c, input_token_count=50)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    with pytest.raises(
+        UsageLimitExceeded,
+        match='The next request would exceed the total_tokens_limit of 10 \\(total_tokens=50\\)',
+    ):
+        await agent.run(
+            'Hello',
+            usage_limits=UsageLimits(total_tokens_limit=10, count_tokens_before_request=True),
+        )
+
+
+async def test_openai_responses_count_tokens_multiple_messages(allow_model_requests: None):
+    """Test count_tokens with multiple messages in history."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock_with_token_count(c, input_token_count=35)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    from pydantic_ai.models import ModelRequestParameters
+
+    messages = [
+        ModelRequest(parts=[SystemPromptPart(content='Be helpful')]),
+        ModelRequest(parts=[UserPromptPart(content='First question')]),
+        ModelResponse(parts=[TextPart(content='First answer')]),
+        ModelRequest(parts=[UserPromptPart(content='Second question')]),
+    ]
+
+    result = await model.count_tokens(
+        messages=messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[],
+            output_tools=[],
+            builtin_tools=[],
+        ),
+    )
+    assert result == RequestUsage(input_tokens=35)
+
+
+async def test_openai_responses_count_tokens_different_models(allow_model_requests: None):
+    """Test count_tokens works with different model names."""
+    for model_name in ['gpt-4o', 'gpt-4o-mini', 'o3', 'o4-mini']:
+        c = response_message(
+            [
+                ResponseOutputMessage(
+                    id='output-1',
+                    content=cast(
+                        list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]
+                    ),
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                )
+            ]
+        )
+        mock_client = MockOpenAIResponses.create_mock_with_token_count(c, input_token_count=20)
+        model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=mock_client))
+
+        from pydantic_ai.models import ModelRequestParameters
+
+        result = await model.count_tokens(
+            messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(
+                function_tools=[],
+                output_tools=[],
+                builtin_tools=[],
+            ),
+        )
+        assert result == RequestUsage(input_tokens=20)
+        kwargs_list = get_mock_input_token_count_kwargs(mock_client)
+        assert kwargs_list[0]['model'] == model_name
+
+
+async def test_openai_responses_count_tokens_with_model_settings(allow_model_requests: None):
+    """Test count_tokens passes relevant model settings."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock_with_token_count(c, input_token_count=20)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    from pydantic_ai.models import ModelRequestParameters
+
+    settings: OpenAIResponsesModelSettings = {'openai_truncation': 'auto'}
+
+    await model.count_tokens(
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=settings,
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[],
+            output_tools=[],
+            builtin_tools=[],
+        ),
+    )
+    kwargs_list = get_mock_input_token_count_kwargs(mock_client)
+    assert kwargs_list[0].get('truncation') == 'auto'
+
+
+async def test_openai_responses_count_tokens_without_flag(allow_model_requests: None):
+    """Test that count_tokens is not called when count_tokens_before_request is False."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock_with_token_count(c, input_token_count=999)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    # Without count_tokens_before_request=True, count_tokens should not be called
+    result = await agent.run('Hello')
+    assert result.output == 'done'
+    kwargs_list = get_mock_input_token_count_kwargs(mock_client)
+    assert len(kwargs_list) == 0
+
+
+async def test_openai_responses_count_tokens_empty_messages(allow_model_requests: None):
+    """Test count_tokens with empty messages list adds an empty user message."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock_with_token_count(c, input_token_count=5)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    from pydantic_ai.models import ModelRequestParameters
+
+    result = await model.count_tokens(
+        messages=[],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[],
+            output_tools=[],
+            builtin_tools=[],
+        ),
+    )
+    assert result == RequestUsage(input_tokens=5)
+    # Should have added an empty user message
+    kwargs_list = get_mock_input_token_count_kwargs(mock_client)
+    input_items = kwargs_list[0]['input']
+    assert len(input_items) == 1
+    assert input_items[0]['role'] == 'user'
+    assert input_items[0]['content'] == ''
