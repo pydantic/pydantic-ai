@@ -66,6 +66,15 @@ print(result.output)
 
 See [Thinking](thinking.md) for provider-specific details and the [unified thinking settings](thinking.md#unified-thinking-settings).
 
+### Compaction
+
+Provider-specific compaction capabilities manage conversation context size by compacting older messages into summaries:
+
+| Provider | Capability | Details |
+|----------|-----------|---------|
+| OpenAI Responses API | [`OpenAICompaction`][pydantic_ai.models.openai.OpenAICompaction] | [OpenAI compaction](models/openai.md#message-compaction) |
+| Anthropic | [`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction] | [Anthropic compaction](models/anthropic.md#message-compaction) |
+
 ### ThreadExecutor
 
 The [`ThreadExecutor`][pydantic_ai.capabilities.ThreadExecutor] capability provides a custom [`Executor`][concurrent.futures.Executor] for running sync tool functions and other sync callbacks in threads. This is useful in long-running servers (e.g. FastAPI) where the default ephemeral threads from [`anyio.to_thread.run_sync`][anyio.to_thread.run_sync] can accumulate under sustained load:
@@ -81,7 +90,6 @@ agent = Agent('openai:gpt-5.2', capabilities=[ThreadExecutor(executor)])
 ```
 
 See [Thread executor for long-running servers](tools-advanced.md#thread-executor-for-long-running-servers) for more details.
-
 ### Hooks
 
 The [`Hooks`][pydantic_ai.capabilities.Hooks] capability provides decorator-based [lifecycle hook](#hooking-into-the-lifecycle) registration — the easiest way to intercept model requests, tool calls, and other events without subclassing [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability]:
