@@ -167,7 +167,7 @@ async def message(ctx: restate.ObjectContext, req: ChatMessage) -> str:
 
 Each `ChatSession` key (e.g. a user ID) gets its own isolated state. Concurrent requests to the same session are automatically queued, preventing race conditions. See the [Restate sessions documentation](https://docs.restate.dev/ai/patterns/sessions) for more details.
 
-### Human-in-the-Loop
+### Human-in-the-Loop with pause/resume
 
 Restate **awakeables** are durable promises that pause the agent until an external event resolves them — such as a human approval via an HTTP call. The agent suspends without consuming compute and survives restarts. On serverless infrastructure like AWS Lambda, you pay nothing while the agent waits.
 
