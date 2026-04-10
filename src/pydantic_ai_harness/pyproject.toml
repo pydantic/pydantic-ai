@@ -5,12 +5,14 @@ build-backend = 'hatchling.build'
 [project]
 name = 'pydantic-harness'
 dynamic = ['version']
-description = 'Agent harness for composable, reusable AI agent capabilities, built on PydanticAI'
+description = 'The batteries for your Pydantic AI agent'
 readme = 'README.md'
 requires-python = '>=3.10'
 license = 'MIT'
 authors = [
-    { name = 'Pydantic Services Inc.' },
+    { name = 'Douwe Maan', email = 'douwe@pydantic.dev' },
+    { name = 'David SF', email = 'david.sanchez@pydantic.dev' },
+    { name = 'Aditya Vardhan', email = 'aditya@pydantic.dev' },
 ]
 classifiers = [
     'Development Status :: 3 - Alpha',
