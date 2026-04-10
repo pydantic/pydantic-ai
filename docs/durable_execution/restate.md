@@ -135,7 +135,7 @@ Navigate to the invocations tab and click on the invocation to see the execution
 
 See the [Restate agent quickstart](https://docs.restate.dev/ai-quickstart) for more details.
 
-## Beyond Basic Durability
+## Beyond Durable Execution
 
 Restate offers a broader set of capabilities that go beyond recovery from failures, to better support production AI agent systems.
 
