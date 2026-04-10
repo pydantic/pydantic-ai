@@ -211,9 +211,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 )
             elif deferred_tool_requests := _get_deferred_tool_requests(message.tool_calls, self._tool_manager):
                 if not self._output_schema.allows_deferred_tools:
-                    raise exceptions.UserError(
-                        'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
-                    )
+                    raise exceptions.DeferredToolRequestsPending(deferred_tool_requests, self._run_ctx)
                 return cast(OutputDataT, deferred_tool_requests)
             elif self._output_schema.allows_image and message.images:
                 result_data = cast(OutputDataT, message.images[0])

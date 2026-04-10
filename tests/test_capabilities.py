@@ -21,6 +21,7 @@ from pydantic_ai.capabilities import (
     MCP,
     BuiltinTool,
     CapabilityOrdering,
+    DeferredToolHandler,
     ImageGeneration,
     IncludeToolReturnSchemas,
     PrefixTools,
@@ -62,8 +63,8 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings as _ModelSettings
-from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
+from pydantic_ai.toolsets import AbstractToolset, ExternalToolset, FunctionToolset
 from pydantic_ai.toolsets._dynamic import ToolsetFunc
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
@@ -8809,3 +8810,228 @@ async def test_after_node_run_node_to_end():
     result = await agent.run('hello')
     assert result.output == 'short-circuited'
     assert model_call_count == 1
+
+
+# --- DeferredToolHandler capability tests ---
+
+
+async def test_deferred_tool_handler_approves():
+    """DeferredToolHandler auto-approves tool calls and the run completes."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('my_tool', {'x': 5}, tool_call_id='t1')])
+        return ModelResponse(parts=[TextPart('result: 6')])
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
+
+    agent = Agent(FunctionModel(llm), capabilities=[DeferredToolHandler(handler=handle_deferred)])
+
+    @agent.tool_plain(requires_approval=True)
+    def my_tool(x: int) -> int:
+        return x + 1
+
+    result = await agent.run('test')
+    assert result.output == 'result: 6'
+    messages = result.all_messages()
+    assert (
+        len(messages) == 4
+    )  # user prompt, model response (tool call), model request (tool return), model response (text)
+    # Verify the tool was actually executed
+    tool_returns = [
+        part
+        for msg in messages
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    assert len(tool_returns) == 1
+    assert tool_returns[0].content == 6
+
+
+async def test_deferred_tool_handler_denies():
+    """DeferredToolHandler denies tool call, model sees denial and adapts."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('my_tool', {'x': 5}, tool_call_id='t1')])
+        return ModelResponse(parts=[TextPart('denied, sorry')])
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(
+            approvals={call.tool_call_id: ToolDenied('Not allowed') for call in requests.approvals}
+        )
+
+    agent = Agent(FunctionModel(llm), capabilities=[DeferredToolHandler(handler=handle_deferred)])
+
+    @agent.tool_plain(requires_approval=True)
+    def my_tool(x: int) -> int:
+        return x + 1  # pragma: no cover
+
+    result = await agent.run('test')
+    assert result.output == 'denied, sorry'
+
+
+async def test_deferred_tool_handler_external_tools():
+    """DeferredToolHandler provides results for external tool calls."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('ext_tool', {'q': 'hello'}, tool_call_id='t1')])
+        return ModelResponse(parts=[TextPart('got: external result')])
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(calls={call.tool_call_id: 'external result' for call in requests.calls})
+
+    ext_toolset = ExternalToolset(
+        [
+            ToolDefinition(
+                name='ext_tool',
+                description='An external tool',
+                parameters_json_schema={'type': 'object', 'properties': {'q': {'type': 'string'}}, 'required': ['q']},
+            ),
+        ]
+    )
+    agent = Agent(
+        FunctionModel(llm),
+        toolsets=[ext_toolset],
+        capabilities=[DeferredToolHandler(handler=handle_deferred)],
+    )
+
+    result = await agent.run('test')
+    assert result.output == 'got: external result'
+
+
+async def test_deferred_tool_handler_sync_handler():
+    """DeferredToolHandler works with sync handler functions."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('my_tool', {'x': 3}, tool_call_id='t1')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    def handle_deferred_sync(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
+
+    agent = Agent(FunctionModel(llm), capabilities=[DeferredToolHandler(handler=handle_deferred_sync)])
+
+    @agent.tool_plain(requires_approval=True)
+    def my_tool(x: int) -> int:
+        return x + 1
+
+    result = await agent.run('test')
+    assert result.output == 'done'
+
+
+async def test_deferred_tool_handler_with_function_tools():
+    """When model calls both function and deferred tools, function tools execute normally."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('regular_tool', {'x': 1}, tool_call_id='r1'),
+                    ToolCallPart('approval_tool', {'x': 2}, tool_call_id='a1'),
+                ]
+            )
+        return ModelResponse(parts=[TextPart('all done')])
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
+
+    agent = Agent(FunctionModel(llm), capabilities=[DeferredToolHandler(handler=handle_deferred)])
+
+    @agent.tool_plain
+    def regular_tool(x: int) -> int:
+        return x * 10
+
+    @agent.tool_plain(requires_approval=True)
+    def approval_tool(x: int) -> int:
+        return x * 20
+
+    result = await agent.run('test')
+    assert result.output == 'all done'
+    # Verify both tools were executed
+    tool_returns = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    assert len(tool_returns) == 2
+
+
+async def test_deferred_tool_handler_does_not_intercept_with_output_type():
+    """When DeferredToolRequests is in output type, the capability does NOT intercept."""
+    handler_called = False
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('ext_tool', {'q': 'hello'}, tool_call_id='t1')])
+
+    async def handle_deferred(
+        ctx: RunContext[None], requests: DeferredToolRequests
+    ) -> DeferredToolResults:  # pragma: no cover
+        nonlocal handler_called
+        handler_called = True
+        return DeferredToolResults(calls={call.tool_call_id: 'result' for call in requests.calls})
+
+    ext_toolset = ExternalToolset(
+        [
+            ToolDefinition(
+                name='ext_tool',
+                description='',
+                parameters_json_schema={'type': 'object', 'properties': {'q': {'type': 'string'}}, 'required': ['q']},
+            ),
+        ]
+    )
+    agent = Agent(
+        FunctionModel(llm),
+        output_type=[str, DeferredToolRequests],
+        toolsets=[ext_toolset],
+        capabilities=[DeferredToolHandler(handler=handle_deferred)],
+    )
+
+    result = await agent.run('test')
+    # DTR should be returned as output, not handled by the capability
+    assert isinstance(result.output, DeferredToolRequests)
+    assert not handler_called
+
+
+async def test_deferred_tool_handler_streaming():
+    """DeferredToolHandler works with streaming runs."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('my_tool', {'x': 7}, tool_call_id='t1')])
+        return ModelResponse(parts=[TextPart('streamed result')])
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
+
+    agent = Agent(FunctionModel(llm), capabilities=[DeferredToolHandler(handler=handle_deferred)])
+
+    @agent.tool_plain(requires_approval=True)
+    def my_tool(x: int) -> int:
+        return x + 1
+
+    result = await agent.run('test')
+    assert result.output == 'streamed result'
+
+
+async def test_deferred_tool_handler_re_raises_non_deferred_errors():
+    """DeferredToolHandler re-raises errors that are not DeferredToolRequestsPending."""
+
+    def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('model exploded')
+
+    async def handle_deferred(
+        ctx: RunContext[None], requests: DeferredToolRequests
+    ) -> DeferredToolResults:  # pragma: no cover
+        return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
+
+    agent = Agent(FunctionModel(failing_model), capabilities=[DeferredToolHandler(handler=handle_deferred)])
+
+    with pytest.raises(RuntimeError, match='model exploded'):
+        await agent.run('hello')

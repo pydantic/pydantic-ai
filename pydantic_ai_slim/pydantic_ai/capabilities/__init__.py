@@ -17,6 +17,7 @@ from .abstract import (
 from .builtin_or_local import BuiltinOrLocalTool
 from .builtin_tool import BuiltinTool
 from .combined import CombinedCapability
+from .deferred_tool_handler import DeferredToolHandler
 from .history_processor import HistoryProcessor
 from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
@@ -68,6 +69,7 @@ __all__ = [
     'BuiltinTool',
     'BuiltinOrLocalTool',
     'CAPABILITY_TYPES',
+    'DeferredToolHandler',
     'ImageGeneration',
     'HistoryProcessor',
     'IncludeToolReturnSchemas',

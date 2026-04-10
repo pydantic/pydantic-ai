@@ -15,11 +15,13 @@ else:
 
 if TYPE_CHECKING:
     from .messages import ModelResponse, RetryPromptPart
+    from .tools import DeferredToolRequests, RunContext
 
 __all__ = (
     'ModelRetry',
     'CallDeferred',
     'ApprovalRequired',
+    'DeferredToolRequestsPending',
     'SkipModelRequest',
     'SkipToolValidation',
     'SkipToolExecution',
@@ -37,11 +39,9 @@ __all__ = (
 
 
 class ModelRetry(Exception):
-    """Exception to raise to request a model retry.
+    """Exception to raise when a tool function should be retried.
 
-    Can be raised from tool functions, output validators, and capability hooks
-    (such as `after_model_request`, `after_tool_execute`, etc.) to send
-    a retry prompt back to the model asking it to try again.
+    The agent will return the message to the model and ask it to try calling the function/tool again.
     """
 
     message: str
@@ -110,6 +110,34 @@ class ApprovalRequired(Exception):
 
     def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
         return self.__class__, (self.metadata,)
+
+
+class DeferredToolRequestsPending(Exception):
+    """Raised when deferred tool calls are present but `DeferredToolRequests` is not in the output type.
+
+    This exception can be caught by the caller to handle deferred tool requests manually,
+    or handled inline by a [`DeferredToolHandler`][pydantic_ai.capabilities.DeferredToolHandler] capability.
+
+    The [`run_context`][pydantic_ai.exceptions.DeferredToolRequestsPending.run_context] provides access
+    to the complete state at the time of the exception, including message history with tool returns
+    for any already-executed tools.
+
+    See [deferred tools docs](../deferred-tools.md) for more information.
+    """
+
+    deferred_tool_requests: DeferredToolRequests
+    """The pending deferred tool requests that need handling."""
+
+    run_context: RunContext[Any]
+    """The run context at the time of the exception, providing access to messages, usage, deps, etc."""
+
+    def __init__(self, deferred_tool_requests: DeferredToolRequests, run_context: RunContext[Any]):
+        self.deferred_tool_requests = deferred_tool_requests
+        self.run_context = run_context
+        super().__init__(
+            'Deferred tool requests are pending. Handle them by catching this exception, '
+            'or use DeferredToolHandler capability for inline handling.'
+        )
 
 
 class SkipModelRequest(Exception):
@@ -236,7 +264,7 @@ class ModelAPIError(AgentRunError):
 
 
 class ModelHTTPError(ModelAPIError):
-    """Raised when a model provider response has a status code of 4xx or 5xx."""
+    """Raised when an model provider response has a status code of 4xx or 5xx."""
 
     status_code: int
     """The HTTP status code returned by the API."""

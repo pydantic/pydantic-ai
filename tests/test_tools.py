@@ -30,7 +30,13 @@ from pydantic_ai import (
     UserError,
     UserPromptPart,
 )
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    DeferredToolRequestsPending,
+    ModelRetry,
+    UnexpectedModelBehavior,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
@@ -2067,12 +2073,10 @@ async def test_deferred_tool_without_output_type():
     )
     agent = Agent(TestModel(), toolsets=[deferred_toolset])
 
-    msg = 'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
-
-    with pytest.raises(UserError, match=msg):
+    with pytest.raises(DeferredToolRequestsPending):
         await agent.run('Hello')
 
-    with pytest.raises(UserError, match=msg):
+    with pytest.raises(DeferredToolRequestsPending):
         async with agent.run_stream('Hello') as result:
             await result.get_output()
 

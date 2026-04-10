@@ -57,6 +57,7 @@ __all__ = (
     'ModelRequestNode',
     'CallToolsNode',
     'build_run_context',
+    'build_tool_call_results',
     'capture_run_messages',
     'HistoryProcessor',
 )
@@ -284,63 +285,19 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             request=next_message, is_resuming_without_prompt=is_resuming_without_prompt
         )
 
-    async def _handle_deferred_tool_results(  # noqa: C901
+    async def _handle_deferred_tool_results(
         self,
         deferred_tool_results: DeferredToolResults,
         messages: list[_messages.ModelMessage],
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     ) -> CallToolsNode[DepsT, NodeRunEndT]:
-        if not messages:
-            raise exceptions.UserError('Tool call results were provided, but the message history is empty.')
-
-        last_model_request: _messages.ModelRequest | None = None
-        last_model_response: _messages.ModelResponse | None = None
-        for message in reversed(messages):
-            if isinstance(message, _messages.ModelRequest):
-                last_model_request = message
-            elif isinstance(message, _messages.ModelResponse):  # pragma: no branch
-                last_model_response = message
-                break
-
-        if not last_model_response:
-            raise exceptions.UserError(
-                'Tool call results were provided, but the message history does not contain a `ModelResponse`.'
-            )
-        if not last_model_response.tool_calls:
-            raise exceptions.UserError(
-                'Tool call results were provided, but the message history does not contain any unprocessed tool calls.'
-            )
-
-        tool_call_results: dict[str, DeferredToolResult | Literal['skip']] | None = None
-        tool_call_results = {}
-        for tool_call_id, approval in deferred_tool_results.approvals.items():
-            if approval is True:
-                approval = ToolApproved()
-            elif approval is False:
-                approval = ToolDenied()
-            tool_call_results[tool_call_id] = approval
-
-        if calls := deferred_tool_results.calls:
-            call_result_types = get_union_args(DeferredToolCallResult)
-            for tool_call_id, result in calls.items():
-                if not isinstance(result, call_result_types):
-                    result = _messages.ToolReturn(result)
-                tool_call_results[tool_call_id] = result
-
-        if last_model_request:
-            for part in last_model_request.parts:
-                if isinstance(part, _messages.ToolReturnPart | _messages.RetryPromptPart):
-                    if part.tool_call_id in tool_call_results:
-                        raise exceptions.UserError(
-                            f'Tool call {part.tool_call_id!r} was already executed and its result cannot be overridden.'
-                        )
-                    tool_call_results[part.tool_call_id] = 'skip'
+        model_response, tool_call_results, metadata = build_tool_call_results(deferred_tool_results, messages)
 
         # Skip ModelRequestNode and go directly to CallToolsNode
         return CallToolsNode[DepsT, NodeRunEndT](
-            last_model_response,
+            model_response,
             tool_call_results=tool_call_results,
-            tool_call_metadata=deferred_tool_results.metadata or None,
+            tool_call_metadata=metadata,
             user_prompt=self.user_prompt,
         )
 
@@ -387,6 +344,63 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         return messages
 
     __repr__ = dataclasses_no_defaults_repr
+
+
+def build_tool_call_results(  # noqa: C901
+    deferred_tool_results: DeferredToolResults,
+    messages: list[_messages.ModelMessage],
+) -> tuple[_messages.ModelResponse, dict[str, DeferredToolResult | Literal['skip']], dict[str, dict[str, Any]] | None]:
+    """Convert ``DeferredToolResults`` into the structures needed by ``CallToolsNode``.
+
+    Returns:
+        A tuple of (last_model_response, tool_call_results, tool_call_metadata).
+    """
+    if not messages:
+        raise exceptions.UserError('Tool call results were provided, but the message history is empty.')
+
+    last_model_request: _messages.ModelRequest | None = None
+    last_model_response: _messages.ModelResponse | None = None
+    for message in reversed(messages):
+        if isinstance(message, _messages.ModelRequest):
+            last_model_request = message
+        elif isinstance(message, _messages.ModelResponse):  # pragma: no branch
+            last_model_response = message
+            break
+
+    if not last_model_response:
+        raise exceptions.UserError(
+            'Tool call results were provided, but the message history does not contain a `ModelResponse`.'
+        )
+    if not last_model_response.tool_calls:
+        raise exceptions.UserError(
+            'Tool call results were provided, but the message history does not contain any unprocessed tool calls.'
+        )
+
+    tool_call_results: dict[str, DeferredToolResult | Literal['skip']] = {}
+    for tool_call_id, approval in deferred_tool_results.approvals.items():
+        if approval is True:
+            approval = ToolApproved()
+        elif approval is False:
+            approval = ToolDenied()
+        tool_call_results[tool_call_id] = approval
+
+    if calls := deferred_tool_results.calls:
+        call_result_types = get_union_args(DeferredToolCallResult)
+        for tool_call_id, call_result in calls.items():
+            if not isinstance(call_result, call_result_types):
+                call_result = _messages.ToolReturn(call_result)
+            tool_call_results[tool_call_id] = call_result
+
+    if last_model_request:
+        for part in last_model_request.parts:
+            if isinstance(part, _messages.ToolReturnPart | _messages.RetryPromptPart):
+                if part.tool_call_id in tool_call_results:
+                    raise exceptions.UserError(
+                        f'Tool call {part.tool_call_id!r} was already executed and its result cannot be overridden.'
+                    )
+                tool_call_results[part.tool_call_id] = 'skip'
+
+    return last_model_response, tool_call_results, deferred_tool_results.metadata or None
 
 
 async def _get_instructions(
@@ -1536,15 +1550,17 @@ async def process_tool_calls(  # noqa: C901
                         yield _messages.FunctionToolResultEvent(e.tool_retry)
 
     if not final_result and deferred_calls:
-        if not ctx.deps.output_schema.allows_deferred_tools:
-            raise exceptions.UserError(
-                'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
-            )
         deferred_tool_requests = _output.DeferredToolRequests(
             calls=deferred_calls['external'],
             approvals=deferred_calls['unapproved'],
             metadata=deferred_metadata,
         )
+        if not ctx.deps.output_schema.allows_deferred_tools:
+            # Append output_parts to message history so the run context has tool returns for already-executed tools
+            if output_parts:
+                ctx.state.message_history.append(_messages.ModelRequest(parts=list(output_parts)))
+            run_context = build_run_context(ctx)
+            raise exceptions.DeferredToolRequestsPending(deferred_tool_requests, run_context)
 
         final_result = result.FinalResult(cast(NodeRunEndT, deferred_tool_requests), None, None)
 
