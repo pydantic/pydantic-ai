@@ -11,7 +11,7 @@ uv add pydantic-harness
 Pydantic AI core ships the agent loop, model providers, the capabilities/hooks abstraction, and two kinds of capabilities:
 
 - **Capabilities that require model or framework support** -- anything backed by provider built-in tools (like [image generation](capabilities.md#provider-adaptive-tools)), provider-specific APIs (like compaction via the OpenAI or Anthropic APIs), or deep agent graph integration. These go hand-in-hand with model class code and need to ship together.
-- **Capabilities that are fundamental to the agent experience** -- things nearly every agent benefits from, like [web search](capabilities.md#provider-adaptive-tools), [tool search](deferred-tools.md), and [thinking](capabilities.md#thinking). These feel like qualities of the agent itself, not accessories.
+- **Capabilities that are fundamental to the agent experience** -- things nearly every agent benefits from, like [web search](capabilities.md#provider-adaptive-tools), [tool search](tools-advanced.md#tool-search), and [thinking](capabilities.md#thinking). These feel like qualities of the agent itself, not accessories.
 
 **Pydantic Harness** is where everything else lives: standalone capabilities that make specific categories of agents powerful, or that are still finding their final shape. Context management, memory, guardrails, file system access, code execution, multi-agent orchestration -- these are the building blocks you pick and choose based on what your agent needs to do.
 
