@@ -891,8 +891,7 @@ from pydantic_ai.capabilities import (
 class InstrumentationCapability(AbstractCapability[Any]):
     """Must wrap all other capabilities to trace everything."""
 
-    @classmethod
-    def get_ordering(cls) -> CapabilityOrdering:
+    def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='outermost')
 
 
@@ -909,11 +908,25 @@ assert type(combined.capabilities[0]) is InstrumentationCapability
 The available constraints are:
 
 * **`position`** — `'outermost'` or `'innermost'`. Places the capability in a tier before (or after) all capabilities without that position. Multiple capabilities can share a tier; original list order breaks ties within it.
-* **`wraps`** — list of capability types this one wraps around (is outside of). Use when your capability needs to see the output of another: `CapabilityOrdering(wraps=[OtherCapability])`.
-* **`wrapped_by`** — list of capability types that wrap around this one (are outside of it). The inverse of `wraps`.
+* **`wraps`** — list of capabilities this one wraps around (is outside of). Each entry can be a capability **type** (matches all instances via `issubclass`) or a specific **instance** (matches by identity). Use when your capability needs to see the output of another: `CapabilityOrdering(wraps=[OtherCapability])`.
+* **`wrapped_by`** — list of capabilities that wrap around this one (are outside of it). Accepts types or instances, like `wraps`. The inverse of `wraps`.
 * **`requires`** — list of capability types that must be present. Raises [`UserError`][pydantic_ai.exceptions.UserError] if any are missing. Does not imply ordering.
 
 When constraints are declared, [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] topologically sorts its children at construction time, preserving user-provided order as a tiebreaker.
+
+[`Hooks`][pydantic_ai.capabilities.Hooks] supports ordering via the `ordering` parameter, so you can declare ordering constraints without subclassing:
+
+```python {title="hooks_ordering_example.py"}
+from pydantic_ai.capabilities import CapabilityOrdering, CombinedCapability, Hooks
+
+logging_hooks = Hooks(ordering=CapabilityOrdering(position='outermost'))
+rate_limit_hooks = Hooks(ordering=CapabilityOrdering(wrapped_by=[logging_hooks]))
+
+# logging_hooks ends up outermost; rate_limit_hooks is wrapped by it
+combined = CombinedCapability([rate_limit_hooks, logging_hooks])
+assert combined.capabilities[0] is logging_hooks
+assert combined.capabilities[1] is rate_limit_hooks
+```
 
 ## Examples
 

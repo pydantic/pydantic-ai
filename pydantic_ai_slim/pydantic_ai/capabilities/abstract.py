@@ -63,6 +63,9 @@ CapabilityPosition = Literal['outermost', 'innermost']
   Same tie-breaking rules apply.
 """
 
+CapabilityRef: TypeAlias = 'type[AbstractCapability[Any]] | AbstractCapability[Any]'
+"""Reference to a capability — either a type (matches all instances of that type) or a specific instance (matches by identity)."""
+
 
 @dataclass
 class CapabilityOrdering:
@@ -81,11 +84,19 @@ class CapabilityOrdering:
     position: CapabilityPosition | None = None
     """Fixed position in the chain, or `None` for user-provided order."""
 
-    wraps: Sequence[type[AbstractCapability[Any]]] = ()
-    """This capability wraps around (is outside of) these types in the middleware chain."""
+    wraps: Sequence[CapabilityRef] = ()
+    """This capability wraps around (is outside of) these capabilities in the middleware chain.
 
-    wrapped_by: Sequence[type[AbstractCapability[Any]]] = ()
-    """This capability is wrapped by (is inside of) these types in the middleware chain."""
+    Each entry can be a capability **type** (matches all instances of that type via `issubclass`)
+    or a specific capability **instance** (matches by identity via `is`).
+    """
+
+    wrapped_by: Sequence[CapabilityRef] = ()
+    """This capability is wrapped by (is inside of) these capabilities in the middleware chain.
+
+    Each entry can be a capability **type** (matches all instances of that type via `issubclass`)
+    or a specific capability **instance** (matches by identity via `is`).
+    """
 
     requires: Sequence[type[AbstractCapability[Any]]] = ()
     """These types must be present in the chain (no ordering implied)."""
@@ -152,12 +163,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return cls(*args, **kwargs)
 
-    @classmethod
-    def get_ordering(cls) -> CapabilityOrdering | None:
+    def get_ordering(self) -> CapabilityOrdering | None:
         """Return ordering constraints for this capability, or `None` for default behavior.
 
         Override to declare a fixed position (`'outermost'` / `'innermost'`),
-        relative ordering (`wraps` / `wrapped_by` other capability types),
+        relative ordering (`wraps` / `wrapped_by` other capability types or instances),
         or dependency requirements (`requires`).
 
         [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] uses

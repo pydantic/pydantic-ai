@@ -8445,15 +8445,13 @@ async def test_thread_executor_static_method() -> None:
 
 @dataclass
 class OutermostCap(AbstractCapability[Any]):
-    @classmethod
-    def get_ordering(cls) -> CapabilityOrdering:
+    def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='outermost')
 
 
 @dataclass
 class InnermostCap(AbstractCapability[Any]):
-    @classmethod
-    def get_ordering(cls) -> CapabilityOrdering:
+    def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='innermost')
 
 
@@ -8471,15 +8469,13 @@ class PlainCapB(AbstractCapability[Any]):
 class WrapsACap(AbstractCapability[Any]):
     """Must wrap around PlainCapA."""
 
-    @classmethod
-    def get_ordering(cls) -> CapabilityOrdering:
+    def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(wraps=[PlainCapA])
 
 
 @dataclass
 class RequiresOutermostCap(AbstractCapability[Any]):
-    @classmethod
-    def get_ordering(cls) -> CapabilityOrdering:
+    def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(requires=[OutermostCap])
 
 
@@ -8511,8 +8507,7 @@ def test_ordering_multiple_outermost_tier():
 
     @dataclass
     class OutermostCap2(AbstractCapability[Any]):
-        @classmethod
-        def get_ordering(cls) -> CapabilityOrdering:
+        def get_ordering(self) -> CapabilityOrdering:
             return CapabilityOrdering(position='outermost')
 
     combined = CombinedCapability([PlainCapA(), OutermostCap2(), OutermostCap()])
@@ -8525,8 +8520,7 @@ def test_ordering_multiple_innermost_tier():
 
     @dataclass
     class InnermostCap2(AbstractCapability[Any]):
-        @classmethod
-        def get_ordering(cls) -> CapabilityOrdering:
+        def get_ordering(self) -> CapabilityOrdering:
             return CapabilityOrdering(position='innermost')
 
     combined = CombinedCapability([InnermostCap(), InnermostCap2(), PlainCapA()])
@@ -8539,14 +8533,12 @@ def test_ordering_outermost_tier_with_wraps():
 
     @dataclass
     class OuterA(AbstractCapability[Any]):
-        @classmethod
-        def get_ordering(cls) -> CapabilityOrdering:
+        def get_ordering(self) -> CapabilityOrdering:
             return CapabilityOrdering(position='outermost')
 
     @dataclass
     class OuterB(AbstractCapability[Any]):
-        @classmethod
-        def get_ordering(cls) -> CapabilityOrdering:
+        def get_ordering(self) -> CapabilityOrdering:
             return CapabilityOrdering(position='outermost', wraps=[OuterA])
 
     # OuterB listed after OuterA, but wraps=[OuterA] overrides tiebreaker
@@ -8565,8 +8557,7 @@ def test_ordering_wrapped_by():
 
     @dataclass
     class WrappedByACap(AbstractCapability[Any]):
-        @classmethod
-        def get_ordering(cls) -> CapabilityOrdering:
+        def get_ordering(self) -> CapabilityOrdering:
             return CapabilityOrdering(wrapped_by=[PlainCapA])
 
     combined = CombinedCapability([WrappedByACap(), PlainCapA()])
@@ -8642,14 +8633,12 @@ def test_ordering_no_constraints_noop():
 def test_ordering_cycle_detection():
     @dataclass
     class CycleA(AbstractCapability[Any]):
-        @classmethod
-        def get_ordering(cls) -> CapabilityOrdering:
+        def get_ordering(self) -> CapabilityOrdering:
             return CapabilityOrdering(wraps=[CycleB])
 
     @dataclass
     class CycleB(AbstractCapability[Any]):
-        @classmethod
-        def get_ordering(cls) -> CapabilityOrdering:
+        def get_ordering(self) -> CapabilityOrdering:
             return CapabilityOrdering(wraps=[CycleA])
 
     with pytest.raises(UserError, match='Circular ordering constraints'):
@@ -8670,6 +8659,114 @@ def test_ordering_wrapper_capability_recurses():
     # and picks up OutermostCap's position='outermost' constraint.
     combined = CombinedCapability([PlainCapA(), wrapped])
     assert combined.capabilities[0] is wrapped
+
+
+def test_ordering_hooks_ordering_parameter():
+    """Hooks with ordering= are sorted according to those constraints."""
+    hooks = Hooks(ordering=CapabilityOrdering(position='outermost'))
+    combined = CombinedCapability([PlainCapA(), hooks, PlainCapB()])
+    assert combined.capabilities[0] is hooks
+
+
+def test_ordering_hooks_ordering_wraps():
+    """Hooks with ordering wraps= are placed before the referenced type."""
+    hooks = Hooks(ordering=CapabilityOrdering(wraps=[PlainCapA]))
+    combined = CombinedCapability([PlainCapA(), hooks])
+    assert combined.capabilities[0] is hooks
+
+
+def test_ordering_hooks_ordering_wrapped_by():
+    """Hooks with ordering wrapped_by= are placed after the referenced type."""
+    hooks = Hooks(ordering=CapabilityOrdering(wrapped_by=[PlainCapA]))
+    combined = CombinedCapability([hooks, PlainCapA()])
+    assert combined.capabilities[0].__class__ is PlainCapA
+    assert combined.capabilities[1] is hooks
+
+
+def test_ordering_hooks_no_ordering():
+    """Hooks without ordering= preserve their list position."""
+    hooks = Hooks()
+    combined = CombinedCapability([PlainCapA(), hooks, PlainCapB()])
+    assert combined.capabilities[1] is hooks
+
+
+def test_ordering_hooks_ordering_requires():
+    """Hooks with ordering requires= validates that the required type is present."""
+    hooks = Hooks(ordering=CapabilityOrdering(requires=[OutermostCap]))
+    with pytest.raises(UserError, match='`Hooks` requires `OutermostCap`'):
+        CombinedCapability([hooks, PlainCapA()])
+
+
+def test_ordering_wraps_instance_ref():
+    """wraps= can reference a specific capability instance instead of a type."""
+    target = PlainCapA()
+    other_a = PlainCapA()
+
+    @dataclass
+    class WrapsInstance(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(wraps=[target])
+
+    # WrapsInstance should come before `target` but not necessarily before `other_a`
+    combined = CombinedCapability([target, WrapsInstance(), other_a])
+    names = _cap_names(combined)
+    assert names.index('WrapsInstance') < names.index('PlainCapA')  # before first PlainCapA (target)
+
+
+def test_ordering_wrapped_by_instance_ref():
+    """wrapped_by= can reference a specific capability instance."""
+    wrapper = PlainCapA()
+
+    @dataclass
+    class WrappedByInstance(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(wrapped_by=[wrapper])
+
+    combined = CombinedCapability([WrappedByInstance(), wrapper])
+    assert combined.capabilities[0] is wrapper
+    assert combined.capabilities[1].__class__ is WrappedByInstance
+
+
+def test_ordering_hooks_wraps_instance():
+    """Hooks can order relative to a specific capability instance via wraps=."""
+    target = PlainCapA()
+    hooks = Hooks(ordering=CapabilityOrdering(wraps=[target]))
+    combined = CombinedCapability([target, hooks])
+    assert combined.capabilities[0] is hooks
+    assert combined.capabilities[1] is target
+
+
+def test_ordering_hooks_wrapped_by_instance():
+    """Hooks can order relative to a specific capability instance via wrapped_by=."""
+    outer = PlainCapA()
+    hooks = Hooks(ordering=CapabilityOrdering(wrapped_by=[outer]))
+    combined = CombinedCapability([hooks, outer])
+    assert combined.capabilities[0] is outer
+    assert combined.capabilities[1] is hooks
+
+
+def test_ordering_instance_ref_not_present():
+    """Instance ref in wraps= that isn't in the list has no effect (no edge added)."""
+    absent = PlainCapA()
+    hooks = Hooks(ordering=CapabilityOrdering(wraps=[absent]))
+    # absent is NOT in the capabilities list — the wraps ref should be a no-op
+    combined = CombinedCapability([PlainCapB(), hooks])
+    # Order preserved since the instance ref doesn't match anything
+    assert combined.capabilities[0].__class__ is PlainCapB
+    assert combined.capabilities[1] is hooks
+
+
+def test_ordering_mixed_type_and_instance_refs():
+    """wraps= can mix type refs and instance refs."""
+    target_instance = PlainCapB()
+
+    @dataclass
+    class MixedRefs(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(wraps=[PlainCapA, target_instance])
+
+    combined = CombinedCapability([PlainCapA(), target_instance, MixedRefs()])
+    assert combined.capabilities[0].__class__ is MixedRefs
 
 
 # --- Hook recovery tests (after_node_run End→node, ErrorMarker in next_node) ---
