@@ -16,6 +16,7 @@ from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, RunContext, ToolDefi
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
+from ._ordering import collect_leaves, sort_capabilities
 from .abstract import AbstractCapability
 
 if TYPE_CHECKING:
@@ -33,8 +34,6 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     capabilities: Sequence[AbstractCapability[AgentDepsT]]
 
     def __post_init__(self) -> None:
-        from ._ordering import collect_leaves, sort_capabilities
-
         if any(type(leaf).get_ordering() is not None for leaf in collect_leaves(self)):
             self.capabilities = sort_capabilities(list(self.capabilities))
 

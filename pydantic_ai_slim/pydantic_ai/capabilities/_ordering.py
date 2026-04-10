@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import heapq
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
+from graphlib import CycleError, TopologicalSorter
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai.exceptions import UserError
@@ -13,8 +13,6 @@ from .abstract import AbstractCapability, CapabilityOrdering
 if TYPE_CHECKING:
     from .abstract import CapabilityPosition
 
-_AddEdge = Callable[[int, int], None]
-
 
 def sort_capabilities(
     capabilities: Sequence[AbstractCapability[Any]],
@@ -22,7 +20,7 @@ def sort_capabilities(
     """Sort capabilities to satisfy ordering constraints.
 
     Preserves the original order as a tiebreaker when constraints allow.
-    Raises `UserError` on conflicts (duplicate positions, missing requirements, cycles).
+    Raises `UserError` on conflicts (missing requirements, cycles).
     """
     caps = list(capabilities)
     n = len(caps)
@@ -32,14 +30,12 @@ def sort_capabilities(
     orderings: list[CapabilityOrdering | None] = [_effective_ordering(cap) for cap in caps]
     leaf_types: list[set[type]] = [_collect_leaf_types(cap) for cap in caps]
 
-    _validate_constraints(caps, orderings, leaf_types)
+    _validate_requires(caps, orderings, leaf_types)
 
-    edges, in_degree = _build_dag(caps, orderings, leaf_types)
-
-    return _topo_sort(caps, edges, in_degree)
+    return _topo_sort(caps, orderings, leaf_types)
 
 
-def _validate_constraints(
+def _validate_requires(
     caps: list[AbstractCapability[Any]],
     orderings: list[CapabilityOrdering | None],
     leaf_types: list[set[type]],
@@ -56,97 +52,74 @@ def _validate_constraints(
                     )
 
 
-def _build_dag(
+def _topo_sort(
     caps: list[AbstractCapability[Any]],
     orderings: list[CapabilityOrdering | None],
     leaf_types: list[set[type]],
-) -> tuple[dict[int, set[int]], dict[int, int]]:
-    """Build a DAG from position and wraps/wrapped_by constraints."""
+) -> list[AbstractCapability[Any]]:
+    """Topological sort using graphlib.TopologicalSorter.
+
+    Edges go from outer (earlier) to inner (later). TopologicalSorter
+    preserves insertion order as tiebreaker for unconstrained nodes.
+    """
     n = len(caps)
-    edges: dict[int, set[int]] = {i: set() for i in range(n)}
-    in_degree: dict[int, int] = {i: 0 for i in range(n)}
+    ts: TopologicalSorter[int] = TopologicalSorter()
 
-    def add_edge(outer: int, inner: int) -> None:
-        if inner not in edges[outer]:
-            edges[outer].add(inner)
-            in_degree[inner] += 1
+    # Add all nodes in original order (establishes tiebreaker)
+    for i in range(n):
+        ts.add(i)
 
-    _add_position_edges(n, orderings, add_edge)
-    _add_relative_edges(n, orderings, leaf_types, add_edge)
+    _add_position_edges(ts, n, orderings)
+    _add_relative_edges(ts, n, orderings, leaf_types)
 
-    return edges, in_degree
+    try:
+        sorted_indices = list(ts.static_order())
+    except CycleError:
+        raise UserError('Circular ordering constraints among capabilities')
+
+    return [caps[i] for i in sorted_indices]
 
 
 def _add_position_edges(
+    ts: TopologicalSorter[int],
     n: int,
     orderings: list[CapabilityOrdering | None],
-    add_edge: _AddEdge,
 ) -> None:
     outermost = {i for i, o in enumerate(orderings) if o and o.position == 'outermost'}
     innermost = {i for i, o in enumerate(orderings) if o and o.position == 'innermost'}
 
-    # Outermost tier: each member gets edges to all non-members.
-    # No edges within the tier — wraps/wrapped_by and the min-heap
-    # tiebreaker (original list index) determine order within.
+    # Outermost tier: each member must come before all non-members.
     for oi in outermost:
         for j in range(n):
             if j != oi and j not in outermost:
-                add_edge(oi, j)
+                ts.add(j, oi)  # j depends on oi (oi comes first)
 
-    # Innermost tier: each member gets edges from all non-members.
+    # Innermost tier: each member must come after all non-members.
     for ii in innermost:
         for j in range(n):
             if j != ii and j not in innermost:
-                add_edge(j, ii)
+                ts.add(ii, j)  # ii depends on j (j comes first)
 
 
 def _add_relative_edges(
+    ts: TopologicalSorter[int],
     n: int,
     orderings: list[CapabilityOrdering | None],
     leaf_types: list[set[type]],
-    add_edge: _AddEdge,
 ) -> None:
     for i, ordering in enumerate(orderings):
         if not ordering:
             continue
-        # wraps=[X] → I wrap around X → edge from me (outer) to X (inner)
+        # wraps=[X] → I come before X
         for wraps_type in ordering.wraps:
             for j in range(n):
                 if i != j and any(issubclass(t, wraps_type) for t in leaf_types[j]):
-                    add_edge(i, j)
-        # wrapped_by=[X] → X wraps around me → edge from X (outer) to me (inner)
+                    ts.add(j, i)  # j depends on i (i comes first)
+        # wrapped_by=[X] → X comes before me
         for wrapped_by_type in ordering.wrapped_by:
             for j in range(n):
                 if i != j and any(issubclass(t, wrapped_by_type) for t in leaf_types[j]):
-                    add_edge(j, i)
-
-
-def _topo_sort(
-    caps: list[AbstractCapability[Any]],
-    edges: dict[int, set[int]],
-    in_degree: dict[int, int],
-) -> list[AbstractCapability[Any]]:
-    """Kahn's algorithm with original-index tiebreaking for stability."""
-    n = len(caps)
-    queue: list[int] = []
-    for i in range(n):
-        if in_degree[i] == 0:
-            heapq.heappush(queue, i)
-
-    result: list[AbstractCapability[Any]] = []
-    while queue:
-        i = heapq.heappop(queue)
-        result.append(caps[i])
-        for j in edges[i]:
-            in_degree[j] -= 1
-            if in_degree[j] == 0:
-                heapq.heappush(queue, j)
-
-    if len(result) != n:
-        remaining = [type(caps[i]).__name__ for i in range(n) if in_degree[i] > 0]
-        raise UserError(f'Circular ordering constraints among capabilities: {", ".join(remaining)}')
-
-    return result
+                    ts.add(i, j)  # i depends on j (j comes first)
 
 
 def _effective_ordering(cap: AbstractCapability[Any]) -> CapabilityOrdering | None:

@@ -860,16 +860,17 @@ print(counter.count)
 #> 0
 ```
 
-### Composition
+### Composition and middleware semantics
 
-When multiple capabilities are passed to an agent, they are composed into a single [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability]:
+When multiple capabilities are passed to an agent, they are composed into a single [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] that follows **middleware semantics** — the same pattern used by web frameworks like Django, Express, and Ring:
 
 * **Configuration** is merged: instructions concatenate, model settings merge additively (later capabilities override earlier ones), toolsets combine, builtin tools collect.
-* **`before_*`** hooks fire in capability order: `cap1 → cap2 → cap3`.
-* **`after_*`** hooks fire in reverse order: `cap3 → cap2 → cap1`.
-* **`wrap_*`** hooks nest as middleware: `cap1` wraps `cap2` wraps `cap3` wraps the actual operation. The first capability is the outermost layer.
+* **`before_*`** hooks fire in capability order (outermost to innermost): `cap1 → cap2 → cap3`.
+* **`after_*`** hooks fire in reverse order (innermost to outermost): `cap3 → cap2 → cap1`.
+* **`wrap_*`** hooks nest as middleware: `cap1` wraps `cap2` wraps `cap3` wraps the actual operation. The first capability is the **outermost** layer.
+* **`get_wrapper_toolset`** follows the same nesting: the first capability's wrapper is outermost.
 
-This means the first capability in the list has the first and last say on the operation — it sees the original input in its `wrap_*` before handler, and it sees the final output after handler returns.
+This means the first capability in the list has the first and last say on the operation — it sees the original input before any other capability, and it sees the final output after all inner capabilities have processed it.
 
 ### Ordering
 
