@@ -638,6 +638,28 @@ async def test_agent_auto_injects_tool_search_capability():
     assert any(isinstance(leaf, ToolSearch) for leaf in leaves)
 
 
+async def test_explicit_tool_search_not_duplicated():
+    """Passing ToolSearch explicitly doesn't result in a second auto-injected one."""
+    agent = Agent('test', capabilities=[ToolSearch()])
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:  # pragma: no cover
+        """Get the current weather for a city."""
+        return f'Weather in {city}'
+
+    leaves = collect_leaves(agent.root_capability)
+    tool_search_count = sum(1 for leaf in leaves if isinstance(leaf, ToolSearch))
+    assert tool_search_count == 1
+
+
+def test_tool_search_excluded_from_capability_registry():
+    """ToolSearch is internal and should not appear in the serializable capability registry."""
+    from pydantic_ai.capabilities import CAPABILITY_TYPES
+
+    assert ToolSearch.get_serialization_name() is None
+    assert not any(cls is ToolSearch for cls in CAPABILITY_TYPES.values())
+
+
 async def test_tool_manager_with_tool_search_toolset():
     """Test that ToolManager works correctly with ToolSearchToolset."""
     toolset = _create_function_toolset()

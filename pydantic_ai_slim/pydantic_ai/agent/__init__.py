@@ -404,11 +404,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         for builtin_tool in builtin_tools:
             capabilities.append(BuiltinToolCap(builtin_tool))
 
-        # Auto-inject ToolSearch if not already present. Always injected
-        # because deferred tools can be dynamic (from get_tools at runtime).
-        # Prepended for natural outermost-tier positioning via index tiebreak.
-        if not has_capability_type(capabilities, ToolSearchCap):
-            capabilities.insert(0, ToolSearchCap())
+        _inject_auto_capabilities(capabilities)
 
         self._root_capability = CombinedCapability(capabilities)
 
@@ -1613,10 +1609,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validated_spec, template_context = _validate_spec(spec, self._deps_type)
 
         capabilities = list(_capabilities_from_spec(validated_spec, custom_capability_types, template_context))
-        # Auto-inject ToolSearch into spec capabilities too, so override(spec=...)
-        # doesn't lose deferred tool discovery when replacing the root capability.
-        if capabilities and not has_capability_type(capabilities, ToolSearchCap):
-            capabilities.insert(0, ToolSearchCap())
+        if capabilities:
+            _inject_auto_capabilities(capabilities)
         combined = CombinedCapability(capabilities) if capabilities else None
 
         # Warn for unsupported fields with non-default values
@@ -2401,9 +2395,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # applied here via get_wrapper_toolset. ToolSearch is auto-injected
         # into capabilities, replacing the previous hardcoded ToolSearchToolset wrap.
         if run_capability is not None:
-            wrapper = run_capability.get_wrapper_toolset(toolset)
-            if wrapper is not None:
-                toolset = wrapper
+            toolset = run_capability.get_wrapper_toolset(toolset) or toolset
 
         output_toolset = output_toolset if _utils.is_set(output_toolset) else self._output_toolset
         if output_toolset is not None:
@@ -2629,6 +2621,20 @@ _UNSUPPORTED_SPEC_FIELDS: tuple[str, ...] = (
     'deps_schema',
 )
 """AgentSpec fields that are not supported at run/override time."""
+
+_AUTO_INJECT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (ToolSearchCap,)
+"""Infrastructure capabilities auto-injected when not already present."""
+
+
+def _inject_auto_capabilities(capabilities: list[AbstractCapability[Any]]) -> None:
+    """Ensure all auto-injected infrastructure capabilities are present.
+
+    Each capability's own ``CapabilityOrdering`` (e.g. ``position='outermost'``)
+    determines its final placement, so insertion order here doesn't matter.
+    """
+    for cap_type in _AUTO_INJECT_CAPABILITY_TYPES:
+        if not has_capability_type(capabilities, cap_type):
+            capabilities.append(cap_type())
 
 
 def _validate_spec(
