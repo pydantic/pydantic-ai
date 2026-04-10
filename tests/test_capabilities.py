@@ -8385,6 +8385,147 @@ class TestCtxAgentInCapability:
         assert hook_agent_names == ['hook_test_agent', 'hook_test_agent']
 
 
+# region --- Compaction capability tests ---
+
+
+class TestCompaction:
+    def test_compaction_part_serialization(self):
+        """CompactionPart round-trips through Pydantic serialization."""
+        from pydantic_ai.messages import CompactionPart, ModelMessagesTypeAdapter, ModelResponse
+
+        # Anthropic-style (text content)
+        anthropic_part = CompactionPart(content='Summary of conversation', provider_name='anthropic')
+        assert anthropic_part.has_content()
+        assert anthropic_part.part_kind == 'compaction'
+
+        # OpenAI-style (encrypted, no content)
+        openai_part = CompactionPart(
+            content=None,
+            id='cmp_123',
+            provider_name='openai',
+            provider_details={'encrypted_content': 'abc123', 'type': 'compaction'},
+        )
+        assert not openai_part.has_content()
+        assert openai_part.part_kind == 'compaction'
+
+        # Round-trip through serialization
+        response = ModelResponse(parts=[anthropic_part, openai_part])
+        messages: list[ModelMessage] = [response]
+        serialized = ModelMessagesTypeAdapter.dump_json(messages)
+        deserialized = ModelMessagesTypeAdapter.validate_json(serialized)
+        assert len(deserialized) == 1
+        assert isinstance(deserialized[0], ModelResponse)
+        parts = deserialized[0].parts
+        assert len(parts) == 2
+        assert isinstance(parts[0], CompactionPart)
+        assert parts[0].content == 'Summary of conversation'
+        assert parts[0].provider_name == 'anthropic'
+        assert isinstance(parts[1], CompactionPart)
+        assert parts[1].content is None
+        assert parts[1].id == 'cmp_123'
+        assert parts[1].provider_details == {'encrypted_content': 'abc123', 'type': 'compaction'}
+
+    async def test_openai_compaction_with_wrong_model(self):
+        """OpenAICompaction raises UserError when used with a non-OpenAI model."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        agent = Agent(
+            FunctionModel(simple_model_function),
+            capabilities=[OpenAICompaction(message_count_threshold=0)],
+        )
+        with pytest.raises(UserError, match='OpenAICompaction requires OpenAIResponsesModel'):
+            await agent.run('hello')
+
+    async def test_openai_compaction_with_wrapped_wrong_model(self):
+        """OpenAICompaction unwraps WrapperModel and raises for non-OpenAI model."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+        from pydantic_ai.models.wrapper import WrapperModel
+
+        wrapped = WrapperModel(FunctionModel(simple_model_function))
+        agent = Agent(
+            wrapped,
+            capabilities=[OpenAICompaction(message_count_threshold=0)],
+        )
+        with pytest.raises(UserError, match='OpenAICompaction requires OpenAIResponsesModel'):
+            await agent.run('hello')
+
+    def test_openai_compaction_should_compact_with_trigger(self):
+        """OpenAICompaction._should_compact delegates to custom trigger."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        cap = OpenAICompaction(trigger=lambda msgs: len(msgs) > 2)
+        assert not cap._should_compact([ModelRequest(parts=[UserPromptPart(content='hi')])])  # pyright: ignore[reportPrivateUsage]
+        assert cap._should_compact(  # pyright: ignore[reportPrivateUsage]
+            [
+                ModelRequest(parts=[UserPromptPart(content='1')]),
+                ModelResponse(parts=[TextPart(content='r1')]),
+                ModelRequest(parts=[UserPromptPart(content='2')]),
+            ]
+        )
+
+    def test_openai_compaction_should_compact_no_config(self):
+        """OpenAICompaction._should_compact returns False when nothing is configured."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        cap = OpenAICompaction()
+        assert not cap._should_compact([ModelRequest(parts=[UserPromptPart(content='hi')])])  # pyright: ignore[reportPrivateUsage]
+
+    def test_openai_compaction_serialization_name(self):
+        """OpenAICompaction has the correct serialization name."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        assert OpenAICompaction.get_serialization_name() == 'OpenAICompaction'
+
+    def test_anthropic_compaction_serialization_name(self):
+        """AnthropicCompaction has the correct serialization name."""
+        pytest.importorskip('anthropic')
+        from pydantic_ai.models.anthropic import AnthropicCompaction
+
+        assert AnthropicCompaction.get_serialization_name() == 'AnthropicCompaction'
+
+    async def test_compaction_part_in_function_model_history(self):
+        """FunctionModel handles message history containing CompactionPart."""
+        from pydantic_ai.messages import CompactionPart
+
+        compaction_response = ModelResponse(
+            parts=[CompactionPart(content='Summary: user greeted.', provider_name='anthropic')],
+            provider_name='anthropic',
+        )
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart(content='Hello!')]),
+            compaction_response,
+            ModelRequest(parts=[UserPromptPart(content='How are you?')]),
+        ]
+
+        agent = Agent(FunctionModel(simple_model_function))
+        result = await agent.run('Follow up', message_history=history)
+        assert result.output == 'response from model'
+
+    async def test_compaction_part_without_content_in_response(self):
+        """CompactionPart with content=None (OpenAI-style) is handled alongside text."""
+        from pydantic_ai.messages import CompactionPart
+
+        def model_with_compaction(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[
+                    CompactionPart(content=None, id='cmp_123', provider_name='openai'),
+                    TextPart(content='actual response'),
+                ]
+            )
+
+        agent = Agent(FunctionModel(model_with_compaction))
+        result = await agent.run('hello')
+        assert result.output == 'actual response'
+
+
+# endregion
+
+
 def test_thread_executor_not_serializable() -> None:
     assert ThreadExecutor.get_serialization_name() is None
 

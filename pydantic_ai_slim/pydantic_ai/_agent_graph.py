@@ -1045,6 +1045,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     # normal retry prompt below.
 
                 text = ''
+                compaction_text = ''
                 tool_calls: list[_messages.ToolCallPart] = []
                 files: list[_messages.BinaryContent] = []
 
@@ -1064,8 +1065,16 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
                     elif isinstance(part, _messages.ThinkingPart):
                         pass
+                    elif isinstance(part, _messages.CompactionPart):
+                        if part.content:
+                            compaction_text += part.content
                     else:
                         assert_never(part)
+
+                # Use compaction content as text fallback when the response has no other
+                # actionable text (e.g. Anthropic pause_after_compaction=True)
+                if not text and compaction_text:
+                    text = compaction_text
 
                 try:
                     # At the moment, we prioritize at least executing tool calls if they are present.

@@ -631,6 +631,20 @@ class Model(ABC, Generic[InterfaceClient]):
         # This method is not required, but you need to implement it if you want to support `UsageLimits.count_tokens_before_request`.
         raise NotImplementedError(f'Token counting ahead of the request is not supported by {self.__class__.__name__}')
 
+    async def compact_messages(
+        self,
+        request_context: ModelRequestContext,
+        *,
+        instructions: str | None = None,
+    ) -> ModelResponse:
+        """Compact messages to reduce conversation context size.
+
+        This method is optional and only supported by specific providers
+        (e.g. OpenAI Responses API). Providers that support compaction
+        override this method with their implementation.
+        """
+        raise NotImplementedError(f'Message compaction is not supported by {self.__class__.__name__}')
+
     @asynccontextmanager
     async def request_stream(
         self,
