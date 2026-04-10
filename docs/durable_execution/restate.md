@@ -27,7 +27,7 @@ A durable agent has three building blocks:
         Journal      |   Replay on
         steps,       |   recovery,
         retries      |   schedule calls
-                     |
+                     v
 +------------------------------------------------------+
 |               Application Process                    |
 |   +----------------------------------------------+   |
