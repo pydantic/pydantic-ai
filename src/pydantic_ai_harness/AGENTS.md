@@ -71,15 +71,18 @@ Always run `make lint && make typecheck && make test` before committing.
 ## File structure
 
 ```
-src/pydantic_harness/
+pydantic_harness/
   __init__.py          # public API re-exports
-  guardrails.py        # guardrail capabilities (InputGuardrail, OutputGuardrail, CostGuard, ToolGuard, AsyncGuardrail)
-  <capability>.py      # each capability gets its own module
+  <capability>/        # each capability gets its own package
+    __init__.py        # public exports for the capability
+    _capability.py     # capability class (AbstractCapability subclass)
+    _toolset.py        # toolset implementation
 tests/
   conftest.py          # shared fixtures (TestModel, test_agent)
-  test_<capability>.py # tests mirror source modules
-examples/
-  <capability>/        # runnable examples per capability
+  _<capability>/       # tests mirror source packages
+    test_<capability>.py
+<capability>/
+  README.md            # standalone docs for the capability
 ```
 
 ## Testing patterns

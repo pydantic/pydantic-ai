@@ -26,7 +26,20 @@ classifiers = [
     'Topic :: Software Development :: Libraries',
     'Typing :: Typed',
 ]
-dependencies = ['pydantic-ai-slim>=1.76.0']
+dependencies = [
+    'pydantic-ai-slim>=1.78.0',
+]
+
+[project.optional-dependencies]
+code-mode = [
+    'pydantic-monty>=0.0.10',
+]
+temporal = [
+    'pydantic-ai-slim[temporal]',
+]
+dbos = [
+    'pydantic-ai-slim[dbos]',
+]
 
 [project.urls]
 Homepage = 'https://github.com/pydantic/pydantic-harness'
@@ -35,15 +48,20 @@ Issues = 'https://github.com/pydantic/pydantic-harness/issues'
 
 [dependency-groups]
 dev = [
+    'pydantic-harness[code-mode]',
     'pytest',
     'anyio[trio]',
     'pytest-anyio',
     'coverage',
+    'logfire[httpx]>=4.31.0',
 ]
 lint = [
     'ruff>=0.14',
     'pyright>=1.1.408',
 ]
+
+[tool.uv.sources]
+pydantic-ai-slim = { git = 'https://github.com/pydantic/pydantic-ai.git', branch = 'main', subdirectory = 'pydantic_ai_slim' }
 
 [tool.hatch.version]
 source = 'uv-dynamic-versioning'
@@ -53,8 +71,9 @@ vcs = 'git'
 style = 'pep440'
 bump = true
 
+
 [tool.hatch.build.targets.wheel]
-packages = ['src/pydantic_harness']
+packages = ['pydantic_harness']
 
 [tool.ruff]
 line-length = 120
@@ -90,18 +109,26 @@ executionEnvironments = [
 [tool.pytest.ini_options]
 testpaths = ['tests']
 xfail_strict = true
-filterwarnings = ['error']
+filterwarnings = [
+    'error',
+    # DBOS's run_sync triggers this on Python 3.12+ — not our code.
+    'ignore:There is no current event loop:DeprecationWarning',
+]
 anyio_mode = 'auto'
 
 [tool.coverage.run]
 branch = true
 source = ['pydantic_harness', 'tests']
 
+[tool.coverage.paths]
+source = ['.', '/home/runner/work/pydantic-harness/pydantic-harness']
+
 [tool.coverage.report]
 fail_under = 100
 show_missing = true
 exclude_lines = [
     'pragma: no cover',
+    'pragma: lax no cover',
     'assert_never',
     'if TYPE_CHECKING:',
 ]

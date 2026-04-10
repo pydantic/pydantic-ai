@@ -29,7 +29,7 @@ Extras for specific capabilities:
 uv add "pydantic-harness[code-mode]"   # CodeMode (adds the Monty sandbox)
 ```
 
-Requires Python 3.10+ and `pydantic-ai-slim>=1.76.0`.
+Requires Python 3.10+ and `pydantic-ai-slim>=1.78.0`.
 
 ## Quick start
 
