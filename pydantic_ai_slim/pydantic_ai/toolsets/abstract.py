@@ -50,11 +50,8 @@ class ToolsetTool(Generic[AgentDepsT]):
     """The toolset that provided this tool, for use in error messages."""
     tool_def: ToolDefinition
     """The tool definition for this tool, including the name, description, and parameters."""
-    max_retries: int | None
-    """The maximum number of retries to attempt if the tool call fails.
-
-    If ``None``, falls back to the agent's default retry count at runtime.
-    """
+    max_retries: int
+    """The maximum number of retries to attempt if the tool call fails."""
     args_validator: SchemaValidator | SchemaValidatorProt
     """The Pydantic Core validator for the tool's arguments.
 

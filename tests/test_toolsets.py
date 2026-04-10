@@ -677,6 +677,30 @@ async def test_tool_explicit_retries_overrides_toolset_and_agent():
         await agent.run('call always_fails', model=TestModel())
 
 
+async def test_prepare_function_sees_agent_max_retries():
+    """Prepare functions should see the agent's default max_retries on ctx when the toolset doesn't set one."""
+    captured_max_retries: list[int] = []
+    captured_last_attempt: list[bool] = []
+
+    async def capture_prepare(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+        captured_max_retries.append(ctx.max_retries)
+        captured_last_attempt.append(ctx.last_attempt)
+        return tool_def
+
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain(prepare=capture_prepare)
+    def my_tool(x: int) -> int:
+        """A tool."""
+        return x
+
+    agent = Agent('test', toolsets=[toolset], retries=3)
+    await agent.run('call my_tool', model=TestModel())
+
+    assert captured_max_retries[0] == 3
+    assert captured_last_attempt[0] is False
+
+
 async def test_tool_manager_multiple_failed_tools():
     """Test retry logic when multiple tools fail in the same run step."""
 

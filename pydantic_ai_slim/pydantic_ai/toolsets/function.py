@@ -72,6 +72,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         Args:
             tools: The tools to add to the toolset.
             max_retries: The maximum number of retries for each tool during a run.
+                If `None`, inherits the agent's default retry count at runtime.
                 Applies to all tools, unless overridden when adding a tool.
             timeout: Timeout in seconds for tool execution. If a tool takes longer than this,
                 a retry prompt is returned to the model. Individual tools can override this with their own timeout.
@@ -338,7 +339,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             name: The name of the tool, defaults to the function name.
             description: The description of the tool, defaults to the function docstring.
             retries: The number of retries to allow for this tool, defaults to the toolset's default retries,
-                which defaults to 1.
+                which defaults to the agent's default.
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
@@ -504,12 +505,16 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for original_name, tool in self.tools.items():
-            max_retries = tool.max_retries if tool.max_retries is not None else self.max_retries
+            max_retries = (
+                tool.max_retries
+                if tool.max_retries is not None
+                else (self.max_retries if self.max_retries is not None else ctx.max_retries)
+            )
             run_context = replace(
                 ctx,
                 tool_name=original_name,
                 retry=ctx.retries.get(original_name, 0),
-                max_retries=max_retries if max_retries is not None else ctx.max_retries,
+                max_retries=max_retries,
             )
             tool_def = await tool.prepare_tool_def(run_context)
             if not tool_def:

@@ -258,19 +258,25 @@ class TestFastMCPToolsetToolDiscovery:
             }
             assert set(tools.keys()) == expected_tools
 
-            # Check tool definitions
             test_tool = tools['test_tool']
-            assert test_tool.tool_def.name == 'test_tool'
-            assert test_tool.tool_def.description is not None
-            assert 'test tool that returns a formatted string' in test_tool.tool_def.description
-            assert test_tool.max_retries is None
             assert test_tool.toolset is toolset
-
-            # Check that the tool has proper schema
-            schema = test_tool.tool_def.parameters_json_schema
-            assert schema['type'] == 'object'
-            assert 'param1' in schema['properties']
-            assert 'param2' in schema['properties']
+            assert {
+                'name': test_tool.tool_def.name,
+                'description': test_tool.tool_def.description,
+                'max_retries': test_tool.max_retries,
+                'parameters_json_schema': test_tool.tool_def.parameters_json_schema,
+            } == snapshot(
+                {
+                    'name': 'test_tool',
+                    'description': 'A test tool that returns a formatted string.',
+                    'max_retries': 0,
+                    'parameters_json_schema': {
+                        'properties': {'param1': {'type': 'string'}, 'param2': {'default': 0, 'type': 'integer'}},
+                        'required': ['param1'],
+                        'type': 'object',
+                    },
+                }
+            )
 
     async def test_get_tools_with_empty_server(self, run_context: RunContext[None]):
         """Test getting tools from an empty FastMCP server."""

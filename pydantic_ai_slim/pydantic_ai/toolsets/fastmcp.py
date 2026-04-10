@@ -72,7 +72,10 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
     """The behavior to take when a tool error occurs."""
 
     max_retries: int | None
-    """The maximum number of retries to attempt if a tool call fails."""
+    """The maximum number of retries to attempt if a tool call fails.
+
+    If `None`, inherits the agent's default retry count at runtime.
+    """
 
     _id: str | None
 
@@ -129,10 +132,12 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         return None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        max_retries = self.max_retries if self.max_retries is not None else ctx.max_retries
         async with self:
             return {
-                mcp_tool.name: self.tool_for_tool_def(
-                    ToolDefinition(
+                mcp_tool.name: ToolsetTool[AgentDepsT](
+                    toolset=self,
+                    tool_def=ToolDefinition(
                         name=mcp_tool.name,
                         description=mcp_tool.description,
                         parameters_json_schema=mcp_tool.inputSchema,
@@ -141,7 +146,9 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
                             'annotations': mcp_tool.annotations.model_dump() if mcp_tool.annotations else None,
                             'output_schema': mcp_tool.outputSchema or None,
                         },
-                    )
+                    ),
+                    max_retries=max_retries,
+                    args_validator=TOOL_SCHEMA_VALIDATOR,
                 )
                 for mcp_tool in await self.client.list_tools()
             }
@@ -169,7 +176,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         return ToolsetTool[AgentDepsT](
             tool_def=tool_def,
             toolset=self,
-            max_retries=self.max_retries,
+            max_retries=self.max_retries if self.max_retries is not None else 1,
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )
 
