@@ -1609,8 +1609,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validated_spec, template_context = _validate_spec(spec, self._deps_type)
 
         capabilities = list(_capabilities_from_spec(validated_spec, custom_capability_types, template_context))
-        if capabilities:
-            _inject_auto_capabilities(capabilities)
         combined = CombinedCapability(capabilities) if capabilities else None
 
         # Warn for unsupported fields with non-default values
@@ -1729,9 +1727,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             model_settings_token = None
 
-        # Set capability from spec, replacing the agent's existing root capability
+        # Set capability from spec, replacing the agent's existing root capability.
+        # Auto-inject infrastructure capabilities since the override replaces
+        # (not merges with) the agent's root capability.
         if resolved is not None and resolved.capability is not None:
-            cap_token = self._override_root_capability.set(_utils.Some(resolved.capability))
+            override_caps = list(resolved.capability.capabilities)
+            _inject_auto_capabilities(override_caps)
+            override_capability = CombinedCapability(override_caps)
+            cap_token = self._override_root_capability.set(_utils.Some(override_capability))
         else:
             cap_token = None
 
