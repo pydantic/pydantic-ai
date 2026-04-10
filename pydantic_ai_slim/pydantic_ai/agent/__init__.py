@@ -77,7 +77,6 @@ from ..toolsets._dynamic import (
     DynamicToolset,
     ToolsetFunc,
 )
-from ..toolsets._tool_search import ToolSearchToolset
 from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
@@ -402,6 +401,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             capabilities.append(HistoryProcessorCap(history_processor))
         for builtin_tool in builtin_tools:
             capabilities.append(BuiltinToolCap(builtin_tool))
+
+        # Auto-inject _ToolSearch if not already present. Always injected
+        # because deferred tools can be dynamic (from get_tools at runtime).
+        # Prepended for natural outermost-tier positioning via index tiebreak.
+        from ..capabilities._tool_search import ToolSearch
+
+        if not any(isinstance(leaf, ToolSearch) for leaf in _collect_capability_leaves(capabilities)):
+            capabilities.insert(0, ToolSearch())
 
         self._root_capability = CombinedCapability(capabilities)
 
@@ -2386,14 +2393,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if self._prepare_tools:
             toolset = PreparedToolset(toolset, self._prepare_tools)
 
+        # Capability wrapper toolsets (including _ToolSearch and CodeMode) are
+        # applied here via get_wrapper_toolset. _ToolSearch is auto-injected
+        # into capabilities, replacing the previous hardcoded ToolSearchToolset wrap.
         if run_capability is not None:
             wrapper = run_capability.get_wrapper_toolset(toolset)
             if wrapper is not None:
                 toolset = wrapper
-
-        # Always wraps; short-circuits when no deferred tools.
-        # Wraps outside PreparedToolset and capability wrappers so search_tools is always available.
-        toolset = ToolSearchToolset(wrapped=toolset)
 
         output_toolset = output_toolset if _utils.is_set(output_toolset) else self._output_toolset
         if output_toolset is not None:
@@ -2614,6 +2620,18 @@ _UNSUPPORTED_SPEC_FIELDS: tuple[str, ...] = (
     'deps_schema',
 )
 """AgentSpec fields that are not supported at run/override time."""
+
+
+def _collect_capability_leaves(
+    capabilities: Sequence[AbstractCapability[Any]],
+) -> list[AbstractCapability[Any]]:
+    """Collect all leaf capabilities from a flat list, expanding CombinedCapability nodes."""
+    from ..capabilities._ordering import collect_leaves
+
+    leaves: list[AbstractCapability[Any]] = []
+    for cap in capabilities:
+        leaves.extend(collect_leaves(cap))
+    return leaves
 
 
 def _validate_spec(

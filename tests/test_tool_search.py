@@ -608,8 +608,11 @@ async def test_tool_search_toolset_no_deferred_tools_returns_all():
     assert tool_names == snapshot(['get_weather', 'get_time'])
 
 
-async def test_agent_always_wraps_in_tool_search_toolset():
-    """Test that agent always wraps toolset in ToolSearchToolset, with and without deferred tools."""
+async def test_agent_auto_injects_tool_search_capability():
+    """Test that agent auto-injects ToolSearch capability, with and without deferred tools."""
+    from pydantic_ai.capabilities._ordering import collect_leaves
+    from pydantic_ai.capabilities._tool_search import ToolSearch
+
     agent_no_deferred = Agent('test')
 
     @agent_no_deferred.tool_plain
@@ -617,7 +620,8 @@ async def test_agent_always_wraps_in_tool_search_toolset():
         """Get the current weather for a city."""
         return f'Weather in {city}'
 
-    assert isinstance(agent_no_deferred._get_toolset(), ToolSearchToolset)  # pyright: ignore[reportPrivateUsage]
+    leaves = collect_leaves(agent_no_deferred._root_capability)  # pyright: ignore[reportPrivateUsage]
+    assert any(isinstance(leaf, ToolSearch) for leaf in leaves)
 
     agent_with_deferred = Agent('test')
 
@@ -631,7 +635,8 @@ async def test_agent_always_wraps_in_tool_search_toolset():
         """Calculate mortgage payment."""
         return 'Calculated'
 
-    assert isinstance(agent_with_deferred._get_toolset(), ToolSearchToolset)  # pyright: ignore[reportPrivateUsage]
+    leaves = collect_leaves(agent_with_deferred._root_capability)  # pyright: ignore[reportPrivateUsage]
+    assert any(isinstance(leaf, ToolSearch) for leaf in leaves)
 
 
 async def test_tool_manager_with_tool_search_toolset():
