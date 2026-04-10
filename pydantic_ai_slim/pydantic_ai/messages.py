@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import base64
+import functools
 import hashlib
 import mimetypes
 import os
@@ -1682,7 +1683,7 @@ class BaseToolCallPart:
         """Return `True` if the tool call has content."""
         return self.args not in ('', {}, None)
 
-    @property
+    @functools.cached_property
     def args_incomplete(self) -> bool:
         """Whether the tool call arguments are incomplete (truncated JSON from cancellation)."""
         if isinstance(self.args, dict):

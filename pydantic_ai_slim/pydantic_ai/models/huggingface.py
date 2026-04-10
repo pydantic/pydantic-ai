@@ -502,7 +502,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
             pass
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        with _map_api_errors(self._model_name):
+        with _map_api_errors(self._model_name), self._stream_cancel_guard():
             if self._provider_timestamp is not None:  # pragma: no branch
                 self.provider_details = {'timestamp': self._provider_timestamp}
             async for chunk in self._response:
