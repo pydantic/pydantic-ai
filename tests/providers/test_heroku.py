@@ -37,7 +37,7 @@ def test_heroku_provider_need_api_key(env: TestEnv) -> None:
         UserError,
         match=re.escape(
             'Set the `HEROKU_INFERENCE_KEY` environment variable or pass it via `HerokuProvider(api_key=...)`'
-            'to use the Heroku provider.'
+            ' to use the Heroku provider.'
         ),
     ):
         HerokuProvider()

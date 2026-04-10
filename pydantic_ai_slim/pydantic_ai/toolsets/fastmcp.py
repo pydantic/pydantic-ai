@@ -77,7 +77,22 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
     If `None`, inherits the agent's default retry count at runtime.
     """
 
+    include_instructions: bool
+    """Whether to include the server's instructions in the agent's instructions.
+
+    Defaults to `False` for backward compatibility.
+    """
+
+    include_return_schema: bool | None
+    """Whether to include return schemas in tool definitions sent to the model.
+
+    When `None` (default), defaults to `False` unless the
+    [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
+    """
+
     _id: str | None
+
+    _instructions: str | None
 
     def __init__(
         self,
@@ -93,6 +108,8 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         *,
         max_retries: int | None = None,
         tool_error_behavior: Literal['model_retry', 'error'] = 'model_retry',
+        include_instructions: bool = False,
+        include_return_schema: bool | None = None,
         id: str | None = None,
     ) -> None:
         if isinstance(client, Client):
@@ -103,6 +120,8 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         self._id = id
         self.max_retries = max_retries
         self.tool_error_behavior = tool_error_behavior
+        self.include_instructions = include_instructions
+        self.include_return_schema = include_return_schema
 
         self._enter_lock: Lock = Lock()
         self._running_count: int = 0
@@ -112,11 +131,23 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
     def id(self) -> str | None:
         return self._id
 
+    @property
+    def instructions(self) -> str | None:
+        """Access the instructions sent by the FastMCP server during initialization."""
+        if not hasattr(self, '_instructions'):
+            raise AttributeError(
+                f'The `{self.__class__.__name__}.instructions` is only available after initialization.'
+            )
+        return self._instructions
+
     async def __aenter__(self) -> Self:
         async with self._enter_lock:
             if self._running_count == 0:
                 self._exit_stack = AsyncExitStack()
                 await self._exit_stack.enter_async_context(self.client)
+                init_result = self.client.initialize_result
+                assert init_result is not None, 'FastMCP Client initialization failed: initialize_result is None'
+                self._instructions = init_result.instructions
 
             self._running_count += 1
 
@@ -128,8 +159,35 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
             if self._running_count == 0 and self._exit_stack:
                 await self._exit_stack.aclose()
                 self._exit_stack = None
+                self._instructions = None
 
         return None
+
+    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> messages.InstructionPart | None:
+        """Return the FastMCP server's instructions for how to use its tools.
+
+        If [`include_instructions`][pydantic_ai.toolsets.fastmcp.FastMCPToolset.include_instructions] is `True`, returns
+        the [`instructions`][pydantic_ai.toolsets.fastmcp.FastMCPToolset.instructions] sent by the FastMCP server during
+        initialization. Otherwise, returns `None`.
+
+        Instructions from external servers are marked as dynamic since they may change between connections.
+
+        Args:
+            ctx: The run context for this agent run.
+
+        Returns:
+            An `InstructionPart` with the server's instructions if `include_instructions` is enabled, otherwise `None`.
+        """
+        if not self.include_instructions:
+            return None
+        try:
+            instructions = self.instructions
+        except AttributeError:
+            # Server not yet initialized — return None rather than propagating.
+            return None
+        if instructions is None:
+            return None
+        return messages.InstructionPart(content=instructions, dynamic=True)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         max_retries = self.max_retries if self.max_retries is not None else ctx.max_retries
@@ -146,6 +204,8 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
                             'annotations': mcp_tool.annotations.model_dump() if mcp_tool.annotations else None,
                             'output_schema': mcp_tool.outputSchema or None,
                         },
+                        return_schema=mcp_tool.outputSchema or None,
+                        include_return_schema=self.include_return_schema,
                     ),
                     max_retries=max_retries,
                     args_validator=TOOL_SCHEMA_VALIDATOR,

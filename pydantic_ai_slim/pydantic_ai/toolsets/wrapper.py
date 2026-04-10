@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
 from typing_extensions import Self
 
 from .._run_context import AgentDepsT, RunContext
+from ..messages import InstructionPart
 from .abstract import AbstractToolset, ToolsetTool
 
 
@@ -27,12 +28,34 @@ class WrapperToolset(AbstractToolset[AgentDepsT]):
     def label(self) -> str:
         return f'{self.__class__.__name__}({self.wrapped.label})'
 
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        new_wrapped = await self.wrapped.for_run(ctx)
+        if new_wrapped is self.wrapped:
+            return self
+        return replace(self, wrapped=new_wrapped)
+
+    async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        new_wrapped = await self.wrapped.for_run_step(ctx)
+        if new_wrapped is self.wrapped:
+            return self
+        return replace(self, wrapped=new_wrapped)
+
     async def __aenter__(self) -> Self:
         await self.wrapped.__aenter__()
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
         return await self.wrapped.__aexit__(*args)
+
+    async def get_instructions(
+        self, ctx: RunContext[AgentDepsT]
+    ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
+        """Delegate instructions to the wrapped toolset.
+
+        This explicit delegation ensures type safety and proper propagation of the
+        instructions from wrapped toolsets to the agent's system prompt.
+        """
+        return await self.wrapped.get_instructions(ctx)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         return await self.wrapped.get_tools(ctx)
