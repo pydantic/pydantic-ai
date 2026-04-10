@@ -1057,6 +1057,23 @@ class StreamedResponse(ABC):
             'This provider must override `cancel()` to support streaming cancellation.'
         )
 
+    @contextmanager
+    def _stream_cancel_guard(self):
+        """Suppress transport errors caused by stream cancellation.
+
+        When ``cancel()`` closes the underlying HTTP/gRPC connection while
+        ``_get_event_iterator()`` is awaiting the next chunk, the SDK raises
+        a transport-level error (``httpx.StreamClosed``, ``urllib3.ProtocolError``,
+        etc.). When ``self.cancelled`` is ``True`` we know the error was caused
+        by our own cancellation, so we suppress it and let the async generator
+        exit cleanly via ``StopAsyncIteration``.
+        """
+        try:
+            yield
+        except Exception:
+            if not self.cancelled:
+                raise
+
     @abstractmethod
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Return an async iterator of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.

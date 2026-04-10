@@ -645,14 +645,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         stream_error: BaseException | None = None
         try:
             yield agent_stream_holder[0]
-            # TODO(#1524): Early break from `StreamedRunResult.stream_text()` can leave a pending
-            # `anext()` from `group_by_temporal` (debounce path) while `run_stream` exits and
-            # drains here, causing concurrent `anext()` on the same async generator:
-            # `RuntimeError: anext(): asynchronous generator is already running`.
-            # We should enforce single-consumer iteration coordination for this stream, including
-            # this teardown drain path.
-            # Added a lock for this already in the stream and moved consumers to use this path
-            # Ensure stream is fully consumed for proper usage counting
+            # Race condition: early break from stream_text() could leave a pending
+            # anext() task from group_by_temporal while this drain runs, causing
+            # concurrent anext() on the same async generator. Mitigated by
+            # AgentStream._anext_lock which serializes all anext() calls through
+            # _events_iter(), including this drain path.
+            # Ensure stream is fully consumed for proper usage counting.
             if not agent_stream_holder[0].cancelled:
                 await agent_stream_holder[0].drain()
         except BaseException as exc:

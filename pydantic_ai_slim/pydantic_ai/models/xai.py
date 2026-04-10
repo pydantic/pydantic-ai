@@ -768,9 +768,10 @@ class XaiStreamedResponse(StreamedResponse):
     async def cancel(self) -> None:
         if self.cancelled:
             return
-        # xAI SDK uses gRPC; the stream's cancel() is synchronous
-        self._stream.cancel()  # type: ignore[union-attr]
+        # Set first so the flag is visible even if cancel raises.
         self._cancelled = True
+        # xAI SDK uses gRPC; the stream's cancel() is synchronous.
+        self._stream.cancel()  # type: ignore[union-attr]
 
     @property
     def system(self) -> str:

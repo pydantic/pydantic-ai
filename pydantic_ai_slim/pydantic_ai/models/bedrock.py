@@ -1175,15 +1175,13 @@ class BedrockStreamedResponse(StreamedResponse):
     async def cancel(self) -> None:
         if self.cancelled:
             return
-        # Bedrock's EventStream.close() is synchronous
-        self._event_stream.close()
+        # Set first so the flag is visible even if close() raises.
         self._cancelled = True
+        # Bedrock's EventStream.close() is synchronous.
+        self._event_stream.close()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
-        # TODO(#1524): If cancel() closes the EventStream during an in-flight read,
-        # urllib3.exceptions.ProtocolError will be raised here.
-        # Add: except urllib3.exceptions.ProtocolError: if self.cancelled: return; raise
-        with _map_api_errors(self._model_name):
+        with _map_api_errors(self._model_name), self._stream_cancel_guard():
             if self._provider_response_id is not None:
                 self.provider_response_id = self._provider_response_id
 

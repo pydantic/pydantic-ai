@@ -666,16 +666,14 @@ class MistralStreamedResponse(StreamedResponse):
     async def cancel(self) -> None:
         if self.cancelled:
             return
+        # Set first so the flag is visible even if close() raises.
+        self._cancelled = True
         # Close the underlying httpx response directly, avoiding the fragile
         # __aexit__(None, None, None) pattern on EventStreamAsync.
         await self._stream.response.aclose()
-        self._cancelled = True
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        # TODO(#1524): If cancel() closes the underlying httpx response during an in-flight read,
-        # httpx.StreamClosed (subclass of httpx.StreamError) will be raised here.
-        # Add: except httpx.StreamClosed: if self.cancelled: return; raise
-        with _map_api_errors(self._model_name):
+        with _map_api_errors(self._model_name), self._stream_cancel_guard():
             if self._provider_timestamp is not None:  # pragma: no branch
                 self.provider_details = {'timestamp': self._provider_timestamp}
             chunk: MistralCompletionEvent

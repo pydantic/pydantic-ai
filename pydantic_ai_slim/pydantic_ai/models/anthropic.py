@@ -1535,9 +1535,9 @@ class AnthropicStreamedResponse(StreamedResponse):
     async def cancel(self) -> None:
         if self.cancelled:
             return
-
-        await self._stream.close()
+        # Set first so the flag is visible even if close() raises.
         self._cancelled = True
+        await self._stream.close()
 
     @property
     def model_name(self) -> AnthropicModelName:
