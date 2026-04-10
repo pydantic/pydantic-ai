@@ -20,7 +20,9 @@ from pydantic_ai import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     CachePoint,
+    CompactionPart,
     DocumentUrl,
+    FilePart,
     FinishReason,
     ImageUrl,
     ModelMessage,
@@ -899,6 +901,9 @@ class BedrockConverseModel(Model):
                                 if item.provider_details and 'status' in item.provider_details:
                                     tool_result['status'] = item.provider_details['status']
                                 content.append({'toolResult': tool_result})
+                    elif isinstance(item, CompactionPart | FilePart):
+                        # Compaction and file parts are not sent back to models that don't support them.
+                        pass  # pragma: no cover
                     else:
                         assert isinstance(item, ToolCallPart)
                         content.append(self._map_tool_call(item))
