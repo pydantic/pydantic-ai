@@ -862,7 +862,7 @@ print(counter.count)
 
 ### Composition and middleware semantics
 
-When multiple capabilities are passed to an agent, they are composed into a single [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] that follows **middleware semantics** — the same pattern used by web frameworks like Django, Express, and Ring:
+When multiple capabilities are passed to an agent, they are composed into a single [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] that follows **middleware semantics** — the same pattern used by web frameworks like Django and Starlette:
 
 * **Configuration** is merged: instructions concatenate, model settings merge additively (later capabilities override earlier ones), toolsets combine, builtin tools collect.
 * **`before_*`** hooks fire in capability order (outermost to innermost): `cap1 → cap2 → cap3`.
