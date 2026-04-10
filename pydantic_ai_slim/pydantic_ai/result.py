@@ -234,7 +234,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     text_processor,
                     text=text,
                     run_context=run_ctx,
-                    capability=self._tool_manager.root_capability,
+                    capability=self._run_ctx.tool_manager.root_capability if self._run_ctx.tool_manager else None,
                     output_mode=self._output_schema.mode,
                     allow_partial=allow_partial,
                     wrap_validation_errors=False,
@@ -256,7 +256,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     async def _validate_image_output(self, image: _messages.BinaryImage, *, allow_partial: bool) -> OutputDataT:
         """Run process hooks and output validators for image output."""
         run_ctx = replace(self._run_ctx, partial_output=allow_partial)
-        capability = self._tool_manager.root_capability
+        capability = self._run_ctx.tool_manager.root_capability if self._run_ctx.tool_manager else None
         if capability is not None:
             result_data: OutputDataT = cast(
                 OutputDataT,
