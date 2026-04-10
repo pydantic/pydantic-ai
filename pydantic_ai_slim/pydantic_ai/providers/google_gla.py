@@ -44,7 +44,7 @@ class GoogleGLAProvider(Provider[httpx.AsyncClient]):
         if not api_key:
             raise UserError(
                 'Set the `GEMINI_API_KEY` environment variable or pass it via `GoogleGLAProvider(api_key=...)`'
-                'to use the Google GLA provider.'
+                ' to use the Google GLA provider.'
             )
 
         self._api_key = api_key

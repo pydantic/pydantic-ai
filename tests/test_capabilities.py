@@ -20,6 +20,7 @@ from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
     BuiltinTool,
+    CapabilityOrdering,
     ImageGeneration,
     IncludeToolReturnSchemas,
     PrefixTools,
@@ -2206,7 +2207,7 @@ class _ReplacingCapability(AbstractCapability[Any]):
     replaced: bool = field(default=False, init=False)
 
     async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
-        from pydantic_ai._agent_graph import ModelRequestNode
+        from pydantic_ai import ModelRequestNode
 
         if isinstance(node, ModelRequestNode) and not self.replaced:
             self.replaced = True
@@ -5062,7 +5063,7 @@ class TestGetWrapperToolsetHook:
         )
 
     async def test_wrapper_chaining_order(self):
-        """Multiple capabilities' wrappers compose by nesting: first wraps innermost."""
+        """Multiple capabilities' wrappers compose by nesting: first wraps outermost."""
         from pydantic_ai.toolsets.prefixed import PrefixedToolset
 
         @dataclass
@@ -5086,8 +5087,8 @@ class TestGetWrapperToolsetHook:
             return 'r'  # pragma: no cover
 
         result = await agent.run('hello')
-        # First cap wraps innermost (a_tool), then second wraps that (b_a_tool)
-        assert result.output == "tools: ['b_a_tool']"
+        # First cap wraps outermost (matching wrap_* hooks): a_b_tool
+        assert result.output == "tools: ['a_b_tool']"
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
@@ -5096,7 +5097,7 @@ class TestGetWrapperToolsetHook:
                     run_id=IsStr(),
                 ),
                 ModelResponse(
-                    parts=[TextPart(content="tools: ['b_a_tool']")],
+                    parts=[TextPart(content="tools: ['a_b_tool']")],
                     usage=RequestUsage(input_tokens=51, output_tokens=2),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
@@ -8437,3 +8438,374 @@ async def test_thread_executor_static_method() -> None:
         assert tool_threads[0].startswith('static-pool')
     finally:
         executor.shutdown(wait=True)
+
+
+# --- Capability ordering tests ---
+
+
+@dataclass
+class OutermostCap(AbstractCapability[Any]):
+    @classmethod
+    def get_ordering(cls) -> CapabilityOrdering:
+        return CapabilityOrdering(position='outermost')
+
+
+@dataclass
+class InnermostCap(AbstractCapability[Any]):
+    @classmethod
+    def get_ordering(cls) -> CapabilityOrdering:
+        return CapabilityOrdering(position='innermost')
+
+
+@dataclass
+class PlainCapA(AbstractCapability[Any]):
+    pass
+
+
+@dataclass
+class PlainCapB(AbstractCapability[Any]):
+    pass
+
+
+@dataclass
+class WrapsACap(AbstractCapability[Any]):
+    """Must wrap around PlainCapA."""
+
+    @classmethod
+    def get_ordering(cls) -> CapabilityOrdering:
+        return CapabilityOrdering(wraps=[PlainCapA])
+
+
+@dataclass
+class RequiresOutermostCap(AbstractCapability[Any]):
+    @classmethod
+    def get_ordering(cls) -> CapabilityOrdering:
+        return CapabilityOrdering(requires=[OutermostCap])
+
+
+def _cap_names(combined: CombinedCapability) -> list[str]:
+    return [type(c).__name__ for c in combined.capabilities]
+
+
+def test_ordering_outermost():
+    """Capability declaring 'outermost' ends up at index 0."""
+    combined = CombinedCapability([PlainCapA(), OutermostCap(), PlainCapB()])
+    assert _cap_names(combined) == ['OutermostCap', 'PlainCapA', 'PlainCapB']
+
+
+def test_ordering_innermost():
+    """Capability declaring 'innermost' ends up last."""
+    combined = CombinedCapability([InnermostCap(), PlainCapA(), PlainCapB()])
+    assert _cap_names(combined) == ['PlainCapA', 'PlainCapB', 'InnermostCap']
+
+
+def test_ordering_both_outermost_and_innermost():
+    """Both outermost and innermost present."""
+    combined = CombinedCapability([PlainCapA(), InnermostCap(), OutermostCap()])
+    assert combined.capabilities[0].__class__ is OutermostCap
+    assert combined.capabilities[-1].__class__ is InnermostCap
+
+
+def test_ordering_multiple_outermost_tier():
+    """Multiple outermost capabilities form a tier; original order breaks ties."""
+
+    @dataclass
+    class OutermostCap2(AbstractCapability[Any]):
+        @classmethod
+        def get_ordering(cls) -> CapabilityOrdering:
+            return CapabilityOrdering(position='outermost')
+
+    combined = CombinedCapability([PlainCapA(), OutermostCap2(), OutermostCap()])
+    # Both outermost caps before PlainCapA; original order (OutermostCap2 before OutermostCap) preserved
+    assert _cap_names(combined) == ['OutermostCap2', 'OutermostCap', 'PlainCapA']
+
+
+def test_ordering_multiple_innermost_tier():
+    """Multiple innermost capabilities form a tier; original order breaks ties."""
+
+    @dataclass
+    class InnermostCap2(AbstractCapability[Any]):
+        @classmethod
+        def get_ordering(cls) -> CapabilityOrdering:
+            return CapabilityOrdering(position='innermost')
+
+    combined = CombinedCapability([InnermostCap(), InnermostCap2(), PlainCapA()])
+    # PlainCapA first, then both innermost in original order
+    assert _cap_names(combined) == ['PlainCapA', 'InnermostCap', 'InnermostCap2']
+
+
+def test_ordering_outermost_tier_with_wraps():
+    """wraps/wrapped_by refines order within the outermost tier."""
+
+    @dataclass
+    class OuterA(AbstractCapability[Any]):
+        @classmethod
+        def get_ordering(cls) -> CapabilityOrdering:
+            return CapabilityOrdering(position='outermost')
+
+    @dataclass
+    class OuterB(AbstractCapability[Any]):
+        @classmethod
+        def get_ordering(cls) -> CapabilityOrdering:
+            return CapabilityOrdering(position='outermost', wraps=[OuterA])
+
+    # OuterB listed after OuterA, but wraps=[OuterA] overrides tiebreaker
+    combined = CombinedCapability([OuterA(), PlainCapA(), OuterB()])
+    assert _cap_names(combined) == ['OuterB', 'OuterA', 'PlainCapA']
+
+
+def test_ordering_wraps():
+    """Explicit 'wraps' edge is respected."""
+    combined = CombinedCapability([PlainCapA(), WrapsACap()])
+    assert _cap_names(combined) == ['WrapsACap', 'PlainCapA']
+
+
+def test_ordering_wrapped_by():
+    """Explicit 'wrapped_by' edge is respected."""
+
+    @dataclass
+    class WrappedByACap(AbstractCapability[Any]):
+        @classmethod
+        def get_ordering(cls) -> CapabilityOrdering:
+            return CapabilityOrdering(wrapped_by=[PlainCapA])
+
+    combined = CombinedCapability([WrappedByACap(), PlainCapA()])
+    assert _cap_names(combined) == ['PlainCapA', 'WrappedByACap']
+
+
+def test_ordering_requires_present():
+    """No error when required capability is present."""
+    combined = CombinedCapability([RequiresOutermostCap(), OutermostCap()])
+    assert len(combined.capabilities) == 2
+
+
+def test_ordering_requires_missing():
+    with pytest.raises(UserError, match='`RequiresOutermostCap` requires `OutermostCap`'):
+        CombinedCapability([RequiresOutermostCap(), PlainCapA()])
+
+
+def test_ordering_preserves_user_order():
+    """Capabilities without constraints keep their relative order."""
+    a, b = PlainCapB(), PlainCapA()
+    combined = CombinedCapability([a, b])
+    assert list(combined.capabilities) == [a, b]
+
+
+def test_ordering_nested_combined():
+    """Ordering from leaves inside a nested CombinedCapability is respected.
+
+    When a CombinedCapability is nested inside another, its leaves' ordering
+    constraints are merged and applied to the outer sort. Leaves without
+    ordering constraints are skipped during the merge.
+    """
+    # OutermostCap declares position='outermost'; PlainCapB has no ordering.
+    # The merged effective ordering for 'inner' should be position='outermost',
+    # placing it before PlainCapA despite being listed second.
+    inner = CombinedCapability([PlainCapB(), OutermostCap()])
+    combined = CombinedCapability([PlainCapA(), inner])
+    assert combined.capabilities[0] is inner
+
+
+def test_ordering_nested_combined_no_constraints():
+    """A nested CombinedCapability with no ordering leaves is treated as unconstrained."""
+    inner = CombinedCapability([PlainCapA(), PlainCapB()])
+    combined = CombinedCapability([inner, OutermostCap()])
+    # OutermostCap first (has ordering), inner second (no constraints → unconstrained)
+    assert combined.capabilities[0].__class__ is OutermostCap
+    assert combined.capabilities[1] is inner
+
+
+def test_ordering_nested_combined_wraps_without_position():
+    """A nested CombinedCapability with wraps constraints (but no position) merges correctly."""
+    inner = CombinedCapability([PlainCapB(), WrapsACap()])
+    # WrapsACap has wraps=[PlainCapA] but no position.
+    # The nested group inherits that constraint, so it sorts before PlainCapA.
+    combined = CombinedCapability([PlainCapA(), inner])
+    assert combined.capabilities[0] is inner
+    assert combined.capabilities[1].__class__ is PlainCapA
+
+
+def test_ordering_single_capability():
+    """Single capability in CombinedCapability is unchanged."""
+    cap = OutermostCap()
+    combined = CombinedCapability([cap])
+    assert list(combined.capabilities) == [cap]
+
+
+def test_ordering_no_constraints_noop():
+    """When no capability declares ordering, list is unchanged."""
+    a, b = PlainCapA(), PlainCapB()
+    combined = CombinedCapability([a, b])
+    assert list(combined.capabilities) == [a, b]
+
+
+def test_ordering_cycle_detection():
+    @dataclass
+    class CycleA(AbstractCapability[Any]):
+        @classmethod
+        def get_ordering(cls) -> CapabilityOrdering:
+            return CapabilityOrdering(wraps=[CycleB])
+
+    @dataclass
+    class CycleB(AbstractCapability[Any]):
+        @classmethod
+        def get_ordering(cls) -> CapabilityOrdering:
+            return CapabilityOrdering(wraps=[CycleA])
+
+    with pytest.raises(UserError, match='Circular ordering constraints'):
+        CombinedCapability([CycleA(), CycleB()])
+
+
+def test_ordering_conflicting_positions_in_nested():
+    """Conflicting positions in a nested CombinedCapability raise UserError."""
+    inner = CombinedCapability([OutermostCap(), InnermostCap()])
+    with pytest.raises(UserError, match='Conflicting positions in nested CombinedCapability'):
+        CombinedCapability([inner, PlainCapA()])
+
+
+def test_ordering_wrapper_capability_recurses():
+    """Ordering constraints on capabilities inside a WrapperCapability are preserved."""
+    wrapped = WrapperCapability(wrapped=OutermostCap())
+    # The WrapperCapability wraps an OutermostCap; ordering sees through via apply()
+    # and picks up OutermostCap's position='outermost' constraint.
+    combined = CombinedCapability([PlainCapA(), wrapped])
+    assert combined.capabilities[0] is wrapped
+
+
+# --- Hook recovery tests (after_node_run End→node, ErrorMarker in next_node) ---
+
+
+async def test_after_node_run_end_to_node_override():
+    """after_node_run can convert an End result back to a node, continuing execution."""
+    from pydantic_ai import ModelRequestNode
+
+    call_count = 0
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[TextPart('first answer')])
+        return ModelResponse(parts=[TextPart('second answer')])
+
+    redirected = False
+
+    @dataclass
+    class RedirectOnFirstEnd(AbstractCapability[Any]):
+        """Redirects the first End back to a ModelRequestNode to force a second model call."""
+
+        _redirected: bool = field(default=False, init=False)
+
+        async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+            nonlocal redirected
+            if isinstance(result, End) and not self._redirected:
+                self._redirected = True
+                redirected = True
+                return ModelRequestNode(ModelRequest(parts=[UserPromptPart(content='try again')]))  # pyright: ignore[reportUnknownVariableType]
+            return result  # pyright: ignore[reportUnknownVariableType]
+
+    agent = Agent(FunctionModel(llm), capabilities=[RedirectOnFirstEnd()])
+    result = await agent.run('hello')
+
+    assert redirected
+    assert call_count == 2
+    assert result.output == 'second answer'
+
+
+async def test_next_node_raises_on_error_marker():
+    """Accessing next_node after a node error re-raises the original exception."""
+    call_count = 0
+
+    def failing_then_ok_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        raise ValueError('model failure')
+
+    agent = Agent(FunctionModel(failing_then_ok_model))
+    async with agent.iter('hello') as agent_run:
+        node = agent_run.next_node
+        while not isinstance(node, End):
+            try:
+                node = await agent_run.next(node)
+            except ValueError:
+                # After an unrecovered error, next_node should re-raise
+                with pytest.raises(ValueError, match='model failure'):
+                    _ = agent_run.next_node
+                break
+
+
+async def test_on_node_run_error_returns_end():
+    """on_node_run_error can recover from an exception by returning End, completing the run."""
+    from pydantic_ai.result import FinalResult
+
+    def always_fails(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ValueError('model exploded')
+
+    @dataclass
+    class RecoverWithEnd(AbstractCapability[Any]):
+        async def on_node_run_error(self, ctx: RunContext[Any], *, node: Any, error: Exception) -> Any:
+            return End(FinalResult('recovered output'))
+
+    agent = Agent(FunctionModel(always_fails), capabilities=[RecoverWithEnd()])
+    result = await agent.run('hello')
+    assert result.output == 'recovered output'
+
+
+async def test_on_node_run_error_returns_node():
+    """on_node_run_error can recover by returning a retry node, continuing execution."""
+    from pydantic_ai import ModelRequestNode
+
+    call_count = 0
+
+    def fails_then_succeeds(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise ValueError('transient failure')
+        return ModelResponse(parts=[TextPart('recovered')])
+
+    @dataclass
+    class RetryOnError(AbstractCapability[Any]):
+        async def on_node_run_error(self, ctx: RunContext[Any], *, node: Any, error: Exception) -> Any:
+            # Retry by returning a new ModelRequestNode with the same request
+            return ModelRequestNode(request=node.request)  # pyright: ignore[reportUnknownVariableType]
+
+    agent = Agent(FunctionModel(fails_then_succeeds), capabilities=[RetryOnError()])
+    result = await agent.run('hello')
+    assert call_count == 2
+    assert result.output == 'recovered'
+
+
+async def test_after_node_run_node_to_end():
+    """after_node_run can short-circuit a run by converting a continuation node to End."""
+    from pydantic_ai.result import FinalResult
+
+    model_call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal model_call_count
+        model_call_count += 1
+        # Always request a tool call, producing a CallToolsNode (not End)
+        return ModelResponse(parts=[ToolCallPart(tool_name='my_tool', args='{}')])
+
+    @dataclass
+    class ShortCircuitAfterModelRequest(AbstractCapability[Any]):
+        """Short-circuit after the first model request node by converting the continuation to End."""
+
+        async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+            from pydantic_ai import ModelRequestNode
+
+            # The ModelRequestNode produces a CallToolsNode (not End); convert it to End.
+            if isinstance(node, ModelRequestNode) and not isinstance(result, End):
+                return End(FinalResult('short-circuited'))
+            return result  # pyright: ignore[reportUnknownVariableType]
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[ShortCircuitAfterModelRequest()])
+
+    @agent.tool_plain
+    def my_tool() -> str:
+        return 'tool result'  # pragma: no cover
+
+    result = await agent.run('hello')
+    assert result.output == 'short-circuited'
+    assert model_call_count == 1

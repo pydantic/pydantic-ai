@@ -614,7 +614,13 @@ def _extract_span_reference(span: Any) -> SpanReference | None:
         ctx = get_span_context()
     except Exception:  # pragma: no cover
         return None
-    if ctx is not None and ctx.trace_id and ctx.span_id:
+    if (
+        ctx is not None
+        and isinstance(ctx.trace_id, int)
+        and isinstance(ctx.span_id, int)
+        and ctx.trace_id
+        and ctx.span_id
+    ):
         return SpanReference(
             trace_id=format(ctx.trace_id, '032x'),
             span_id=format(ctx.span_id, '016x'),

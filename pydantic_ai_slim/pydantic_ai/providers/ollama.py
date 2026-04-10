@@ -99,7 +99,7 @@ class OllamaProvider(Provider[AsyncOpenAI]):
             if not base_url:
                 raise UserError(
                     'Set the `OLLAMA_BASE_URL` environment variable or pass it via `OllamaProvider(base_url=...)`'
-                    'to use the Ollama provider.'
+                    ' to use the Ollama provider.'
                 )
 
             # This is a workaround for the OpenAI client requiring an API key, whilst locally served,

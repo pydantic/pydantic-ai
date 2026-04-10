@@ -377,7 +377,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                         progress_bar.update(task_id, advance=1)
                     return result
 
-            if (context := eval_span.context) is None:  # pragma: no cover
+            if (context := eval_span.context) is None:
                 trace_id = None
                 span_id = None
             else:
