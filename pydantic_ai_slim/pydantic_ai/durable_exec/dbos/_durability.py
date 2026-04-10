@@ -213,8 +213,7 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
 
         return toolset.visit_and_replace(swap)
 
-    @classmethod
-    def get_ordering(cls) -> CapabilityOrdering:
+    def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='innermost')
 
     @classmethod
