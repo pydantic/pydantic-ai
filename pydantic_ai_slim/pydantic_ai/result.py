@@ -651,7 +651,9 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
-    async def _marked_completed(self, message: _messages.ModelResponse | None = None) -> None:
+    async def _marked_completed(
+        self, message: _messages.ModelResponse | None = None, *, on_complete: bool = True
+    ) -> None:
         if self.is_complete:
             return
         self.is_complete = True
@@ -659,12 +661,15 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             if self._stream_response:  # pragma: no branch
                 message.run_id = self._stream_response.run_id
             self._all_messages.append(message)
-        if self._on_complete is not None:
+        if on_complete and self._on_complete is not None:
             await self._on_complete()
 
     async def cancel(self):
         if self._stream_response is not None:  # pragma: no branch
             await self._stream_response.cancel()
+            # Append the interrupted response to _all_messages so all_messages()
+            # includes it. Skip on_complete -- no tool processing for cancelled streams.
+            await self._marked_completed(self.response, on_complete=False)
 
     @property
     def cancelled(self) -> bool:

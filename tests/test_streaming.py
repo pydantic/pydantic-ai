@@ -3806,6 +3806,40 @@ async def test_run_stream_cancel():
     assert result.response.interrupted is True
 
 
+async def test_run_stream_cancel_all_messages_includes_interrupted_response():
+    """After cancelling a stream, all_messages() should include the interrupted ModelResponse."""
+    agent = Agent(TestModel())
+
+    async with agent.run_stream('Hello') as result:
+        # Consume one chunk to start the stream
+        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+            break
+        await result.cancel()
+
+    assert result.cancelled
+    assert result.response.interrupted is True
+    # The interrupted ModelResponse must appear in all_messages()
+    msgs = result.all_messages()
+    assert msgs == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success ')],
+                usage=RequestUsage(input_tokens=51, output_tokens=1),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+                interrupted=True,
+            ),
+        ]
+    )
+
+
 async def test_run_stream_cancel_after_complete():
     agent = Agent(TestModel())
 
