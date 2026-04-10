@@ -856,6 +856,26 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
 
 
 class StreamEventsResult(Generic[OutputDataT]):
+    """Result of [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events].
+
+    Wraps the underlying async generator to support explicit cancellation
+    via [`cancel()`][pydantic_ai.result.StreamEventsResult.cancel] and
+    deterministic cleanup via the async context manager protocol.
+
+    Usage:
+
+    ```python
+    async with agent.run_stream_events('Hello') as stream:
+        async for event in stream:
+            ...
+        # optional: await stream.cancel() to stop early
+    # cleanup is automatic on __aexit__
+    ```
+
+    Direct iteration (without `async with`) is deprecated and will be
+    removed in v2.
+    """
+
     def __init__(self, generator: AsyncGenerator[AgentStreamEvent | AgentRunResultEvent[Any], None]) -> None:
         self._generator = generator
         self._managed = False
