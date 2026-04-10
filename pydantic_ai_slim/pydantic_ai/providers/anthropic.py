@@ -85,7 +85,7 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             if not api_key:
                 raise UserError(
                     'Set the `ANTHROPIC_API_KEY` environment variable or pass it via `AnthropicProvider(api_key=...)`'
-                    'to use the Anthropic provider.'
+                    ' to use the Anthropic provider.'
                 )
             if http_client is not None:
                 self._client = AsyncAnthropic(api_key=api_key, base_url=base_url, http_client=http_client)

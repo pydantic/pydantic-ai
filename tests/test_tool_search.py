@@ -20,6 +20,8 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, FunctionToolset, ToolCallPart
 from pydantic_ai._run_context import RunContext
+from pydantic_ai.capabilities._ordering import collect_leaves
+from pydantic_ai.capabilities._tool_search import ToolSearch
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolReturn, ToolReturnPart
 from pydantic_ai.models.test import TestModel
@@ -608,8 +610,8 @@ async def test_tool_search_toolset_no_deferred_tools_returns_all():
     assert tool_names == snapshot(['get_weather', 'get_time'])
 
 
-async def test_agent_always_wraps_in_tool_search_toolset():
-    """Test that agent always wraps toolset in ToolSearchToolset, with and without deferred tools."""
+async def test_agent_auto_injects_tool_search_capability():
+    """Test that agent auto-injects ToolSearch capability, with and without deferred tools."""
     agent_no_deferred = Agent('test')
 
     @agent_no_deferred.tool_plain
@@ -617,7 +619,8 @@ async def test_agent_always_wraps_in_tool_search_toolset():
         """Get the current weather for a city."""
         return f'Weather in {city}'
 
-    assert isinstance(agent_no_deferred._get_toolset(), ToolSearchToolset)  # pyright: ignore[reportPrivateUsage]
+    leaves = collect_leaves(agent_no_deferred.root_capability)
+    assert any(isinstance(leaf, ToolSearch) for leaf in leaves)
 
     agent_with_deferred = Agent('test')
 
@@ -631,7 +634,30 @@ async def test_agent_always_wraps_in_tool_search_toolset():
         """Calculate mortgage payment."""
         return 'Calculated'
 
-    assert isinstance(agent_with_deferred._get_toolset(), ToolSearchToolset)  # pyright: ignore[reportPrivateUsage]
+    leaves = collect_leaves(agent_with_deferred.root_capability)
+    assert any(isinstance(leaf, ToolSearch) for leaf in leaves)
+
+
+async def test_explicit_tool_search_not_duplicated():
+    """Passing ToolSearch explicitly doesn't result in a second auto-injected one."""
+    agent = Agent('test', capabilities=[ToolSearch()])
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:  # pragma: no cover
+        """Get the current weather for a city."""
+        return f'Weather in {city}'
+
+    leaves = collect_leaves(agent.root_capability)
+    tool_search_count = sum(1 for leaf in leaves if isinstance(leaf, ToolSearch))
+    assert tool_search_count == 1
+
+
+def test_tool_search_excluded_from_capability_registry():
+    """ToolSearch is internal and should not appear in the serializable capability registry."""
+    from pydantic_ai.capabilities import CAPABILITY_TYPES
+
+    assert ToolSearch.get_serialization_name() is None
+    assert not any(cls is ToolSearch for cls in CAPABILITY_TYPES.values())
 
 
 async def test_tool_manager_with_tool_search_toolset():
