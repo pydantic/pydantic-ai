@@ -864,7 +864,7 @@ class StreamEventsResult(Generic[OutputDataT]):
 
     Usage:
 
-    ```python
+    ```python {lint="skip"}
     async with agent.run_stream_events('Hello') as stream:
         async for event in stream:
             ...
