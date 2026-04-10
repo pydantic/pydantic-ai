@@ -870,8 +870,10 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
     _max_retries_overrides: dict[str, int]
     """Per-tool max_retries overrides from `ToolOutput(max_retries=N)`."""
     output_validators: list[OutputValidator[AgentDepsT, Any]]
-    _output_retry: int
+    _output_retry_count: int
+    """Current global output retry count, snapshotted from `ctx.retry` in `for_run_step`."""
     _output_max_retries: int
+    """Global output max retries, snapshotted from `ctx.max_retries` in `for_run_step`."""
 
     @classmethod
     def build(
@@ -963,7 +965,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         self.max_retries = max_retries
         self._max_retries_overrides = max_retries_overrides or {}
         self.output_validators = output_validators or []
-        self._output_retry = 0
+        self._output_retry_count = 0
         self._output_max_retries = 0
 
     @property
@@ -979,7 +981,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         # whose param names differ from field names (e.g. field `_tool_defs` vs param `tool_defs`)
         # makes replace() pass unrecognized kwargs to __init__.
         new = copy(self)
-        new._output_retry = ctx.retry
+        new._output_retry_count = ctx.retry
         new._output_max_retries = ctx.max_retries
         return new
 
@@ -1000,7 +1002,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
     ) -> Any:
         output = await self.processors[name].call(tool_args, ctx, wrap_validation_errors=False)
         if self.output_validators:
-            validator_ctx = replace(ctx, retry=self._output_retry, max_retries=self._output_max_retries)
+            validator_ctx = replace(ctx, retry=self._output_retry_count, max_retries=self._output_max_retries)
             for validator in self.output_validators:
                 output = await validator.validate(output, validator_ctx, wrap_validation_errors=False)
         return output
