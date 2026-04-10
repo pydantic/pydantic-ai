@@ -18,6 +18,7 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolReturnPart,
+    CompactionPart,
     FilePart,
     FileUrl,
     FinalResultEvent,
@@ -287,6 +288,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         - [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] -> [`handle_builtin_tool_call_start()`][pydantic_ai.ui.UIEventStream.handle_builtin_tool_call_start]
         - [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] -> [`handle_builtin_tool_return()`][pydantic_ai.ui.UIEventStream.handle_builtin_tool_return]
         - [`FilePart`][pydantic_ai.messages.FilePart] -> [`handle_file()`][pydantic_ai.ui.UIEventStream.handle_file]
+        - [`CompactionPart`][pydantic_ai.messages.CompactionPart] -> [`handle_compaction()`][pydantic_ai.ui.UIEventStream.handle_compaction]
 
         Subclasses are encouraged to override the individual `handle_*` methods rather than this one.
         If you need specific behavior for all part start events, make sure you call the super method.
@@ -312,8 +314,11 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case BuiltinToolReturnPart():
                 async for e in self.handle_builtin_tool_return(part):
                     yield e
-            case FilePart():  # pragma: no branch
+            case FilePart():
                 async for e in self.handle_file(part):
+                    yield e
+            case CompactionPart():  # pragma: no cover
+                async for e in self.handle_compaction(part):
                     yield e
 
     async def handle_part_delta(self, event: PartDeltaEvent) -> AsyncIterator[EventT]:
@@ -374,7 +379,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case BuiltinToolCallPart():
                 async for e in self.handle_builtin_tool_call_end(part):
                     yield e
-            case BuiltinToolReturnPart() | FilePart():  # pragma: no cover
+            case BuiltinToolReturnPart() | FilePart() | CompactionPart():  # pragma: no cover
                 # These don't have deltas, so they don't need to be ended.
                 pass
 
@@ -556,6 +561,15 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
         Args:
             part: The file part.
+        """
+        return  # pragma: no cover
+        yield  # Make this an async generator
+
+    async def handle_compaction(self, part: CompactionPart) -> AsyncIterator[EventT]:
+        """Handle a `CompactionPart`.
+
+        Args:
+            part: The compaction part.
         """
         return  # pragma: no cover
         yield  # Make this an async generator
