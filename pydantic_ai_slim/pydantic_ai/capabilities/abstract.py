@@ -89,6 +89,11 @@ class CapabilityOrdering:
 
     Each entry can be a capability **type** (matches all instances of that type via `issubclass`)
     or a specific capability **instance** (matches by identity via `is`).
+
+    Note: instance refs use identity (`is`) matching, so if a capability's
+    [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] returns a
+    new instance, refs to the original will no longer match. Use type refs
+    when the target capability uses per-run state isolation.
     """
 
     wrapped_by: Sequence[CapabilityRef] = ()
@@ -96,6 +101,11 @@ class CapabilityOrdering:
 
     Each entry can be a capability **type** (matches all instances of that type via `issubclass`)
     or a specific capability **instance** (matches by identity via `is`).
+
+    Note: instance refs use identity (`is`) matching, so if a capability's
+    [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] returns a
+    new instance, refs to the original will no longer match. Use type refs
+    when the target capability uses per-run state isolation.
     """
 
     requires: Sequence[type[AbstractCapability[Any]]] = ()
