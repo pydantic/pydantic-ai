@@ -137,7 +137,7 @@ class GroqModelSettings(ModelSettings, total=False):
 
 
 @dataclass(init=False)
-class GroqModel(Model):
+class GroqModel(Model[AsyncGroq]):
     """A model that uses the Groq API.
 
     Internally, this uses the [Groq Python client](https://github.com/groq/groq-python) to interact with the API.

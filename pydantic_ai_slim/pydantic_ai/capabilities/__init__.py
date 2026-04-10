@@ -3,6 +3,8 @@ from typing import Any
 from .abstract import (
     AbstractCapability,
     AgentNode,
+    CapabilityOrdering,
+    CapabilityPosition,
     NodeResult,
     RawToolArgs,
     ValidatedToolArgs,
@@ -54,6 +56,8 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
 __all__ = [
     'AbstractCapability',
     'AgentNode',
+    'CapabilityOrdering',
+    'CapabilityPosition',
     'NodeResult',
     'RawToolArgs',
     'ValidatedToolArgs',

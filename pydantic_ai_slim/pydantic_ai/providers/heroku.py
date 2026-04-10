@@ -8,7 +8,7 @@ from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.providers import Provider
 
@@ -70,7 +70,7 @@ class HerokuProvider(Provider[AsyncOpenAI]):
             if not api_key:
                 raise UserError(
                     'Set the `HEROKU_INFERENCE_KEY` environment variable or pass it via `HerokuProvider(api_key=...)`'
-                    'to use the Heroku provider.'
+                    ' to use the Heroku provider.'
                 )
 
             base_url = base_url or os.getenv('HEROKU_INFERENCE_URL', 'https://us.inference.heroku.com')
@@ -79,5 +79,10 @@ class HerokuProvider(Provider[AsyncOpenAI]):
             if http_client is not None:
                 self._client = AsyncOpenAI(api_key=api_key, http_client=http_client, base_url=base_url)
             else:
-                http_client = cached_async_http_client(provider='heroku')
+                http_client = create_async_http_client()
+                self._own_http_client = http_client
+                self._http_client_factory = create_async_http_client
                 self._client = AsyncOpenAI(api_key=api_key, http_client=http_client, base_url=base_url)
+
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
