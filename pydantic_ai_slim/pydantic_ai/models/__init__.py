@@ -1099,7 +1099,7 @@ class StreamedResponse(ABC):
             provider_response_id=self.provider_response_id,
             provider_details=self.provider_details,
             finish_reason=self.finish_reason,
-            interrupted=True if self._cancelled else None,
+            interrupted=self._cancelled or None,
         )
 
     # TODO (v2): Make this a property
@@ -1133,6 +1133,7 @@ class StreamedResponse(ABC):
 
     @property
     def cancelled(self) -> bool:
+        """Whether the stream has been cancelled via `cancel()`."""
         return self._cancelled
 
 

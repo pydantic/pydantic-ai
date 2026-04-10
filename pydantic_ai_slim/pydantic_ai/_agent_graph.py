@@ -499,6 +499,9 @@ class _SkipStreamedResponse(models.StreamedResponse):
     def timestamp(self) -> datetime:  # pragma: no cover
         return self._response.timestamp
 
+    async def cancel(self) -> None:  # pragma: no cover
+        self._cancelled = True
+
     async def _get_event_iterator(self) -> AsyncIterator[_messages.ModelResponseStreamEvent]:
         return
         yield  # pragma: no cover

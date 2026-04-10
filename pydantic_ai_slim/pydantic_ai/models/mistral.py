@@ -670,6 +670,8 @@ class MistralStreamedResponse(StreamedResponse):
         self._cancelled = True
         # Close the underlying httpx response directly, avoiding the fragile
         # __aexit__(None, None, None) pattern on EventStreamAsync.
+        # TODO: Check if MistralEventStreamAsync exposes a public close() method
+        # to avoid reaching into SDK internals.
         await self._stream.response.aclose()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:

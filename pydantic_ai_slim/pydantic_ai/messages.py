@@ -1693,7 +1693,7 @@ class BaseToolCallPart:
         try:
             pydantic_core.from_json(self.args)
             return False
-        except Exception:
+        except ValueError:
             return True
 
     __repr__ = _utils.dataclasses_no_defaults_repr
@@ -1784,7 +1784,11 @@ class ModelResponse:
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
     interrupted: bool | None = None
-    """Flag set when the response was interrupted due to cancellation."""
+    """Flag set when the response was interrupted due to cancellation.
+
+    Uses ``None`` (not ``False``) as the default so that existing serialized
+    ``ModelResponse`` objects from before this field was added round-trip cleanly.
+    """
 
     @property
     def text(self) -> str | None:

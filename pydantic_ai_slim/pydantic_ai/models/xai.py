@@ -884,11 +884,7 @@ class XaiStreamedResponse(StreamedResponse):
             yield self._parts_manager.handle_part(vendor_part_id=return_vendor_id, part=return_part)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        # TODO(#1524): If cancel() cancels the gRPC call during an in-flight read,
-        # asyncio.CancelledError or grpc.aio.AioRpcError (with StatusCode.CANCELLED)
-        # will be raised here.
-        # Add: except (asyncio.CancelledError, grpc.aio.AioRpcError): if self.cancelled: return; raise
-        with _map_api_errors(self._model_name):
+        with _map_api_errors(self._model_name), self._stream_cancel_guard():
             # Local state to avoid re-emmiting duplicate events.
             prev_reasoning_content = ''
             prev_encrypted_content = ''

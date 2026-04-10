@@ -140,15 +140,18 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     text = await validator.validate(text, replace(self._run_ctx, partial_output=True))
                 yield text
 
-    async def cancel(self):
+    async def cancel(self) -> None:
+        """Cancel the stream, stopping token generation and closing the underlying connection."""
         await self._raw_stream_response.cancel()
 
-    async def drain(self):
+    async def drain(self) -> None:
+        """Consume all remaining events from the stream, discarding them."""
         async for _ in self:
             pass
 
     @property
     def cancelled(self) -> bool:
+        """Whether the stream has been cancelled via `cancel()`."""
         return self._raw_stream_response.cancelled
 
     @property
@@ -343,6 +346,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     async def _events_iter(
         self, base_iter: AsyncIterator[ModelResponseStreamEvent]
     ) -> AsyncIterator[ModelResponseStreamEvent]:
+        # TODO: Verify _anext_lock doesn't deadlock with group_by_temporal's background reader.
         while True:
             async with self._anext_lock:
                 try:
@@ -666,7 +670,12 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         if self._on_complete is not None:
             await self._on_complete()
 
-    async def cancel(self):
+    async def cancel(self) -> None:
+        """Cancel the stream, stopping token generation and closing the underlying connection.
+
+        The interrupted response is recorded in the message history so that
+        `all_messages()` includes it.
+        """
         if self._stream_response is not None:  # pragma: no branch
             await self._stream_response.cancel()
             # Record the interrupted response in _all_messages so all_messages()
@@ -678,6 +687,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
 
     @property
     def cancelled(self) -> bool:
+        """Whether the stream has been cancelled via `cancel()`."""
         if self._stream_response is not None:
             return self._stream_response.cancelled
         return False  # pragma: no cover -- only reachable via wrap_run short-circuit (no stream)

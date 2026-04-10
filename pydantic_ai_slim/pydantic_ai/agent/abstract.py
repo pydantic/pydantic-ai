@@ -1094,11 +1094,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 )
 
         task = asyncio.create_task(run_agent())
-        # TODO(#1524): Replace _task_cancel_sent with task.cancelling() when Python 3.10 is dropped (3.11+).
+        # Replace _task_cancel_sent with task.cancelling() when Python 3.10 is dropped (3.11+).
         _task_cancel_sent: bool = False
-        # TODO(#1524): Add tests for break/cancel cleanup of the producer task.
-        # Verify no BrokenResourceError, no orphan tasks, and that CancelledError
-        # (not BrokenResourceError) reaches the producer on break.
 
         try:
             async with receive_stream:
