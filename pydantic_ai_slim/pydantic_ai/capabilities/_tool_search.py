@@ -22,8 +22,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     user-facing configuration options.
     """
 
-    @classmethod
-    def get_ordering(cls) -> CapabilityOrdering:
+    def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='outermost')
 
     @classmethod
