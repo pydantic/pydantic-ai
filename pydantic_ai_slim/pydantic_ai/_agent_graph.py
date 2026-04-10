@@ -697,6 +697,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             _run_ctx=build_run_context(ctx),
             _usage_limits=ctx.deps.usage_limits,
             _tool_manager=ctx.deps.tool_manager,
+            _root_capability=ctx.deps.root_capability,
             _metadata_getter=lambda: ctx.state.metadata,
         )
 

@@ -31,6 +31,7 @@ from .tool_manager import ToolManager
 from .usage import RunUsage, UsageLimits
 
 if TYPE_CHECKING:
+    from .capabilities.abstract import AbstractCapability
     from .run import AgentRunResult
 
 __all__ = (
@@ -55,6 +56,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _run_ctx: RunContext[AgentDepsT]
     _usage_limits: UsageLimits | None
     _tool_manager: ToolManager[AgentDepsT]
+    _root_capability: AbstractCapability[AgentDepsT] | None
     _metadata_getter: Callable[[], dict[str, Any] | None] | None = field(default=None, repr=False)
 
     _agent_stream_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
@@ -234,7 +236,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     text_processor,
                     text=text,
                     run_context=run_ctx,
-                    capability=self._run_ctx.tool_manager.root_capability if self._run_ctx.tool_manager else None,
+                    capability=self._root_capability,
                     output_mode=self._output_schema.mode,
                     allow_partial=allow_partial,
                     wrap_validation_errors=False,
@@ -256,7 +258,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     async def _validate_image_output(self, image: _messages.BinaryImage, *, allow_partial: bool) -> OutputDataT:
         """Run process hooks and output validators for image output."""
         run_ctx = replace(self._run_ctx, partial_output=allow_partial)
-        capability = self._run_ctx.tool_manager.root_capability if self._run_ctx.tool_manager else None
+        capability = self._root_capability
         if capability is not None:
             result_data: OutputDataT = cast(
                 OutputDataT,

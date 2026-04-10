@@ -2452,6 +2452,7 @@ def test_agent_stream_metadata_falls_back_to_run_context() -> None:
         _run_ctx=run_ctx,
         _usage_limits=None,
         _tool_manager=ToolManager(toolset=MagicMock()),
+        _root_capability=None,
     )
 
     assert stream.metadata == {'source': 'run-context'}
