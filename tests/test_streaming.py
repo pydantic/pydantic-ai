@@ -3951,4 +3951,61 @@ async def test_incomplete_tool_call_filtered_from_history():
     )
 
 
+def test_args_incomplete_property():
+    """args_incomplete returns True only for truncated JSON string args."""
+    # dict args are never incomplete (already parsed)
+    assert ToolCallPart(tool_name='t', args={'x': 1}, tool_call_id='c1').args_incomplete is False
+    # empty string args are not incomplete
+    assert ToolCallPart(tool_name='t', args='', tool_call_id='c2').args_incomplete is False
+    # valid JSON string args are not incomplete
+    assert ToolCallPart(tool_name='t', args='{"x": 1}', tool_call_id='c3').args_incomplete is False
+    # truncated JSON is incomplete
+    assert ToolCallPart(tool_name='t', args='{"x": ', tool_call_id='c4').args_incomplete is True
+
+
+async def test_partial_incomplete_tool_call_filtered_from_history():
+    """When an interrupted response has a mix of valid and incomplete parts,
+    the incomplete tool calls are stripped but valid parts are kept."""
+
+    async def my_tool(x: int) -> str:
+        return str(x)
+
+    agent = Agent(TestModel(), tools=[my_tool])
+
+    # Interrupted response with a valid TextPart and an incomplete ToolCallPart.
+    # The TextPart survives filtering; the response is trimmed, not dropped.
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(
+            parts=[
+                TextPart(content='Let me call the tool'),
+                ToolCallPart(tool_name='my_tool', args='{"x": ', tool_call_id='call_1'),
+            ],
+            interrupted=True,
+        ),
+    ]
+
+    result = await agent.run('Continue', message_history=history)
+    # The interrupted response is kept but with only the TextPart;
+    # the incomplete ToolCallPart is stripped.
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())]),
+            ModelResponse(parts=[TextPart(content='Let me call the tool')], timestamp=IsDatetime(), interrupted=True),
+            ModelRequest(
+                parts=[UserPromptPart(content='Continue', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=52, output_tokens=9),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
 # endregion
