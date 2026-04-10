@@ -34,7 +34,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     capabilities: Sequence[AbstractCapability[AgentDepsT]]
 
     def __post_init__(self) -> None:
-        if any(type(leaf).get_ordering() is not None for leaf in collect_leaves(self)):
+        if any(leaf.get_ordering() is not None for leaf in collect_leaves(self)):
             self.capabilities = sort_capabilities(list(self.capabilities))
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic_ai.exceptions import UserError
 
-from .abstract import AbstractCapability, CapabilityOrdering
+from .abstract import AbstractCapability, CapabilityOrdering, CapabilityRef
 
 if TYPE_CHECKING:
     from .abstract import CapabilityPosition
@@ -27,12 +27,13 @@ def sort_capabilities(
     if n <= 1:
         return caps
 
-    orderings: list[CapabilityOrdering | None] = [_effective_ordering(cap) for cap in caps]
-    leaf_types: list[set[type]] = [_collect_leaf_types(cap) for cap in caps]
+    cap_leaves: list[list[AbstractCapability[Any]]] = [collect_leaves(cap) for cap in caps]
+    orderings: list[CapabilityOrdering | None] = [_effective_ordering(leaves) for leaves in cap_leaves]
+    leaf_types: list[set[type]] = [{type(leaf) for leaf in leaves} for leaves in cap_leaves]
 
     _validate_requires(caps, orderings, leaf_types)
 
-    return _topo_sort(caps, orderings, leaf_types)
+    return _topo_sort(caps, orderings, leaf_types, cap_leaves)
 
 
 def _validate_requires(
@@ -56,6 +57,7 @@ def _topo_sort(
     caps: list[AbstractCapability[Any]],
     orderings: list[CapabilityOrdering | None],
     leaf_types: list[set[type]],
+    cap_leaves: list[list[AbstractCapability[Any]]],
 ) -> list[AbstractCapability[Any]]:
     """Topological sort using graphlib.TopologicalSorter.
 
@@ -70,7 +72,7 @@ def _topo_sort(
         ts.add(i)
 
     _add_position_edges(ts, n, orderings)
-    _add_relative_edges(ts, n, orderings, leaf_types)
+    _add_relative_edges(ts, n, orderings, leaf_types, cap_leaves)
 
     try:
         sorted_indices = list(ts.static_order())
@@ -106,37 +108,52 @@ def _add_relative_edges(
     n: int,
     orderings: list[CapabilityOrdering | None],
     leaf_types: list[set[type]],
+    cap_leaves: list[list[AbstractCapability[Any]]],
 ) -> None:
     for i, ordering in enumerate(orderings):
         if not ordering:
             continue
         # wraps=[X] → I come before X
-        for wraps_type in ordering.wraps:
+        for ref in ordering.wraps:
             for j in range(n):
-                if i != j and any(issubclass(t, wraps_type) for t in leaf_types[j]):
+                if i != j and _ref_matches(ref, leaf_types[j], cap_leaves[j]):
                     ts.add(j, i)  # j depends on i (i comes first)
         # wrapped_by=[X] → X comes before me
-        for wrapped_by_type in ordering.wrapped_by:
+        for ref in ordering.wrapped_by:
             for j in range(n):
-                if i != j and any(issubclass(t, wrapped_by_type) for t in leaf_types[j]):
+                if i != j and _ref_matches(ref, leaf_types[j], cap_leaves[j]):
                     ts.add(i, j)  # i depends on j (j comes first)
 
 
-def _effective_ordering(cap: AbstractCapability[Any]) -> CapabilityOrdering | None:
-    """Get the effective ordering for a capability, merging from all leaves.
+def _ref_matches(
+    ref: CapabilityRef,
+    leaf_types: set[type],
+    leaves: list[AbstractCapability[Any]],
+) -> bool:
+    """Check if a capability ref matches any leaf in a capability group.
+
+    Type refs match via `issubclass`; instance refs match via `is` identity.
+    """
+    if isinstance(ref, type):
+        return any(issubclass(t, ref) for t in leaf_types)
+    return any(leaf is ref for leaf in leaves)
+
+
+def _effective_ordering(leaves: list[AbstractCapability[Any]]) -> CapabilityOrdering | None:
+    """Get the effective ordering for a capability, merging from all its leaves.
 
     For plain capabilities (single leaf), returns `get_ordering()` directly.
     For containers (`CombinedCapability`, `WrapperCapability`), merges
-    constraints from all leaves via `apply`.
+    constraints from all leaves.
     """
     merged_position: CapabilityPosition | None = None
-    merged_wraps: list[type[AbstractCapability[Any]]] = []
-    merged_wrapped_by: list[type[AbstractCapability[Any]]] = []
+    merged_wraps: list[CapabilityRef] = []
+    merged_wrapped_by: list[CapabilityRef] = []
     merged_requires: list[type[AbstractCapability[Any]]] = []
     has_any = False
 
-    for leaf in collect_leaves(cap):
-        ordering = type(leaf).get_ordering()
+    for leaf in leaves:
+        ordering = leaf.get_ordering()
         if ordering is None:
             continue
         has_any = True
@@ -167,5 +184,9 @@ def collect_leaves(cap: AbstractCapability[Any]) -> list[AbstractCapability[Any]
     return leaves
 
 
-def _collect_leaf_types(cap: AbstractCapability[Any]) -> set[type]:
-    return {type(leaf) for leaf in collect_leaves(cap)}
+def has_capability_type(
+    capabilities: Sequence[AbstractCapability[Any]],
+    cap_type: type[AbstractCapability[Any]],
+) -> bool:
+    """Check whether any leaf in a capability list/tree is an instance of the given type."""
+    return any(isinstance(leaf, cap_type) for cap in capabilities for leaf in collect_leaves(cap))
