@@ -60,7 +60,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
     needs to be passed to the constructor.
 
     Example:
-        ```python
+        ```python {test="skip"}
         from pydantic_ai import Agent
         from pydantic_ai.durable_exec.temporal import TemporalDurability
 

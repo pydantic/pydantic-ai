@@ -37,7 +37,7 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
     automatically via ``for_agent()``.
 
     Example:
-        ```python
+        ```python {test="skip"}
         from pydantic_ai import Agent
         from pydantic_ai.durable_exec.prefect import PrefectDurability
 
