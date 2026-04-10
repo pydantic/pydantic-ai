@@ -15,6 +15,9 @@ Capabilities are the recommended way to extend Pydantic AI. They are useful for:
 
 See [Capabilities](capabilities.md) for using and building capabilities, and [Hooks](hooks.md) for the lightweight decorator-based approach.
 
+!!! tip
+    If you want to contribute a capability, open an issue on [**Pydantic Harness**](https://github.com/pydantic/pydantic-harness) rather than on pydantic-ai. Most capabilities belong in the harness -- see [What goes where?](harness.md#what-goes-where) for the distinction.
+
 ## Publishing capability packages
 
 To make a capability installable and usable in [agent specs](agent-spec.md):
@@ -36,6 +39,12 @@ agent = Agent.from_file('agent.yaml', custom_capability_types=[MyCapability])
 ```
 
 See [Custom capabilities in specs](agent-spec.md#custom-capabilities-in-specs) for implementation details.
+
+## Pydantic Harness
+
+[**Pydantic Harness**](https://github.com/pydantic/pydantic-harness) is the official capability library for Pydantic AI. Pydantic AI core ships capabilities that require model or framework support, and capabilities that are fundamental to the agent experience. The harness is where standalone capabilities live, and where new capabilities start before potentially graduating to core. This keeps pydantic-ai lean while letting capabilities iterate and ship faster.
+
+If you want to contribute a capability, the harness repo is the right place. See the [full capability matrix](https://github.com/pydantic/pydantic-harness#capability-matrix) for what's available.
 
 ## Third-party ecosystem
 

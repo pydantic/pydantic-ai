@@ -1021,6 +1021,16 @@ print(f'Output: {result.output}')
 #> Output: Hello! How can I help you today?
 ```
 
+## Pydantic Harness
+
+[**Pydantic Harness**](https://github.com/pydantic/pydantic-harness) (`pydantic-harness`) is the official capability library for Pydantic AI -- the batteries for your agent. Install it with `uv add pydantic-harness`.
+
+Pydantic AI core ships capabilities that require model or framework support (like [image generation](#provider-adaptive-tools) backed by provider APIs) and capabilities that are fundamental to the agent experience (like [web search](#provider-adaptive-tools), [tool search](deferred-tools.md), and [thinking](#thinking)). Pydantic Harness is where standalone capabilities live: file system access, guardrails, memory, context management, [code mode](https://github.com/pydantic/pydantic-harness/tree/main/code_mode), and more. The harness is also where new capabilities start before potentially graduating to core.
+
+See the [full capability matrix](https://github.com/pydantic/pydantic-harness#capability-matrix) for what's available and what's coming, and the [Pydantic Harness page](harness.md) for more details.
+
+**Want to contribute a capability?** Open an issue on [pydantic-harness](https://github.com/pydantic/pydantic-harness), not here. See [Contributing](https://github.com/pydantic/pydantic-harness#contributing).
+
 ## Third-party capabilities
 
 Capabilities are the recommended way for third-party packages to extend Pydantic AI, since they can bundle tools with hooks, instructions, and model settings. See [Extensibility](extensibility.md) for the full ecosystem, including [third-party toolsets](toolsets.md#third-party-toolsets) that can also be wrapped as capabilities.
