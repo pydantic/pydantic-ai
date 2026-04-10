@@ -4,7 +4,7 @@ import base64
 import re
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, cast, overload
 from uuid import uuid4
@@ -336,13 +336,14 @@ class GoogleModel(Model[Client]):
             self.profile
         ).google_supports_native_output_with_builtin_tools
         if model_request_parameters.builtin_tools and model_request_parameters.output_tools:
-            if model_request_parameters.output_mode == 'auto':
-                output_mode = 'native' if supports_native_output_with_builtin_tools else 'prompted'
-                model_request_parameters = replace(model_request_parameters, output_mode=output_mode)
-            else:
-                output_mode = 'NativeOutput' if supports_native_output_with_builtin_tools else 'PromptedOutput'
+            default_mode = 'native' if supports_native_output_with_builtin_tools else 'prompted'
+            model_request_parameters = model_request_parameters.with_default_output_mode(default_mode)
+            if model_request_parameters.output_mode not in ('native', 'prompted'):
+                suggested_output_type = (
+                    'NativeOutput' if supports_native_output_with_builtin_tools else 'PromptedOutput'
+                )
                 raise UserError(
-                    f'Google does not support output tools and built-in tools at the same time. Use `output_type={output_mode}(...)` instead.'
+                    f'Google does not support output tools and built-in tools at the same time. Use `output_type={suggested_output_type}(...)` instead.'
                 )
         return super().prepare_request(model_settings, model_request_parameters)
 
