@@ -4,6 +4,7 @@ import inspect
 import json
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
+from copy import copy
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
@@ -974,9 +975,13 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         return "the agent's output tools"
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        self._output_retry = ctx.retry
-        self._output_max_retries = ctx.max_retries
-        return self
+        # copy() instead of replace() because @dataclass(init=False) with a custom __init__
+        # whose param names differ from field names (e.g. field `_tool_defs` vs param `tool_defs`)
+        # makes replace() pass unrecognized kwargs to __init__.
+        new = copy(self)
+        new._output_retry = ctx.retry
+        new._output_max_retries = ctx.max_retries
+        return new
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         max_retries = self.max_retries if self.max_retries is not None else 1
