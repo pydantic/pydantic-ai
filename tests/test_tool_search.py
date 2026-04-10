@@ -20,6 +20,8 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, FunctionToolset, ToolCallPart
 from pydantic_ai._run_context import RunContext
+from pydantic_ai.capabilities._ordering import collect_leaves
+from pydantic_ai.capabilities._tool_search import ToolSearch
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolReturn, ToolReturnPart
 from pydantic_ai.models.test import TestModel
@@ -610,9 +612,6 @@ async def test_tool_search_toolset_no_deferred_tools_returns_all():
 
 async def test_agent_auto_injects_tool_search_capability():
     """Test that agent auto-injects ToolSearch capability, with and without deferred tools."""
-    from pydantic_ai.capabilities._ordering import collect_leaves
-    from pydantic_ai.capabilities._tool_search import ToolSearch
-
     agent_no_deferred = Agent('test')
 
     @agent_no_deferred.tool_plain
@@ -620,7 +619,7 @@ async def test_agent_auto_injects_tool_search_capability():
         """Get the current weather for a city."""
         return f'Weather in {city}'
 
-    leaves = collect_leaves(agent_no_deferred._root_capability)  # pyright: ignore[reportPrivateUsage]
+    leaves = collect_leaves(agent_no_deferred.root_capability)
     assert any(isinstance(leaf, ToolSearch) for leaf in leaves)
 
     agent_with_deferred = Agent('test')
@@ -635,7 +634,7 @@ async def test_agent_auto_injects_tool_search_capability():
         """Calculate mortgage payment."""
         return 'Calculated'
 
-    leaves = collect_leaves(agent_with_deferred._root_capability)  # pyright: ignore[reportPrivateUsage]
+    leaves = collect_leaves(agent_with_deferred.root_capability)
     assert any(isinstance(leaf, ToolSearch) for leaf in leaves)
 
 

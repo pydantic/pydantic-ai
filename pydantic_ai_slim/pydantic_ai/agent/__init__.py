@@ -48,6 +48,8 @@ from .._output import OutputToolset
 from .._template import TemplateStr, validate_from_spec_args
 from ..builtin_tools import AbstractBuiltinTool
 from ..capabilities import AbstractCapability, CombinedCapability
+from ..capabilities._ordering import has_capability_type
+from ..capabilities._tool_search import ToolSearch as ToolSearchCap
 from ..capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
 from ..capabilities.history_processor import HistoryProcessor as HistoryProcessorCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
@@ -402,13 +404,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         for builtin_tool in builtin_tools:
             capabilities.append(BuiltinToolCap(builtin_tool))
 
-        # Auto-inject _ToolSearch if not already present. Always injected
+        # Auto-inject ToolSearch if not already present. Always injected
         # because deferred tools can be dynamic (from get_tools at runtime).
         # Prepended for natural outermost-tier positioning via index tiebreak.
-        from ..capabilities._tool_search import ToolSearch
-
-        if not any(isinstance(leaf, ToolSearch) for leaf in _collect_capability_leaves(capabilities)):
-            capabilities.insert(0, ToolSearch())
+        if not has_capability_type(capabilities, ToolSearchCap):
+            capabilities.insert(0, ToolSearchCap())
 
         self._root_capability = CombinedCapability(capabilities)
 
@@ -1612,7 +1612,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         validated_spec, template_context = _validate_spec(spec, self._deps_type)
 
-        capabilities = _capabilities_from_spec(validated_spec, custom_capability_types, template_context)
+        capabilities = list(_capabilities_from_spec(validated_spec, custom_capability_types, template_context))
+        # Auto-inject ToolSearch into spec capabilities too, so override(spec=...)
+        # doesn't lose deferred tool discovery when replacing the root capability.
+        if capabilities and not has_capability_type(capabilities, ToolSearchCap):
+            capabilities.insert(0, ToolSearchCap())
         combined = CombinedCapability(capabilities) if capabilities else None
 
         # Warn for unsupported fields with non-default values
@@ -2393,8 +2397,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if self._prepare_tools:
             toolset = PreparedToolset(toolset, self._prepare_tools)
 
-        # Capability wrapper toolsets (including _ToolSearch and CodeMode) are
-        # applied here via get_wrapper_toolset. _ToolSearch is auto-injected
+        # Capability wrapper toolsets (including ToolSearch and CodeMode) are
+        # applied here via get_wrapper_toolset. ToolSearch is auto-injected
         # into capabilities, replacing the previous hardcoded ToolSearchToolset wrap.
         if run_capability is not None:
             wrapper = run_capability.get_wrapper_toolset(toolset)
@@ -2408,6 +2412,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             toolset = CombinedToolset([output_toolset, toolset])
 
         return toolset
+
+    @property
+    def root_capability(self) -> CombinedCapability[AgentDepsT]:
+        """The root capability of the agent, containing all registered capabilities."""
+        return self._root_capability
 
     @property
     def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
@@ -2620,18 +2629,6 @@ _UNSUPPORTED_SPEC_FIELDS: tuple[str, ...] = (
     'deps_schema',
 )
 """AgentSpec fields that are not supported at run/override time."""
-
-
-def _collect_capability_leaves(
-    capabilities: Sequence[AbstractCapability[Any]],
-) -> list[AbstractCapability[Any]]:
-    """Collect all leaf capabilities from a flat list, expanding CombinedCapability nodes."""
-    from ..capabilities._ordering import collect_leaves
-
-    leaves: list[AbstractCapability[Any]] = []
-    for cap in capabilities:
-        leaves.extend(collect_leaves(cap))
-    return leaves
 
 
 def _validate_spec(

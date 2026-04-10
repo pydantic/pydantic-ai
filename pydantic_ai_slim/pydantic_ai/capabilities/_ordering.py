@@ -167,5 +167,13 @@ def collect_leaves(cap: AbstractCapability[Any]) -> list[AbstractCapability[Any]
     return leaves
 
 
+def has_capability_type(
+    capabilities: Sequence[AbstractCapability[Any]],
+    cap_type: type[AbstractCapability[Any]],
+) -> bool:
+    """Check whether any leaf in a capability list/tree is an instance of the given type."""
+    return any(isinstance(leaf, cap_type) for cap in capabilities for leaf in collect_leaves(cap))
+
+
 def _collect_leaf_types(cap: AbstractCapability[Any]) -> set[type]:
     return {type(leaf) for leaf in collect_leaves(cap)}
