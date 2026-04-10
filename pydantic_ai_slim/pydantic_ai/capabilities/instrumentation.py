@@ -19,6 +19,7 @@ from pydantic_ai.tools import ToolDefinition
 
 from .abstract import (
     AbstractCapability,
+    CapabilityOrdering,
     ValidatedToolArgs,
     WrapModelRequestHandler,
     WrapRunHandler,
@@ -54,6 +55,10 @@ class Instrumentation(AbstractCapability[Any]):
     _instrumentation_names: InstrumentationNames = field(
         default_factory=lambda: InstrumentationNames.for_version(2), repr=False, init=False
     )
+
+    @classmethod
+    def get_ordering(cls) -> CapabilityOrdering:
+        return CapabilityOrdering(position='outermost')
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
