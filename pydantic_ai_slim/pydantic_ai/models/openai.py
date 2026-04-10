@@ -2365,7 +2365,11 @@ class OpenAIResponsesModel(Model):
                                 )
                             )
                     elif isinstance(item, CompactionPart):
-                        if item.provider_name == self.system and item.provider_details:  # pragma: no branch
+                        if (
+                            item.provider_name == self.system
+                            and item.provider_details
+                            and 'encrypted_content' in item.provider_details
+                        ):  # pragma: no branch
                             openai_messages.append(
                                 ResponseCompactionItemParamParam(
                                     id=item.id,
