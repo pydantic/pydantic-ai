@@ -42,9 +42,7 @@ See [Custom capabilities in specs](agent-spec.md#custom-capabilities-in-specs) f
 
 ## Pydantic Harness
 
-[**Pydantic Harness**](https://github.com/pydantic/pydantic-harness) is the official capability library for Pydantic AI. Pydantic AI core ships capabilities that require model or framework support, and capabilities that are fundamental to the agent experience. The harness is where standalone capabilities live, and where new capabilities start before potentially graduating to core. This keeps pydantic-ai lean while letting capabilities iterate and ship faster.
-
-If you want to contribute a capability, the harness repo is the right place. See the [full capability matrix](https://github.com/pydantic/pydantic-harness#capability-matrix) for what's available.
+[**Pydantic Harness**](harness.md) is the official capability library for Pydantic AI -- standalone capabilities like memory, guardrails, and context management live there rather than in core. See [What goes where?](harness.md#what-goes-where) for the full breakdown, or jump to the [capability matrix](https://github.com/pydantic/pydantic-harness#capability-matrix).
 
 ## Third-party ecosystem
 

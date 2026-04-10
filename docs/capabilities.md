@@ -1023,13 +1023,7 @@ print(f'Output: {result.output}')
 
 ## Pydantic Harness
 
-[**Pydantic Harness**](https://github.com/pydantic/pydantic-harness) (`pydantic-harness`) is the official capability library for Pydantic AI -- the batteries for your agent. Install it with `uv add pydantic-harness`.
-
-Pydantic AI core ships capabilities that require model or framework support (like [image generation](#provider-adaptive-tools) backed by provider APIs) and capabilities that are fundamental to the agent experience (like [web search](#provider-adaptive-tools), [tool search](deferred-tools.md), and [thinking](#thinking)). Pydantic Harness is where standalone capabilities live: file system access, guardrails, memory, context management, [code mode](https://github.com/pydantic/pydantic-harness/tree/main/code_mode), and more. The harness is also where new capabilities start before potentially graduating to core.
-
-See the [full capability matrix](https://github.com/pydantic/pydantic-harness#capability-matrix) for what's available and what's coming, and the [Pydantic Harness page](harness.md) for more details.
-
-**Want to contribute a capability?** Open an issue on [pydantic-harness](https://github.com/pydantic/pydantic-harness), not here. See [Contributing](https://github.com/pydantic/pydantic-harness#contributing).
+[**Pydantic Harness**](harness.md) is the official capability library for Pydantic AI -- standalone capabilities like memory, guardrails, context management, and [code mode](https://github.com/pydantic/pydantic-harness/tree/main/code_mode) live there rather than in core. See [What goes where?](harness.md#what-goes-where) for the full breakdown, or jump to the [capability matrix](https://github.com/pydantic/pydantic-harness#capability-matrix).
 
 ## Third-party capabilities
 

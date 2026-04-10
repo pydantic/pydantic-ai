@@ -27,7 +27,7 @@ If the fix could reasonably go more than one way, or you're unsure it's actually
 
 Before writing code, ask whether the change needs to live in core at all. Most new agent behaviors belong in [**Pydantic Harness**](https://github.com/pydantic/pydantic-harness), the official capability library — not in this repo. Pydantic AI core is for the agent loop, model providers, and capabilities that require model-specific support or are fundamental to the agent experience. Standalone capabilities — guardrails, memory, context management, file system access, etc. — belong in the harness, where they can iterate faster. See [What goes where?](harness.md#what-goes-where) for the full distinction.
 
-**If your idea is a capability**, open an issue on [pydantic-harness](https://github.com/pydantic/pydantic-harness/issues/new?template=capability-request.yml) instead. You can also publish capabilities as your own package using the `pydantic-ai-<name>` convention — see [Publishing capability packages](extensibility.md#publishing-capability-packages). Once a capability has real users and a stable shape, we can talk about upstreaming to harness or core.
+**If your idea is a capability**, open an issue on [pydantic-harness](https://github.com/pydantic/pydantic-harness/issues) instead. You can also publish capabilities as your own package using the `pydantic-ai-<name>` convention — see [Publishing capability packages](extensibility.md#publishing-capability-packages). Once a capability has real users and a stable shape, we can talk about upstreaming to harness or core.
 
 If it does belong in core:
 
