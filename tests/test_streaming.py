@@ -3840,6 +3840,26 @@ async def test_run_stream_cancel_all_messages_includes_interrupted_response():
     )
 
 
+async def test_run_stream_cancel_guard_suppresses_transport_error():
+    """When cancel() is called mid-stream and iteration continues, _stream_cancel_guard
+    suppresses the simulated transport error and the stream ends gracefully."""
+    agent = Agent(TestModel())
+
+    async with agent.run_stream('Hello') as result:
+        chunks: list[str] = []
+        async for text in result.stream_text(delta=True, debounce_by=None):
+            chunks.append(text)
+            if not result.cancelled:
+                await result.cancel()
+                # Don't break: let the loop call anext() again, which resumes
+                # the generator into the _cancelled check and exercises the
+                # _stream_cancel_guard suppression branch.
+
+    assert result.cancelled
+    assert result.response.interrupted is True
+    assert len(chunks) >= 1
+
+
 async def test_run_stream_cancel_after_complete():
     agent = Agent(TestModel())
 
