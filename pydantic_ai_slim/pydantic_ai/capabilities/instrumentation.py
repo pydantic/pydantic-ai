@@ -56,8 +56,7 @@ class Instrumentation(AbstractCapability[Any]):
         default_factory=lambda: InstrumentationNames.for_version(2), repr=False, init=False
     )
 
-    @classmethod
-    def get_ordering(cls) -> CapabilityOrdering:
+    def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='outermost')
 
     @classmethod
