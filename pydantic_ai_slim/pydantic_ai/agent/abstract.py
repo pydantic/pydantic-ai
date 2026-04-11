@@ -301,9 +301,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             spec=spec,
         ) as agent_run:
             # Drive via next() so capability hooks fire for each node.
-            # When event_stream_handler is set, streaming must happen AFTER before_node_run
-            # (which may replace the node) and INSIDE wrap_node_run. We achieve this by
-            # passing a custom step function that streams before advancing the graph.
+            # When event_stream_handler is set or a capability overrides wrap_run_event_stream,
+            # streaming must happen AFTER before_node_run (which may replace the node) and
+            # INSIDE wrap_node_run. We achieve this by passing a custom step function that
+            # streams before advancing the graph.
             _stream_step: (
                 Callable[
                     [_agent_graph.AgentNode[AgentDepsT, Any]],
@@ -311,7 +312,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 ]
                 | None
             ) = None
-            if event_stream_handler is not None:
+            _needs_streaming = (
+                event_stream_handler is not None or agent_run.ctx.deps.root_capability.has_wrap_run_event_stream
+            )
+            if _needs_streaming:
                 _handler = event_stream_handler
 
                 async def _stream_and_advance(
@@ -321,7 +325,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                         async with n.stream(agent_run.ctx) as stream:
                             run_ctx = _agent_graph.build_run_context(agent_run.ctx)
                             wrapped = agent_run.ctx.deps.root_capability.wrap_run_event_stream(run_ctx, stream=stream)
-                            await _handler(run_ctx, wrapped)
+                            if _handler is not None:
+                                await _handler(run_ctx, wrapped)
+                            else:
+                                async for _ in wrapped:
+                                    pass
                     return await agent_run._advance_graph(n)  # pyright: ignore[reportPrivateUsage]
 
                 _stream_step = _stream_and_advance

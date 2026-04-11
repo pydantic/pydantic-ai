@@ -15,9 +15,6 @@ from .._inline_snapshot import snapshot
 from ..conftest import IsStr, try_import
 
 with try_import() as imports_successful:
-    import logfire
-    from logfire.testing import CaptureLogfire
-
     from pydantic_evals.evaluators._run_evaluator import run_evaluator
     from pydantic_evals.evaluators.common import (
         Contains,
@@ -37,10 +34,17 @@ with try_import() as imports_successful:
         EvaluatorOutput,
     )
     from pydantic_evals.evaluators.spec import EvaluatorSpec
-    from pydantic_evals.otel._context_in_memory_span_exporter import context_subtree
     from pydantic_evals.otel.span_tree import SpanQuery, SpanTree
 
+with try_import() as logfire_import_successful:
+    import logfire
+    from logfire.testing import CaptureLogfire
+
+    from pydantic_evals.otel._context_in_memory_span_exporter import context_subtree
+
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+
+needs_logfire = pytest.mark.skipif(not logfire_import_successful(), reason='logfire not installed')
 
 
 class TaskInput(BaseModel):
@@ -544,6 +548,7 @@ async def test_max_duration_evaluator(test_context: EvaluatorContext[TaskInput, 
     assert result is False
 
 
+@needs_logfire
 async def test_span_query_evaluator(
     capfire: CaptureLogfire,
 ):
