@@ -56,6 +56,7 @@ def _data_converter(converter: DataConverter | None) -> DataConverter:
         warnings.warn(
             'A non-Pydantic Temporal payload converter was used which has been replaced with PydanticPayloadConverter. '
             'To suppress this warning, ensure your payload_converter_class inherits from PydanticPayloadConverter.'
+            stacklevel=2,
         )
 
     return replace(converter, payload_converter_class=PydanticPayloadConverter)

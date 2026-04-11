@@ -142,6 +142,7 @@ class OpenAIModelProfile(ModelProfile):
                 'The `openai_supports_sampling_settings` has no effect, and it will be removed in future versions. '
                 'Use `openai_unsupported_model_settings` instead.',
                 DeprecationWarning,
+                stacklevel=2,
             )
         if self.openai_chat_send_back_thinking_parts == 'field' and not self.openai_chat_thinking_field:
             raise UserError(

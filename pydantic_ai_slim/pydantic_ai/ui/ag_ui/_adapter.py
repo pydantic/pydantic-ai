@@ -468,6 +468,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     warnings.warn(
                         f'AG-UI message type {type(msg).__name__} is not yet implemented; skipping.',
                         UserWarning,
+                        stacklevel=2,
                     )
 
         return builder.messages
