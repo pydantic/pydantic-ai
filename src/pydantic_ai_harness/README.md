@@ -34,9 +34,13 @@ Requires Python 3.10+ and `pydantic-ai-slim>=1.80.0`.
 ## Quick start
 
 ```python
+import logfire
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import MCP  # from the core pydantic-ai package
 from pydantic_harness import CodeMode
+
+logfire.configure()
+logfire.instrument_pydantic_ai()
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
@@ -52,6 +56,8 @@ result = agent.run_sync('Rank the open PRs on pydantic/pydantic-harness by thumb
 [`MCP`](https://ai.pydantic.dev/capabilities/#provider-adaptive-tools) (from the core `pydantic-ai` package) connects your agent to any MCP server -- here, [GitHub's official MCP server](https://github.com/github/github-mcp-server).
 
 [`CodeMode`](pydantic_harness/code_mode/) wraps all tools into a single `run_code` tool powered by our [Monty](https://github.com/pydantic/monty) sandbox, so the model can orchestrate multiple tool calls with Python code instead of one model round-trip per call.
+
+[`logfire`](https://pydantic.dev/logfire) gives you a trace for every agent run. With CodeMode, you can see the `run_code` span with each nested tool call as a child span -- making it easy to debug what the model's code actually did. See the [Pydantic AI Logfire docs](https://ai.pydantic.dev/logfire/) for setup details.
 
 ## Capability matrix
 
