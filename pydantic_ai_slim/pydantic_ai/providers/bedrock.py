@@ -197,6 +197,8 @@ def bedrock_qwen_model_profile(model_name: str) -> ModelProfile | None:
         ).update(_without_builtin_tools(qwen_model_profile(model_name))),
         json_schema_transformer=BedrockJsonSchemaTransformer,
         supports_json_schema_output=model_name.startswith(models_that_support_json_schema_output),
+        # Bedrock Converse API doesn't support JSON object mode
+        supports_json_object_output=False,
     )
 
 
