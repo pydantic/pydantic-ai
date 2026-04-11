@@ -660,35 +660,27 @@ class TestCodeMode:
     # Deferred tools
     # ---------------------------------------------------------------------------
 
-    async def test_deferred_loading_tools_promoted_to_native_with_warning(self) -> None:
-        """Tools with `defer_loading=True` are excluded from sandbox but promoted to native; warning fires once."""
+    async def test_deferred_loading_tools_sandboxed(self) -> None:
+        """Tools with `defer_loading=True` (tool search) are sandboxed like normal tools."""
 
-        def later() -> str:
-            """A deferred tool."""
-            return 'later'  # pragma: no cover - deferred tools are promoted to native, not sandboxed
+        def later(x: int) -> str:
+            """A deferred-loading tool."""
+            return str(x)  # pragma: no cover - tool body is not invoked in this test
 
         toolset = FunctionToolset[None](tools=[Tool(add), Tool(later, defer_loading=True)])
         wrapper = CodeMode[None]().get_wrapper_toolset(toolset)
         assert isinstance(wrapper, CodeModeToolset)
 
         ctx = build_run_context(None)
-        with pytest.warns(UserWarning, match=r"tool 'later' uses deferred loading"):
-            tools = await wrapper.get_tools(ctx)
+        tools = await wrapper.get_tools(ctx)
 
         description = tools['run_code'].tool_def.description
         assert description is not None
+        # Both tools should appear as sandboxed function signatures
         assert 'async def add' in description
-        assert 'async def later' not in description
-        # Deferred tool is promoted to native — not lost
-        assert 'later' in tools
-
-        # Second `get_tools` call must not warn again — the set is preserved across calls
-        # within the same toolset instance.
-        import warnings as _warnings
-
-        with _warnings.catch_warnings():
-            _warnings.simplefilter('error')
-            await wrapper.get_tools(ctx)
+        assert 'async def later' in description
+        # The deferred-loading tool should NOT be exposed as a native tool
+        assert 'later' not in tools
 
     async def test_deferred_execution_tools_promoted_to_native_with_warning(self) -> None:
         """Tools with `kind='external'` (deferred execution) are excluded from sandbox but promoted to native."""

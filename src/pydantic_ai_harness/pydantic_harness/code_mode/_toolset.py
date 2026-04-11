@@ -167,9 +167,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     callable from the sandbox at runtime. Non-selected tools remain visible
     to the model as normal tool calls.
 
-    Tools that require deferred execution (kind `external`/`unapproved`) or
-    deferred loading (`defer_loading=True`) cannot be called from inside the
-    sandbox and are dropped with a one-time `UserWarning`.
+    Tools that require deferred execution (kind `external`/`unapproved`) cannot
+    be called from inside the sandbox and are dropped with a one-time `UserWarning`.
     """
 
     tool_selector: ToolSelector[AgentDepsT] = 'all'
@@ -439,10 +438,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         hyphens or dots like `get-weather`, `api.call`) are sanitized to
         underscored forms and mapped back to their original names for dispatch.
 
-        Tools requiring deferred execution (kind `external`/`unapproved`) or
-        deferred loading (`defer_loading=True`) cannot run in the sandbox and
-        are excluded from `callable_defs`. Their names are returned in the
-        third element so the caller can promote them back to native tools.
+        Tools requiring deferred execution (kind `external`/`unapproved`) cannot
+        run in the sandbox and are excluded from `callable_defs`. Their names
+        are returned in the third element so the caller can promote them back
+        to native tools.
 
         Returns:
             A tuple of `(callable_defs, sanitized_to_original, native_fallbacks)`
@@ -461,18 +460,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                         f'CodeMode: tool {name!r} requires deferred execution '
                         f'(kind={td.kind!r}) and cannot be called from inside the '
                         f'sandbox; it will be exposed as a native tool instead.',
-                        UserWarning,
-                        stacklevel=2,
-                    )
-                native_fallbacks.add(name)
-                continue
-            if td.defer_loading:
-                if name not in self._warned_deferred:
-                    self._warned_deferred.add(name)
-                    warnings.warn(
-                        f'CodeMode: tool {name!r} uses deferred loading (tool search) '
-                        f'and cannot be pre-registered in the sandbox; it will be '
-                        f'exposed as a native tool instead.',
                         UserWarning,
                         stacklevel=2,
                     )
