@@ -33,7 +33,7 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporalio not installed', allow_module_level=True)
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ToolDefinition
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -85,9 +85,14 @@ def add(a: int, b: int) -> int:
     return a + b
 
 
+_captured_tool_defs: list[list[ToolDefinition]] = []
+
+
 # FunctionModel that emits a run_code tool call for the given code snippet.
 def _code_mode_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
     """Model that generates a run_code call on the first request, then returns the result as text."""
+    _captured_tool_defs.append(info.function_tools)
+
     # Check if we already got a tool result back.
     for msg in messages:
         if isinstance(msg, ModelResponse):
@@ -145,6 +150,7 @@ async def test_code_mode_runs_in_temporal_workflow(client: Client) -> None:
     event loop doesn't implement `call_soon_threadsafe`. The snapshot
     approach (`feed_start`/`resume`) avoids threads entirely.
     """
+    _captured_tool_defs.clear()
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -206,3 +212,16 @@ async def test_code_mode_runs_in_temporal_workflow(client: Client) -> None:
     assert messages[3]['kind'] == 'response'
     assert messages[3]['parts'][0]['part_kind'] == 'text'
     assert messages[3]['parts'][0]['content'] == 'done: 7'
+
+    # 5. Verify tool definitions sent to the model
+    assert len(_captured_tool_defs) == 2
+    for tool_defs in _captured_tool_defs:
+        tool_names = [td.name for td in tool_defs]
+        # CodeMode wraps `add` into `run_code` — the model should only see `run_code`
+        assert 'run_code' in tool_names
+        assert 'add' not in tool_names
+
+        run_code_td = next(td for td in tool_defs if td.name == 'run_code')
+        assert run_code_td.description is not None
+        assert 'async def add' in run_code_td.description
+        assert run_code_td.parameters_json_schema['properties']['code']['type'] == 'string'

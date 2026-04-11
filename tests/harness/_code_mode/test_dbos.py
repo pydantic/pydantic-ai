@@ -20,7 +20,7 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('dbos not installed', allow_module_level=True)
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ToolDefinition
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -59,7 +59,12 @@ def add(a: int, b: int) -> int:
     return a + b
 
 
+_captured_tool_defs: list[list[ToolDefinition]] = []
+
+
 def _code_mode_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
+    _captured_tool_defs.append(info.function_tools)
+
     for msg in messages:
         if isinstance(msg, ModelResponse):
             continue
@@ -97,6 +102,7 @@ def test_code_mode_runs_in_dbos_workflow(dbos_instance: DBOS) -> None:
     """CodeMode's snapshot-based execution loop works inside a DBOS durable
     workflow. DBOS defaults to `parallel_ordered_events` mode, which triggers
     the sequential FutureSnapshot resolution path."""
+    _captured_tool_defs.clear()
     result = dbos_code_mode_agent.run_sync('Calculate 3 + 4')
     assert result.output == 'done: 7'
 
@@ -147,3 +153,18 @@ def test_code_mode_runs_in_dbos_workflow(dbos_instance: DBOS) -> None:
     final = messages[3].parts[0]
     assert isinstance(final, TextPart)
     assert final.content == 'done: 7'
+
+    # 5. Verify tool definitions sent to the model
+    # The model was called twice (first request + after tool return), both
+    # should see the same tool definitions.
+    assert len(_captured_tool_defs) == 2
+    for tool_defs in _captured_tool_defs:
+        tool_names = [td.name for td in tool_defs]
+        # CodeMode wraps `add` into `run_code` — the model should only see `run_code`
+        assert 'run_code' in tool_names
+        assert 'add' not in tool_names
+
+        run_code_td = next(td for td in tool_defs if td.name == 'run_code')
+        assert run_code_td.description is not None
+        assert 'async def add' in run_code_td.description
+        assert run_code_td.parameters_json_schema['properties']['code']['type'] == 'string'
