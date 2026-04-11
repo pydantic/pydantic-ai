@@ -1353,12 +1353,14 @@ async def process_tool_calls(  # noqa: C901
         # `final_result` can be passed into `process_tool_calls` from `Agent.run_stream`
         # when streaming and there's already a final result
         if final_result and final_result.tool_call_id == call.tool_call_id:
+            yield _messages.FunctionToolCallEvent(call, args_valid=True)
             part = _messages.ToolReturnPart(
                 tool_name=call.tool_name,
                 content='Final result processed.',
                 tool_call_id=call.tool_call_id,
             )
             output_parts.append(part)
+            yield _messages.FunctionToolResultEvent(part)
         # Early strategy is chosen and final result is already set
         elif ctx.deps.end_strategy == 'early' and final_result:
             for event in _emit_skipped_output_tool(
@@ -1428,12 +1430,14 @@ async def process_tool_calls(  # noqa: C901
                 ctx.state.retries += 1
                 continue
 
+            yield _messages.FunctionToolCallEvent(call, args_valid=True)
             part = _messages.ToolReturnPart(
                 tool_name=call.tool_name,
                 content='Final result processed.',
                 tool_call_id=call.tool_call_id,
             )
             output_parts.append(part)
+            yield _messages.FunctionToolResultEvent(part)
 
             # In both `early` and `exhaustive` modes, use the first output tool's result as the final result
             if not final_result:

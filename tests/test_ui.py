@@ -493,6 +493,7 @@ async def test_run_stream_output_tool():
             "</tool-call name='final_result'>",
             '</response>',
             '<request>',
+            '<function-tool-call name=\'final_result\'>{"query":"Hello world"}</function-tool-call>',
             "<function-tool-result name='final_result'>Final result processed.</function-tool-result>",
             '</request>',
             "<run-result>{'results': [{'title': '\"Hello, World!\" program', 'url': 'https://en.wikipedia.org/wiki/%22Hello,_World!%22_program'}]}</run-result>",

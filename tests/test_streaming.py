@@ -2649,8 +2649,50 @@ async def test_unknown_tool_call_events():
     )
 
 
-async def test_output_tool_validation_failure_events():
-    """Test that output tools that fail validation emit events during streaming."""
+async def test_output_tool_success_events():
+    """Test that a successful output tool call emits FunctionToolCallEvent and FunctionToolResultEvent during streaming."""
+
+    def call_final_result(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart('final_result', {'value': 'hello'})])
+
+    agent = Agent(FunctionModel(call_final_result), output_type=OutputType)
+
+    events: list[Any] = []
+    async with agent.iter('test') as agent_run:
+        async for node in agent_run:
+            if Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as event_stream:
+                    async for event in event_stream:
+                        events.append(event)
+
+    assert agent_run.result is not None
+    assert agent_run.result.output == snapshot(OutputType(value='hello'))
+
+    assert events == snapshot(
+        [
+            FunctionToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='final_result',
+                    args={'value': 'hello'},
+                    tool_call_id=IsStr(),
+                ),
+                args_valid=True,
+            ),
+            FunctionToolResultEvent(
+                result=ToolReturnPart(
+                    tool_name='final_result',
+                    content='Final result processed.',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                )
+            ),
+        ]
+    )
+
+
+async def test_output_tool_events():
+    """Test that output tools emit events during streaming for both validation failure and success."""
 
     def call_final_result_with_bad_data(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         """Mock function that calls final_result tool with invalid data."""
@@ -2697,8 +2739,22 @@ async def test_output_tool_validation_failure_events():
                     timestamp=IsNow(tz=timezone.utc),
                 )
             ),
-            # Note: No FunctionToolCallEvent for the successful output tool call
-            # Output tools only emit FunctionToolCallEvent on validation/execution failure
+            FunctionToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='final_result',
+                    args={'value': 'valid'},
+                    tool_call_id=IsStr(),
+                ),
+                args_valid=True,
+            ),
+            FunctionToolResultEvent(
+                result=ToolReturnPart(
+                    tool_name='final_result',
+                    content='Final result processed.',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                )
+            ),
         ]
     )
 

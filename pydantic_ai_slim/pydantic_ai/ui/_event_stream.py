@@ -34,7 +34,6 @@ from ..messages import (
     ThinkingPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
-    ToolReturnPart,
     UploadedFile,
 )
 from ..output import OutputDataT
@@ -83,7 +82,6 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
     _turn: Literal['request', 'response'] | None = None
 
     _result: AgentRunResult[OutputDataT] | None = None
-    _final_result_event: FinalResultEvent | None = None
 
     def new_message_id(self) -> str:
         """Generate and store a new message ID."""
@@ -162,26 +160,6 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                     async for e in self._turn_to('request'):
                         yield e
                 elif isinstance(event, AgentRunResultEvent):
-                    if (
-                        self._final_result_event
-                        and (tool_call_id := self._final_result_event.tool_call_id)
-                        and (tool_name := self._final_result_event.tool_name)
-                    ):
-                        async for e in self._turn_to('request'):
-                            yield e
-
-                        self._final_result_event = None
-                        # Ensure the stream does not end on a dangling tool call without a result.
-                        output_tool_result_event = FunctionToolResultEvent(
-                            result=ToolReturnPart(
-                                tool_call_id=tool_call_id,
-                                tool_name=tool_name,
-                                content='Final result processed.',
-                            )
-                        )
-                        async for e in self.handle_function_tool_result(output_tool_result_event):
-                            yield e
-
                     result = cast(AgentRunResult[OutputDataT], event.result)
                     self._result = result
 
@@ -196,9 +174,6 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                             await on_complete(result)
                         else:
                             await _utils.run_in_executor(on_complete, result)
-                elif isinstance(event, FinalResultEvent):
-                    self._final_result_event = event
-
                 if isinstance(event, BuiltinToolCallEvent | BuiltinToolResultEvent):  # pyright: ignore[reportDeprecated]
                     # These events were deprecated before this feature was introduced
                     continue
