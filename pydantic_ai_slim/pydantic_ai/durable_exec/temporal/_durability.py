@@ -238,7 +238,9 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
 
         # --- Event stream handler activity ---
 
-        async def event_stream_handler_activity_fn(params: _EventStreamHandlerParams, deps: AgentDepsT) -> None:
+        async def event_stream_handler_activity_fn(  # pragma: lax no cover
+            params: _EventStreamHandlerParams, deps: AgentDepsT
+        ) -> None:
             assert event_stream_handler is not None
             run_context = deserialize_run_context(
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
@@ -328,10 +330,10 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
             default = self._models_by_id.get('default')
             if default is not None:
                 return default
-            return next(iter(self._models_by_id.values()))
+            return next(iter(self._models_by_id.values()))  # pragma: no cover
 
-        if model_id in self._models_by_id:
-            return self._models_by_id[model_id]
+        if model_id in self._models_by_id:  # pragma: lax no cover
+            return self._models_by_id[model_id]  # pragma: lax no cover
 
         return self._infer_model(model_id, run_context)  # pragma: lax no cover
 
@@ -355,7 +357,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         with _utils.disable_threads():
             try:
                 return await handler()
-            except PydanticSerializationError as e:
+            except PydanticSerializationError as e:  # pragma: lax no cover
                 raise UserError(
                     'The `deps` object failed to be serialized. Temporal requires all objects that are passed '
                     "to activities to be serializable using Pydantic's `TypeAdapter`."

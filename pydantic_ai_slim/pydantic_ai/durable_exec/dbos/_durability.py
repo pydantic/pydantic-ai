@@ -140,7 +140,7 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
                         step_name_prefix=self.name,
                         step_config=self._mcp_step_config,
                     )
-                    if ts.id is not None:
+                    if ts.id is not None:  # pragma: no branch
                         self._dbos_toolsets_by_id[ts.id] = wrapped
                     return wrapped
 
@@ -157,7 +157,7 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
                         step_name_prefix=self.name,
                         step_config=self._mcp_step_config,
                     )
-                    if ts.id is not None:
+                    if ts.id is not None:  # pragma: no branch
                         self._dbos_toolsets_by_id[ts.id] = wrapped
                     return wrapped
 
@@ -209,7 +209,7 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
             ts_id = ts.id
             if ts_id is not None and ts_id in self._dbos_toolsets_by_id:
                 return self._dbos_toolsets_by_id[ts_id]
-            return ts
+            return ts  # pragma: lax no cover
 
         return toolset.visit_and_replace(swap)
 

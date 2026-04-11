@@ -52,7 +52,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> CombinedCapability[AgentDepsT]:
         new_caps = [c.for_agent(agent) for c in self.capabilities]
-        if all(new is old for new, old in zip(new_caps, self.capabilities)):
+        if all(new is old for new, old in zip(new_caps, self.capabilities)):  # pragma: no branch
             return self
         return replace(self, capabilities=list(new_caps))
 

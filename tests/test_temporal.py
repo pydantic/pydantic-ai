@@ -4258,3 +4258,170 @@ def test_durability_temporal_activities_with_toolsets():
     )
     # 3 base activities + 1 for <agent> FunctionToolset + 1 for test_toolset
     assert len(durability.temporal_activities) == 5
+
+
+# --- _find_model_id fallthrough to model_id string match ---
+
+
+def test_durability_find_model_id_by_model_id_string():
+    """_find_model_id falls through identity check to match by model_id string."""
+    # Two FunctionModels with the same model_name produce identical model_id strings
+    m1 = FunctionModel(_durability_model_fn, model_name='shared')
+    m2 = FunctionModel(_durability_model_fn, model_name='shared')
+    assert m1 is not m2
+    assert m1.model_id == m2.model_id
+
+    durability = TemporalDurability(models={'alt': m1})
+    Agent(m2, name='model_id_string_test', capabilities=[durability])
+
+    # m2 is the default model (registered as 'default'), identity check matches
+    assert durability._find_model_id(m2) is None  # pyright: ignore[reportPrivateUsage]
+
+    # m1 is registered as 'alt', identity check matches
+    assert durability._find_model_id(m1) == 'alt'  # pyright: ignore[reportPrivateUsage]
+
+    # A third model with the same model_id but a different instance falls through
+    # the identity loop and matches m2 (the 'default') by model_id string
+    m3 = FunctionModel(_durability_model_fn, model_name='shared')
+    assert m3 is not m1 and m3 is not m2
+    assert durability._find_model_id(m3) is None  # pyright: ignore[reportPrivateUsage]
+
+    # A model with a unique model_id not in the registry falls through both loops
+    # and returns the raw model_id string
+    m4 = FunctionModel(_durability_model_fn, model_name='unknown')
+    assert durability._find_model_id(m4) == 'function:unknown'  # pyright: ignore[reportPrivateUsage]
+
+
+# --- get_serialization_name returns None ---
+
+
+def test_durability_get_serialization_name():
+    """TemporalDurability.get_serialization_name() returns None."""
+    assert TemporalDurability.get_serialization_name() is None
+
+
+# --- Toolset without ID raises UserError ---
+
+
+def test_durability_toolset_without_id_raises():
+    """TemporalDurability raises UserError for leaf toolsets without an ID."""
+    durability = TemporalDurability()
+    with pytest.raises(UserError, match='unique `id`'):
+        Agent(
+            _durability_fn_model,
+            name='no_id_test',
+            toolsets=[ExternalToolset(tool_defs=[ToolDefinition(name='ext_tool')])],
+            capabilities=[durability],
+        )
+
+
+# --- temporalize returning non-TemporalWrapperToolset (line 294->297 branch) ---
+
+
+def test_durability_non_temporal_wrapper_toolset_not_in_registry():
+    """When temporalize returns a non-TemporalWrapperToolset, it's not added to the registry."""
+    durability = TemporalDurability()
+    Agent(
+        _durability_fn_model,
+        name='external_ts_test',
+        toolsets=[ExternalToolset(tool_defs=[ToolDefinition(name='ext_tool')], id='ext')],
+        capabilities=[durability],
+    )
+    # ExternalToolset is not wrapped into a TemporalWrapperToolset by the default
+    # temporalize_toolset, so 'ext' should not appear in _temporal_toolsets_by_id.
+    assert 'ext' not in durability._temporal_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
+    # The agent's built-in <agent> FunctionToolset IS wrapped.
+    assert '<agent>' in durability._temporal_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
+
+
+# --- get_wrapper_toolset returns None when no temporal toolsets ---
+
+
+def test_durability_get_wrapper_toolset_returns_none():
+    """get_wrapper_toolset returns None when _temporal_toolsets_by_id is empty."""
+    # Use a no-op temporalize_toolset_func so no toolsets get wrapped
+    durability = TemporalDurability(
+        temporalize_toolset_func=lambda ts, prefix, config, tool_config, deps_type, rc_type: ts,
+    )
+    Agent(_durability_fn_model, name='no_wrap_test', capabilities=[durability])
+    assert len(durability._temporal_toolsets_by_id) == 0  # pyright: ignore[reportPrivateUsage]
+
+    dummy_toolset = FunctionToolset(id='dummy')
+    assert durability.get_wrapper_toolset(dummy_toolset) is None
+
+
+# --- get_wrapper_toolset swap returns unchanged toolset ---
+
+
+def test_durability_get_wrapper_toolset_swap_unchanged():
+    """get_wrapper_toolset's swap returns a toolset unchanged if its ID is not in the registry."""
+    durability = TemporalDurability()
+    Agent(_durability_fn_model, name='swap_test', capabilities=[durability])
+
+    # Create a new toolset not registered with this durability
+    unregistered_toolset = FunctionToolset(id='unregistered')
+    result = durability.get_wrapper_toolset(unregistered_toolset)
+    # The toolset should be returned as-is since its ID is not in the registry
+    assert result is unregistered_toolset
+
+
+# --- Streaming in workflow (event_stream_handler) ---
+
+
+async def _stream_model_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    yield 'Stream'
+    yield 'ed '
+    yield 'response'
+
+
+_stream_fn_model = FunctionModel(_durability_model_fn, stream_function=_stream_model_fn)
+
+_stream_events_collected: list[AgentStreamEvent] = []
+
+
+async def _durability_event_stream_handler(
+    ctx: RunContext[None],
+    stream: AsyncIterable[AgentStreamEvent],
+) -> None:
+    async for event in stream:
+        _stream_events_collected.append(event)
+
+
+_stream_durability = TemporalDurability(
+    event_stream_handler=_durability_event_stream_handler,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+_stream_durable_agent = Agent(
+    _stream_fn_model,
+    name='durability_stream_agent',
+    capabilities=[_stream_durability],
+)
+
+
+@workflow.defn
+class StreamDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _stream_durable_agent.run(prompt)
+        return result.output
+
+
+async def test_durability_streaming_in_workflow(client: Client):
+    """TemporalDurability routes model requests through streaming activity when event_stream_handler is set."""
+    _stream_events_collected.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[StreamDurableAgentWorkflow],
+        plugins=[DurabilityPlugin(_stream_durability)],
+    ):
+        output = await client.execute_workflow(
+            StreamDurableAgentWorkflow.run,
+            args=['Hello streaming'],
+            id=StreamDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        # The non-streaming FunctionModel function is NOT used for the streaming activity;
+        # instead, request_stream_activity uses the stream_function path.
+        # The final response is assembled from the streamed chunks.
+        assert output == 'Streamed response'

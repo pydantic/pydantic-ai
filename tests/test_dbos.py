@@ -1699,3 +1699,127 @@ async def test_dbos_durability_step_verification(dbos: DBOS) -> None:
     steps = await dbos.list_workflow_steps_async(wfid)
     step_names = [step['function_name'] for step in steps]
     assert 'durability_steps__model.request' in step_names
+
+
+def test_dbos_durability_requires_agent_name() -> None:
+    """DBOSDurability raises UserError when the agent has no name."""
+    with pytest.raises(UserError, match='unique `name`'):
+        Agent(_durability_fn_model, capabilities=[DBOSDurability()])
+
+
+def test_dbos_durability_requires_concrete_model() -> None:
+    """DBOSDurability raises UserError when the agent has no concrete model."""
+    with pytest.raises(UserError, match='concrete `model`'):
+        Agent('openai:gpt-4o', name='needs_concrete', defer_model_check=True, capabilities=[DBOSDurability()])
+
+
+def test_dbos_durability_get_ordering() -> None:
+    """DBOSDurability declares innermost ordering."""
+    from pydantic_ai.capabilities.abstract import CapabilityOrdering
+
+    durability = DBOSDurability()
+    ordering = durability.get_ordering()
+    assert ordering == CapabilityOrdering(position='innermost')
+
+
+def test_dbos_durability_get_serialization_name() -> None:
+    """DBOSDurability is not spec-serializable."""
+    assert DBOSDurability.get_serialization_name() is None
+
+
+async def _durability_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    for msg in reversed(messages):
+        for part in msg.parts:
+            if isinstance(part, UserPromptPart):
+                yield f'Echo: {part.content}'
+                return
+    yield 'no prompt'  # pragma: no cover
+
+
+async def test_dbos_durability_streaming_in_workflow(dbos: DBOS) -> None:
+    """DBOSDurability routes streaming requests through DBOS steps when event_stream_handler is set."""
+    events_received: list[Any] = []
+
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[Any]) -> None:
+        async for event in stream:
+            events_received.append(event)
+
+    stream_model = FunctionModel(_durability_model_fn, stream_function=_durability_stream_fn)
+    agent = Agent(
+        stream_model,
+        name='durability_streaming',
+        capabilities=[DBOSDurability(event_stream_handler=handler)],
+    )
+
+    wfid = str(uuid.uuid4())
+
+    @DBOS.workflow()
+    async def run_durable_streaming_agent() -> str:
+        result = await agent.run('Hello streaming')
+        return result.output
+
+    with SetWorkflowID(wfid):
+        output = await run_durable_streaming_agent()
+
+    assert output == 'Echo: Hello streaming'
+
+    steps = await dbos.list_workflow_steps_async(wfid)
+    step_names = [step['function_name'] for step in steps]
+    assert 'durability_streaming__model.request_stream' in step_names
+
+
+async def test_dbos_durability_mcp_toolset_wrapping(dbos: DBOS) -> None:
+    """DBOSDurability discovers MCPServerStdio and creates DBOS wrappers."""
+    from pydantic_ai.durable_exec.dbos._mcp_server import DBOSMCPServer
+
+    durability = DBOSDurability()
+    mcp_toolset = MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='my_mcp')
+    Agent(
+        _durability_fn_model,
+        name='durability_mcp',
+        toolsets=[mcp_toolset],
+        capabilities=[durability],
+    )
+
+    # The capability should have stored a DBOS wrapper keyed by the toolset id
+    assert 'my_mcp' in durability._dbos_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(durability._dbos_toolsets_by_id['my_mcp'], DBOSMCPServer)  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_dbos_durability_fastmcp_toolset_wrapping(dbos: DBOS) -> None:
+    """DBOSDurability discovers FastMCPToolset and creates DBOS wrappers."""
+    from pydantic_ai.durable_exec.dbos._fastmcp_toolset import DBOSFastMCPToolset
+
+    durability = DBOSDurability()
+    fastmcp_toolset = FastMCPToolset('https://example.com/mcp', id='my_fastmcp')
+    Agent(
+        _durability_fn_model,
+        name='durability_fastmcp',
+        toolsets=[fastmcp_toolset],
+        capabilities=[durability],
+    )
+
+    # The capability should have stored a DBOS wrapper keyed by the toolset id
+    assert 'my_fastmcp' in durability._dbos_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(durability._dbos_toolsets_by_id['my_fastmcp'], DBOSFastMCPToolset)  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_dbos_durability_get_wrapper_toolset_with_mcp(dbos: DBOS) -> None:
+    """DBOSDurability.get_wrapper_toolset replaces MCP toolsets by id."""
+    from pydantic_ai.durable_exec.dbos._mcp_server import DBOSMCPServer
+
+    durability = DBOSDurability()
+    mcp_toolset = MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='swap_mcp')
+    Agent(
+        _durability_fn_model,
+        name='durability_swap',
+        toolsets=[mcp_toolset],
+        capabilities=[durability],
+    )
+
+    assert 'swap_mcp' in durability._dbos_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
+
+    # get_wrapper_toolset should replace the original MCP toolset with the DBOS wrapper
+    replaced = durability.get_wrapper_toolset(mcp_toolset)
+    assert replaced is not None
+    assert isinstance(replaced, DBOSMCPServer)

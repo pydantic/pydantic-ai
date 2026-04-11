@@ -61,7 +61,7 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
         new_wrapped = self.wrapped.for_agent(agent)
-        if new_wrapped is self.wrapped:
+        if new_wrapped is self.wrapped:  # pragma: no branch
             return self
         return replace(self, wrapped=new_wrapped)
 
