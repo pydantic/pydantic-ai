@@ -15,7 +15,7 @@ Pydantic AI core ships the agent loop, model providers, the capabilities/hooks a
 
 **Pydantic Harness** is where everything else lives: standalone capabilities that make specific categories of agents powerful, or that are still finding their final shape. Context management, memory, guardrails, file system access, code execution, multi-agent orchestration -- these are the building blocks you pick and choose based on what your agent needs to do.
 
-The harness is also where new capabilities *start*. It ships as a separate package so capabilities can iterate faster without the strict backward-compatibility requirements of core. As a capability stabilizes and proves itself broadly essential, it can graduate into core -- [code mode](https://github.com/pydantic/pydantic-harness/tree/main/code_mode) is an early candidate.
+The harness is also where new capabilities *start*. It ships as a separate package so capabilities can iterate faster without the strict backward-compatibility requirements of core. As a capability stabilizes and proves itself broadly essential, it can graduate into core -- [code mode](https://github.com/pydantic/pydantic-harness/tree/main/pydantic_harness/code_mode) is an early candidate.
 
 Many capabilities benefit from a "fall up" pattern: they typically start as a local implementation that works with every model, then gain provider-native support that uses the provider's built-in API when available -- auto-switching between the two. This is how [web search](capabilities.md#provider-adaptive-tools), [web fetch](capabilities.md#provider-adaptive-tools), and [image generation](capabilities.md#provider-adaptive-tools) already work in core, and the same approach is coming for skills, code mode, and context compaction.
 
