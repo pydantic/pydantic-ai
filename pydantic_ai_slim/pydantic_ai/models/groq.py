@@ -201,7 +201,8 @@ class GroqModel(Model[AsyncGroq]):
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
-        # Groq doesn't support native structured output with function tools.
+        # Groq doesn't support native structured output with function tools:
+        # https://console.groq.com/docs/structured-outputs
         # This must happen BEFORE super().prepare_request() because the base class
         # clears output_tools when output_mode != 'tool'.
         if model_request_parameters.function_tools:
