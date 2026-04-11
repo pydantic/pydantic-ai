@@ -36,6 +36,7 @@ def convert_temp(fahrenheit: float) -> float:
     return round((fahrenheit - 32) * 5 / 9, 1)
 
 result = agent.run_sync("What's the weather in Paris and Tokyo, in Celsius?")
+print(result.output)
 ```
 
 The model writes code like:
@@ -151,6 +152,8 @@ from pydantic_ai import Agent
 from pydantic_harness import CodeMode
 
 agent = Agent.from_file('agent.yaml', custom_capability_types=[CodeMode])
+result = agent.run_sync('...')
+print(result.output)
 ```
 
 Pass `custom_capability_types` so the spec loader knows how to instantiate `CodeMode`. You can also pass arguments in the YAML:

@@ -51,6 +51,7 @@ agent = Agent(
 )
 
 result = agent.run_sync('Rank the open PRs on pydantic/pydantic-harness by thumbs-up reactions. Which 5 should we merge first?')
+print(result.output)
 ```
 
 [`MCP`](https://ai.pydantic.dev/capabilities/#provider-adaptive-tools) (from the core `pydantic-ai` package) connects your agent to any MCP server -- here, [GitHub's official MCP server](https://github.com/github/github-mcp-server).
