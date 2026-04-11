@@ -37,7 +37,7 @@ pytestmark = pytest.mark.anyio
 T = TypeVar('T')
 
 
-def build_run_context(deps: T, run_step: int = 0) -> RunContext[T]:
+def build_run_context(deps: T, run_step: int = 0, max_retries: int = 0) -> RunContext[T]:
     return RunContext(
         deps=deps,
         model=TestModel(),
@@ -45,6 +45,7 @@ def build_run_context(deps: T, run_step: int = 0) -> RunContext[T]:
         prompt=None,
         messages=[],
         run_step=run_step,
+        max_retries=max_retries,
     )
 
 
@@ -832,8 +833,8 @@ async def test_tool_manager_multiple_failed_tools():
         """Tool C that works"""
         return x * 3
 
-    # Create tool manager
-    context = build_run_context(TestDeps())
+    # Create tool manager with max_retries=1, matching what _agent_graph.py sets in a real run
+    context = build_run_context(TestDeps(), max_retries=1)
     tool_manager = await ToolManager[TestDeps](toolset).for_run_step(context)
 
     # Call tool_a - should fail and be added to failed_tools
@@ -852,7 +853,7 @@ async def test_tool_manager_multiple_failed_tools():
     assert tool_manager.failed_tools == {'tool_a', 'tool_b'}  # unchanged
 
     # Create next run step - should have retry counts for both failed tools
-    new_context = build_run_context(TestDeps(), run_step=1)
+    new_context = build_run_context(TestDeps(), run_step=1, max_retries=1)
     new_tool_manager = await tool_manager.for_run_step(new_context)
 
     assert new_tool_manager.ctx is not None

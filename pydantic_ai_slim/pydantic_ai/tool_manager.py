@@ -117,8 +117,6 @@ class ToolManager(Generic[AgentDepsT]):
             }
             ctx = replace(ctx, retries=retries)
 
-        ctx = replace(ctx, max_retries=self.default_max_retries)
-
         toolset = await self.toolset.for_run_step(ctx)
 
         new_tm = self.__class__(
