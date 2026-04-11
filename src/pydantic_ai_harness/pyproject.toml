@@ -27,7 +27,7 @@ classifiers = [
     'Typing :: Typed',
 ]
 dependencies = [
-    'pydantic-ai-slim>=1.78.0',
+    'pydantic-ai-slim>=1.80.0',
 ]
 
 [project.optional-dependencies]

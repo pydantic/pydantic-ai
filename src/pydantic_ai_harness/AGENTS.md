@@ -77,12 +77,11 @@ pydantic_harness/
     __init__.py        # public exports for the capability
     _capability.py     # capability class (AbstractCapability subclass)
     _toolset.py        # toolset implementation
+    README.md          # standalone docs for the capability
 tests/
   conftest.py          # shared fixtures (TestModel, test_agent)
   _<capability>/       # tests mirror source packages
     test_<capability>.py
-<capability>/
-  README.md            # standalone docs for the capability
 ```
 
 ## Testing patterns
