@@ -628,6 +628,8 @@ async def model_logic(  # noqa: C901
     elif isinstance(m, ToolReturnPart) and m.tool_name in ('_add', 'add'):
         return ModelResponse(parts=[TextPart(f'The answer is {m.content}')])
     elif isinstance(m, UserPromptPart):
+        if isinstance(m.content, list) and m.content[0] == 'Summarize this document':
+            return ModelResponse(parts=[TextPart('This document outlines the PDF specification version 1.4.')])
         assert isinstance(m.content, str)
         if m.content == 'What is 2 + 3?' and any(t.name in ('_add', 'add') for t in info.function_tools):
             add_name = next(t.name for t in info.function_tools if t.name in ('_add', 'add'))

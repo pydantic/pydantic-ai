@@ -8,7 +8,7 @@ from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
@@ -68,10 +68,15 @@ class AzureProvider(Provider[AsyncOpenAI]):
 
                 # As AzureProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
                 # we need to maintain that behavior unless json_schema_transformer is set explicitly
-                return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
+                # Azure Chat Completions API doesn't support document input
+                return OpenAIModelProfile(
+                    json_schema_transformer=OpenAIJsonSchemaTransformer,
+                    openai_chat_supports_document_input=False,
+                ).update(profile)
 
         # OpenAI models are unprefixed
-        return openai_model_profile(model_name)
+        # Azure Chat Completions API doesn't support document input
+        return OpenAIModelProfile(openai_chat_supports_document_input=False).update(openai_model_profile(model_name))
 
     @overload
     def __init__(self, *, openai_client: AsyncAzureOpenAI) -> None: ...
@@ -132,7 +137,10 @@ class AzureProvider(Provider[AsyncOpenAI]):
                     'Must provide one of the `api_version` argument or the `OPENAI_API_VERSION` environment variable'
                 )
 
-            http_client = http_client or cached_async_http_client(provider='azure')
+            if http_client is None:
+                http_client = create_async_http_client()
+                self._own_http_client = http_client
+                self._http_client_factory = create_async_http_client
             self._client = AsyncAzureOpenAI(
                 azure_endpoint=azure_endpoint,
                 api_key=api_key,
@@ -140,3 +148,6 @@ class AzureProvider(Provider[AsyncOpenAI]):
                 http_client=http_client,
             )
             self._base_url = str(self._client.base_url)
+
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

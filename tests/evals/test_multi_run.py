@@ -10,8 +10,6 @@ from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from logfire.testing import CaptureLogfire
-
     from pydantic_evals import Case, Dataset
     from pydantic_evals.evaluators import EvaluationResult, Evaluator, EvaluatorContext, EvaluatorOutput
     from pydantic_evals.reporting import (
@@ -38,12 +36,20 @@ with try_import() as imports_successful:
             return True
 
 
+with try_import() as logfire_import_successful:
+    from logfire.testing import CaptureLogfire
+
+
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
 
+needs_logfire = pytest.mark.skipif(not logfire_import_successful(), reason='logfire not installed')
 
-@pytest.fixture(autouse=True)
-def use_logfire(capfire: CaptureLogfire):
-    assert capfire
+
+if logfire_import_successful():
+
+    @pytest.fixture(autouse=True)
+    def use_logfire(capfire: CaptureLogfire):
+        assert capfire
 
 
 async def test_repeat_1_produces_identical_behavior():
@@ -348,6 +354,7 @@ def test_average_from_aggregates_partial_keys():
     assert result.assertions == 1.0
 
 
+@needs_logfire
 async def test_otel_spans_have_correct_attributes(capfire: CaptureLogfire):
     """OTel spans should have repeat and source_case_name attributes set when repeat > 1."""
 
