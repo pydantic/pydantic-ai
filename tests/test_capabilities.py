@@ -71,6 +71,8 @@ from pydantic_graph import End
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInstance, IsStr
 
+from pydantic_ai.capabilities import RepairToolOrphans
+
 pytestmark = [
     pytest.mark.anyio,
 ]
@@ -84,6 +86,7 @@ def test_capability_types() -> None:
             'IncludeToolReturnSchemas': IncludeToolReturnSchemas,
             'MCP': MCP,
             'PrefixTools': PrefixTools,
+            'RepairToolOrphans': RepairToolOrphans,
             'SetToolMetadata': SetToolMetadata,
             'Thinking': Thinking,
             'WebFetch': WebFetch,

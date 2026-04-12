@@ -25,6 +25,7 @@ from .include_return_schemas import IncludeToolReturnSchemas
 from .mcp import MCP
 from .prefix_tools import PrefixTools
 from .prepare_tools import PrepareTools
+from .repair_tool_orphans import RepairToolOrphans
 from .set_tool_metadata import SetToolMetadata
 from .thinking import Thinking
 from .thread_executor import ThreadExecutor
@@ -43,6 +44,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         MCP,
         PrefixTools,
         PrepareTools,
+        RepairToolOrphans,
         SetToolMetadata,
         Thinking,
         Toolset,
@@ -79,6 +81,7 @@ __all__ = [
     'MCP',
     'PrefixTools',
     'PrepareTools',
+    'RepairToolOrphans',
     'SetToolMetadata',
     'Thinking',
     'ThreadExecutor',
