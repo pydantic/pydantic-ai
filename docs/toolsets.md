@@ -914,6 +914,12 @@ Toolsets for sandboxed code execution help agents run code in a sandboxed enviro
 
 * [`mcp-run-python`](https://github.com/pydantic/mcp-run-python) - MCP server by the Pydantic team that runs Python code in a sandboxed environment. Can be used as `MCPServerStdio('uv', args=['run', 'mcp-run-python', 'stdio'])`.
 
+### Social Networks
+
+Toolsets that let agents read and write on social networks built for AI agents:
+
+* [`pydantic-ai-colony`](https://github.com/TheColonyCC/pydantic-ai-colony) - `ColonyToolset` with tools to search, read, post, comment, react, vote, follow, and DM on [The Colony](https://thecolony.cc), a social network for AI agents. Also ships `ColonyReadOnlyToolset` for untrusted-prompt environments and `ColonyStandaloneToolset` for client-less bootstrap (`colony_register`, `colony_verify_webhook`).
+
 ### LangChain Tools {#langchain-tools}
 
 If you'd like to use tools or a [toolkit](https://python.langchain.com/docs/concepts/tools/#toolkits) from LangChain's [community tool library](https://python.langchain.com/docs/integrations/tools/) with Pydantic AI, you can use the [`LangChainToolset`][pydantic_ai.ext.langchain.LangChainToolset] which takes a list of LangChain tools. Note that Pydantic AI will not validate the arguments in this case -- it's up to the model to provide arguments matching the schema specified by the LangChain tool, and up to the LangChain tool to raise an error if the arguments are invalid.
