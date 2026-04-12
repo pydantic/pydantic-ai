@@ -1,0 +1,212 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '364'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Create a CSV file with the numbers 1 to 5 and their squares
+          type: text
+        role: user
+      model: claude-sonnet-4-0
+      stream: false
+      thinking:
+        budget_tokens: 3000
+        type: enabled
+      tool_choice:
+        type: auto
+      tools:
+      - name: code_execution
+        type: code_execution_20250522
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '3582'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=12393
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      container:
+        expires_at: '2026-04-12T10:30:22.309037Z'
+        id: container_011CZyeEeVBWseWqDHShnnsu
+      content:
+      - signature: ErAECmIIDBgCKkAcuVrxk6PQMEGnZfpHe6+NjgAjlfbaC9sDjITjGBPMl738nYUC7h55ARuKV+nQSS+/LAR9d8xla3PFZZQdzRv3MhhjbGF1ZGUtc29ubmV0LTQtMjAyNTA1MTQ4ABIMx0frr8e7y46Y0wENGgy9S6W4qfHUrBRL8GAiMBFNZTuCHCtrMAVlUVqnwf+zvM5LDu7A63TlBmZIqmvOklWINWp+FhJbuh31xsfioSr7AhHuPJv3rOK9mDry7k68xc+ZEutaKwKyiLLpqSpEdiTNUZbz4Ejwuvz8d8hYVmFo/E1QapCvKijLPsoG05WMa8vtt8ywRIS901l3Fuk177j3J5arYa8xptyOYfCndFfPtT+6/YKFFQ5xBJeEYM/0bHiJ25u6uZkRUMvaZqgF9miYYnPz9vtppRh1YCquij12oIcv3PHSz4L1JyX+Y6fJdJGynLHsc5Ypkwqhu+vdCdbxjZblpUqwgjjmA/xkuosKAAO0AIr2b1yyqxAgvotdludp0NsmndYaFIiNH+TB+9wI5Gtb3EZMr9qbN9WamqqqAHIouVHEY3AhqyfquHtO3NScSphcK4BK8SDVnBEeZd4THcsTAUzEC01z5ujArPH28Ek9MySXafMWYtRioKse3mXvWgmDQG4HUXrscjRpwvaFJ159ExWk3wqOq3AdCbnDq+G9o5UCrSKzKor/NG/aTRGi3OyQNREj49YDHhiGhxhyfvqSTk68Ey0HoxkYAQ==
+        thinking: |-
+          The user wants me to create a CSV file with numbers 1 to 5 and their squares. This involves creating a file, so I should use the code_execution tool to generate this CSV file.
+
+          I need to:
+          1. Create data with numbers 1-5 and their squares
+          2. Write this data to a CSV file
+          3. Save it to the OUTPUT_DIR so the user can access it
+
+          Let me write Python code to do this.
+        type: thinking
+      - text: I'll create a CSV file with numbers 1 to 5 and their squares for you.
+        type: text
+      - id: srvtoolu_01G3T21DgbvyAtkymRpDt2S9
+        input:
+          code: "import csv\nimport os\n\n# Get the output directory\noutput_dir = os.environ.get('OUTPUT_DIR', '.')\n\n#
+            Create data: numbers 1-5 and their squares\ndata = []\nfor i in range(1, 6):\n    data.append([i, i**2])\n\n#
+            Create CSV file\ncsv_filename = os.path.join(output_dir, 'numbers_and_squares.csv')\n\nwith open(csv_filename,
+            'w', newline='') as csvfile:\n    writer = csv.writer(csvfile)\n    \n    # Write header\n    writer.writerow(['Number',
+            'Square'])\n    \n    # Write data\n    writer.writerows(data)\n\nprint(f\"CSV file created: {csv_filename}\")\n\n#
+            Display the contents to verify\nprint(\"\\nFile contents:\")\nwith open(csv_filename, 'r') as csvfile:\n    print(csvfile.read())"
+        name: code_execution
+        type: server_tool_use
+      - content:
+          abort_reason: null
+          content:
+          - file_id: file_011CZyeFHAKGd2xor7gAFyrL
+            type: code_execution_output
+          return_code: 0
+          stderr: ''
+          stdout: |-
+            CSV file created: /files/output/2e2badd4e9b8b729/numbers_and_squares.csv
+
+            File contents:
+            Number,Square
+            1,1
+            2,4
+            3,9
+            4,16
+            5,25
+          type: code_execution_result
+        tool_use_id: srvtoolu_01G3T21DgbvyAtkymRpDt2S9
+        type: code_execution_tool_result
+      - text: |-
+          Perfect! I've created a CSV file called `numbers_and_squares.csv` that contains:
+
+          - Column 1: Numbers from 1 to 5
+          - Column 2: Their corresponding squares (1, 4, 9, 16, 25)
+
+          The file has been saved with proper headers ("Number" and "Square") and is ready for download. Each row contains a number and its square value, making it easy to use for data analysis or other applications.
+        type: text
+      id: msg_0174wvdk9Yf7pYeBCVYFsS4v
+      model: claude-sonnet-4-20250514
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 2055
+        output_tokens: 508
+        server_tool_use:
+          web_fetch_requests: 0
+          web_search_requests: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/binary
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      cookie:
+      - _cfuvid=jo_ckKKV3j2x8o3wYKv4hEOfOuYb5TLpgrxsfNoa3Fg-1775986213.0525322-1.0.1.1-gkc0wkNIdYGcaYvsLDg8WsJxlMVZtBsjrbB7n41Hj.g
+      host:
+      - api.anthropic.com
+    method: GET
+    uri: https://api.anthropic.com/v1/files/file_011CZyeFHAKGd2xor7gAFyrL/content?beta=true
+  response:
+    body:
+      string: "Number,Square\r\n1,1\r\n2,4\r\n3,9\r\n4,16\r\n5,25\r\n"
+    headers:
+      connection:
+      - keep-alive
+      content-disposition:
+      - attachment; filename*=utf-8''numbers_and_squares.csv
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/csv
+      server-timing:
+      - x-originResponse;dur=280
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      cookie:
+      - _cfuvid=Y5_VvzvC06f03a5aVDwCsBWMJh_T4t3pTC8Huc86tow-1775986225.766339-1.0.1.1-J5CPlwALhUNhxrJ5_OPr6O..HqdB.pXjth6IpL9fyRc
+      host:
+      - api.anthropic.com
+    method: GET
+    uri: https://api.anthropic.com/v1/files/file_011CZyeFHAKGd2xor7gAFyrL?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '204'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=143
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      created_at: '2026-04-12T09:30:21.992000Z'
+      downloadable: true
+      filename: numbers_and_squares.csv
+      id: file_011CZyeFHAKGd2xor7gAFyrL
+      mime_type: text/csv
+      size_bytes: 42
+      type: file
+    status:
+      code: 200
+      message: OK
+version: 1
