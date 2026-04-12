@@ -211,6 +211,8 @@ def bedrock_google_model_profile(model_name: str) -> ModelProfile | None:
         supports_json_schema_output=model_name.startswith(models_that_support_json_schema_output),
         # Bedrock Converse API doesn't support JSON object mode
         supports_json_object_output=False,
+        # Bedrock Converse API doesn't support tool return schemas natively
+        supports_tool_return_schema=False,
     )
 
 
