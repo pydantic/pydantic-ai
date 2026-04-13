@@ -1,5 +1,7 @@
 # Code Mode
 
+Code mode is one of the capabilities in [**Pydantic AI Harness**](overview.md), the official capability library for Pydantic AI. The full docs live in the [harness repo](https://github.com/pydantic/pydantic-ai-harness) -- this page is a short intro.
+
 [`CodeMode`](https://github.com/pydantic/pydantic-ai-harness/blob/main/pydantic_ai_harness/code_mode/README.md) wraps your tools into a single `run_code` tool powered by our [Monty](https://github.com/pydantic/monty) sandbox. The model writes Python that calls multiple tools with loops, conditionals, variables, and `asyncio.gather` -- all inside one tool call.
 
 Standard tool calling requires one model round-trip per tool call. An agent that needs to fetch 10 items and process each one makes 11+ model calls -- slow, expensive, and context-heavy. Code mode collapses that into one.
