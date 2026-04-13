@@ -41,6 +41,7 @@ with try_import() as imports_successful:
     )
 
     # Import the content mapping functions for testing
+    from pydantic_ai.mcp import CallToolFunc, ToolResult
     from pydantic_ai.toolsets.fastmcp import (
         FastMCPToolset,
     )
@@ -181,6 +182,11 @@ class TestFastMCPToolsetInitialization:
         """Test that the id property returns None."""
         toolset = FastMCPToolset(fastmcp_client)
         assert toolset.id is None
+
+    async def test_process_tool_call_default_is_none(self, fastmcp_client: Client[FastMCPTransport]):
+        """Test that process_tool_call defaults to None."""
+        toolset = FastMCPToolset(fastmcp_client)
+        assert toolset.process_tool_call is None
 
 
 class TestFastMCPToolsetContextManagement:
@@ -544,6 +550,47 @@ class TestFastMCPToolsetToolCalling:
 
             with pytest.raises(ModelRetry, match='This is a test error'):
                 await toolset.call_tool('error_tool', {}, run_context, error_tool)
+
+    async def test_process_tool_call_invoked(
+        self,
+        fastmcp_client: Client[FastMCPTransport],
+        run_context: RunContext[None],
+    ):
+        """Test that process_tool_call hook is invoked when set."""
+        called = False
+
+        async def process_tool_call(
+            ctx: RunContext[None],
+            call_tool: CallToolFunc,
+            name: str,
+            tool_args: dict[str, Any],
+        ) -> ToolResult:
+            nonlocal called
+            called = True
+            return await call_tool(name, tool_args, None)
+
+        toolset = FastMCPToolset(fastmcp_client, process_tool_call=process_tool_call)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            test_tool = tools['test_tool']
+            result = await toolset.call_tool('test_tool', {'param1': 'hello', 'param2': 42}, run_context, test_tool)
+        assert result == {'result': 'param1=hello, param2=42'}
+        assert called
+
+    async def test_process_tool_call_none_calls_direct(
+        self,
+        fastmcp_toolset: FastMCPToolset[None],
+        run_context: RunContext[None],
+    ):
+        """Test that when process_tool_call is None, direct_call_tool is used."""
+        assert fastmcp_toolset.process_tool_call is None
+        async with fastmcp_toolset:
+            tools = await fastmcp_toolset.get_tools(run_context)
+            test_tool = tools['test_tool']
+            result = await fastmcp_toolset.call_tool(
+                'test_tool', {'param1': 'world', 'param2': 0}, run_context, test_tool
+            )
+        assert result == {'result': 'param1=world, param2=0'}
 
 
 class TestFastMCPToolsetFactoryMethods:

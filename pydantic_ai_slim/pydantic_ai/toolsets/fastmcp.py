@@ -15,7 +15,6 @@ from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets.abstract import ToolsetTool
-from pydantic_ai.mcp import ProcessToolCallback
 
 try:
     from fastmcp.client import Client
@@ -46,6 +45,8 @@ except ImportError as _import_error:
 
 if TYPE_CHECKING:
     from fastmcp.client.client import CallToolResult
+
+    from pydantic_ai.mcp import ProcessToolCallback
 
 
 FastMCPToolResult = messages.BinaryContent | dict[str, Any] | str | None
@@ -87,6 +88,8 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
     When `None` (default), defaults to `False` unless the
     [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
     """
+
+    process_tool_call: ProcessToolCallback | None
 
     _id: str | None
 
@@ -251,7 +254,6 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         ctx: RunContext[Any],
         tool: ToolsetTool[Any],
     ) -> Any:
-
         if self.process_tool_call is not None:
             return await self.process_tool_call(ctx, self.direct_call_tool, name, tool_args)
         else:
