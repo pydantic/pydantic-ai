@@ -7,6 +7,7 @@ from typing import Annotated, Any, Literal, TypeAlias, cast
 from pydantic import BaseModel, Discriminator, ValidationError, field_validator
 from typing_extensions import TypedDict, assert_never, override
 
+from .. import _utils
 from ..builtin_tools import AbstractBuiltinTool, WebSearchTool
 from ..exceptions import ModelHTTPError
 from ..messages import BinaryContent, FinishReason, ModelResponseStreamEvent, ThinkingPart, VideoUrl
@@ -33,10 +34,8 @@ try:
         _ChatCompletionChunk,  # pyright: ignore[reportPrivateUsage]
     )
 except ImportError as _import_error:
-    raise ImportError(
-        'Please install `openai` to use the OpenRouter model, '
-        'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
-    ) from _import_error
+    _utils.check_package_installed('openai', install_group='openai', install_label='OpenRouter')
+    raise
 
 _CHAT_FINISH_REASON_MAP: dict[Literal['stop', 'length', 'tool_calls', 'content_filter', 'error'], FinishReason] = {
     'stop': 'stop',

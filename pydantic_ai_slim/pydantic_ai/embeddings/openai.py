@@ -20,10 +20,10 @@ try:
 
     from pydantic_ai.models.openai import OMIT
 except ImportError as _import_error:
-    raise ImportError(
-        'Please install `openai` to use the OpenAI embeddings model, '
-        'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
-    ) from _import_error
+    from pydantic_ai._utils import check_package_installed
+
+    check_package_installed('openai', install_group='openai', install_label='OpenAI embeddings')
+    raise
 
 OpenAIEmbeddingModelName = str | LatestOpenAIEmbeddingModelNames
 """Possible OpenAI embeddings model names.

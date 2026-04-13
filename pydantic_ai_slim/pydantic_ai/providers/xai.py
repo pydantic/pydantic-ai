@@ -12,10 +12,10 @@ from pydantic_ai.providers import Provider
 try:
     from xai_sdk import AsyncClient
 except ImportError as _import_error:  # pragma: no cover
-    raise ImportError(
-        'Please install the `xai-sdk` package to use the xAI provider, '
-        'you can use the `xai` optional group — `pip install "pydantic-ai-slim[xai]"`'
-    ) from _import_error
+    from pydantic_ai._utils import check_package_installed
+
+    check_package_installed('xai_sdk', install_group='xai', install_label='xAI')
+    raise
 
 
 class _LazyAsyncClient:

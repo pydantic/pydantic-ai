@@ -18,10 +18,10 @@ from pydantic_ai.providers import Provider
 try:
     from openai import AsyncOpenAI
 except ImportError as _import_error:  # pragma: no cover
-    raise ImportError(
-        'Please install the `openai` package to use the Cerebras provider, '
-        'you can use the `cerebras` optional group — `pip install "pydantic-ai-slim[cerebras]"`'
-    ) from _import_error
+    from pydantic_ai._utils import check_package_installed
+
+    check_package_installed('openai', install_group='cerebras', install_label='Cerebras')
+    raise
 
 
 class CerebrasProvider(Provider[AsyncOpenAI]):

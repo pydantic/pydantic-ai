@@ -106,10 +106,8 @@ try:
         VideoMetadataDict,
     )
 except ImportError as _import_error:
-    raise ImportError(
-        'Please install `google-genai` to use the Google model, '
-        'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
-    ) from _import_error
+    _utils.check_package_installed('google.genai', install_group='google', install_label='Google')
+    raise
 
 
 _FILE_SEARCH_QUERY_PATTERN = re.compile(r'file_search\.query\(query=(["\'])((?:\\.|(?!\1).)*?)\1\)')

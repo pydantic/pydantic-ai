@@ -22,10 +22,10 @@ try:
     from google.auth.transport.requests import Request
     from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 except ImportError as _import_error:
-    raise ImportError(
-        'Please install the `google-auth` package to use the Google Vertex AI provider, '
-        'you can use the `vertexai` optional group — `pip install "pydantic-ai-slim[vertexai]"`'
-    ) from _import_error
+    from pydantic_ai._utils import check_package_installed
+
+    check_package_installed('google.auth', install_group='vertexai', install_label='Google Vertex AI')
+    raise
 
 
 __all__ = ('GoogleVertexProvider',)

@@ -66,10 +66,8 @@ try:
     from huggingface_hub.errors import HfHubHTTPError
 
 except ImportError as _import_error:
-    raise ImportError(
-        'Please install `huggingface_hub` to use Hugging Face Inference Providers, '
-        'you can use the `huggingface` optional group — `pip install "pydantic-ai-slim[huggingface]"`'
-    ) from _import_error
+    _utils.check_package_installed('huggingface_hub', install_group='huggingface', install_label='Hugging Face')
+    raise
 
 
 @contextmanager

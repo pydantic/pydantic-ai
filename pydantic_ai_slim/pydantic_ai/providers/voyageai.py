@@ -9,10 +9,10 @@ from pydantic_ai.providers import Provider
 try:
     from voyageai.client_async import AsyncClient
 except ImportError as _import_error:  # pragma: no cover
-    raise ImportError(
-        'Please install the `voyageai` package to use the VoyageAI provider, '
-        'you can use the `voyageai` optional group — `pip install "pydantic-ai-slim[voyageai]"`'
-    ) from _import_error
+    from pydantic_ai._utils import check_package_installed
+
+    check_package_installed('voyageai', install_group='voyageai', install_label='VoyageAI')
+    raise
 
 
 class VoyageAIProvider(Provider[AsyncClient]):

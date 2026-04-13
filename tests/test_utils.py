@@ -16,6 +16,7 @@ from pydantic_ai._utils import (
     UNSET,
     PeekableAsyncStream,
     check_object_json_schema,
+    check_package_installed,
     group_by_temporal,
     is_async_callable,
     merge_json_schema_defs,
@@ -833,3 +834,80 @@ def test_validate_empty_kwargs_preserves_order():
     assert '`first`' in error_msg
     assert '`second`' in error_msg
     assert '`third`' in error_msg
+
+
+class TestCheckPackageInstalled:
+    """Tests for check_package_installed — distinguishes 'not installed' from 'name not found'."""
+
+    def test_raises_import_error_when_package_not_installed(self):
+        """When the package is genuinely missing, check_package_installed raises a
+        helpful ImportError with install instructions."""
+        with pytest.raises(ImportError, match=r'Please install.*nonexistent_pkg.*pip install'):
+            check_package_installed('nonexistent_pkg_that_does_not_exist', install_group='nonexistent_pkg')
+
+    def test_returns_none_when_package_is_installed(self):
+        """When the package IS installed, the function returns without raising,
+        so the caller can re-raise the original (more specific) ImportError."""
+        # 'os' is always available
+        result = check_package_installed('os')
+        assert result is None
+
+    def test_install_group_appears_in_message(self):
+        with pytest.raises(ImportError, match=r'pip install "pydantic-ai-slim\[my-group\]"'):
+            check_package_installed(
+                'nonexistent_pkg_xyz', install_group='my-group', install_label='MyGroup'
+            )
+
+    def test_install_label_appears_in_message(self):
+        with pytest.raises(ImportError, match=r'use the MyLabel model'):
+            check_package_installed(
+                'nonexistent_pkg_xyz', install_group='my-group', install_label='MyLabel'
+            )
+
+    def test_defaults_install_group_to_package_name(self):
+        with pytest.raises(ImportError, match=r'pip install "pydantic-ai-slim\[some_missing_pkg\]"'):
+            check_package_installed('some_missing_pkg')
+
+    def test_does_not_mask_name_import_error(self):
+        """Simulate the real-world scenario: the package is installed but a
+        specific name cannot be imported.  check_package_installed should NOT
+        raise (allowing the caller to re-raise the original error)."""
+        # pytest is installed, so this should silently return
+        check_package_installed('pytest')
+
+    def test_integration_with_try_except_pattern(self):
+        """End-to-end test of the recommended usage pattern:
+        try:
+            from some_installed_pkg import NonExistentName
+        except ImportError:
+            check_package_installed(...)
+            raise
+        The original ImportError (with the real diagnostic) should propagate."""
+        with pytest.raises(ImportError, match=r'cannot import name'):
+            try:
+                from os import this_name_does_not_exist_in_os  # type: ignore  # noqa: F401
+            except ImportError:
+                check_package_installed('os')
+                raise
+
+    def test_integration_package_missing_raises_install_hint(self):
+        """When the package is truly missing, the user gets the install hint
+        rather than a confusing internal error."""
+        with pytest.raises(ImportError, match=r'Please install.*mistral'):
+            try:
+                import nonexistent_mistralai_pkg  # type: ignore  # noqa: F401
+            except ImportError:
+                check_package_installed(
+                    'nonexistent_mistralai_pkg',
+                    install_group='mistral',
+                    install_label='Mistral',
+                )
+                raise  # should not reach here
+
+    def test_subpackage_detection(self):
+        """find_spec works with dotted package names like 'google.genai'."""
+        # os.path exists as a module
+        check_package_installed('os.path')
+        # non-existent sub-package should raise
+        with pytest.raises(ImportError, match=r'Please install'):
+            check_package_installed('os.nonexistent_subpackage_xyz', install_group='test')

@@ -23,10 +23,10 @@ from .settings import EmbeddingSettings
 try:
     from botocore.exceptions import ClientError
 except ImportError as _import_error:
-    raise ImportError(
-        'Please install `boto3` to use Bedrock embedding models, '
-        'you can use the `bedrock` optional group — `pip install "pydantic-ai-slim[bedrock]"`'
-    ) from _import_error
+    from pydantic_ai._utils import check_package_installed
+
+    check_package_installed('botocore', install_group='bedrock', install_label='Bedrock embeddings')
+    raise
 
 if TYPE_CHECKING:
     from botocore.client import BaseClient

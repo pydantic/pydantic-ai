@@ -20,10 +20,10 @@ try:
 
     from pydantic_ai.providers.cohere import CohereProvider
 except ImportError as _import_error:
-    raise ImportError(
-        'Please install `cohere` to use the Cohere embeddings model, '
-        'you can use the `cohere` optional group — `pip install "pydantic-ai-slim[cohere]"`'
-    ) from _import_error
+    from pydantic_ai._utils import check_package_installed
+
+    check_package_installed('cohere', install_group='cohere', install_label='Cohere embeddings')
+    raise
 
 LatestCohereEmbeddingModelNames = Literal[
     'embed-v4.0',

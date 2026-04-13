@@ -16,10 +16,10 @@ try:
     from google.genai.client import Client
     from google.genai.types import HttpOptions
 except ImportError as _import_error:
-    raise ImportError(
-        'Please install the `google-genai` package to use the Google provider, '
-        'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
-    ) from _import_error
+    from pydantic_ai._utils import check_package_installed
+
+    check_package_installed('google.genai', install_group='google', install_label='Google')
+    raise
 
 
 class GoogleProvider(Provider[Client]):

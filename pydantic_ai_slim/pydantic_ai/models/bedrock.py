@@ -17,10 +17,10 @@ try:
     from botocore.client import BaseClient
     from botocore.exceptions import ClientError
 except ImportError as _import_error:
-    raise ImportError(
-        'Please install `boto3` to use the Bedrock model, '
-        'you can use the `bedrock` optional group — `pip install "pydantic-ai-slim[bedrock]"`'
-    ) from _import_error
+    from pydantic_ai._utils import check_package_installed
+
+    check_package_installed('botocore', install_group='bedrock', install_label='Bedrock')
+    raise
 
 from pydantic_ai import (
     AudioUrl,

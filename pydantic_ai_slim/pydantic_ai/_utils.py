@@ -728,3 +728,43 @@ def is_text_like_media_type(media_type: str) -> bool:
         or media_type.endswith('+xml')
         or media_type in ('application/x-yaml', 'application/yaml')
     )
+
+
+def check_package_installed(package_name: str, *, install_group: str | None = None, install_label: str | None = None) -> None:
+    """Check if a Python package is installed using importlib.util.find_spec.
+
+    This should be called inside an ``except ImportError`` block to distinguish
+    between "package not installed" and "package installed but a specific name
+    cannot be imported" (e.g. due to an incompatible SDK version).
+
+    If the package cannot be found, raises an ``ImportError`` with a clear
+    installation instruction.  If the package *is* found, the function returns
+    without doing anything, allowing the original ``ImportError`` (which
+    contains the real diagnostic, such as ``cannot import name 'X'``) to be
+    raised by the caller.
+
+    Args:
+        package_name: The top-level package name to look up (e.g. ``"mistralai"``).
+        install_group: The pip extra group name, defaults to *package_name*
+            (e.g. ``"mistral"``).
+        install_label: Human-readable label used in the error message, defaults
+            to *install_group* (e.g. ``"Mistral"``).
+    """
+    import importlib.util
+
+    if install_group is None:
+        install_group = package_name
+    if install_label is None:
+        install_label = install_group
+
+    try:
+        spec = importlib.util.find_spec(package_name)
+    except (ModuleNotFoundError, ValueError):
+        spec = None
+
+    if spec is None:
+        raise ImportError(
+            f'Please install `{install_group}` to use the {install_label} model, '
+            f'you can use the `{install_group}` optional group — '
+            f'`pip install "pydantic-ai-slim[{install_group}]"`'
+        )

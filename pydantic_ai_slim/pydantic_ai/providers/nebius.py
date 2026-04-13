@@ -21,10 +21,10 @@ from pydantic_ai.providers import Provider
 try:
     from openai import AsyncOpenAI
 except ImportError as _import_error:  # pragma: no cover
-    raise ImportError(
-        'Please install the `openai` package to use the Nebius provider, '
-        'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
-    ) from _import_error
+    from pydantic_ai._utils import check_package_installed
+
+    check_package_installed('openai', install_group='openai', install_label='Nebius')
+    raise
 
 
 class NebiusProvider(Provider[AsyncOpenAI]):

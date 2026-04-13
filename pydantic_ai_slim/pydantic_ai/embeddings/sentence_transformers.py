@@ -17,11 +17,10 @@ try:
     import torch
     from sentence_transformers import SentenceTransformer
 except ImportError as _import_error:
-    raise ImportError(
-        'Please install `sentence-transformers` to use the Sentence-Transformers embeddings model, '
-        'you can use the `sentence-transformers` optional group — '
-        'pip install "pydantic-ai-slim[sentence-transformers]"'
-    ) from _import_error
+    from pydantic_ai._utils import check_package_installed
+
+    check_package_installed('sentence_transformers', install_group='sentence-transformers', install_label='Sentence-Transformers embeddings')
+    raise
 
 
 class SentenceTransformersEmbeddingSettings(EmbeddingSettings, total=False):

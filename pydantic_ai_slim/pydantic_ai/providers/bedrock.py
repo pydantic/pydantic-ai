@@ -25,10 +25,10 @@ try:
     from botocore.session import Session
     from botocore.tokens import FrozenAuthToken
 except ImportError as _import_error:
-    raise ImportError(
-        'Please install the `boto3` package to use the Bedrock provider, '
-        'you can use the `bedrock` optional group — `pip install "pydantic-ai-slim[bedrock]"`'
-    ) from _import_error
+    from pydantic_ai._utils import check_package_installed
+
+    check_package_installed('botocore', install_group='bedrock', install_label='Bedrock')
+    raise
 
 
 @dataclass(kw_only=True)

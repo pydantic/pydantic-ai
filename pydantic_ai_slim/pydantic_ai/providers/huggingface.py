@@ -18,10 +18,10 @@ try:
     from huggingface_hub import AsyncInferenceClient
     from huggingface_hub.constants import INFERENCE_PROXY_TEMPLATE
 except ImportError as _import_error:  # pragma: no cover
-    raise ImportError(
-        'Please install the `huggingface_hub` package to use the HuggingFace provider, '
-        "you can use the `huggingface` optional group — `pip install 'pydantic-ai-slim[huggingface]'`"
-    ) from _import_error
+    from pydantic_ai._utils import check_package_installed
+
+    check_package_installed('huggingface_hub', install_group='huggingface', install_label='HuggingFace')
+    raise
 
 from . import Provider
 

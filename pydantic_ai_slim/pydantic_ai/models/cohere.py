@@ -8,7 +8,7 @@ from typing_extensions import assert_never
 
 from pydantic_ai.exceptions import ModelAPIError
 
-from .. import ModelHTTPError, usage
+from .. import ModelHTTPError, _utils, usage
 from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     BuiltinToolCallPart,
@@ -58,10 +58,8 @@ try:
     from cohere.core.api_error import ApiError
     from cohere.v2.client import OMIT
 except ImportError as _import_error:
-    raise ImportError(
-        'Please install `cohere` to use the Cohere model, '
-        'you can use the `cohere` optional group — `pip install "pydantic-ai-slim[cohere]"`'
-    ) from _import_error
+    _utils.check_package_installed('cohere', install_label='Cohere')
+    raise
 
 LatestCohereModelNames = Literal[
     'c4ai-aya-expanse-32b',

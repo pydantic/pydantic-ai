@@ -65,10 +65,8 @@ try:
     from groq.types.chat.chat_completion_content_part_image_param import ImageURL
     from groq.types.chat.chat_completion_message import ExecutedTool
 except ImportError as _import_error:
-    raise ImportError(
-        'Please install `groq` to use the Groq model, '
-        'you can use the `groq` optional group — `pip install "pydantic-ai-slim[groq]"`'
-    ) from _import_error
+    _utils.check_package_installed('groq', install_label='Groq')
+    raise
 
 
 @contextmanager

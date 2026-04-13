@@ -7,6 +7,7 @@ from typing import Any, Literal, cast
 
 from typing_extensions import override
 
+from .. import _utils
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..settings import ModelSettings
@@ -17,10 +18,8 @@ try:
 
     from .openai import OpenAIChatModel, OpenAIChatModelSettings
 except ImportError as _import_error:
-    raise ImportError(
-        'Please install the `openai` package to use the Cerebras model, '
-        'you can use the `cerebras` optional group — `pip install "pydantic-ai-slim[cerebras]"'
-    ) from _import_error
+    _utils.check_package_installed('openai', install_group='cerebras', install_label='Cerebras')
+    raise
 
 __all__ = ('CerebrasModel', 'CerebrasModelName', 'CerebrasModelSettings')
 

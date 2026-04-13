@@ -13,10 +13,10 @@ from pydantic_ai.providers import Provider
 try:
     from cohere import AsyncClient, AsyncClientV2
 except ImportError as _import_error:
-    raise ImportError(
-        'Please install the `cohere` package to use the Cohere provider, '
-        'you can use the `cohere` optional group — `pip install "pydantic-ai-slim[cohere]"`'
-    ) from _import_error
+    from pydantic_ai._utils import check_package_installed
+
+    check_package_installed('cohere', install_group='cohere', install_label='Cohere')
+    raise
 
 
 class CohereProvider(Provider[AsyncClientV2]):

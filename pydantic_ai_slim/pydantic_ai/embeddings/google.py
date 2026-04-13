@@ -14,10 +14,10 @@ try:
     from google.genai import Client, errors
     from google.genai.types import Content, ContentListUnion, EmbedContentConfig, EmbedContentResponse, Part
 except ImportError as _import_error:
-    raise ImportError(
-        'Please install `google-genai` to use the Google embeddings model, '
-        'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
-    ) from _import_error
+    from pydantic_ai._utils import check_package_installed
+
+    check_package_installed('google.genai', install_group='google', install_label='Google embeddings')
+    raise
 
 
 LatestGoogleGLAEmbeddingModelNames = Literal['gemini-embedding-001', 'gemini-embedding-2-preview']

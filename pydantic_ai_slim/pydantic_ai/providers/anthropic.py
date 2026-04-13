@@ -17,10 +17,10 @@ from .._json_schema import JsonSchema, JsonSchemaTransformer
 try:
     from anthropic import AsyncAnthropic, AsyncAnthropicBedrock, AsyncAnthropicFoundry, AsyncAnthropicVertex
 except ImportError as _import_error:
-    raise ImportError(
-        'Please install the `anthropic` package to use the Anthropic provider, '
-        'you can use the `anthropic` optional group — `pip install "pydantic-ai-slim[anthropic]"`'
-    ) from _import_error
+    from pydantic_ai._utils import check_package_installed
+
+    check_package_installed('anthropic', install_group='anthropic', install_label='Anthropic')
+    raise
 
 
 AsyncAnthropicClient: TypeAlias = AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicFoundry | AsyncAnthropicVertex

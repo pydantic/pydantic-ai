@@ -68,10 +68,8 @@ try:
     from outlines.types.dsl import JsonSchema
     from PIL import Image as PILImage
 except ImportError as _import_error:
-    raise ImportError(
-        'Please install `outlines` to use the Outlines model, '
-        'you can use the `outlines` optional group — `pip install "pydantic-ai-slim[outlines]"`'
-    ) from _import_error
+    _utils.check_package_installed('outlines', install_label='Outlines')
+    raise
 
 if TYPE_CHECKING:
     import llama_cpp  # pyright: ignore[reportMissingImports]
@@ -204,10 +202,8 @@ class OutlinesModel(Model):
         try:
             from openai import AsyncOpenAI
         except ImportError as _import_error:
-            raise ImportError(
-                'Please install `openai` to use the Outlines SGLang model, '
-                'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
-            ) from _import_error
+            _utils.check_package_installed('openai', install_label='Outlines SGLang')
+            raise
 
         openai_client = AsyncOpenAI(base_url=base_url, api_key=api_key)
         outlines_model: OutlinesBaseModel | OutlinesAsyncBaseModel = from_sglang(openai_client, model_name)

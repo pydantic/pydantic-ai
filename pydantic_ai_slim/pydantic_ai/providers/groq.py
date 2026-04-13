@@ -21,10 +21,10 @@ from pydantic_ai.providers import Provider
 try:
     from groq import AsyncGroq
 except ImportError as _import_error:
-    raise ImportError(
-        'Please install the `groq` package to use the Groq provider, '
-        'you can use the `groq` optional group — `pip install "pydantic-ai-slim[groq]"`'
-    ) from _import_error
+    from pydantic_ai._utils import check_package_installed
+
+    check_package_installed('groq', install_group='groq', install_label='Groq')
+    raise
 
 
 def groq_moonshotai_model_profile(model_name: str) -> ModelProfile | None:

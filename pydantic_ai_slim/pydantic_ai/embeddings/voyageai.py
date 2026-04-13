@@ -16,10 +16,10 @@ try:
     from voyageai.client_async import AsyncClient
     from voyageai.error import VoyageError
 except ImportError as _import_error:
-    raise ImportError(
-        'Please install `voyageai` to use the VoyageAI embeddings model, '
-        'you can use the `voyageai` optional group — `pip install "pydantic-ai-slim[voyageai]"`'
-    ) from _import_error
+    from pydantic_ai._utils import check_package_installed
+
+    check_package_installed('voyageai', install_group='voyageai', install_label='VoyageAI embeddings')
+    raise
 
 LatestVoyageAIEmbeddingModelNames = Literal[
     'voyage-4-large',
