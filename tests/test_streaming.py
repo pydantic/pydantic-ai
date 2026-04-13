@@ -2759,6 +2759,55 @@ async def test_output_tool_events():
     )
 
 
+def _tool_call_and_return_ids_from_messages(messages: list[ModelMessage]) -> tuple[set[str], set[str]]:
+    call_ids: set[str] = set()
+    return_ids: set[str] = set()
+    for message in messages:
+        for part in message.parts:
+            if isinstance(part, ToolCallPart):
+                call_ids.add(part.tool_call_id)
+            elif isinstance(part, ToolReturnPart):
+                return_ids.add(part.tool_call_id)
+    return call_ids, return_ids
+
+
+async def test_output_tool_event_history_has_no_dangling_call():
+    """Regression test for #2640: event-reconstructed history should not have a dangling output tool call.
+
+    Every `FunctionToolCallEvent` seen on the event stream should have a matching
+    `FunctionToolResultEvent`, and the tool_call_ids should match those in `all_messages()`.
+    """
+
+    def call_final_result(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart('final_result', {'value': 'hello'})])
+
+    agent = Agent(FunctionModel(call_final_result), output_type=OutputType)
+
+    events: list[Any] = []
+    async with agent.iter('test') as agent_run:
+        async for node in agent_run:
+            if Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as handle_stream:
+                    async for event in handle_stream:
+                        events.append(event)
+
+    call_ids_from_events = {e.part.tool_call_id for e in events if isinstance(e, FunctionToolCallEvent)}
+    return_ids_from_events = {e.result.tool_call_id for e in events if isinstance(e, FunctionToolResultEvent)}
+
+    # No dangling calls: every call seen on the event stream has a matching result.
+    assert call_ids_from_events == return_ids_from_events
+    assert None not in call_ids_from_events
+
+    # And the event-stream view matches `all_messages()`.
+    assert agent_run.result is not None
+    call_ids_from_messages, return_ids_from_messages = _tool_call_and_return_ids_from_messages(
+        agent_run.result.all_messages()
+    )
+    assert call_ids_from_events == call_ids_from_messages
+    assert return_ids_from_events == return_ids_from_messages
+
+
 async def test_stream_structured_output():
     class CityLocation(BaseModel):
         city: str

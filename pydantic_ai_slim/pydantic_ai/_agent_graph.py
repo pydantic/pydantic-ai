@@ -1305,14 +1305,14 @@ async def _run_output_validators(
     return result_data
 
 
-def _emit_skipped_output_tool(
+def _emit_output_tool_events(
     call: _messages.ToolCallPart,
     message: str,
     output_parts: list[_messages.ModelRequestPart],
     *,
     args_valid: bool | None = None,
 ) -> Iterator[_messages.HandleResponseEvent]:
-    """Yield events for an output tool call that was skipped, and append the result to output_parts."""
+    """Yield call+result events for an output tool call, and append the result to output_parts."""
     yield _messages.FunctionToolCallEvent(call, args_valid=args_valid)
     part = _messages.ToolReturnPart(
         tool_name=call.tool_name,
@@ -1353,17 +1353,11 @@ async def process_tool_calls(  # noqa: C901
         # `final_result` can be passed into `process_tool_calls` from `Agent.run_stream`
         # when streaming and there's already a final result
         if final_result and final_result.tool_call_id == call.tool_call_id:
-            yield _messages.FunctionToolCallEvent(call, args_valid=True)
-            part = _messages.ToolReturnPart(
-                tool_name=call.tool_name,
-                content='Final result processed.',
-                tool_call_id=call.tool_call_id,
-            )
-            output_parts.append(part)
-            yield _messages.FunctionToolResultEvent(part)
+            for event in _emit_output_tool_events(call, 'Final result processed.', output_parts, args_valid=True):
+                yield event
         # Early strategy is chosen and final result is already set
         elif ctx.deps.end_strategy == 'early' and final_result:
-            for event in _emit_skipped_output_tool(
+            for event in _emit_output_tool_events(
                 call, 'Output tool not used - a final result was already processed.', output_parts, args_valid=None
             ):
                 yield event
@@ -1379,7 +1373,7 @@ async def process_tool_calls(  # noqa: C901
                 # This allows exhaustive strategy to complete successfully when at least one output tool is valid
                 if final_result:
                     # If output tool fails when we already have a final result, skip it without retrying
-                    for event in _emit_skipped_output_tool(
+                    for event in _emit_output_tool_events(
                         call, 'Output tool not used - output failed validation.', output_parts, args_valid=False
                     ):
                         yield event
@@ -1394,7 +1388,7 @@ async def process_tool_calls(  # noqa: C901
             if not validated.args_valid:
                 assert validated.validation_error is not None
                 if final_result:
-                    for event in _emit_skipped_output_tool(
+                    for event in _emit_output_tool_events(
                         call, 'Output tool not used - output failed validation.', output_parts, args_valid=False
                     ):
                         yield event
@@ -1411,7 +1405,7 @@ async def process_tool_calls(  # noqa: C901
                 result_data = await tool_manager.execute_tool_call(validated)
             except exceptions.UnexpectedModelBehavior as e:
                 if final_result:
-                    for event in _emit_skipped_output_tool(
+                    for event in _emit_output_tool_events(
                         call, 'Output tool not used - output function execution failed.', output_parts, args_valid=True
                     ):
                         yield event
@@ -1430,14 +1424,8 @@ async def process_tool_calls(  # noqa: C901
                 ctx.state.retries += 1
                 continue
 
-            yield _messages.FunctionToolCallEvent(call, args_valid=True)
-            part = _messages.ToolReturnPart(
-                tool_name=call.tool_name,
-                content='Final result processed.',
-                tool_call_id=call.tool_call_id,
-            )
-            output_parts.append(part)
-            yield _messages.FunctionToolResultEvent(part)
+            for event in _emit_output_tool_events(call, 'Final result processed.', output_parts, args_valid=True):
+                yield event
 
             # In both `early` and `exhaustive` modes, use the first output tool's result as the final result
             if not final_result:
