@@ -206,13 +206,13 @@ def test_azure_provider_foundry_serverless_endpoint():
     assert provider.base_url == 'https://gpt-oss-120b.eastus2.models.ai.azure.com/v1/'
 
 
-def test_azure_provider_foundry_serverless_endpoint_ignores_api_version():
-    provider = AzureProvider(
-        azure_endpoint='https://gpt-oss-120b.eastus2.models.ai.azure.com',
-        api_version='2024-12-01-preview',
-        api_key='test-key-123',
-    )
-    assert type(provider.client) is AsyncOpenAI
+def test_azure_provider_v1_endpoint_rejects_api_version():
+    with pytest.raises(UserError, match='`api_version` must not be set'):
+        AzureProvider(
+            azure_endpoint='https://gpt-oss-120b.eastus2.models.ai.azure.com',
+            api_version='2024-12-01-preview',
+            api_key='test-key-123',
+        )
 
 
 def test_azure_provider_openai_v1_ga_endpoint():

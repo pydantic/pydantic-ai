@@ -147,6 +147,11 @@ class AzureProvider(Provider[AsyncOpenAI]):
             # `api-version` query parameter that `AsyncAzureOpenAI` always
             # injects, so we use a plain `AsyncOpenAI` client instead.
             if (v1_base_url := _openai_compatible_v1_base_url(azure_endpoint)) is not None:
+                if api_version is not None:
+                    raise UserError(
+                        '`api_version` must not be set when `azure_endpoint` targets the Azure OpenAI '
+                        'v1 API or an Azure AI Foundry serverless model endpoint, which do not accept it.'
+                    )
                 self._client = AsyncOpenAI(
                     base_url=v1_base_url,
                     api_key=api_key or os.getenv('AZURE_OPENAI_API_KEY'),
