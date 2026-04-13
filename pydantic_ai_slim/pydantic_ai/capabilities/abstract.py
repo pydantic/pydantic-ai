@@ -434,7 +434,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject the response and
         ask the model to try again. The original response is still appended to message history
-        so the model can see what it said. Retries count against `max_result_retries`.
+        so the model can see what it said. Retries count against `output_retries`.
         """
         return response
 

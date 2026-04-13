@@ -7079,9 +7079,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
     agent = Agent(model=model, builtin_tools=[ImageGenerationTool()])
 
     with capture_run_messages() as messages:
-        with pytest.raises(
-            UnexpectedModelBehavior, match=re.escape('Exceeded maximum retries (1) for output validation')
-        ):
+        with pytest.raises(UnexpectedModelBehavior, match=re.escape('Exceeded maximum output retries (1)')):
             await agent.run('Generate an image of an axolotl.')
 
     assert messages == snapshot(
