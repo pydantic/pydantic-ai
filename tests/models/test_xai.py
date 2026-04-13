@@ -71,7 +71,7 @@ from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.output import NativeOutput, PromptedOutput, ToolOutput
 from pydantic_ai.profiles.grok import GrokModelProfile
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai.usage import RunUsage
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr, try_import
