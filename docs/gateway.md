@@ -25,6 +25,7 @@ To help you get started with Pydantic AI Gateway, some code examples on the Pyda
 - **Cost Limits**: Set spending limits at project, user, and API key levels with daily, weekly, and monthly caps.
 - **BYOK and managed providers:** Bring your own API keys (BYOK) from LLM providers, or pay for inference directly through the platform.
 - **Multi-provider support:** Access models from OpenAI, Anthropic, Google Vertex, Groq, and AWS Bedrock. _More providers coming soon_.
+- **Provider failover:** Configure [routing groups](#provider-failover) so the Gateway can automatically fall back to another provider serving the same model when the primary is unavailable.
 - **Backend observability:** Log every request through [Pydantic Logfire](https://pydantic.dev/logfire) or any OpenTelemetry backend (_coming soon_).
 - **Zero translation**: Unlike traditional AI gateways that translate everything to one common schema, **Pydantic AI Gateway** allows requests to flow through directly in each provider's native format. This gives you immediate access to new model features as soon as they are released.
 - **Enterprise ready**: Inherits Logfire's enterprise features — including SSO, custom roles and permissions.
@@ -365,6 +366,49 @@ The [Vercel AI SDK](https://ai-sdk.dev/) can route through the Gateway by pointi
       process.exit(1);
     });
     ```
+
+## Provider failover
+
+Pydantic AI Gateway can automatically fail over between providers serving the same model through **routing groups**. A routing group is a named collection of providers with a priority and weight assigned to each member; the Gateway tries higher-priority members first, and load-balances across members that share the same priority using their weights.
+
+This is useful when the same model is available through more than one provider (for example Anthropic models served through both the Anthropic API and Google Vertex) and you want the Gateway to transparently retry another provider when the primary is unavailable or rate-limited.
+
+### Creating a routing group
+
+Routing groups are managed from your organization's Gateway settings in Logfire:
+
+1. Open **Gateway -> Admin -> Routing Groups** and click **Add Routing Group**.
+2. Give the group a slug (e.g. `anthropic-fallback`) and an optional description.
+3. Open the group's **Members** page and add one or more providers. For each member set:
+    - **Priority** - higher values are tried first.
+    - **Weight** - load-balancing weight used between members that share the same priority.
+    - **Active** - inactive members are skipped during routing.
+
+### Using a routing group
+
+Point the Gateway provider at the group via the `route` parameter (the group's slug):
+
+```python {title="fallback_routing.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.providers.gateway import gateway_provider
+
+provider = gateway_provider(
+    'anthropic',
+    api_key='pylf_v...',
+    route='anthropic-fallback',
+)
+model = AnthropicModel('claude-sonnet-4-6', provider=provider)
+agent = Agent(model)
+
+result = agent.run_sync('Where does "hello world" come from?')
+print(result.output)
+"""
+The first known use of "hello, world" was in a 1974 textbook about the C programming language.
+"""
+```
+
+Requests sent to this group will be dispatched to the highest-priority active member first, with the remaining members used as fallbacks in priority order. Members at the same priority split traffic according to their configured weights.
 
 ## Troubleshooting
 
