@@ -65,6 +65,8 @@ nav:
       - Embeddings: embeddings.md
       - Testing: testing.md
 
+  - Pydantic Harness: harness.md
+
   - Pydantic Evals:
       - Overview: evals.md
       - Getting Started:

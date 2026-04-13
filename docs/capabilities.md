@@ -66,6 +66,15 @@ print(result.output)
 
 See [Thinking](thinking.md) for provider-specific details and the [unified thinking settings](thinking.md#unified-thinking-settings).
 
+### Compaction
+
+Provider-specific compaction capabilities manage conversation context size by compacting older messages into summaries:
+
+| Provider | Capability | Details |
+|----------|-----------|---------|
+| OpenAI Responses API | [`OpenAICompaction`][pydantic_ai.models.openai.OpenAICompaction] | [OpenAI compaction](models/openai.md#message-compaction) |
+| Anthropic | [`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction] | [Anthropic compaction](models/anthropic.md#message-compaction) |
+
 ### ThreadExecutor
 
 The [`ThreadExecutor`][pydantic_ai.capabilities.ThreadExecutor] capability provides a custom [`Executor`][concurrent.futures.Executor] for running sync tool functions and other sync callbacks in threads. This is useful in long-running servers (e.g. FastAPI) where the default ephemeral threads from [`anyio.to_thread.run_sync`][anyio.to_thread.run_sync] can accumulate under sustained load:
@@ -81,7 +90,6 @@ agent = Agent('openai:gpt-5.2', capabilities=[ThreadExecutor(executor)])
 ```
 
 See [Thread executor for long-running servers](tools-advanced.md#thread-executor-for-long-running-servers) for more details.
-
 ### Hooks
 
 The [`Hooks`][pydantic_ai.capabilities.Hooks] capability provides decorator-based [lifecycle hook](#hooking-into-the-lifecycle) registration — the easiest way to intercept model requests, tool calls, and other events without subclassing [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability]:
@@ -891,8 +899,7 @@ from pydantic_ai.capabilities import (
 class InstrumentationCapability(AbstractCapability[Any]):
     """Must wrap all other capabilities to trace everything."""
 
-    @classmethod
-    def get_ordering(cls) -> CapabilityOrdering:
+    def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='outermost')
 
 
@@ -909,11 +916,25 @@ assert type(combined.capabilities[0]) is InstrumentationCapability
 The available constraints are:
 
 * **`position`** — `'outermost'` or `'innermost'`. Places the capability in a tier before (or after) all capabilities without that position. Multiple capabilities can share a tier; original list order breaks ties within it.
-* **`wraps`** — list of capability types this one wraps around (is outside of). Use when your capability needs to see the output of another: `CapabilityOrdering(wraps=[OtherCapability])`.
-* **`wrapped_by`** — list of capability types that wrap around this one (are outside of it). The inverse of `wraps`.
+* **`wraps`** — list of capabilities this one wraps around (is outside of). Each entry can be a capability **type** (matches all instances via `issubclass`) or a specific **instance** (matches by identity). Use when your capability needs to see the output of another: `CapabilityOrdering(wraps=[OtherCapability])`.
+* **`wrapped_by`** — list of capabilities that wrap around this one (are outside of it). Accepts types or instances, like `wraps`. The inverse of `wraps`.
 * **`requires`** — list of capability types that must be present. Raises [`UserError`][pydantic_ai.exceptions.UserError] if any are missing. Does not imply ordering.
 
 When constraints are declared, [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] topologically sorts its children at construction time, preserving user-provided order as a tiebreaker.
+
+[`Hooks`][pydantic_ai.capabilities.Hooks] supports ordering via the `ordering` parameter, so you can declare ordering constraints without subclassing:
+
+```python {title="hooks_ordering_example.py"}
+from pydantic_ai.capabilities import CapabilityOrdering, CombinedCapability, Hooks
+
+logging_hooks = Hooks(ordering=CapabilityOrdering(position='outermost'))
+rate_limit_hooks = Hooks(ordering=CapabilityOrdering(wrapped_by=[logging_hooks]))
+
+# logging_hooks ends up outermost; rate_limit_hooks is wrapped by it
+combined = CombinedCapability([rate_limit_hooks, logging_hooks])
+assert combined.capabilities[0] is logging_hooks
+assert combined.capabilities[1] is rate_limit_hooks
+```
 
 ## Examples
 
@@ -1020,6 +1041,10 @@ result = agent.run_sync('hello')
 print(f'Output: {result.output}')
 #> Output: Hello! How can I help you today?
 ```
+
+## Pydantic Harness
+
+[**Pydantic Harness**](harness.md) is the official capability library for Pydantic AI -- standalone capabilities like memory, guardrails, context management, and [code mode](https://github.com/pydantic/pydantic-harness/tree/main/pydantic_harness/code_mode) live there rather than in core. See [What goes where?](harness.md#what-goes-where) for the full breakdown, or jump to the [capability matrix](https://github.com/pydantic/pydantic-harness#capability-matrix).
 
 ## Third-party capabilities
 

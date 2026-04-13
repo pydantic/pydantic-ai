@@ -8385,6 +8385,147 @@ class TestCtxAgentInCapability:
         assert hook_agent_names == ['hook_test_agent', 'hook_test_agent']
 
 
+# region --- Compaction capability tests ---
+
+
+class TestCompaction:
+    def test_compaction_part_serialization(self):
+        """CompactionPart round-trips through Pydantic serialization."""
+        from pydantic_ai.messages import CompactionPart, ModelMessagesTypeAdapter, ModelResponse
+
+        # Anthropic-style (text content)
+        anthropic_part = CompactionPart(content='Summary of conversation', provider_name='anthropic')
+        assert anthropic_part.has_content()
+        assert anthropic_part.part_kind == 'compaction'
+
+        # OpenAI-style (encrypted, no content)
+        openai_part = CompactionPart(
+            content=None,
+            id='cmp_123',
+            provider_name='openai',
+            provider_details={'encrypted_content': 'abc123', 'type': 'compaction'},
+        )
+        assert not openai_part.has_content()
+        assert openai_part.part_kind == 'compaction'
+
+        # Round-trip through serialization
+        response = ModelResponse(parts=[anthropic_part, openai_part])
+        messages: list[ModelMessage] = [response]
+        serialized = ModelMessagesTypeAdapter.dump_json(messages)
+        deserialized = ModelMessagesTypeAdapter.validate_json(serialized)
+        assert len(deserialized) == 1
+        assert isinstance(deserialized[0], ModelResponse)
+        parts = deserialized[0].parts
+        assert len(parts) == 2
+        assert isinstance(parts[0], CompactionPart)
+        assert parts[0].content == 'Summary of conversation'
+        assert parts[0].provider_name == 'anthropic'
+        assert isinstance(parts[1], CompactionPart)
+        assert parts[1].content is None
+        assert parts[1].id == 'cmp_123'
+        assert parts[1].provider_details == {'encrypted_content': 'abc123', 'type': 'compaction'}
+
+    async def test_openai_compaction_with_wrong_model(self):
+        """OpenAICompaction raises UserError when used with a non-OpenAI model."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        agent = Agent(
+            FunctionModel(simple_model_function),
+            capabilities=[OpenAICompaction(message_count_threshold=0)],
+        )
+        with pytest.raises(UserError, match='OpenAICompaction requires OpenAIResponsesModel'):
+            await agent.run('hello')
+
+    async def test_openai_compaction_with_wrapped_wrong_model(self):
+        """OpenAICompaction unwraps WrapperModel and raises for non-OpenAI model."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+        from pydantic_ai.models.wrapper import WrapperModel
+
+        wrapped = WrapperModel(FunctionModel(simple_model_function))
+        agent = Agent(
+            wrapped,
+            capabilities=[OpenAICompaction(message_count_threshold=0)],
+        )
+        with pytest.raises(UserError, match='OpenAICompaction requires OpenAIResponsesModel'):
+            await agent.run('hello')
+
+    def test_openai_compaction_should_compact_with_trigger(self):
+        """OpenAICompaction._should_compact delegates to custom trigger."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        cap = OpenAICompaction(trigger=lambda msgs: len(msgs) > 2)
+        assert not cap._should_compact([ModelRequest(parts=[UserPromptPart(content='hi')])])  # pyright: ignore[reportPrivateUsage]
+        assert cap._should_compact(  # pyright: ignore[reportPrivateUsage]
+            [
+                ModelRequest(parts=[UserPromptPart(content='1')]),
+                ModelResponse(parts=[TextPart(content='r1')]),
+                ModelRequest(parts=[UserPromptPart(content='2')]),
+            ]
+        )
+
+    def test_openai_compaction_should_compact_no_config(self):
+        """OpenAICompaction._should_compact returns False when nothing is configured."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        cap = OpenAICompaction()
+        assert not cap._should_compact([ModelRequest(parts=[UserPromptPart(content='hi')])])  # pyright: ignore[reportPrivateUsage]
+
+    def test_openai_compaction_serialization_name(self):
+        """OpenAICompaction has the correct serialization name."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        assert OpenAICompaction.get_serialization_name() == 'OpenAICompaction'
+
+    def test_anthropic_compaction_serialization_name(self):
+        """AnthropicCompaction has the correct serialization name."""
+        pytest.importorskip('anthropic')
+        from pydantic_ai.models.anthropic import AnthropicCompaction
+
+        assert AnthropicCompaction.get_serialization_name() == 'AnthropicCompaction'
+
+    async def test_compaction_part_in_function_model_history(self):
+        """FunctionModel handles message history containing CompactionPart."""
+        from pydantic_ai.messages import CompactionPart
+
+        compaction_response = ModelResponse(
+            parts=[CompactionPart(content='Summary: user greeted.', provider_name='anthropic')],
+            provider_name='anthropic',
+        )
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart(content='Hello!')]),
+            compaction_response,
+            ModelRequest(parts=[UserPromptPart(content='How are you?')]),
+        ]
+
+        agent = Agent(FunctionModel(simple_model_function))
+        result = await agent.run('Follow up', message_history=history)
+        assert result.output == 'response from model'
+
+    async def test_compaction_part_without_content_in_response(self):
+        """CompactionPart with content=None (OpenAI-style) is handled alongside text."""
+        from pydantic_ai.messages import CompactionPart
+
+        def model_with_compaction(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[
+                    CompactionPart(content=None, id='cmp_123', provider_name='openai'),
+                    TextPart(content='actual response'),
+                ]
+            )
+
+        agent = Agent(FunctionModel(model_with_compaction))
+        result = await agent.run('hello')
+        assert result.output == 'actual response'
+
+
+# endregion
+
+
 def test_thread_executor_not_serializable() -> None:
     assert ThreadExecutor.get_serialization_name() is None
 
@@ -8445,15 +8586,13 @@ async def test_thread_executor_static_method() -> None:
 
 @dataclass
 class OutermostCap(AbstractCapability[Any]):
-    @classmethod
-    def get_ordering(cls) -> CapabilityOrdering:
+    def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='outermost')
 
 
 @dataclass
 class InnermostCap(AbstractCapability[Any]):
-    @classmethod
-    def get_ordering(cls) -> CapabilityOrdering:
+    def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='innermost')
 
 
@@ -8471,15 +8610,13 @@ class PlainCapB(AbstractCapability[Any]):
 class WrapsACap(AbstractCapability[Any]):
     """Must wrap around PlainCapA."""
 
-    @classmethod
-    def get_ordering(cls) -> CapabilityOrdering:
+    def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(wraps=[PlainCapA])
 
 
 @dataclass
 class RequiresOutermostCap(AbstractCapability[Any]):
-    @classmethod
-    def get_ordering(cls) -> CapabilityOrdering:
+    def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(requires=[OutermostCap])
 
 
@@ -8511,8 +8648,7 @@ def test_ordering_multiple_outermost_tier():
 
     @dataclass
     class OutermostCap2(AbstractCapability[Any]):
-        @classmethod
-        def get_ordering(cls) -> CapabilityOrdering:
+        def get_ordering(self) -> CapabilityOrdering:
             return CapabilityOrdering(position='outermost')
 
     combined = CombinedCapability([PlainCapA(), OutermostCap2(), OutermostCap()])
@@ -8525,8 +8661,7 @@ def test_ordering_multiple_innermost_tier():
 
     @dataclass
     class InnermostCap2(AbstractCapability[Any]):
-        @classmethod
-        def get_ordering(cls) -> CapabilityOrdering:
+        def get_ordering(self) -> CapabilityOrdering:
             return CapabilityOrdering(position='innermost')
 
     combined = CombinedCapability([InnermostCap(), InnermostCap2(), PlainCapA()])
@@ -8539,14 +8674,12 @@ def test_ordering_outermost_tier_with_wraps():
 
     @dataclass
     class OuterA(AbstractCapability[Any]):
-        @classmethod
-        def get_ordering(cls) -> CapabilityOrdering:
+        def get_ordering(self) -> CapabilityOrdering:
             return CapabilityOrdering(position='outermost')
 
     @dataclass
     class OuterB(AbstractCapability[Any]):
-        @classmethod
-        def get_ordering(cls) -> CapabilityOrdering:
+        def get_ordering(self) -> CapabilityOrdering:
             return CapabilityOrdering(position='outermost', wraps=[OuterA])
 
     # OuterB listed after OuterA, but wraps=[OuterA] overrides tiebreaker
@@ -8565,8 +8698,7 @@ def test_ordering_wrapped_by():
 
     @dataclass
     class WrappedByACap(AbstractCapability[Any]):
-        @classmethod
-        def get_ordering(cls) -> CapabilityOrdering:
+        def get_ordering(self) -> CapabilityOrdering:
             return CapabilityOrdering(wrapped_by=[PlainCapA])
 
     combined = CombinedCapability([WrappedByACap(), PlainCapA()])
@@ -8642,14 +8774,12 @@ def test_ordering_no_constraints_noop():
 def test_ordering_cycle_detection():
     @dataclass
     class CycleA(AbstractCapability[Any]):
-        @classmethod
-        def get_ordering(cls) -> CapabilityOrdering:
+        def get_ordering(self) -> CapabilityOrdering:
             return CapabilityOrdering(wraps=[CycleB])
 
     @dataclass
     class CycleB(AbstractCapability[Any]):
-        @classmethod
-        def get_ordering(cls) -> CapabilityOrdering:
+        def get_ordering(self) -> CapabilityOrdering:
             return CapabilityOrdering(wraps=[CycleA])
 
     with pytest.raises(UserError, match='Circular ordering constraints'):
@@ -8670,6 +8800,118 @@ def test_ordering_wrapper_capability_recurses():
     # and picks up OutermostCap's position='outermost' constraint.
     combined = CombinedCapability([PlainCapA(), wrapped])
     assert combined.capabilities[0] is wrapped
+
+
+def test_ordering_hooks_ordering_parameter():
+    """Hooks with ordering= are sorted according to those constraints."""
+    hooks = Hooks(ordering=CapabilityOrdering(position='outermost'))
+    combined = CombinedCapability([PlainCapA(), hooks, PlainCapB()])
+    assert combined.capabilities[0] is hooks
+
+
+def test_ordering_hooks_ordering_wraps():
+    """Hooks with ordering wraps= are placed before the referenced type."""
+    hooks = Hooks(ordering=CapabilityOrdering(wraps=[PlainCapA]))
+    combined = CombinedCapability([PlainCapA(), hooks])
+    assert combined.capabilities[0] is hooks
+
+
+def test_ordering_hooks_ordering_wrapped_by():
+    """Hooks with ordering wrapped_by= are placed after the referenced type."""
+    hooks = Hooks(ordering=CapabilityOrdering(wrapped_by=[PlainCapA]))
+    combined = CombinedCapability([hooks, PlainCapA()])
+    assert combined.capabilities[0].__class__ is PlainCapA
+    assert combined.capabilities[1] is hooks
+
+
+def test_ordering_hooks_no_ordering():
+    """Hooks without ordering= preserve their list position."""
+    hooks = Hooks()
+    combined = CombinedCapability([PlainCapA(), hooks, PlainCapB()])
+    assert combined.capabilities[1] is hooks
+
+
+def test_ordering_hooks_ordering_requires():
+    """Hooks with ordering requires= validates that the required type is present."""
+    hooks = Hooks(ordering=CapabilityOrdering(requires=[OutermostCap]))
+    with pytest.raises(UserError, match='`Hooks` requires `OutermostCap`'):
+        CombinedCapability([hooks, PlainCapA()])
+
+
+def test_ordering_wraps_instance_ref():
+    """wraps= with an instance ref only constrains the specific instance, not all instances of that type."""
+    target = PlainCapA()
+    other_a = PlainCapA()
+
+    @dataclass
+    class WrapsInstance(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(wraps=[target])
+
+    # Arrange so that instance ref vs type ref produces a distinguishable result:
+    # - Instance ref wraps=[target] → only target must come after WrapsInstance
+    # - A type ref wraps=[PlainCapA] would constrain both other_a and target
+    combined = CombinedCapability([other_a, target, WrapsInstance()])
+    # other_a stays before WrapsInstance (no constraint), WrapsInstance before target
+    assert combined.capabilities[0] is other_a
+    assert combined.capabilities[1].__class__ is WrapsInstance
+    assert combined.capabilities[2] is target
+
+
+def test_ordering_wrapped_by_instance_ref():
+    """wrapped_by= can reference a specific capability instance."""
+    wrapper = PlainCapA()
+
+    @dataclass
+    class WrappedByInstance(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(wrapped_by=[wrapper])
+
+    combined = CombinedCapability([WrappedByInstance(), wrapper])
+    assert combined.capabilities[0] is wrapper
+    assert combined.capabilities[1].__class__ is WrappedByInstance
+
+
+def test_ordering_hooks_wraps_instance():
+    """Hooks can order relative to a specific capability instance via wraps=."""
+    target = PlainCapA()
+    hooks = Hooks(ordering=CapabilityOrdering(wraps=[target]))
+    combined = CombinedCapability([target, hooks])
+    assert combined.capabilities[0] is hooks
+    assert combined.capabilities[1] is target
+
+
+def test_ordering_hooks_wrapped_by_instance():
+    """Hooks can order relative to a specific capability instance via wrapped_by=."""
+    outer = PlainCapA()
+    hooks = Hooks(ordering=CapabilityOrdering(wrapped_by=[outer]))
+    combined = CombinedCapability([hooks, outer])
+    assert combined.capabilities[0] is outer
+    assert combined.capabilities[1] is hooks
+
+
+def test_ordering_instance_ref_not_present():
+    """Instance ref in wraps= that isn't in the list has no effect (no edge added)."""
+    absent = PlainCapA()
+    hooks = Hooks(ordering=CapabilityOrdering(wraps=[absent]))
+    # absent is NOT in the capabilities list — the wraps ref should be a no-op
+    combined = CombinedCapability([PlainCapB(), hooks])
+    # Order preserved since the instance ref doesn't match anything
+    assert combined.capabilities[0].__class__ is PlainCapB
+    assert combined.capabilities[1] is hooks
+
+
+def test_ordering_mixed_type_and_instance_refs():
+    """wraps= can mix type refs and instance refs."""
+    target_instance = PlainCapB()
+
+    @dataclass
+    class MixedRefs(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(wraps=[PlainCapA, target_instance])
+
+    combined = CombinedCapability([PlainCapA(), target_instance, MixedRefs()])
+    assert combined.capabilities[0].__class__ is MixedRefs
 
 
 # --- Hook recovery tests (after_node_run End→node, ErrorMarker in next_node) ---

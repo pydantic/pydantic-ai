@@ -206,6 +206,33 @@ print(result2.output)
 #> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
 ```
 
+#### Message Compaction
+
+The Responses API supports [compacting message history](https://platform.openai.com/docs/guides/conversation-state#compaction-advanced) to reduce token usage in long conversations. Compaction produces an encrypted summary that replaces older messages while preserving context.
+
+The easiest way to enable compaction is with the [`OpenAICompaction`][pydantic_ai.models.openai.OpenAICompaction] capability, which automatically calls the compact endpoint when the message count exceeds a threshold:
+
+```python {title="openai_compaction.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAICompaction
+
+agent = Agent(
+    'openai-responses:gpt-4o',
+    capabilities=[OpenAICompaction(message_count_threshold=10)],
+)
+
+message_history = []
+for question in ['What is 2+2?', 'And 3+3?', 'And 4+4?']:
+    result = agent.run_sync(question, message_history=message_history)
+    message_history = result.all_messages()
+    # After 10 messages, history is automatically compacted before each request
+```
+
+For advanced use cases, you can call [`compact_messages`][pydantic_ai.models.openai.OpenAIResponsesModel.compact_messages] directly on the model.
+
+!!! tip
+    For best results, combine compaction with [`openai_previous_response_id='auto'`](#automatically-referencing-earlier-responses) in your model settings. This lets OpenAI's server-side history work alongside compaction for improved context continuity. Note that this sends conversation data to OpenAI's server-side storage.
+
 ## OpenAI-compatible Models
 
 Many providers and models are compatible with the OpenAI API, and can be used with `OpenAIChatModel` in Pydantic AI.
@@ -424,6 +451,32 @@ model = OpenAIChatModel(
 agent = Agent(model)
 ...
 ```
+
+#### Using Azure with the Responses API
+
+Azure AI Foundry also supports the OpenAI Responses API through [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]. This is particularly recommended when working with document inputs ([`DocumentUrl`][pydantic_ai.DocumentUrl] and [`BinaryContent`][pydantic_ai.BinaryContent]), as Azure's Chat Completions API does not support these input types.
+
+??? example "Document processing with Azure using Responses API"
+    ```python
+    from pydantic_ai import Agent, BinaryContent
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.azure import AzureProvider
+
+    pdf_bytes = b'%PDF-1.4 ...'  # Your PDF content
+
+    model = OpenAIResponsesModel(
+        'gpt-5.2',
+        provider=AzureProvider(
+            azure_endpoint='your-azure-endpoint',
+            api_version='your-api-version',
+        ),
+    )
+    agent = Agent(model)
+    result = agent.run_sync([
+        'Summarize this document',
+        BinaryContent(data=pdf_bytes, media_type='application/pdf'),
+    ])
+    ```
 
 ### Vercel AI Gateway
 

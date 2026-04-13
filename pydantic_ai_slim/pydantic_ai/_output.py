@@ -4,7 +4,8 @@ import inspect
 import json
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass, field
+from copy import copy
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
 from pydantic import Json, TypeAdapter, ValidationError
@@ -869,6 +870,10 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
     _max_retries_overrides: dict[str, int]
     """Per-tool max_retries overrides from `ToolOutput(max_retries=N)`."""
     output_validators: list[OutputValidator[AgentDepsT, Any]]
+    _output_retry_count: int
+    """Current global output retry count, snapshotted from `ctx.retry` in `for_run_step`."""
+    _output_max_retries: int
+    """Global output max retries, snapshotted from `ctx.max_retries` in `for_run_step`."""
 
     @classmethod
     def build(
@@ -960,6 +965,8 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         self.max_retries = max_retries
         self._max_retries_overrides = max_retries_overrides or {}
         self.output_validators = output_validators or []
+        self._output_retry_count = 0
+        self._output_max_retries = 0
 
     @property
     def id(self) -> str | None:
@@ -968,6 +975,15 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
     @property
     def label(self) -> str:
         return "the agent's output tools"
+
+    async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        # copy() instead of replace() because @dataclass(init=False) with a custom __init__
+        # whose param names differ from field names (e.g. field `_tool_defs` vs param `tool_defs`)
+        # makes replace() pass unrecognized kwargs to __init__.
+        new = copy(self)
+        new._output_retry_count = ctx.retry
+        new._output_max_retries = ctx.max_retries
+        return new
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         max_retries = self.max_retries if self.max_retries is not None else 1
@@ -985,8 +1001,10 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         output = await self.processors[name].call(tool_args, ctx, wrap_validation_errors=False)
-        for validator in self.output_validators:
-            output = await validator.validate(output, ctx, wrap_validation_errors=False)
+        if self.output_validators:
+            validator_ctx = replace(ctx, retry=self._output_retry_count, max_retries=self._output_max_retries)
+            for validator in self.output_validators:
+                output = await validator.validate(output, validator_ctx, wrap_validation_errors=False)
         return output
 
 
