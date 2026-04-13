@@ -1006,24 +1006,6 @@ class StreamedResponse(ABC):
         first match is found.
         """
         if self._event_iterator is None:
-
-            async def iterator_with_final_event(
-                iterator: AsyncIterator[ModelResponseStreamEvent],
-            ) -> AsyncIterator[ModelResponseStreamEvent]:
-                async for event in iterator:
-                    yield event
-                    if (
-                        final_result_event := _get_final_result_event(event, self.model_request_parameters)
-                    ) is not None:
-                        self.final_result_event = final_result_event
-                        yield final_result_event
-                        break
-
-                # If we broke out of the above loop, we need to yield the rest of the events
-                # If we didn't, this will just be a no-op
-                async for event in iterator:
-                    yield event
-
             async def iterator_with_part_end(
                 iterator: AsyncIterator[ModelResponseStreamEvent],
             ) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -1061,8 +1043,28 @@ class StreamedResponse(ABC):
                 if end_event:
                     yield end_event
 
-            self._event_iterator = iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
+            self._event_iterator = iterator_with_part_end(self._events_with_final_result(self._get_event_iterator()))
         return self._event_iterator
+
+    async def _events_with_final_result(
+        self, iterator: AsyncIterator[ModelResponseStreamEvent]
+    ) -> AsyncIterator[ModelResponseStreamEvent]:
+        yielded_final_result_event = False
+        async for event in iterator:
+            yield event
+            if (final_result_event := _get_final_result_event(event, self.model_request_parameters)) is not None:
+                self.final_result_event = final_result_event
+                yield final_result_event
+                yielded_final_result_event = True
+                break
+
+        if yielded_final_result_event:
+            # If we broke out of the above loop, we need to yield the rest of the events.
+            async for event in iterator:
+                yield event
+        elif final_result_event := _get_final_result_event_from_response(self.get(), self.model_request_parameters):
+            self.final_result_event = final_result_event
+            yield final_result_event
 
     @abstractmethod
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -1520,12 +1522,29 @@ def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestPar
     """Return an appropriate FinalResultEvent if `e` corresponds to a part that will produce a final result."""
     if isinstance(e, PartStartEvent):
         new_part = e.part
-        if (isinstance(new_part, TextPart) and params.allow_text_output) or (
-            isinstance(new_part, FilePart) and params.allow_image_output and isinstance(new_part.content, BinaryImage)
-        ):
-            return FinalResultEvent(tool_name=None, tool_call_id=None)
+        if not _has_output_or_deferred_tool_defs(params):
+            if (isinstance(new_part, TextPart) and params.allow_text_output) or (
+                isinstance(new_part, FilePart) and params.allow_image_output and isinstance(new_part.content, BinaryImage)
+            ):
+                return FinalResultEvent(tool_name=None, tool_call_id=None)
         elif isinstance(new_part, ToolCallPart) and (tool_def := params.tool_defs.get(new_part.tool_name)):
             if tool_def.kind == 'output':
                 return FinalResultEvent(tool_name=new_part.tool_name, tool_call_id=new_part.tool_call_id)
             elif tool_def.defer:
                 return FinalResultEvent(tool_name=None, tool_call_id=None)
+
+
+def _get_final_result_event_from_response(
+    response: ModelResponse, params: ModelRequestParameters
+) -> FinalResultEvent | None:
+    if params.allow_text_output and any(isinstance(part, TextPart) for part in response.parts):
+        return FinalResultEvent(tool_name=None, tool_call_id=None)
+    if params.allow_image_output and any(
+        isinstance(part, FilePart) and isinstance(part.content, BinaryImage) for part in response.parts
+    ):
+        return FinalResultEvent(tool_name=None, tool_call_id=None)
+    return None
+
+
+def _has_output_or_deferred_tool_defs(params: ModelRequestParameters) -> bool:
+    return any(tool_def.kind == 'output' or tool_def.defer for tool_def in params.tool_defs.values())

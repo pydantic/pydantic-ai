@@ -888,6 +888,73 @@ class TestPartialOutput:
             ]
         )
 
+    async def test_text_then_structured_output_prefers_structured(self):
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            assert info.output_tools is not None and len(info.output_tools) == 1
+            yield 'Calling handoff.'
+            yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='{"a": 42, "b": "foo"}')}
+
+        agent = Agent(FunctionModel(stream_function=sf), output_type=str | Foo)
+
+        async with agent.run_stream('test') as result:
+            responses = [response async for response, _ in result.stream_responses(debounce_by=None)]
+            output = await result.get_output()
+
+        assert output == Foo(a=42, b='foo')
+        assert responses[-1] == ModelResponse(
+            parts=[
+                TextPart(content='Calling handoff.'),
+                ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr()),
+            ],
+            usage=RequestUsage(input_tokens=50, output_tokens=9),
+            model_name='function::sf',
+            timestamp=IsNow(tz=timezone.utc),
+            run_id=IsStr(),
+        )
+        assert result.all_messages() == [
+            ModelRequest(
+                parts=[UserPromptPart(content='test', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Calling handoff.'),
+                    ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=50, output_tokens=9),
+                model_name='function::sf',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        timestamp=IsNow(tz=timezone.utc),
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+        ]
+
+    async def test_text_with_structured_output_falls_back_to_text(self):
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            assert info.output_tools is not None and len(info.output_tools) == 1
+            yield 'Just text.'
+
+        agent = Agent(FunctionModel(stream_function=sf), output_type=str | Foo)
+
+        async with agent.run_stream('test') as result:
+            outputs = [output async for output in result.stream_output(debounce_by=None)]
+            output = await result.get_output()
+
+        assert outputs == ['Just text.', 'Just text.']
+        assert output == 'Just text.'
+
     async def test_output_function_text(self):
         """Test that output functions receive correct value for `partial_output` with text output."""
         call_log: list[tuple[str, bool]] = []
