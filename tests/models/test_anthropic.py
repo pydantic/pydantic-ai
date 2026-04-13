@@ -32,6 +32,7 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RequestUsage,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -9085,4 +9086,23 @@ async def test_stream_cancel(allow_model_requests: None):
         await result.cancel()  # double cancel is a no-op
         assert result.cancelled
 
-    assert result.response.interrupted is True
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='hello ')],
+                usage=RequestUsage(input_tokens=5, details={'input_tokens': 5, 'output_tokens': 0}),
+                model_name='claude-haiku-4-5-123',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_response_id='msg_cancel',
+                run_id=IsStr(),
+                interrupted=True,
+            ),
+        ]
+    )

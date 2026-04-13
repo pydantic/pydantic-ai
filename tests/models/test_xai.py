@@ -44,6 +44,7 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RequestUsage,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -5486,7 +5487,27 @@ async def test_stream_cancel(allow_model_requests: None):
         await result.cancel()  # double cancel is a no-op
         assert result.cancelled
 
-    assert result.response.interrupted is True
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='hello ')],
+                usage=RequestUsage(input_tokens=2, output_tokens=1),
+                model_name='grok-4-fast-non-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_url='https://api.x.ai/v1',
+                provider_response_id='grok-123',
+                finish_reason='stop',
+                run_id=IsStr(),
+                interrupted=True,
+            ),
+        ]
+    )
 
 
 # End of tests

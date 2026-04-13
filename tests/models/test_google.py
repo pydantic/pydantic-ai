@@ -298,8 +298,9 @@ async def test_google_model_structured_output(allow_model_requests: None, google
     )
 
 
-async def test_stream_cancel(allow_model_requests: None, google_provider: GoogleProvider):
-    model = GoogleModel('gemini-2.0-flash', provider=google_provider)
+async def test_stream_cancel(allow_model_requests: None, gemini_api_key: str):
+    provider = GoogleProvider(api_key=gemini_api_key, base_url='https://generativelanguage.googleapis.com')
+    model = GoogleModel('gemini-2.0-flash', provider=provider)
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0})
     async with agent.run_stream('What is the capital of France?') as result:
         async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
@@ -308,7 +309,27 @@ async def test_stream_cancel(allow_model_requests: None, google_provider: Google
         await result.cancel()  # double cancel is a no-op
         assert result.cancelled
 
-    assert result.response.interrupted is True
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                instructions='You are a helpful chatbot.',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())],
+                usage=IsInstance(RequestUsage),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com',
+                provider_response_id=IsStr(),
+                interrupted=True,
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_google_model_stream(allow_model_requests: None, google_provider: GoogleProvider):

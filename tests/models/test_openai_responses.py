@@ -10235,7 +10235,26 @@ async def test_stream_cancel(allow_model_requests: None):
         await result.cancel()  # double cancel is a no-op
         assert result.cancelled
 
-    assert result.response.interrupted is True
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='hello ', id='msg_001', provider_name='openai')],
+                model_name='gpt-4o',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={'timestamp': IsDatetime()},
+                provider_response_id='resp_001',
+                run_id=IsStr(),
+                interrupted=True,
+            ),
+        ]
+    )
 
 
 async def test_openai_responses_text_content_input(allow_model_requests: None, openai_api_key: str):

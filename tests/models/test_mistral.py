@@ -2733,4 +2733,24 @@ async def test_stream_cancel(allow_model_requests: None):
         await result.cancel()  # double cancel is a no-op
         assert result.cancelled
 
-    assert result.response.interrupted is True
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='hello ')],
+                usage=RequestUsage(input_tokens=1, output_tokens=1),
+                model_name='gpt-4',
+                timestamp=IsDatetime(),
+                provider_name='mistral',
+                provider_url='https://api.mistral.ai',
+                provider_details={'timestamp': IsDatetime()},
+                provider_response_id='x',
+                run_id=IsStr(),
+                interrupted=True,
+            ),
+        ]
+    )

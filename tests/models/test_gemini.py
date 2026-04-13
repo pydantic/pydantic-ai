@@ -2104,7 +2104,24 @@ async def test_stream_cancel(get_gemini_client: GetGeminiClient):
         await result.cancel()  # double cancel is a no-op
         assert result.cancelled
 
-    assert result.response.interrupted is True
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Hello ')],
+                model_name='gemini-1.5-flash',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
+                run_id=IsStr(),
+                interrupted=True,
+            ),
+        ]
+    )
 
 
 def test_map_empty_usage():
