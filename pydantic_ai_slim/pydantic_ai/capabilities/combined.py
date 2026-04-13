@@ -16,6 +16,7 @@ from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, RunContext, ToolDefi
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
+from ._ordering import collect_leaves, sort_capabilities
 from .abstract import AbstractCapability
 
 if TYPE_CHECKING:
@@ -32,9 +33,21 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
     capabilities: Sequence[AbstractCapability[AgentDepsT]]
 
+    def __post_init__(self) -> None:
+        if any(leaf.get_ordering() is not None for leaf in collect_leaves(self)):
+            self.capabilities = sort_capabilities(list(self.capabilities))
+
+    def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
+        for cap in self.capabilities:
+            cap.apply(visitor)
+
     @property
     def has_wrap_node_run(self) -> bool:
         return any(c.has_wrap_node_run for c in self.capabilities)
+
+    @property
+    def has_wrap_run_event_stream(self) -> bool:
+        return any(c.has_wrap_run_event_stream for c in self.capabilities)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         new_caps = await asyncio.gather(*(c.for_run(ctx) for c in self.capabilities))
@@ -101,7 +114,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         wrapped = toolset
         any_wrapped = False
-        for capability in self.capabilities:
+        for capability in reversed(self.capabilities):
             result = capability.get_wrapper_toolset(wrapped)
             if result is not None:
                 wrapped = result
