@@ -90,6 +90,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
     """
 
     process_tool_call: ProcessToolCallback | None
+    """Hook to customize tool calling and optionally pass extra metadata."""
 
     _id: str | None
 
