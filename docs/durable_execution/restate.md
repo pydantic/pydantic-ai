@@ -135,6 +135,103 @@ Navigate to the invocations tab and click on the invocation to see the execution
 
 See the [Restate agent quickstart](https://docs.restate.dev/ai-quickstart) for more details.
 
+## Restate Integration Considerations
+
+When using Restate with Pydantic AI agents, there are a few important considerations to ensure agents and toolsets behave correctly.
+
+### Agent and Toolset Requirements
+
+The Restate service hosting the agent must have a unique name, and it must be registered with the Restate Server before it can be invoked.
+
+Optionally, tools can be auto-wrapped into durable steps:
+
+```python {title="agent.py" test="skip" lint="skip"}
+RestateAgent(weather_agent, auto_wrap_tools=True)
+```
+
+Alternatively, you can manually wrap steps with [Restate context actions](https://docs.restate.dev/foundations/actions), for example `restate_context().run_typed()`, timers, service calls, etc.
+
+### Parallel Tool Execution
+
+When the LLM asks for a list of tools to be executed, the Restate integration forces them to run sequentially. This is required to make replay on recovery work correctly.
+
+Two workarounds are described in the [Restate documentation](https://docs.restate.dev/ai/patterns/parallelization).
+
+### Streaming
+
+The Restate integration does not support streaming. Adding support is on the roadmap — see the [GitHub issue](https://github.com/restatedev/sdk-python/issues/189) for updates.
+
+## Step Retries
+
+Restate distinguishes between two types of errors:
+
+- **Transient errors** are temporary and should be retried (network problems, service overload, API unavailability, etc.).
+- **Terminal errors** are permanent and should not be retried (invalid input, business rule violation, etc.).
+
+### Transient Errors
+
+By default, Restate will retry failures in your entire handler with [the retry policy described in the Restate documentation](https://docs.restate.dev/services/configuration#retries).
+
+Outside of that, there is no default retry policy set for the agent or tools. If you want to customize the retry policy for the LLM calls, MCP calls, and auto-wrapped tools, you can pass `RunOptions` to `RestateAgent`:
+
+```python {test="skip" lint="skip"}
+restate_agent = RestateAgent(
+    agent,
+    run_options=RunOptions(
+        # Initial retry interval
+        initial_retry_interval=timedelta(milliseconds=100),
+        # Retry policies are exponential, the retry interval will double on each attempt
+        retry_interval_factor=2.0,
+        # Maximum retry interval
+        max_retry_interval=timedelta(seconds=10),
+        # Max duration of retries before giving up with a Terminal Error
+        max_duration=timedelta(minutes=5),
+        # Max attempts (including the initial) before giving up
+        max_attempts=10,
+    ),
+)
+```
+
+When manually wrapping tool steps, you can [pass `RunOptions`](https://docs.restate.dev/guides/error-handling#at-the-run-block-level) to `restate_context().run_typed()`.
+
+`RunOptions` at the agent level or `run_typed()` level take precedence over any retry policies set [on the handler or service](https://docs.restate.dev/services/configuration#retries).
+
+### Terminal Errors
+
+By default, Restate treats all errors as transient and will retry them. If you want an error to be treated as terminal (not retried), raise a `TerminalError` from the tool or handler:
+
+```python {test="skip" lint="skip"}
+from restate.exceptions import TerminalError
+
+raise TerminalError("Something went wrong.")
+```
+
+Optionally, you can catch these errors and let the agent roll back any work it already did. See the [Restate documentation](https://docs.restate.dev/ai/patterns/rollback) for more details.
+
+## Observability with Logfire
+
+Restate exports OpenTelemetry traces for all executions, and Pydantic AI emits traces for all LLM calls and tool executions. You can combine Restate and Pydantic AI traces to get a complete view of your agent's behavior in Logfire:
+
+```python {test="skip" lint="skip"}
+import logfire
+from opentelemetry import trace as trace_api
+from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_ai import Agent
+from restate.ext.tracing import RestateTracerProvider
+
+logfire.configure(service_name=claim_service.name)
+logfire.instrument_pydantic_ai()
+
+# Instrument Pydantic AI with Restate-aware tracing
+Agent.instrument_all(
+    InstrumentationSettings(
+        tracer_provider=RestateTracerProvider(trace_api.get_tracer_provider())
+    )
+)
+```
+
+See the [Restate-Logfire integration docs](https://docs.restate.dev/ai/ecosystem-integrations/logfire) for more details.
+
 ## Beyond Durable Execution
 
 Restate offers a broader set of capabilities that go beyond recovery from failures, to better support production AI agent systems.
@@ -235,29 +332,3 @@ restate deployments register http://agent-v2:9080
 ```
 
 On FaaS platforms like AWS Lambda, Vercel, or Deno Deploy, versioning is automatic via version-specific URLs or ARNs. For containers, register new endpoints and Restate handles traffic routing. See the [Restate versioning documentation](https://docs.restate.dev/services/versioning) for more details.
-
-## Observability with Logfire
-
-Restate exports OpenTelemetry traces for all executions. Pydantic AI emits traces for all LLM calls and tool executions.
-You can combine Restate and Pydantic AI traces to get a complete view of your agent's behavior in Logfire:
-
-
-```python {test="skip" lint="skip"}
-import logfire
-from opentelemetry import trace as trace_api
-from pydantic_ai.models.instrumented import InstrumentationSettings
-from pydantic_ai import Agent
-from restate.ext.tracing import RestateTracerProvider
-
-logfire.configure(service_name=claim_service.name)
-logfire.instrument_pydantic_ai()
-
-# Instrument Pydantic AI with Restate-aware tracing
-Agent.instrument_all(
-    InstrumentationSettings(
-        tracer_provider=RestateTracerProvider(trace_api.get_tracer_provider())
-    )
-)
-```
-
-See the [Restate-Logfire integration docs](https://docs.restate.dev/ai/ecosystem-integrations/logfire) for more details.
