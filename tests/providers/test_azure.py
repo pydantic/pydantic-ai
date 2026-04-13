@@ -18,10 +18,10 @@ from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from openai import AsyncAzureOpenAI
+    from openai import AsyncAzureOpenAI, AsyncOpenAI
 
     from pydantic_ai.models.openai import OpenAIChatModel
-    from pydantic_ai.providers.azure import AzureProvider
+    from pydantic_ai.providers.azure import AzureProvider, _is_openai_compatible_endpoint
 
 
 pytestmark = [
@@ -192,3 +192,118 @@ async def test_azure_document_url_input_not_supported(allow_model_requests: None
         match="Azure's Chat Completions API does not support document input.*OpenAIResponsesModel",
     ):
         await agent.run(['Summarize this document', DocumentUrl(url='https://example.com/test.pdf')])
+
+
+# --- Tests for _is_openai_compatible_endpoint ---
+
+
+class TestIsOpenAICompatibleEndpoint:
+    """Tests for detecting Azure AI Foundry serverless endpoints."""
+
+    def test_standard_azure_openai_endpoint(self):
+        """Standard Azure OpenAI endpoints should NOT be detected as OpenAI-compatible."""
+        assert not _is_openai_compatible_endpoint('https://project-id.openai.azure.com/')
+        assert not _is_openai_compatible_endpoint('https://project-id.openai.azure.com/openai/')
+
+    def test_models_ai_azure_com_endpoint(self):
+        """Azure AI Foundry serverless model endpoints should be detected."""
+        assert _is_openai_compatible_endpoint('https://gpt-oss-120b.eastus2.models.ai.azure.com')
+        assert _is_openai_compatible_endpoint('https://gpt-oss-120b.eastus2.models.ai.azure.com/')
+        assert _is_openai_compatible_endpoint('https://my-model.westus.models.ai.azure.com')
+
+    def test_services_ai_azure_com_endpoint(self):
+        """Azure AI Services unified endpoints should be detected."""
+        assert _is_openai_compatible_endpoint('https://my-resource.services.ai.azure.com')
+        assert _is_openai_compatible_endpoint('https://my-resource.services.ai.azure.com/')
+        assert _is_openai_compatible_endpoint('https://my-resource.services.ai.azure.com/models')
+
+    def test_explicit_v1_path(self):
+        """Any endpoint with /v1 path should be detected as OpenAI-compatible."""
+        assert _is_openai_compatible_endpoint('https://custom-endpoint.example.com/v1')
+        assert _is_openai_compatible_endpoint('https://custom-endpoint.example.com/v1/')
+        assert _is_openai_compatible_endpoint('https://my-endpoint.azure.com/some/path/v1')
+
+    def test_non_azure_non_v1_endpoint(self):
+        """Non-Azure endpoints without /v1 should NOT be detected."""
+        assert not _is_openai_compatible_endpoint('https://api.example.com/')
+        assert not _is_openai_compatible_endpoint('https://api.openai.com/v2')
+
+
+class TestAzureProviderServerlessEndpoint:
+    """Tests for AzureProvider with Azure AI Foundry serverless endpoints."""
+
+    def test_serverless_endpoint_uses_openai_client(self):
+        """When endpoint is a serverless model endpoint, should use AsyncOpenAI (not AsyncAzureOpenAI)."""
+        provider = AzureProvider(
+            azure_endpoint='https://gpt-oss-120b.eastus2.models.ai.azure.com',
+            api_key='test-key-123',
+        )
+        assert isinstance(provider, AzureProvider)
+        assert provider.name == 'azure'
+        # Should use plain AsyncOpenAI, not AsyncAzureOpenAI
+        assert isinstance(provider.client, AsyncOpenAI)
+        assert not isinstance(provider.client, AsyncAzureOpenAI)
+        # base_url should point to /v1
+        assert provider.base_url == 'https://gpt-oss-120b.eastus2.models.ai.azure.com/v1'
+
+    def test_serverless_endpoint_does_not_require_api_version(self):
+        """Serverless endpoints should NOT require api_version."""
+        # This should work without api_version
+        provider = AzureProvider(
+            azure_endpoint='https://my-model.westus.models.ai.azure.com',
+            api_key='test-key-123',
+        )
+        assert isinstance(provider.client, AsyncOpenAI)
+
+    def test_serverless_endpoint_ignores_api_version(self):
+        """Even if api_version is provided, serverless endpoint should not send it."""
+        provider = AzureProvider(
+            azure_endpoint='https://gpt-oss-120b.eastus2.models.ai.azure.com',
+            api_version='2024-12-01-preview',
+            api_key='test-key-123',
+        )
+        # Should still use plain AsyncOpenAI
+        assert isinstance(provider.client, AsyncOpenAI)
+        assert not isinstance(provider.client, AsyncAzureOpenAI)
+
+    def test_services_ai_endpoint_uses_openai_client(self):
+        """Azure AI Services unified endpoint should use AsyncOpenAI."""
+        provider = AzureProvider(
+            azure_endpoint='https://my-resource.services.ai.azure.com',
+            api_key='test-key-123',
+        )
+        assert isinstance(provider.client, AsyncOpenAI)
+        assert not isinstance(provider.client, AsyncAzureOpenAI)
+
+    def test_explicit_v1_endpoint_uses_openai_client(self):
+        """Endpoint with explicit /v1 path should use AsyncOpenAI."""
+        provider = AzureProvider(
+            azure_endpoint='https://custom.example.com/v1',
+            api_key='test-key-123',
+        )
+        assert isinstance(provider.client, AsyncOpenAI)
+        assert not isinstance(provider.client, AsyncAzureOpenAI)
+        assert provider.base_url == 'https://custom.example.com/v1'
+
+    def test_standard_endpoint_still_uses_azure_client(self):
+        """Standard Azure OpenAI endpoints should still use AsyncAzureOpenAI."""
+        provider = AzureProvider(
+            azure_endpoint='https://project-id.openai.azure.com/',
+            api_version='2023-03-15-preview',
+            api_key='1234567890',
+        )
+        assert isinstance(provider.client, AsyncAzureOpenAI)
+        assert provider.base_url == snapshot('https://project-id.openai.azure.com/openai/')
+
+    def test_serverless_with_openai_model(self):
+        """OpenAIChatModel should work with serverless AzureProvider."""
+        model = OpenAIChatModel(
+            model_name='gpt-oss-120b',
+            provider=AzureProvider(
+                azure_endpoint='https://gpt-oss-120b.eastus2.models.ai.azure.com',
+                api_key='test-key-123',
+            ),
+        )
+        assert isinstance(model, OpenAIChatModel)
+        assert isinstance(model.client, AsyncOpenAI)
+        assert not isinstance(model.client, AsyncAzureOpenAI)

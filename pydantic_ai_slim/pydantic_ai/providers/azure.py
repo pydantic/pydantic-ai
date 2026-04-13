@@ -106,7 +106,9 @@ class AzureProvider(Provider[AsyncOpenAI]):
             azure_endpoint: The Azure endpoint to use for authentication, if not provided, the `AZURE_OPENAI_ENDPOINT`
                 environment variable will be used if available.
             api_version: The API version to use for authentication, if not provided, the `OPENAI_API_VERSION`
-                environment variable will be used if available.
+                environment variable will be used if available. For Azure AI Foundry serverless endpoints
+                that use OpenAI-compatible ``/v1`` paths, ``api_version`` is not required and will not be
+                sent as a query parameter.
             api_key: The API key to use for authentication, if not provided, the `AZURE_OPENAI_API_KEY` environment variable
                 will be used if available.
             openai_client: An existing
@@ -132,22 +134,79 @@ class AzureProvider(Provider[AsyncOpenAI]):
                     'Must provide one of the `api_key` argument or the `AZURE_OPENAI_API_KEY` environment variable'
                 )
 
-            if not api_version and 'OPENAI_API_VERSION' not in os.environ:  # pragma: no cover
-                raise UserError(
-                    'Must provide one of the `api_version` argument or the `OPENAI_API_VERSION` environment variable'
-                )
-
             if http_client is None:
                 http_client = create_async_http_client()
                 self._own_http_client = http_client
                 self._http_client_factory = create_async_http_client
-            self._client = AsyncAzureOpenAI(
-                azure_endpoint=azure_endpoint,
-                api_key=api_key,
-                api_version=api_version,
-                http_client=http_client,
-            )
-            self._base_url = str(self._client.base_url)
+
+            # Azure AI Foundry serverless endpoints expose an OpenAI-compatible
+            # ``/v1`` API that rejects the ``api-version`` query parameter used
+            # by the standard Azure OpenAI service.  Detect this case and fall
+            # back to a plain ``AsyncOpenAI`` client so the query parameter is
+            # never sent.
+            if _is_openai_compatible_endpoint(azure_endpoint):
+                stripped = azure_endpoint.rstrip('/')
+                # Don't append /v1 if the endpoint already ends with it
+                base_url = stripped if stripped.endswith('/v1') else stripped + '/v1'
+                self._client = AsyncOpenAI(
+                    base_url=base_url,
+                    api_key=api_key or os.getenv('AZURE_OPENAI_API_KEY'),
+                    http_client=http_client,
+                )
+                self._base_url = base_url
+            else:
+                if not api_version and 'OPENAI_API_VERSION' not in os.environ:  # pragma: no cover
+                    raise UserError(
+                        'Must provide one of the `api_version` argument or the `OPENAI_API_VERSION` environment variable'
+                    )
+
+                self._client = AsyncAzureOpenAI(
+                    azure_endpoint=azure_endpoint,
+                    api_key=api_key,
+                    api_version=api_version,
+                    http_client=http_client,
+                )
+                self._base_url = str(self._client.base_url)
 
     def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
         self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
+
+
+def _is_openai_compatible_endpoint(endpoint: str) -> bool:
+    """Detect Azure AI Foundry serverless endpoints that use the OpenAI-compatible ``/v1`` API.
+
+    These endpoints do **not** accept the ``api-version`` query parameter that
+    ``AsyncAzureOpenAI`` injects by default.  Common patterns include::
+
+        https://<model>.<region>.models.ai.azure.com
+        https://<resource>.services.ai.azure.com/models
+
+    The heuristic looks at the URL path: if it already ends with ``/v1`` (or has
+    no meaningful path) and the host belongs to Azure AI Foundry domains, we
+    treat it as OpenAI-compatible.
+
+    The endpoint URL contains ``/v1`` in the path is also treated as
+    OpenAI-compatible, regardless of the host domain.
+    """
+    from urllib.parse import urlparse
+
+    parsed = urlparse(endpoint.rstrip('/'))
+    path = parsed.path.rstrip('/')
+    host = parsed.hostname or ''
+
+    # Explicit /v1 in the path — the user is clearly targeting the
+    # OpenAI-compatible surface.
+    if path == '/v1' or path.endswith('/v1'):
+        return True
+
+    # Azure AI Foundry serverless model endpoints
+    # e.g. https://<model-name>.eastus2.models.ai.azure.com
+    if host.endswith('.models.ai.azure.com'):
+        return True
+
+    # Azure AI Services unified endpoint (Model-as-a-Service)
+    # e.g. https://<resource>.services.ai.azure.com/models
+    if host.endswith('.services.ai.azure.com'):
+        return True
+
+    return False
