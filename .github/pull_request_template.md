@@ -6,6 +6,9 @@
 <!-- and assigned to you. Unassigned PRs may be auto-closed. -->
 <!-- Trivial fixes (typos, broken links, small doc improvements) don't need an issue. -->
 
+<!-- Adding a capability? Most capabilities belong in Pydantic Harness, not here. -->
+<!-- See: https://ai.pydantic.dev/harness/#what-goes-where -->
+
 - Closes #<issue>
 
 ### Checklist
