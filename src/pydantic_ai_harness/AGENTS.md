@@ -1,4 +1,4 @@
-# Pydantic Harness
+# Pydantic AI Harness
 
 ## Local setup
 
@@ -16,7 +16,7 @@ Fill in the absolute path where the `capabilities` branch of `pydantic-ai` is ch
 
 ## Vocabulary
 
-- **Capability**: an `AbstractCapability` subclass that bundles tools, hooks, instructions, and model settings into a reusable unit. This is the core abstraction of pydantic-harness
+- **Capability**: an `AbstractCapability` subclass that bundles tools, hooks, instructions, and model settings into a reusable unit. This is the core abstraction of pydantic-ai-harness
 - **Hook**: a lifecycle method on `AbstractCapability` that intercepts agent graph execution (e.g. `before_model_request`, `wrap_run`, `after_tool_execute`)
 - **Toolset**: a collection of tools that a capability can provide to the agent
 - **Guard**: a type of capability that validates inputs/outputs or controls tool access (e.g. `InputGuardrail`, `CostGuard`)
@@ -71,7 +71,7 @@ Always run `make lint && make typecheck && make test` before committing.
 ## File structure
 
 ```
-pydantic_harness/
+pydantic_ai_harness/
   __init__.py          # public API re-exports
   <capability>/        # each capability gets its own package
     __init__.py        # public exports for the capability

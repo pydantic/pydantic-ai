@@ -3,7 +3,7 @@ requires = ['hatchling', 'uv-dynamic-versioning>=0.7.0']
 build-backend = 'hatchling.build'
 
 [project]
-name = 'pydantic-harness'
+name = 'pydantic-ai-harness'
 dynamic = ['version']
 description = 'The batteries for your Pydantic AI agent'
 readme = 'README.md'
@@ -43,13 +43,13 @@ dbos = [
 ]
 
 [project.urls]
-Homepage = 'https://github.com/pydantic/pydantic-harness'
-Source = 'https://github.com/pydantic/pydantic-harness'
-Issues = 'https://github.com/pydantic/pydantic-harness/issues'
+Homepage = 'https://github.com/pydantic/pydantic-ai-harness'
+Source = 'https://github.com/pydantic/pydantic-ai-harness'
+Issues = 'https://github.com/pydantic/pydantic-ai-harness/issues'
 
 [dependency-groups]
 dev = [
-    'pydantic-harness[code-mode]',
+    'pydantic-ai-harness[code-mode]',
     'pytest',
     'anyio[trio]',
     'pytest-anyio',
@@ -74,7 +74,7 @@ bump = true
 
 
 [tool.hatch.build.targets.wheel]
-packages = ['pydantic_harness']
+packages = ['pydantic_ai_harness']
 
 [tool.ruff]
 line-length = 120
@@ -119,10 +119,10 @@ anyio_mode = 'auto'
 
 [tool.coverage.run]
 branch = true
-source = ['pydantic_harness', 'tests']
+source = ['pydantic_ai_harness', 'tests']
 
 [tool.coverage.paths]
-source = ['.', '/home/runner/work/pydantic-harness/pydantic-harness']
+source = ['.', '/home/runner/work/pydantic-ai-harness/pydantic-ai-harness']
 
 [tool.coverage.report]
 fail_under = 100

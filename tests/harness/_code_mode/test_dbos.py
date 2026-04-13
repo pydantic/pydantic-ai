@@ -25,7 +25,7 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 
-from pydantic_harness import CodeMode
+from pydantic_ai_harness import CodeMode
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -36,7 +36,7 @@ from pydantic_harness import CodeMode
 def dbos_instance(tmp_path_factory: pytest.TempPathFactory) -> Generator[DBOS, Any, None]:
     dbos_sqlite_file = tmp_path_factory.mktemp('dbos') / 'dbostest.sqlite'
     dbos_config: DBOSConfig = {
-        'name': 'pydantic_harness_dbos_tests',
+        'name': 'pydantic_ai_harness_dbos_tests',
         'system_database_url': f'sqlite:///{dbos_sqlite_file}',
         'run_admin_server': False,
         'enable_otlp': False,

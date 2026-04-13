@@ -21,7 +21,7 @@ Standard tool calling requires one model round-trip per tool call. An agent that
 
 ```python
 from pydantic_ai import Agent
-from pydantic_harness import CodeMode
+from pydantic_ai_harness import CodeMode
 
 agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode()])
 
@@ -56,7 +56,7 @@ tokyo_c = await convert_temp(fahrenheit=tokyo['temp_f'])
 Code mode requires the Monty sandbox:
 
 ```bash
-uv add "pydantic-harness[code-mode]"
+uv add "pydantic-ai-harness[code-mode]"
 ```
 
 ## Selective tool sandboxing
@@ -81,7 +81,7 @@ Tools that match the selector are wrapped inside `run_code`. Non-matching tools 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_harness import CodeMode
+from pydantic_ai_harness import CodeMode
 
 search_tools = FunctionToolset(tools=[search, fetch]).with_metadata(code_mode=True)
 
@@ -149,7 +149,7 @@ capabilities:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_harness import CodeMode
+from pydantic_ai_harness import CodeMode
 
 agent = Agent.from_file('agent.yaml', custom_capability_types=[CodeMode])
 result = agent.run_sync('...')

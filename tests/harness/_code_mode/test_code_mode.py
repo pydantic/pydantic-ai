@@ -26,9 +26,9 @@ from pydantic_ai.usage import RunUsage
 from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import TypedDict
 
-from pydantic_harness import CodeMode
-from pydantic_harness.code_mode import CodeModeToolset
-from pydantic_harness.code_mode._toolset import (  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai_harness import CodeMode
+from pydantic_ai_harness.code_mode import CodeModeToolset
+from pydantic_ai_harness.code_mode._toolset import (  # pyright: ignore[reportPrivateUsage]
     _SEARCH_TOOLS_MODIFIER,
     _TOOL_SEARCH_ADDENDUM,
     _PrintCapture,

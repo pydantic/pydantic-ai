@@ -3,12 +3,12 @@ from pathlib import Path
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
-import pydantic_harness
+import pydantic_ai_harness
 
 
 def test_import():
-    assert pydantic_harness.__doc__ is not None
-    assert isinstance(pydantic_harness.__all__, list)
+    assert pydantic_ai_harness.__doc__ is not None
+    assert isinstance(pydantic_ai_harness.__all__, list)
 
 
 def test_test_model_fixture(test_model: TestModel):

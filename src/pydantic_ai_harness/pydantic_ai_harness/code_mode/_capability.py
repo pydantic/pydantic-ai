@@ -9,7 +9,7 @@ from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
 from pydantic_ai.capabilities._tool_search import ToolSearch as _ToolSearch
 from pydantic_ai.tools import AgentDepsT, ToolSelector
 
-from pydantic_harness.code_mode._toolset import CodeModeToolset
+from pydantic_ai_harness.code_mode._toolset import CodeModeToolset
 
 
 @dataclass
@@ -26,7 +26,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
 
     ```python
     from pydantic_ai import Agent
-    from pydantic_harness import CodeMode
+    from pydantic_ai_harness import CodeMode
 
     # Sandbox all tools
     agent = Agent('openai:gpt-5', capabilities=[CodeMode()])

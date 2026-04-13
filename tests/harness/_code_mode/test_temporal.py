@@ -38,12 +38,12 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 
-from pydantic_harness import CodeMode
+from pydantic_ai_harness import CodeMode
 
 pytestmark = pytest.mark.anyio
 
 TEMPORAL_PORT = 7244  # avoid conflict with other test suites
-TASK_QUEUE = 'pydantic-harness-code-mode-queue'
+TASK_QUEUE = 'pydantic-ai-harness-code-mode-queue'
 BASE_ACTIVITY_CONFIG = ActivityConfig(
     start_to_close_timeout=timedelta(seconds=60),
     retry_policy=RetryPolicy(maximum_attempts=1),

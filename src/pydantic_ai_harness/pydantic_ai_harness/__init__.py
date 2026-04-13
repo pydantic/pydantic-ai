@@ -1,4 +1,4 @@
-"""Agent harness for composable, reusable AI agent capabilities, for Pydantic AI."""
+"""The batteries for your Pydantic AI agent -- the official capability library."""
 
 from typing import TYPE_CHECKING
 
