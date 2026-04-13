@@ -12,7 +12,7 @@ Standard tool calling requires one model round-trip per tool call. An agent that
 uv add "pydantic-ai-harness[code-mode]"
 ```
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai_harness import CodeMode
 
@@ -37,7 +37,7 @@ print(result.output)
 
 The model writes code like:
 
-```python
+```python {test="skip" lint="skip"}
 paris, tokyo = await asyncio.gather(
     get_weather(city='Paris'),
     get_weather(city='Tokyo'),
