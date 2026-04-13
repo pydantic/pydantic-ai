@@ -408,7 +408,7 @@ rapid-mlx serve mlx-community/Qwen3.5-4B-MLX-4bit
 ```
 
 The server listens on `http://localhost:8000/v1` and implements the OpenAI
-chat completions API.
+chat completions API, so you can point [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] at it:
 
 ```python
 from pydantic_ai import Agent
