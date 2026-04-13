@@ -306,6 +306,66 @@ Use the base URL that matches your Logfire region (`gateway-us` or `gateway-eu`)
     #> Hello user
     ```
 
+#### Vercel AI SDK
+
+The [Vercel AI SDK](https://ai-sdk.dev/) can route through the Gateway by pointing each provider's `baseURL` at the matching proxy path (e.g. `/proxy/openai` or `/proxy/anthropic`). Use the base URL that matches your Logfire region (`gateway-us` or `gateway-eu`).
+
+=== "US"
+
+    ```typescript
+    import { createOpenAI } from "@ai-sdk/openai";
+    import { generateText } from "ai";
+
+    const apiKey = process.env.PYDANTIC_AI_GATEWAY_API_KEY;
+    if (!apiKey) throw new Error("set PYDANTIC_AI_GATEWAY_API_KEY");
+
+    const openai = createOpenAI({
+      apiKey,
+      baseURL: "https://gateway-us.pydantic.dev/proxy/openai",
+    });
+
+    async function main() {
+      const openaiResult = await generateText({
+        model: openai("gpt-5.2"),
+        prompt: "what color is the sky? reply concisely",
+      });
+      console.log("openai:", openaiResult.text);
+    }
+
+    main().catch((err) => {
+      console.error(err);
+      process.exit(1);
+    });
+    ```
+
+=== "EU"
+
+    ```typescript
+    import { createOpenAI } from "@ai-sdk/openai";
+    import { generateText } from "ai";
+
+    const apiKey = process.env.PYDANTIC_AI_GATEWAY_API_KEY;
+    if (!apiKey) throw new Error("set PYDANTIC_AI_GATEWAY_API_KEY");
+
+    const openai = createOpenAI({
+      apiKey,
+      baseURL: "https://gateway-eu.pydantic.dev/proxy/openai",
+    });
+
+    async function main() {
+      const openaiResult = await generateText({
+        model: openai("gpt-5.2"),
+        prompt: "what color is the sky? reply concisely",
+      });
+      console.log("openai:", openaiResult.text);
+    }
+
+    main().catch((err) => {
+      console.error(err);
+      process.exit(1);
+    });
+    ```
+
 ## Troubleshooting
 
 ### Unable to calculate spend
