@@ -152,7 +152,7 @@ See [Anthropic's Microsoft Foundry documentation](https://platform.claude.com/do
 Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) to reduce costs by caching parts of your prompts. Pydantic AI provides four ways to use prompt caching:
 
 1. **Cache User Messages with [`CachePoint`][pydantic_ai.messages.CachePoint]**: Insert a `CachePoint` marker in your user messages to cache everything before it
-2. **Cache System Instructions**: Set [`AnthropicModelSettings.anthropic_cache_instructions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_instructions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly
+2. **Cache System Instructions**: Set [`AnthropicModelSettings.anthropic_cache_instructions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_instructions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly. When you have both static and dynamic [instructions](../agent.md#instructions), the cache point is automatically placed after the last static instruction, so dynamic instructions can change without invalidating the static cache.
 3. **Cache Tool Definitions**: Set [`AnthropicModelSettings.anthropic_cache_tool_definitions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_tool_definitions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly
 4. **Cache All Messages**: Set [`AnthropicModelSettings.anthropic_cache_messages`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_messages] to `True` to automatically cache all messages
 
@@ -208,6 +208,41 @@ def search_docs(ctx: RunContext, query: str) -> str:
 result = agent.run_sync('Search for Python best practices')
 print(result.output)
 ```
+
+### Smart Instruction Caching
+
+When you use `anthropic_cache_instructions` with both static and dynamic [instructions](../agent.md#instructions), Pydantic AI automatically places the cache boundary at the optimal point. Static instructions (from `Agent(instructions=...)`) are sorted before dynamic instructions (from `@agent.instructions` functions or [toolsets](../toolsets.md)), and the cache point is placed after the last static instruction block.
+
+This means your stable, static instructions are cached efficiently, while dynamic instructions (which may change between requests) remain outside the cache boundary and don't cause cache invalidation.
+
+```python {test="skip"}
+from datetime import date
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    deps_type=str,
+    instructions='You are a helpful customer service agent. Follow company policy.',  # (1)!
+    model_settings=AnthropicModelSettings(
+        anthropic_cache_instructions=True,  # (2)!
+    ),
+)
+
+
+@agent.instructions
+def dynamic_context(ctx: RunContext[str]) -> str:  # (3)!
+    return f"Customer name: {ctx.deps}. Today's date: {date.today()}."
+
+
+result = agent.run_sync('What is your return policy?', deps='Alice')
+print(result.output)
+```
+
+1. Static instructions are cached across requests.
+2. Enables smart cache placement at the static/dynamic boundary.
+3. Dynamic instructions change per-request and are not cached.
 
 ### Example 3: Fine-Grained Control with CachePoint
 
@@ -344,3 +379,45 @@ print(f'Cache read tokens: {usage.cache_read_tokens}')
 - The cache point created by `anthropic_cache_messages` is **always preserved** (as it's the newest message cache point)
 - Additional `CachePoint` markers in messages are removed from oldest to newest when the limit is exceeded
 - This ensures critical caching (instructions/tools) is maintained while still benefiting from message-level caching
+
+## Message Compaction
+
+Anthropic supports [automatic context compaction](https://docs.anthropic.com/en/docs/build-with-claude/compaction) to manage long conversations. When input tokens exceed a configured threshold, the API automatically generates a summary that replaces older messages while preserving context.
+
+The easiest way to enable compaction is with the [`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction] capability:
+
+```python {title="anthropic_compaction.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicCompaction
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    capabilities=[AnthropicCompaction(token_threshold=100_000)],
+)
+```
+
+The capability accepts:
+
+- **`token_threshold`** (default: 150,000, minimum: 50,000): Compaction triggers when input tokens exceed this value.
+- **`instructions`**: Custom instructions for how the summary should be generated.
+- **`pause_after_compaction`**: When `True`, the response stops after the compaction block with `stop_reason='compaction'`, allowing explicit handling before continuing.
+
+Alternatively, you can configure compaction directly via model settings using [`anthropic_context_management`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_context_management]:
+
+```python {title="anthropic_compaction_settings.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+agent = Agent('anthropic:claude-sonnet-4-6')
+result = agent.run_sync(
+    'Hello!',
+    model_settings=AnthropicModelSettings(
+        anthropic_context_management={
+            'edits': [{'type': 'compact_20260112', 'trigger': {'type': 'input_tokens', 'value': 100_000}}]
+        }
+    ),
+)
+```
+
+!!! note
+    Compaction blocks returned by Anthropic contain readable text summaries. They are automatically round-tripped in subsequent requests when included in the message history.

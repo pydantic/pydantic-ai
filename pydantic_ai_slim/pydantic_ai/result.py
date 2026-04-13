@@ -19,13 +19,13 @@ from ._output import (
     TextOutputSchema,
 )
 from ._run_context import AgentDepsT, RunContext
-from ._tool_manager import ToolManager
 from .messages import ModelResponseStreamEvent
 from .output import (
     DeferredToolRequests,
     OutputDataT,
     ToolOutput,
 )
+from .tool_manager import ToolManager
 from .usage import RunUsage, UsageLimits
 
 if TYPE_CHECKING:
@@ -216,7 +216,12 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     )
                 return cast(OutputDataT, deferred_tool_requests)
             elif self._output_schema.allows_image and message.images:
-                return cast(OutputDataT, message.images[0])
+                result_data = cast(OutputDataT, message.images[0])
+                for validator in self._output_validators:
+                    result_data = await validator.validate(
+                        result_data, replace(self._run_ctx, partial_output=allow_partial), wrap_validation_errors=False
+                    )
+                return result_data
             elif text_processor := self._output_schema.text_processor:
                 text = ''
                 for part in message.parts:

@@ -81,6 +81,13 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
     Defaults to `False` for backward compatibility.
     """
 
+    include_return_schema: bool | None
+    """Whether to include return schemas in tool definitions sent to the model.
+
+    When `None` (default), defaults to `False` unless the
+    [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
+    """
+
     _id: str | None
 
     _instructions: str | None
@@ -100,6 +107,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         max_retries: int = 1,
         tool_error_behavior: Literal['model_retry', 'error'] = 'model_retry',
         include_instructions: bool = False,
+        include_return_schema: bool | None = None,
         id: str | None = None,
         process_tool_call: ProcessToolCallback | None = None,
     ) -> None:
@@ -112,6 +120,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         self.max_retries = max_retries
         self.tool_error_behavior = tool_error_behavior
         self.include_instructions = include_instructions
+        self.include_return_schema = include_return_schema
         self.process_tool_call = process_tool_call
 
         self._enter_lock: Lock = Lock()
@@ -154,26 +163,31 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
 
         return None
 
-    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> str | None:
+    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> messages.InstructionPart | None:
         """Return the FastMCP server's instructions for how to use its tools.
 
         If [`include_instructions`][pydantic_ai.toolsets.fastmcp.FastMCPToolset.include_instructions] is `True`, returns
         the [`instructions`][pydantic_ai.toolsets.fastmcp.FastMCPToolset.instructions] sent by the FastMCP server during
         initialization. Otherwise, returns `None`.
 
+        Instructions from external servers are marked as dynamic since they may change between connections.
+
         Args:
             ctx: The run context for this agent run.
 
         Returns:
-            The server's instructions if `include_instructions` is enabled, otherwise `None`.
+            An `InstructionPart` with the server's instructions if `include_instructions` is enabled, otherwise `None`.
         """
         if not self.include_instructions:
             return None
         try:
-            return self.instructions
+            instructions = self.instructions
         except AttributeError:
             # Server not yet initialized — return None rather than propagating.
             return None
+        if instructions is None:
+            return None
+        return messages.InstructionPart(content=instructions, dynamic=True)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         async with self:
@@ -188,6 +202,8 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
                             'annotations': mcp_tool.annotations.model_dump() if mcp_tool.annotations else None,
                             'output_schema': mcp_tool.outputSchema or None,
                         },
+                        return_schema=mcp_tool.outputSchema or None,
+                        include_return_schema=self.include_return_schema,
                     )
                 )
                 for mcp_tool in await self.client.list_tools()

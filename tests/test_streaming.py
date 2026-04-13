@@ -44,13 +44,13 @@ from pydantic_ai import (
 )
 from pydantic_ai._agent_graph import GraphAgentState
 from pydantic_ai._output import TextOutputProcessor, TextOutputSchema
-from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai.agent import AgentRun
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel, TestStreamedResponse as ModelTestStreamedResponse
 from pydantic_ai.output import PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import AgentStream, FinalResult, RunUsage, StreamedRunResult, StreamedRunResultSync
+from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
 from pydantic_graph import End
@@ -770,7 +770,7 @@ async def test_call_tool_wrong_name():
         return x
 
     with capture_run_messages() as messages:
-        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(0\) for output validation'):
+        with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'foobar' exceeded max retries count of 0"):
             async with agent.run_stream('hello'):
                 pass
 
@@ -2628,6 +2628,22 @@ async def test_unknown_tool_call_events():
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
                 ),
+            ),
+            FunctionToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='known_tool',
+                    args={'x': 5},
+                    tool_call_id=IsStr(),
+                ),
+                args_valid=True,
+            ),
+            FunctionToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='unknown_tool',
+                    args={'arg': 'value'},
+                    tool_call_id=IsStr(),
+                ),
+                args_valid=False,
             ),
         ]
     )
