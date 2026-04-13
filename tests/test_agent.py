@@ -9482,6 +9482,54 @@ def test_validator_max_retries_text_path_unchanged():
     assert max_retries_log == [4]
 
 
+def test_output_retries_spec_only_override():
+    """`spec={'output_retries': N}` without a run arg takes effect at run time."""
+    retries_log: list[int] = []
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": 1, "b": "foo"}')])
+
+    agent = Agent(FunctionModel(return_model), output_type=ToolOutput(Foo), output_retries=5)
+
+    @agent.output_validator
+    def always_retry(ctx: RunContext[None], o: Foo) -> Foo:
+        retries_log.append(ctx.retry)
+        raise ModelRetry(f'retry {ctx.retry}')
+
+    # spec provides output_retries=2, run arg is omitted → spec value wins over agent default of 5
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(2\)'):
+        agent.run_sync('Hello', spec={'output_retries': 2})
+
+    assert retries_log == [0, 1, 2]
+
+
+def test_output_retries_run_override_without_validators():
+    """Run-level `output_retries` takes effect even when no output_validator is registered.
+
+    This exercises the shared-toolset clone branch: when `output_schema == self._output_schema`
+    and no output_validators are registered, `Agent.iter` must still clone the shared
+    `self._output_toolset` before mutating `max_retries` so concurrent runs stay isolated.
+    Triggers via ToolManager's per-tool `_check_max_retries` rather than consume_output_retry.
+    """
+    call_count = 0
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        assert info.output_tools is not None
+        # Always return invalid args → output function raises ModelRetry via validation path
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"bad_field": 1}')])
+
+    agent = Agent(FunctionModel(return_model), output_type=ToolOutput(Foo), output_retries=10)
+
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(2\)'):
+        agent.run_sync('Hello', output_retries=2)
+
+    # 3 attempts: initial + 2 retries, capped by the run override at 2 (not the agent default 10)
+    assert call_count == 3
+
+
 def test_unknown_tool_with_valid_tool_does_not_exhaust_retries():
     """Unknown tool calls should not increment the global retry counter.
 
