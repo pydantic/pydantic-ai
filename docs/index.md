@@ -29,19 +29,22 @@ Designed to give your IDE or AI coding agent as much context as possible for aut
 5. **Powerful Evals**:
 Enables you to systematically test and [evaluate](evals.md) the performance and accuracy of the agentic systems you build, and monitor the performance over time in Pydantic Logfire.
 
-6. **MCP, A2A, and UI**:
+6. **Extensible by Design**:
+Build agents from composable [capabilities](capabilities.md) that bundle tools, hooks, instructions, and model settings into reusable units. Use built-in capabilities for [web search](capabilities.md#provider-adaptive-tools), [thinking](capabilities.md#thinking), and [MCP](capabilities.md#provider-adaptive-tools), pick from the [Pydantic Harness](harness.md) capability library, build your own, or install [third-party capability packages](extensibility.md). Define agents entirely in [YAML/JSON](agent-spec.md) — no code required.
+
+7. **MCP, A2A, and UI**:
 Integrates the [Model Context Protocol](mcp/overview.md), [Agent2Agent](a2a.md), and various [UI event stream](ui/overview.md) standards to give your agent access to external tools and data, let it interoperate with other agents, and build interactive applications with streaming event-based communication.
 
-7. **Human-in-the-Loop Tool Approval**:
+8. **Human-in-the-Loop Tool Approval**:
 Easily lets you flag that certain tool calls [require approval](deferred-tools.md#human-in-the-loop-tool-approval) before they can proceed, possibly depending on tool call arguments, conversation history, or user preferences.
 
-8. **Durable Execution**:
+9. **Durable Execution**:
 Enables you to build [durable agents](durable_execution/overview.md) that can preserve their progress across transient API failures and application errors or restarts, and handle long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability.
 
-9. **Streamed Outputs**:
+10. **Streamed Outputs**:
 Provides the ability to [stream](output.md#streamed-results) structured output continuously, with immediate validation, ensuring real time access to generated data.
 
-10. **Graph Support**:
+11. **Graph Support**:
 Provides a powerful way to define [graphs](graph.md) using type hints, for use in complex applications where standard control flow can degrade to spaghetti code.
 
 Realistically though, no list is going to be as convincing as [giving it a try](#next-steps) and seeing how it makes you feel!
@@ -93,7 +96,26 @@ _(This example is complete, it can be run "as is", assuming you've [installed th
 
 The exchange will be very short: Pydantic AI will send the instructions and the user prompt to the LLM, and the model will return a text response.
 
-Not very interesting yet, but we can easily add [tools](tools.md), [dynamic instructions](agent.md#instructions), and [structured outputs](output.md) to build more powerful agents.
+Not very interesting yet, but we can easily add [tools](tools.md), [dynamic instructions](agent.md#instructions), [structured outputs](output.md), or composable [capabilities](capabilities.md) to build more powerful agents.
+
+Here's the same agent with [thinking](capabilities.md#thinking) and [web search](capabilities.md#provider-adaptive-tools) capabilities:
+
+```python {title="hello_world_capabilities.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Thinking, WebSearch
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    instructions='Be concise, reply with one sentence.',
+    capabilities=[Thinking(), WebSearch()],
+)
+
+result = agent.run_sync('What was the mass of the largest meteorite found this year?')
+print(result.output)
+"""
+The largest meteorite recovered this year weighed approximately 7.6 kg, found in the Sahara Desert in January.
+"""
+```
 
 ## Tools & Dependency Injection Example
 

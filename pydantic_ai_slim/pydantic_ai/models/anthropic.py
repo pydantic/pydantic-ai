@@ -1,8 +1,8 @@
 from __future__ import annotations as _annotations
 
 import io
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Literal, cast, overload
@@ -21,6 +21,7 @@ from ..builtin_tools import (
     WebFetchTool,
     WebSearchTool,
 )
+from ..capabilities.abstract import AbstractCapability
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     AudioUrl,
@@ -28,6 +29,7 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     CachePoint,
+    CompactionPart,
     DocumentUrl,
     FilePart,
     FinishReason,
@@ -39,6 +41,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -49,10 +52,11 @@ from ..messages import (
     is_multi_modal_content,
 )
 from ..profiles import ModelProfileSpec
+from ..profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP, AnthropicModelProfile
 from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
-from ..settings import ModelSettings, merge_model_settings
-from ..tools import ToolDefinition
+from ..settings import ModelSettings, ThinkingEffort, merge_model_settings
+from ..tools import AgentDepsT, ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
@@ -87,9 +91,13 @@ try:
         BetaCodeExecutionToolResultBlockContent,
         BetaCodeExecutionToolResultBlockParam,
         BetaCodeExecutionToolResultBlockParamContentParam,
+        BetaCompactionBlock,
+        BetaCompactionBlockParam,
+        BetaCompactionContentBlockDelta,
         BetaContainerParams,
         BetaContentBlock,
         BetaContentBlockParam,
+        BetaContextManagementConfigParam,
         BetaFileDocumentSourceParam,
         BetaFileImageSourceParam,
         BetaImageBlockParam,
@@ -155,6 +163,19 @@ except ImportError as _import_error:
         'you can use the `anthropic` optional group — `pip install "pydantic-ai-slim[anthropic]"`'
     ) from _import_error
 
+
+@contextmanager
+def _map_api_errors(model_name: str) -> Iterator[None]:
+    try:
+        yield
+    except APIStatusError as e:
+        if (status_code := e.status_code) >= 400:
+            raise ModelHTTPError(status_code=status_code, model_name=model_name, body=e.body) from e
+        raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
+    except APIConnectionError as e:
+        raise ModelAPIError(model_name=model_name, message=e.message) from e
+
+
 LatestAnthropicModelNames = ModelParam
 """Latest Anthropic models."""
 
@@ -190,7 +211,6 @@ class AnthropicModelSettings(ModelSettings, total=False):
     When enabled, the last tool in the `tools` array will have `cache_control` set,
     allowing Anthropic to cache tool definitions and reduce costs.
     If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
-    TTL is automatically omitted for Bedrock, as it does not support explicit TTL.
     See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
     """
 
@@ -200,7 +220,6 @@ class AnthropicModelSettings(ModelSettings, total=False):
     When enabled, the last system prompt will have `cache_control` set,
     allowing Anthropic to cache system instructions and reduce costs.
     If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
-    TTL is automatically omitted for Bedrock, as it does not support explicit TTL.
     See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
     """
 
@@ -211,7 +230,6 @@ class AnthropicModelSettings(ModelSettings, total=False):
     in the final user message, which is useful for caching conversation history
     or context in multi-turn conversations.
     If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
-    TTL is automatically omitted for Bedrock, as it does not support explicit TTL.
 
     Note: Uses 1 of Anthropic's 4 available cache points per request. Any additional CachePoint
     markers in messages will be automatically limited to respect the 4-cache-point maximum.
@@ -234,6 +252,15 @@ class AnthropicModelSettings(ModelSettings, total=False):
     Set to a dict (e.g. `{'id': 'container_xxx'}`) to explicitly specify a container.
     """
 
+    anthropic_eager_input_streaming: bool
+    """Whether to enable eager input streaming on tool definitions.
+
+    When enabled, all tool definitions will have `eager_input_streaming` set to `True`,
+    allowing Anthropic to stream tool call arguments incrementally instead of buffering
+    the entire JSON before streaming. This reduces latency for tool calls with large inputs.
+    See https://platform.claude.com/docs/en/agents-and-tools/tool-use/fine-grained-tool-streaming for more information.
+    """
+
     anthropic_betas: list[AnthropicBetaParam]
     """List of Anthropic beta features to enable for API requests.
 
@@ -242,9 +269,19 @@ class AnthropicModelSettings(ModelSettings, total=False):
     extra_headers['anthropic-beta']. See the Anthropic docs for available beta features.
     """
 
+    anthropic_context_management: BetaContextManagementConfigParam
+    """Context management configuration for automatic compaction.
+
+    When configured, Anthropic will automatically compact older context when the
+    input token count exceeds the configured threshold. The compaction produces
+    a summary that replaces the compacted messages.
+
+    See [the Anthropic docs](https://docs.anthropic.com/en/docs/build-with-claude/compaction) for more details.
+    """
+
 
 @dataclass(init=False)
-class AnthropicModel(Model):
+class AnthropicModel(Model[AsyncAnthropicClient]):
     """A model that uses the Anthropic API.
 
     Internally, this uses the [Anthropic Python client](https://github.com/anthropics/anthropic-sdk-python) to interact with the API.
@@ -371,16 +408,19 @@ class AnthropicModel(Model):
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         settings = merge_model_settings(self.settings, model_settings)
-        if (
-            model_request_parameters.output_tools
-            and settings
-            and (thinking := settings.get('anthropic_thinking'))
-            and thinking.get('type') in ('enabled', 'adaptive')
-        ):
-            if model_request_parameters.output_mode == 'auto':
-                output_mode = 'native' if self.profile.supports_json_schema_output else 'prompted'
-                model_request_parameters = replace(model_request_parameters, output_mode=output_mode)
-            elif (
+
+        # Determine if thinking is effectively enabled (check both provider-specific and unified fields)
+        thinking_enabled = False
+        if settings:
+            if anthropic_thinking := settings.get('anthropic_thinking'):
+                thinking_enabled = anthropic_thinking.get('type') in ('enabled', 'adaptive')
+            elif settings.get('thinking'):
+                thinking_enabled = True
+
+        if model_request_parameters.output_tools and thinking_enabled:
+            output_mode = 'native' if self.profile.supports_json_schema_output else 'prompted'
+            model_request_parameters = model_request_parameters.with_default_output_mode(output_mode)
+            if (
                 model_request_parameters.output_mode == 'tool' and not model_request_parameters.allow_text_output
             ):  # pragma: no branch
                 # This would result in `tool_choice=required`, which Anthropic does not support with thinking.
@@ -399,6 +439,22 @@ class AnthropicModel(Model):
                 model_request_parameters, output_object=replace(model_request_parameters.output_object, strict=True)
             )
         return super().prepare_request(model_settings, model_request_parameters)
+
+    def _translate_thinking(
+        self,
+        model_settings: AnthropicModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> BetaThinkingConfigParam:
+        """Get the thinking parameter, falling back to unified thinking."""
+        if anthropic_thinking := model_settings.get('anthropic_thinking'):
+            return anthropic_thinking
+        thinking = model_request_parameters.thinking
+        if thinking is None or thinking is False:
+            return OMIT  # type: ignore[return-value]
+        profile = AnthropicModelProfile.from_profile(self.profile)
+        if profile.anthropic_supports_adaptive_thinking:
+            return {'type': 'adaptive'}
+        return {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
 
     @overload
     async def _messages_create(
@@ -442,8 +498,9 @@ class AnthropicModel(Model):
         output_config = self._build_output_config(model_request_parameters, model_settings)
         betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
         betas.update(builtin_tool_betas)
+        context_management = self._add_compaction_params(messages, betas, model_settings)
         container = self._get_container(messages, model_settings)
-        try:
+        with _map_api_errors(self.model_name):
             return await self.client.beta.messages.create(
                 max_tokens=model_settings.get('max_tokens', 4096),
                 system=system_prompt or OMIT,
@@ -455,22 +512,37 @@ class AnthropicModel(Model):
                 output_config=output_config or OMIT,
                 betas=sorted(betas) or OMIT,
                 stream=stream,
-                thinking=model_settings.get('anthropic_thinking', OMIT),
+                thinking=self._translate_thinking(model_settings, model_request_parameters),
                 stop_sequences=model_settings.get('stop_sequences', OMIT),
                 temperature=model_settings.get('temperature', OMIT),
                 top_p=model_settings.get('top_p', OMIT),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 metadata=model_settings.get('anthropic_metadata', OMIT),
+                context_management=context_management or OMIT,
                 container=container or OMIT,
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
-        except APIStatusError as e:
-            if (status_code := e.status_code) >= 400:
-                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise ModelAPIError(model_name=self.model_name, message=e.message) from e  # pragma: lax no cover
-        except APIConnectionError as e:
-            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
+
+    @staticmethod
+    def _add_compaction_params(
+        messages: list[ModelMessage],
+        betas: set[str],
+        model_settings: AnthropicModelSettings,
+    ) -> BetaContextManagementConfigParam | None:
+        """Add compaction beta and default context_management when messages contain CompactionParts.
+
+        This ensures CompactionParts can be round-tripped even without AnthropicCompaction active.
+        """
+        has_compaction_parts = any(
+            isinstance(part, CompactionPart) for msg in messages if isinstance(msg, ModelResponse) for part in msg.parts
+        )
+        if has_compaction_parts:
+            betas.add('compact-2026-01-12')
+        context_management = model_settings.get('anthropic_context_management')
+        if has_compaction_parts and context_management is None:
+            context_management = cast(BetaContextManagementConfigParam, {'edits': [{'type': 'compact_20260112'}]})
+        return context_management
 
     def _get_betas_and_extra_headers(
         self,
@@ -492,6 +564,9 @@ class AnthropicModel(Model):
 
         if has_strict_tools or model_request_parameters.output_mode == 'native':
             betas.add('structured-outputs-2025-11-13')
+
+        if model_settings.get('anthropic_context_management'):
+            betas.add('compact-2026-01-12')
 
         if betas_from_setting := model_settings.get('anthropic_betas'):
             betas.update(str(b) for b in betas_from_setting)
@@ -533,7 +608,8 @@ class AnthropicModel(Model):
         output_config = self._build_output_config(model_request_parameters, model_settings)
         betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
         betas.update(builtin_tool_betas)
-        try:
+        context_management = self._add_compaction_params(messages, betas, model_settings)
+        with _map_api_errors(self.model_name):
             return await self.client.beta.messages.count_tokens(
                 system=system_prompt or OMIT,
                 messages=anthropic_messages,
@@ -543,17 +619,12 @@ class AnthropicModel(Model):
                 mcp_servers=mcp_servers or OMIT,
                 betas=sorted(betas) or OMIT,
                 output_config=output_config or OMIT,
-                thinking=model_settings.get('anthropic_thinking', OMIT),
+                thinking=self._translate_thinking(model_settings, model_request_parameters),
+                context_management=context_management or OMIT,
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
-        except APIStatusError as e:
-            if (status_code := e.status_code) >= 400:
-                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise ModelAPIError(model_name=self.model_name, message=e.message) from e  # pragma: lax no cover
-        except APIConnectionError as e:
-            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
     def _process_response(self, response: BetaMessage) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -585,6 +656,8 @@ class AnthropicModel(Model):
             elif isinstance(item, BetaMCPToolResultBlock):
                 call_part = builtin_tool_calls.get(item.tool_use_id)
                 items.append(_map_mcp_server_result_block(item, call_part, self.system))
+            elif isinstance(item, BetaCompactionBlock):
+                items.append(CompactionPart(content=item.content, provider_name=self.system))
             else:
                 assert isinstance(item, BetaToolUseBlock), f'unexpected item type {type(item)}'
                 items.append(
@@ -619,7 +692,8 @@ class AnthropicModel(Model):
         self, response: AsyncStream[BetaRawMessageStreamEvent], model_request_parameters: ModelRequestParameters
     ) -> StreamedResponse:
         peekable_response = _utils.PeekableAsyncStream(response)
-        first_chunk = await peekable_response.peek()
+        with _map_api_errors(self.model_name):
+            first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
 
@@ -637,7 +711,7 @@ class AnthropicModel(Model):
         self, model_request_parameters: ModelRequestParameters, model_settings: AnthropicModelSettings
     ) -> list[BetaToolUnionParam]:
         tools: list[BetaToolUnionParam] = [
-            self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()
+            self._map_tool_definition(r, model_settings) for r in model_request_parameters.tool_defs.values()
         ]
 
         # Add cache_control to the last tool if enabled
@@ -823,6 +897,7 @@ class AnthropicModel(Model):
                     | BetaRedactedThinkingBlockParam
                     | BetaMCPToolUseBlockParam
                     | BetaMCPToolResultBlock
+                    | BetaCompactionBlockParam
                 ] = []
                 for response_part in m.parts:
                     if isinstance(response_part, TextPart):
@@ -958,6 +1033,11 @@ class AnthropicModel(Model):
                                         **response_part.content,  # pyright: ignore[reportUnknownMemberType]
                                     )
                                 )
+                    elif isinstance(response_part, CompactionPart):
+                        if response_part.provider_name == self.system:  # pragma: no branch
+                            assistant_content_params.append(
+                                BetaCompactionBlockParam(content=response_part.content, type='compaction')
+                            )
                     elif isinstance(response_part, FilePart):  # pragma: no cover
                         # Files generated by models are not sent back to models that don't themselves generate files.
                         pass
@@ -967,8 +1047,7 @@ class AnthropicModel(Model):
                     anthropic_messages.append(BetaMessageParam(role='assistant', content=assistant_content_params))
             else:
                 assert_never(m)
-        if instructions := self._get_instructions(messages, model_request_parameters):
-            system_prompt_parts.append(instructions)
+        instruction_parts = self._get_instruction_parts(messages, model_request_parameters)
         system_prompt = '\n\n'.join(system_prompt_parts)
 
         # Add cache_control to the last message content if anthropic_cache_messages is enabled
@@ -990,18 +1069,49 @@ class AnthropicModel(Model):
                 content = cast(list[BetaContentBlockParam], content)
                 self._add_cache_control_to_last_param(content, ttl)
 
-        # If anthropic_cache_instructions is enabled, return system prompt as a list with cache_control
-        if system_prompt and (cache_instructions := model_settings.get('anthropic_cache_instructions')):
-            # If True, use '5m'; otherwise use the specified ttl value
-            ttl: Literal['5m', '1h'] = '5m' if cache_instructions is True else cache_instructions
-            system_prompt_blocks = [
-                BetaTextBlockParam(
-                    type='text',
-                    text=system_prompt,
-                    cache_control=self._build_cache_control(ttl),
-                )
-            ]
-            return system_prompt_blocks, anthropic_messages
+        # Build system prompt blocks: each instruction part becomes a separate text block.
+        # When anthropic_cache_instructions is enabled, the cache point goes after the last
+        # static instruction (or at the end if all instructions are static).
+        cache_instructions = model_settings.get('anthropic_cache_instructions')
+
+        if instruction_parts or cache_instructions:
+            system_prompt_blocks: list[BetaTextBlockParam] = []
+
+            if system_prompt:
+                system_prompt_blocks.append(BetaTextBlockParam(type='text', text=system_prompt))
+
+            if instruction_parts:
+                for part in instruction_parts:
+                    system_prompt_blocks.append(BetaTextBlockParam(type='text', text=part.content))
+
+            if system_prompt_blocks and cache_instructions:
+                ttl: Literal['5m', '1h'] = '5m' if cache_instructions is True else cache_instructions
+                # Find the last block that corresponds to a static instruction.
+                # system_prompt_blocks layout: [system_prompt_block?, ...instruction_blocks]
+                # instruction_parts are sorted static-first, so find the boundary.
+                if instruction_parts:
+                    has_dynamic = any(p.dynamic for p in instruction_parts)
+                    if has_dynamic:
+                        # Cache after the last static instruction block
+                        num_prefix_blocks = 1 if system_prompt else 0
+                        num_static = sum(1 for p in instruction_parts if not p.dynamic)
+                        if num_static > 0:
+                            cache_block_idx = num_prefix_blocks + num_static - 1
+                        else:
+                            # All dynamic: cache the system prompt block if it exists
+                            cache_block_idx = 0 if system_prompt else None
+                    else:
+                        # All static: cache the last block
+                        cache_block_idx = len(system_prompt_blocks) - 1
+                else:
+                    # No instruction parts, just system prompt: cache it
+                    cache_block_idx = 0
+
+                if cache_block_idx is not None:
+                    system_prompt_blocks[cache_block_idx]['cache_control'] = self._build_cache_control(ttl)
+
+            if system_prompt_blocks:
+                return system_prompt_blocks, anthropic_messages
 
         return system_prompt, anthropic_messages
 
@@ -1075,17 +1185,14 @@ class AnthropicModel(Model):
                         del block_dict['cache_control']
 
     def _build_cache_control(self, ttl: Literal['5m', '1h'] = '5m') -> BetaCacheControlEphemeralParam:
-        """Build cache control dict, automatically omitting TTL for Bedrock clients.
+        """Build cache control dict with the specified TTL.
 
         Args:
-            ttl: The cache time-to-live ('5m' or '1h'). Ignored for Bedrock clients.
+            ttl: The cache time-to-live ('5m' or '1h').
 
         Returns:
-            A cache control dict suitable for the current client type.
+            A cache control dict with the specified TTL.
         """
-        if isinstance(self.client, AsyncAnthropicBedrock):
-            # Bedrock doesn't support TTL, use cast to satisfy type checker
-            return cast(BetaCacheControlEphemeralParam, {'type': 'ephemeral'})
         return BetaCacheControlEphemeralParam(type='ephemeral', ttl=ttl)
 
     def _add_cache_control_to_last_param(
@@ -1097,8 +1204,7 @@ class AnthropicModel(Model):
 
         Args:
             params: List of content block params to modify.
-            ttl: The cache time-to-live ('5m' or '1h'). This is automatically ignored for
-                 Bedrock clients, which don't support explicit TTL parameters.
+            ttl: The cache time-to-live ('5m' or '1h').
         """
         if not params:
             raise UserError(
@@ -1193,9 +1299,10 @@ class AnthropicModel(Model):
                 yield BetaTextBlockParam(text=part.content, type='text')
         else:
             for item in part.content:
-                if isinstance(item, str):
-                    if item:  # Only yield non-empty text
-                        yield BetaTextBlockParam(text=item, type='text')
+                if isinstance(item, str | TextContent):
+                    text = item if isinstance(item, str) else item.content
+                    if text:  # Only yield non-empty text
+                        yield BetaTextBlockParam(text=text, type='text')
                 elif isinstance(item, CachePoint):
                     yield item
                 elif isinstance(item, UploadedFile):
@@ -1224,7 +1331,7 @@ class AnthropicModel(Model):
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
 
-    def _map_tool_definition(self, f: ToolDefinition) -> BetaToolParam:
+    def _map_tool_definition(self, f: ToolDefinition, model_settings: AnthropicModelSettings) -> BetaToolParam:
         """Maps a `ToolDefinition` dataclass to an Anthropic `BetaToolParam` dictionary."""
         tool_param: BetaToolParam = {
             'name': f.name,
@@ -1233,11 +1340,12 @@ class AnthropicModel(Model):
         }
         if f.strict and self.profile.supports_json_schema_output:
             tool_param['strict'] = f.strict
+        if model_settings.get('anthropic_eager_input_streaming'):
+            tool_param['eager_input_streaming'] = True
         return tool_param
 
-    @staticmethod
     def _build_output_config(
-        model_request_parameters: ModelRequestParameters, model_settings: AnthropicModelSettings
+        self, model_request_parameters: ModelRequestParameters, model_settings: AnthropicModelSettings
     ) -> BetaOutputConfigParam | None:
         output_format: BetaJSONOutputFormatParam | None = None
         if model_request_parameters.output_mode == 'native':
@@ -1245,6 +1353,19 @@ class AnthropicModel(Model):
             output_format = {'type': 'json_schema', 'schema': model_request_parameters.output_object.json_schema}
 
         effort = model_settings.get('anthropic_effort')
+        # Fall back to unified thinking effort level when anthropic_effort is not set
+        # Only map effort level strings; bare True just enables thinking without a specific effort
+        profile = AnthropicModelProfile.from_profile(self.profile)
+        if effort is None and profile.anthropic_supports_effort and isinstance(model_request_parameters.thinking, str):
+            # Map unified levels to Anthropic effort; Anthropic accepts low/medium/high/max
+            effort_map: dict[ThinkingEffort, str] = {
+                'minimal': 'low',
+                'low': 'low',
+                'medium': 'medium',
+                'high': 'high',
+                'xhigh': 'max',  # Opus 4.6 only; other models ignore unsupported values
+            }
+            effort = effort_map.get(model_request_parameters.thinking, model_request_parameters.thinking)
 
         if output_format is None and effort is None:
             return None
@@ -1253,8 +1374,74 @@ class AnthropicModel(Model):
         if output_format is not None:
             config['format'] = output_format
         if effort is not None:
-            config['effort'] = effort
+            config['effort'] = effort  # type: ignore[typeddict-item]
         return config
+
+
+class AnthropicCompaction(AbstractCapability[AgentDepsT]):
+    """Compaction capability for Anthropic models.
+
+    Configures automatic context management via Anthropic's `context_management`
+    API parameter. Compaction triggers server-side when input tokens exceed
+    the configured threshold.
+
+    Example usage::
+
+        from pydantic_ai import Agent
+        from pydantic_ai.models.anthropic import AnthropicCompaction
+
+        agent = Agent(
+            'anthropic:claude-sonnet-4-6',
+            capabilities=[AnthropicCompaction(token_threshold=100_000)],
+        )
+    """
+
+    def __init__(
+        self,
+        *,
+        token_threshold: int = 150_000,
+        instructions: str | None = None,
+        pause_after_compaction: bool = False,
+    ) -> None:
+        """Initialize the Anthropic compaction capability.
+
+        Args:
+            token_threshold: Compact when input tokens exceed this threshold. Minimum 50,000.
+            instructions: Custom instructions for the compaction summarization.
+            pause_after_compaction: If `True`, the response will stop after the compaction block
+                with `stop_reason='compaction'`, allowing explicit handling.
+        """
+        self.token_threshold = token_threshold
+        self.instructions = instructions
+        self.pause_after_compaction = pause_after_compaction
+
+    def get_model_settings(self) -> Callable[[RunContext[AgentDepsT]], ModelSettings]:
+        edit: dict[str, Any] = {
+            'type': 'compact_20260112',
+            'trigger': {'type': 'input_tokens', 'value': self.token_threshold},
+        }
+        if self.pause_after_compaction:
+            edit['pause_after_compaction'] = True
+        if self.instructions is not None:
+            edit['instructions'] = self.instructions
+
+        def resolve(ctx: RunContext[AgentDepsT]) -> ModelSettings:
+            # Append our edit to any existing context_management the user may have configured,
+            # preserving other fields (not just edits).
+            existing_cm: dict[str, Any] = {}
+            if ctx.model_settings:
+                raw_cm = cast(dict[str, Any], ctx.model_settings).get('anthropic_context_management')
+                if isinstance(raw_cm, dict):  # pragma: no branch
+                    existing_cm = {**cast(dict[str, Any], raw_cm)}
+            existing_edits = cast(list[dict[str, Any]], existing_cm.get('edits', []))
+            existing_cm['edits'] = [*existing_edits, edit]
+            return cast(ModelSettings, {'anthropic_context_management': existing_cm})
+
+        return resolve
+
+    @classmethod
+    def get_serialization_name(cls) -> str | None:
+        return 'AnthropicCompaction'
 
 
 def _map_usage(
@@ -1301,147 +1488,162 @@ class AnthropicStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
-        current_block: BetaContentBlock | None = None
+        with _map_api_errors(self._model_name):
+            current_block: BetaContentBlock | None = None
 
-        builtin_tool_calls: dict[str, BuiltinToolCallPart] = {}
-        async for event in self._response:
-            if isinstance(event, BetaRawMessageStartEvent):
-                self._usage = _map_usage(event, self._provider_name, self._provider_url, self._model_name)
-                self.provider_response_id = event.message.id
-                if event.message.container:
-                    self.provider_details = self.provider_details or {}
-                    self.provider_details['container_id'] = event.message.container.id
+            builtin_tool_calls: dict[str, BuiltinToolCallPart] = {}
+            async for event in self._response:
+                if isinstance(event, BetaRawMessageStartEvent):
+                    self._usage = _map_usage(event, self._provider_name, self._provider_url, self._model_name)
+                    self.provider_response_id = event.message.id
+                    if event.message.container:
+                        self.provider_details = self.provider_details or {}
+                        self.provider_details['container_id'] = event.message.container.id
 
-            elif isinstance(event, BetaRawContentBlockStartEvent):
-                current_block = event.content_block
-                if isinstance(current_block, BetaTextBlock) and current_block.text:
-                    for event_ in self._parts_manager.handle_text_delta(
-                        vendor_part_id=event.index, content=current_block.text
-                    ):
-                        yield event_
-                elif isinstance(current_block, BetaThinkingBlock):
-                    for event_ in self._parts_manager.handle_thinking_delta(
-                        vendor_part_id=event.index,
-                        content=current_block.thinking,
-                        signature=current_block.signature,
-                        provider_name=self.provider_name,
-                    ):
-                        yield event_
-                elif isinstance(current_block, BetaRedactedThinkingBlock):
-                    for event_ in self._parts_manager.handle_thinking_delta(
-                        vendor_part_id=event.index,
-                        id='redacted_thinking',
-                        signature=current_block.data,
-                        provider_name=self.provider_name,
-                    ):
-                        yield event_
-                elif isinstance(current_block, BetaToolUseBlock):
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
-                        vendor_part_id=event.index,
-                        tool_name=current_block.name,
-                        args=cast(dict[str, Any], current_block.input) or None,
-                        tool_call_id=current_block.id,
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
-                elif isinstance(current_block, BetaServerToolUseBlock):
-                    call_part = _map_server_tool_use_block(current_block, self.provider_name)
-                    builtin_tool_calls[call_part.tool_call_id] = call_part
-                    yield self._parts_manager.handle_part(
-                        vendor_part_id=event.index,
-                        part=call_part,
-                    )
-                elif isinstance(current_block, BetaWebSearchToolResultBlock):
-                    yield self._parts_manager.handle_part(
-                        vendor_part_id=event.index,
-                        part=_map_web_search_tool_result_block(current_block, self.provider_name),
-                    )
-                elif isinstance(current_block, BetaCodeExecutionToolResultBlock):
-                    yield self._parts_manager.handle_part(
-                        vendor_part_id=event.index,
-                        part=_map_code_execution_tool_result_block(current_block, self.provider_name),
-                    )
-                elif isinstance(current_block, BetaWebFetchToolResultBlock):  # pragma: lax no cover
-                    yield self._parts_manager.handle_part(
-                        vendor_part_id=event.index,
-                        part=_map_web_fetch_tool_result_block(current_block, self.provider_name),
-                    )
-                elif isinstance(current_block, BetaMCPToolUseBlock):
-                    call_part = _map_mcp_server_use_block(current_block, self.provider_name)
-                    builtin_tool_calls[call_part.tool_call_id] = call_part
+                elif isinstance(event, BetaRawContentBlockStartEvent):
+                    current_block = event.content_block
+                    if isinstance(current_block, BetaTextBlock) and current_block.text:
+                        for event_ in self._parts_manager.handle_text_delta(
+                            vendor_part_id=event.index, content=current_block.text
+                        ):
+                            yield event_
+                    elif isinstance(current_block, BetaThinkingBlock):
+                        for event_ in self._parts_manager.handle_thinking_delta(
+                            vendor_part_id=event.index,
+                            content=current_block.thinking,
+                            signature=current_block.signature,
+                            provider_name=self.provider_name,
+                        ):
+                            yield event_
+                    elif isinstance(current_block, BetaRedactedThinkingBlock):
+                        for event_ in self._parts_manager.handle_thinking_delta(
+                            vendor_part_id=event.index,
+                            id='redacted_thinking',
+                            signature=current_block.data,
+                            provider_name=self.provider_name,
+                        ):
+                            yield event_
+                    elif isinstance(current_block, BetaToolUseBlock):
+                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                            vendor_part_id=event.index,
+                            tool_name=current_block.name,
+                            args=cast(dict[str, Any], current_block.input) or None,
+                            tool_call_id=current_block.id,
+                        )
+                        if maybe_event is not None:  # pragma: no branch
+                            yield maybe_event
+                    elif isinstance(current_block, BetaServerToolUseBlock):
+                        call_part = _map_server_tool_use_block(current_block, self.provider_name)
+                        builtin_tool_calls[call_part.tool_call_id] = call_part
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=event.index,
+                            part=call_part,
+                        )
+                    elif isinstance(current_block, BetaWebSearchToolResultBlock):
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=event.index,
+                            part=_map_web_search_tool_result_block(current_block, self.provider_name),
+                        )
+                    elif isinstance(current_block, BetaCodeExecutionToolResultBlock):
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=event.index,
+                            part=_map_code_execution_tool_result_block(current_block, self.provider_name),
+                        )
+                    elif isinstance(current_block, BetaWebFetchToolResultBlock):  # pragma: lax no cover
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=event.index,
+                            part=_map_web_fetch_tool_result_block(current_block, self.provider_name),
+                        )
+                    elif isinstance(current_block, BetaMCPToolUseBlock):
+                        call_part = _map_mcp_server_use_block(current_block, self.provider_name)
+                        builtin_tool_calls[call_part.tool_call_id] = call_part
 
-                    args_json = call_part.args_as_json_str()
-                    # Drop the final `{}}` so that we can add tool args deltas
-                    args_json_delta = args_json[:-3]
-                    assert args_json_delta.endswith('"tool_args":'), (
-                        f'Expected {args_json_delta!r} to end in `"tool_args":`'
-                    )
+                        args_json = call_part.args_as_json_str()
+                        # Drop the final `{}}` so that we can add tool args deltas
+                        args_json_delta = args_json[:-3]
+                        assert args_json_delta.endswith('"tool_args":'), (
+                            f'Expected {args_json_delta!r} to end in `"tool_args":`'
+                        )
 
-                    yield self._parts_manager.handle_part(
-                        vendor_part_id=event.index, part=replace(call_part, args=None)
-                    )
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
-                        vendor_part_id=event.index,
-                        args=args_json_delta,
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
-                elif isinstance(current_block, BetaMCPToolResultBlock):
-                    call_part = builtin_tool_calls.get(current_block.tool_use_id)
-                    yield self._parts_manager.handle_part(
-                        vendor_part_id=event.index,
-                        part=_map_mcp_server_result_block(current_block, call_part, self.provider_name),
-                    )
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=event.index, part=replace(call_part, args=None)
+                        )
+                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                            vendor_part_id=event.index,
+                            args=args_json_delta,
+                        )
+                        if maybe_event is not None:  # pragma: no branch
+                            yield maybe_event
+                    elif isinstance(current_block, BetaMCPToolResultBlock):
+                        call_part = builtin_tool_calls.get(current_block.tool_use_id)
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=event.index,
+                            part=_map_mcp_server_result_block(current_block, call_part, self.provider_name),
+                        )
+                    elif isinstance(current_block, BetaCompactionBlock):
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=event.index,
+                            part=CompactionPart(content=current_block.content, provider_name=self.provider_name),
+                        )
 
-            elif isinstance(event, BetaRawContentBlockDeltaEvent):
-                if isinstance(event.delta, BetaTextDelta):
-                    for event_ in self._parts_manager.handle_text_delta(
-                        vendor_part_id=event.index, content=event.delta.text
-                    ):
-                        yield event_
-                elif isinstance(event.delta, BetaThinkingDelta):
-                    for event_ in self._parts_manager.handle_thinking_delta(
-                        vendor_part_id=event.index,
-                        content=event.delta.thinking,
-                        provider_name=self.provider_name,
-                    ):
-                        yield event_
-                elif isinstance(event.delta, BetaSignatureDelta):
-                    for event_ in self._parts_manager.handle_thinking_delta(
-                        vendor_part_id=event.index,
-                        signature=event.delta.signature,
-                        provider_name=self.provider_name,
-                    ):
-                        yield event_
-                elif isinstance(event.delta, BetaInputJSONDelta):
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
-                        vendor_part_id=event.index,
-                        args=event.delta.partial_json,
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
-                # TODO(Marcelo): We need to handle citations.
-                elif isinstance(event.delta, BetaCitationsDelta):
-                    pass
+                elif isinstance(event, BetaRawContentBlockDeltaEvent):
+                    if isinstance(event.delta, BetaTextDelta):
+                        for event_ in self._parts_manager.handle_text_delta(
+                            vendor_part_id=event.index, content=event.delta.text
+                        ):
+                            yield event_
+                    elif isinstance(event.delta, BetaThinkingDelta):
+                        for event_ in self._parts_manager.handle_thinking_delta(
+                            vendor_part_id=event.index,
+                            content=event.delta.thinking,
+                            provider_name=self.provider_name,
+                        ):
+                            yield event_
+                    elif isinstance(event.delta, BetaSignatureDelta):
+                        for event_ in self._parts_manager.handle_thinking_delta(
+                            vendor_part_id=event.index,
+                            signature=event.delta.signature,
+                            provider_name=self.provider_name,
+                        ):
+                            yield event_
+                    elif isinstance(event.delta, BetaInputJSONDelta):
+                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                            vendor_part_id=event.index,
+                            args=event.delta.partial_json,
+                        )
+                        if maybe_event is not None:  # pragma: no branch
+                            yield maybe_event
+                    elif isinstance(event.delta, BetaCompactionContentBlockDelta):
+                        if event.delta.content:  # pragma: no branch
+                            # Re-emit part with updated content; replaces the initial block start part
+                            yield self._parts_manager.handle_part(
+                                vendor_part_id=event.index,
+                                part=CompactionPart(content=event.delta.content, provider_name=self.provider_name),
+                            )
+                    # TODO(Marcelo): We need to handle citations.
+                    elif isinstance(event.delta, BetaCitationsDelta):
+                        pass
 
-            elif isinstance(event, BetaRawMessageDeltaEvent):
-                self._usage = _map_usage(event, self._provider_name, self._provider_url, self._model_name, self._usage)
-                if raw_finish_reason := event.delta.stop_reason:  # pragma: no branch
-                    self.provider_details = self.provider_details or {}
-                    self.provider_details['finish_reason'] = raw_finish_reason
-                    self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
-
-            elif isinstance(event, BetaRawContentBlockStopEvent):  # pragma: no branch
-                if isinstance(current_block, BetaMCPToolUseBlock):
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
-                        vendor_part_id=event.index,
-                        args='}',
+                elif isinstance(event, BetaRawMessageDeltaEvent):
+                    self._usage = _map_usage(
+                        event, self._provider_name, self._provider_url, self._model_name, self._usage
                     )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
-                current_block = None
-            elif isinstance(event, BetaRawMessageStopEvent):  # pragma: no branch
-                current_block = None
+                    if raw_finish_reason := event.delta.stop_reason:  # pragma: no branch
+                        self.provider_details = self.provider_details or {}
+                        self.provider_details['finish_reason'] = raw_finish_reason
+                        self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+
+                elif isinstance(event, BetaRawContentBlockStopEvent):  # pragma: no branch
+                    if isinstance(current_block, BetaMCPToolUseBlock):
+                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                            vendor_part_id=event.index,
+                            args='}',
+                        )
+                        if maybe_event is not None:  # pragma: no branch
+                            yield maybe_event
+                    current_block = None
+                elif isinstance(event, BetaRawMessageStopEvent):  # pragma: no branch
+                    current_block = None
 
     @property
     def model_name(self) -> AnthropicModelName:

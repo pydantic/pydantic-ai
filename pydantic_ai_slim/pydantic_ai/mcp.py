@@ -599,6 +599,19 @@ class MCPServer(AbstractToolset[Any], ABC):
     Set to `False` for servers that change resources dynamically without sending notifications.
     """
 
+    include_instructions: bool
+    """Whether to include the server's instructions in the agent's instructions.
+
+    Defaults to `False` for backward compatibility.
+    """
+
+    include_return_schema: bool | None
+    """Whether to include return schemas in tool definitions sent to the model.
+
+    When `None` (default), defaults to `False` unless the
+    [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
+    """
+
     _id: str | None
 
     _enter_lock: Lock = field(compare=False)
@@ -633,6 +646,8 @@ class MCPServer(AbstractToolset[Any], ABC):
         cache_tools: bool = True,
         cache_resources: bool = True,
         *,
+        include_instructions: bool = False,
+        include_return_schema: bool | None = None,
         id: str | None = None,
         client_info: mcp_types.Implementation | None = None,
     ):
@@ -649,6 +664,8 @@ class MCPServer(AbstractToolset[Any], ABC):
         self.cache_prompts = cache_prompts
         self.cache_tools = cache_tools
         self.cache_resources = cache_resources
+        self.include_instructions = include_instructions
+        self.include_return_schema = include_return_schema
         self.client_info = client_info
 
         self._id = id or tool_prefix
@@ -722,6 +739,31 @@ class MCPServer(AbstractToolset[Any], ABC):
                 f'The `{self.__class__.__name__}.instructions` is only available after initialization.'
             )
         return self._instructions
+
+    async def get_instructions(self, ctx: RunContext[Any]) -> messages.InstructionPart | None:
+        """Return the MCP server's instructions for how to use its tools.
+
+        If [`include_instructions`][pydantic_ai.mcp.MCPServer.include_instructions] is `True`, returns
+        the [`instructions`][pydantic_ai.mcp.MCPServer.instructions] sent by the MCP server during
+        initialization. Otherwise, returns `None`.
+
+        Instructions from external servers are marked as dynamic since they may change between connections.
+
+        Args:
+            ctx: The run context for this agent run.
+
+        Returns:
+            An `InstructionPart` with the server's instructions if `include_instructions` is enabled, otherwise `None`.
+        """
+        if not self.include_instructions:
+            return None
+        try:
+            instr = self.instructions
+        except AttributeError:
+            # Server not yet initialized — return None rather than propagating.
+            # Durable execution wrappers detect this and fetch via activity/step.
+            return None
+        return messages.InstructionPart(content=instr, dynamic=True) if instr is not None else None
 
     async def list_prompts(self) -> list[Prompt]:
         """Retrieve prompts that are currently active on the server.
@@ -879,6 +921,8 @@ class MCPServer(AbstractToolset[Any], ABC):
                         'annotations': mcp_tool.annotations.model_dump() if mcp_tool.annotations else None,
                         'output_schema': mcp_tool.outputSchema or None,
                     },
+                    return_schema=mcp_tool.outputSchema or None,
+                    include_return_schema=self.include_return_schema,
                 ),
             )
             for mcp_tool in await self.list_tools()
@@ -1182,6 +1226,7 @@ class MCPServerStdio(MCPServer):
     cache_prompts: bool
     cache_tools: bool
     cache_resources: bool
+    include_instructions: bool
 
     def __init__(
         self,
@@ -1203,6 +1248,8 @@ class MCPServerStdio(MCPServer):
         cache_prompts: bool = True,
         cache_tools: bool = True,
         cache_resources: bool = True,
+        include_instructions: bool = False,
+        include_return_schema: bool | None = None,
         id: str | None = None,
         client_info: mcp_types.Implementation | None = None,
     ):
@@ -1229,6 +1276,10 @@ class MCPServerStdio(MCPServer):
                 See [`MCPServer.cache_tools`][pydantic_ai.mcp.MCPServer.cache_tools].
             cache_resources: Whether to cache the list of resources.
                 See [`MCPServer.cache_resources`][pydantic_ai.mcp.MCPServer.cache_resources].
+            include_instructions: Whether to include the server's instructions in the agent's instructions.
+                See [`MCPServer.include_instructions`][pydantic_ai.mcp.MCPServer.include_instructions].
+            include_return_schema: Whether to include return schemas in tool definitions.
+                See [`MCPServer.include_return_schema`][pydantic_ai.mcp.MCPServer.include_return_schema].
             id: An optional unique ID for the MCP server. An MCP server needs to have an ID in order to be used in a durable execution environment like Temporal, in which case the ID will be used to identify the server's activities within the workflow.
             client_info: Information describing the MCP client implementation.
         """
@@ -1252,6 +1303,8 @@ class MCPServerStdio(MCPServer):
             cache_tools,
             cache_resources,
             id=id,
+            include_instructions=include_instructions,
+            include_return_schema=include_return_schema,
             client_info=client_info,
         )
 
@@ -1354,6 +1407,7 @@ class _MCPServerHTTP(MCPServer):
     cache_prompts: bool
     cache_tools: bool
     cache_resources: bool
+    include_instructions: bool
 
     def __init__(
         self,
@@ -1375,6 +1429,8 @@ class _MCPServerHTTP(MCPServer):
         cache_prompts: bool = True,
         cache_tools: bool = True,
         cache_resources: bool = True,
+        include_instructions: bool = False,
+        include_return_schema: bool | None = None,
         client_info: mcp_types.Implementation | None = None,
         **_deprecated_kwargs: Any,
     ):
@@ -1401,6 +1457,10 @@ class _MCPServerHTTP(MCPServer):
                 See [`MCPServer.cache_tools`][pydantic_ai.mcp.MCPServer.cache_tools].
             cache_resources: Whether to cache the list of resources.
                 See [`MCPServer.cache_resources`][pydantic_ai.mcp.MCPServer.cache_resources].
+            include_instructions: Whether to include the server's instructions in the agent's instructions.
+                See [`MCPServer.include_instructions`][pydantic_ai.mcp.MCPServer.include_instructions].
+            include_return_schema: Whether to include return schemas in tool definitions.
+                See [`MCPServer.include_return_schema`][pydantic_ai.mcp.MCPServer.include_return_schema].
             client_info: Information describing the MCP client implementation.
         """
         if 'sse_read_timeout' in _deprecated_kwargs:
@@ -1435,6 +1495,8 @@ class _MCPServerHTTP(MCPServer):
             cache_prompts=cache_prompts,
             cache_tools=cache_tools,
             cache_resources=cache_resources,
+            include_instructions=include_instructions,
+            include_return_schema=include_return_schema,
             id=id,
             client_info=client_info,
         )

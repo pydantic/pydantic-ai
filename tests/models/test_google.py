@@ -40,6 +40,7 @@ from pydantic_ai import (
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -69,6 +70,7 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
+    InstructionPart,
     UploadedFile,
 )
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, ModelRequestParameters
@@ -103,6 +105,7 @@ with try_import() as imports_successful:
         GeminiStreamedResponse,
         GoogleModel,
         GoogleModelSettings,
+        GoogleServiceTier,
         _content_model_response,  # pyright: ignore[reportPrivateUsage]
         _metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
     )
@@ -1865,10 +1868,7 @@ print(f"Tomorrow is {tomorrow.strftime('%A, %B %d, %Y')}.")
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
-                        content={
-                            'outcome': 'OUTCOME_OK',
-                            'output': 'Tomorrow is Wednesday, September 17, 2025.\n',
-                        },
+                        content={'outcome': 'OUTCOME_OK', 'output': 'Tomorrow is Wednesday, September 17, 2025.\n'},
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
@@ -2533,7 +2533,7 @@ async def test_google_url_input(
                 timestamp=IsDatetime(),
                 provider_name='google-vertex',
                 provider_url='https://aiplatform.googleapis.com/',
-                provider_details={'finish_reason': 'STOP', 'timestamp': IsDatetime()},
+                provider_details={'finish_reason': 'STOP', 'timestamp': IsDatetime(), 'traffic_type': 'ON_DEMAND'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2577,7 +2577,7 @@ async def test_google_url_input_force_download(
                 timestamp=IsDatetime(),
                 provider_name='google-vertex',
                 provider_url='https://aiplatform.googleapis.com/',
-                provider_details={'finish_reason': 'STOP', 'timestamp': IsDatetime()},
+                provider_details={'finish_reason': 'STOP', 'timestamp': IsDatetime(), 'traffic_type': 'ON_DEMAND'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -4856,6 +4856,20 @@ async def test_uploaded_file_invalid_file_id(allow_model_requests: None):
         await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='google-gla')])
 
 
+async def test_uploaded_file_vertex_requires_gs_uri(mocker: MockerFixture):
+    """Vertex `UploadedFile` must use a gs:// URI (not Files API https URLs)."""
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
+
+    https_files_api = 'https://generativelanguage.googleapis.com/v1beta/files/abc123'
+    with pytest.raises(UserError, match='must use a GCS URI'):
+        await model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+            UserPromptPart(
+                content=[UploadedFile(file_id=https_files_api, provider_name='google-vertex')],
+            )
+        )
+
+
 async def test_uploaded_file_with_vendor_metadata():
     """Test that UploadedFile with vendor_metadata includes video_metadata."""
     model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
@@ -5032,6 +5046,19 @@ async def test_file_url_in_tool_return_on_vertex(
     result = await model._map_file_to_function_response_part(file_url)  # pyright: ignore[reportPrivateUsage]
 
     assert result == expected
+
+
+async def test_map_user_prompt_with_text_content(mocker: MockerFixture):
+    """Test that _map_user_prompt correctly handles a mix of text content and str."""
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-gla')
+
+    user_prompt_part = UserPromptPart(
+        content=['Hi', TextContent(content='This is some context', metadata={'source': 'user'})]
+    )
+    content = await model._map_user_prompt(user_prompt_part)  # pyright: ignore[reportPrivateUsage]
+
+    assert content == snapshot([{'text': 'Hi'}, {'text': 'This is some context'}])
 
 
 async def test_thinking_with_tool_calls_from_other_model(
@@ -5716,17 +5743,23 @@ async def test_google_system_prompts_and_instructions_ordering(google_provider: 
                 SystemPromptPart(content='System prompt 2'),
                 UserPromptPart(content='Hello'),
             ],
-            instructions='Instructions content',
         ),
     ]
+    model_request_parameters = ModelRequestParameters(
+        instruction_parts=[InstructionPart(content='Instructions content')],
+    )
 
-    system_instruction, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    system_instruction, contents = await m._map_messages(messages, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
 
     # Verify system parts are in order: system1, system2, instructions
     assert system_instruction == snapshot(
         {
             'role': 'user',
-            'parts': [{'text': 'System prompt 1'}, {'text': 'System prompt 2'}, {'text': 'Instructions content'}],
+            'parts': [
+                {'text': 'System prompt 1'},
+                {'text': 'System prompt 2'},
+                {'text': 'Instructions content'},
+            ],
         }
     )
     assert contents == snapshot([{'role': 'user', 'parts': [{'text': 'Hello'}]}])
@@ -6006,6 +6039,7 @@ async def test_google_vertex_logprobs(allow_model_requests: None, vertex_provide
         {
             'finish_reason': 'STOP',
             'timestamp': IsDatetime(),
+            'traffic_type': 'ON_DEMAND',
             'logprobs': {
                 'chosen_candidates': [
                     {'log_probability': -0.01972555, 'token': '2', 'token_id': 236778},
@@ -6102,6 +6136,7 @@ async def test_google_vertex_logprobs_without_top_logprobs(allow_model_requests:
         {
             'finish_reason': 'STOP',
             'timestamp': IsDatetime(),
+            'traffic_type': 'ON_DEMAND',
             'logprobs': {
                 'chosen_candidates': [
                     {'log_probability': -0.0066939937, 'token': '2', 'token_id': 236778},
@@ -6138,6 +6173,7 @@ async def test_google_vertex_logprobs_structure(
         {
             'finish_reason': 'STOP',
             'timestamp': IsDatetime(),
+            'traffic_type': 'ON_DEMAND',
             'logprobs': {
                 'chosen_candidates': [{'log_probability': -1.0489701e-05, 'token': 'Hello', 'token_id': 9259}],
                 'top_candidates': [
@@ -6296,3 +6332,166 @@ async def test_google_prompt_feedback_streaming(
         assert response_msg['provider_details']['safety_ratings'][0]['category'] == 'HARM_CATEGORY_DANGEROUS_CONTENT'
         assert response_msg['provider_details']['safety_ratings'][0]['probability'] == 'HIGH'
         assert response_msg['provider_details']['safety_ratings'][0]['blocked'] is True
+
+
+@pytest.mark.parametrize(
+    'service_tier,expected_headers',
+    [
+        pytest.param(
+            'pt_then_on_demand',
+            {},
+            id='pt_then_on_demand',
+        ),
+        pytest.param(
+            'pt_only',
+            {'X-Vertex-AI-LLM-Request-Type': 'dedicated'},
+            id='pt_only',
+        ),
+        pytest.param(
+            'on_demand',
+            {'X-Vertex-AI-LLM-Request-Type': 'shared'},
+            id='on_demand',
+        ),
+        pytest.param(
+            'pt_then_flex',
+            {'X-Vertex-AI-LLM-Shared-Request-Type': 'flex'},
+            id='pt_then_flex',
+        ),
+        pytest.param(
+            'flex_only',
+            {
+                'X-Vertex-AI-LLM-Request-Type': 'shared',
+                'X-Vertex-AI-LLM-Shared-Request-Type': 'flex',
+            },
+            id='flex_only',
+        ),
+    ],
+)
+async def test_google_service_tier_vertex_headers(
+    allow_model_requests: None,
+    service_tier: GoogleServiceTier,
+    expected_headers: dict[str, str],
+):
+    """Test that Vertex `google_service_tier` values set the expected HTTP headers."""
+    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model_settings = GoogleModelSettings(google_service_tier=service_tier)
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    headers = config_dict['http_options']['headers']
+
+    routing_header_names = {'X-Vertex-AI-LLM-Request-Type', 'X-Vertex-AI-LLM-Shared-Request-Type'}
+    actual_routing_headers = {k: v for k, v in headers.items() if k in routing_header_names}
+    assert actual_routing_headers == expected_headers
+
+
+async def test_google_service_tier_not_set_no_headers(allow_model_requests: None):
+    """Test that no Vertex PT/Flex routing headers are set when `google_service_tier` is omitted."""
+    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model_settings = GoogleModelSettings()
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    headers = config_dict['http_options']['headers']
+
+    assert 'X-Vertex-AI-LLM-Request-Type' not in headers
+    assert 'X-Vertex-AI-LLM-Shared-Request-Type' not in headers
+
+
+@pytest.mark.vcr()
+async def test_google_vertex_service_tier_flex(
+    allow_model_requests: None, vertex_provider: GoogleProvider
+):  # pragma: lax no cover
+    model = GoogleModel('gemini-3-flash-preview', provider=vertex_provider)
+    agent = Agent(model=model)
+
+    settings = GoogleModelSettings(google_service_tier='pt_then_flex')
+    result = await agent.run('Reply with exactly: OK', model_settings=settings)
+
+    assert result.output == snapshot('OK')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Reply with exactly: OK', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='OK',
+                        provider_name='google-vertex',
+                        provider_details={'thought_signature': IsStr()},
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=5,
+                    output_tokens=52,
+                    details={'thoughts_tokens': 51, 'text_prompt_tokens': 5, 'text_candidates_tokens': 1},
+                ),
+                model_name='gemini-3-flash-preview',
+                timestamp=IsDatetime(),
+                provider_name='google-vertex',
+                provider_url='https://aiplatform.googleapis.com/',
+                provider_details={'finish_reason': 'STOP', 'timestamp': IsDatetime(), 'traffic_type': 'ON_DEMAND_FLEX'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_google_vertex_service_tier_flex_stream(
+    allow_model_requests: None, vertex_provider: GoogleProvider
+):  # pragma: lax no cover
+    model = GoogleModel('gemini-3-flash-preview', provider=vertex_provider)
+    agent = Agent(model=model)
+
+    settings = GoogleModelSettings(google_service_tier='pt_then_flex')
+    async with agent.run_stream('Reply with exactly: OK', model_settings=settings) as result:
+        output = await result.get_output()
+        assert output == snapshot('OK')
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Reply with exactly: OK', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='OK',
+                        provider_name='google-vertex',
+                        provider_details={'thought_signature': IsStr()},
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=5,
+                    output_tokens=101,
+                    details={'thoughts_tokens': 100, 'text_prompt_tokens': 5, 'text_candidates_tokens': 1},
+                ),
+                model_name='gemini-3-flash-preview',
+                timestamp=IsDatetime(),
+                provider_name='google-vertex',
+                provider_url='https://aiplatform.googleapis.com/',
+                provider_details={'timestamp': IsDatetime(), 'finish_reason': 'STOP', 'traffic_type': 'ON_DEMAND_FLEX'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
