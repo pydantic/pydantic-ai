@@ -1094,7 +1094,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 )
 
         task = asyncio.create_task(run_agent())
-        # Replace _task_cancel_sent with task.cancelling() when Python 3.10 is dropped (3.11+).
+        # TODO: Replace _task_cancel_sent flag with task.cancelling() when Python 3.10 is dropped (3.11+).
         _task_cancel_sent: bool = False
 
         try:
@@ -1110,10 +1110,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             raise
 
         finally:
+            cancelled_exc = anyio.get_cancelled_exc_class()
             if not task.done() and not _task_cancel_sent:
                 task.cancel()
 
-            with contextlib.suppress(BaseException):
+            with contextlib.suppress(cancelled_exc):
                 await task
 
         yield AgentRunResultEvent(result)
