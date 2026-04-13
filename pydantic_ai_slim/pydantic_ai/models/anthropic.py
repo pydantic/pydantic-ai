@@ -560,11 +560,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         betas: set[str] = set()
 
-        has_strict_tools = any(tool.get('strict') for tool in tools)
-
-        if has_strict_tools or model_request_parameters.output_mode == 'native':
-            betas.add('structured-outputs-2025-11-13')
-
         if model_settings.get('anthropic_context_management'):
             betas.add('compact-2026-01-12')
 
