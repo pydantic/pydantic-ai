@@ -326,7 +326,7 @@ The [Vercel AI SDK](https://ai-sdk.dev/) can route through the Gateway by pointi
 
     async function main() {
       const openaiResult = await generateText({
-        model: openai("gpt-4.1"),
+        model: openai("gpt-5.2"),
         prompt: "what color is the sky? reply concisely",
       });
       console.log("openai:", openaiResult.text);
@@ -354,7 +354,7 @@ The [Vercel AI SDK](https://ai-sdk.dev/) can route through the Gateway by pointi
 
     async function main() {
       const openaiResult = await generateText({
-        model: openai("gpt-4.1"),
+        model: openai("gpt-5.2"),
         prompt: "what color is the sky? reply concisely",
       });
       console.log("openai:", openaiResult.text);
