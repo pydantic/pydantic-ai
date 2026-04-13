@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import functools
 import os
 import uuid
 import warnings
@@ -9,9 +8,10 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Literal
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+from urllib.parse import urlparse
 
-import httpx
+import httpcore
 import pytest
 from pydantic import BaseModel
 
@@ -39,7 +39,6 @@ from pydantic_ai.usage import RequestUsage
 
 try:
     from prefect import flow, task
-    from prefect.client.orchestration import PrefectClient, SyncPrefectClient
     from prefect.testing.utilities import prefect_test_harness
 
     from pydantic_ai.durable_exec.prefect import (
@@ -81,6 +80,50 @@ pytestmark = [
     pytest.mark.usefixtures('setup_prefect_test_harness'),
 ]
 
+LOCALHOST_HOSTS = {'localhost', '127.0.0.1', '0.0.0.0', '::1'}
+
+
+def _is_localhost_request(request: httpcore.Request) -> bool:
+    return urlparse(bytes(request.url).decode('ascii')).hostname in LOCALHOST_HOSTS
+
+
+@pytest.fixture(autouse=True, scope='module')
+def patch_vcr_httpcore_for_localhost() -> Iterator[None]:
+    """Bypass VCR's httpcore wrappers for Prefect's localhost test server.
+
+    The wrapper eagerly consumes real response streams while recording. For httpcore
+    connection-pool responses, that skips the normal close path that returns the
+    connection to the pool, which can exhaust Prefect's localhost client pool across
+    nested subflows.
+    """
+    try:
+        import vcr.stubs.httpcore_stubs as httpcore_stubs
+    except ImportError:  # pragma: no cover
+        yield
+        return
+
+    orig_async = httpcore_stubs.vcr_handle_async_request  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    orig_sync = httpcore_stubs.vcr_handle_request  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+
+    def _wrap(orig: Any) -> Any:
+        def patched(cassette: Any, real_handle: Any) -> Any:
+            vcr_wrapper: Any = orig(cassette, real_handle)
+
+            def wrapper(self: Any, req: httpcore.Request) -> Any:
+                return real_handle(self, req) if _is_localhost_request(req) else vcr_wrapper(self, req)
+
+            return wrapper
+
+        return patched
+
+    httpcore_stubs.vcr_handle_async_request = _wrap(orig_async)
+    httpcore_stubs.vcr_handle_request = _wrap(orig_sync)
+    try:
+        yield
+    finally:
+        httpcore_stubs.vcr_handle_async_request = orig_async
+        httpcore_stubs.vcr_handle_request = orig_sync
+
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
 # at the end of each test, but we need this one to live longer.
@@ -106,44 +149,8 @@ def setup_logfire_instrumentation() -> Iterator[None]:
 
 @pytest.fixture(scope='session')
 def setup_prefect_test_harness() -> Iterator[None]:
-    """Set up Prefect test harness for tests with default httpx connection pool limits.
-
-    Prefect overrides httpx defaults with conservative limits (max_connections=16,
-    max_keepalive_connections=8) which can cause PoolTimeout errors with nested flows.
-    We restore the httpx defaults (unlimited connections) to prevent pool exhaustion.
-    """
-
-    # Store original __init__ methods
-    original_async_init = PrefectClient.__init__
-    original_sync_init = SyncPrefectClient.__init__
-
-    # Use httpx defaults (unlimited connections) instead of Prefect's conservative limits
-    # which can cause PoolTimeout errors with nested flows
-    default_limits = httpx.Limits()
-
-    @functools.wraps(original_async_init)
-    def patched_async_init(self: PrefectClient, *args: Any, **kwargs: Any) -> None:
-        # Inject default limits if not already specified
-        httpx_settings: dict[str, Any] = kwargs.get('httpx_settings') or {}
-        if 'limits' not in httpx_settings:
-            httpx_settings = {**httpx_settings, 'limits': default_limits}
-            kwargs['httpx_settings'] = httpx_settings
-        original_async_init(self, *args, **kwargs)
-
-    @functools.wraps(original_sync_init)
-    def patched_sync_init(self: SyncPrefectClient, *args: Any, **kwargs: Any) -> None:
-        # Inject default limits if not already specified
-        httpx_settings: dict[str, Any] = kwargs.get('httpx_settings') or {}
-        if 'limits' not in httpx_settings:
-            httpx_settings = {**httpx_settings, 'limits': default_limits}
-            kwargs['httpx_settings'] = httpx_settings
-        original_sync_init(self, *args, **kwargs)
-
-    with (
-        patch.object(PrefectClient, '__init__', patched_async_init),
-        patch.object(SyncPrefectClient, '__init__', patched_sync_init),
-        prefect_test_harness(),
-    ):
+    """Set up Prefect test harness for all tests."""
+    with prefect_test_harness(server_startup_timeout=60):
         yield
 
 
@@ -154,31 +161,6 @@ def flow_raises(exc_type: type[Exception], exc_message: str) -> Iterator[None]:
         yield
     assert isinstance(exc_info.value, Exception)
     assert str(exc_info.value) == exc_message
-
-
-def test_prefect_client_uses_unlimited_connection_pool() -> None:
-    """Verify that the monkeypatch sets httpx defaults (unlimited connections).
-
-    Prefect's default limits (max_connections=16, max_keepalive_connections=8)
-    can cause PoolTimeout errors with nested flows. This test ensures our
-    monkeypatch correctly overrides these with httpx defaults.
-    """
-    import sys
-
-    from prefect.client.orchestration import PrefectClient
-
-    client = PrefectClient('http://localhost:4200/api')
-    # Access internal pool to verify connection limits (using getattr to avoid pyright warnings)
-    httpx_client: Any = getattr(client, '_client')
-    pool: Any = getattr(getattr(httpx_client, '_transport'), '_pool')
-
-    # httpx uses sys.maxsize internally to represent "unlimited" (None)
-    assert pool._max_connections == sys.maxsize, (
-        f'Expected unlimited max_connections (sys.maxsize), got {pool._max_connections}'
-    )
-    assert pool._max_keepalive_connections == sys.maxsize, (
-        f'Expected unlimited max_keepalive_connections (sys.maxsize), got {pool._max_keepalive_connections}'
-    )
 
 
 model = OpenAIChatModel(
