@@ -284,16 +284,14 @@ uvicorn ag_ui_tool_events:app --host 0.0.0.0 --port 9000
 
 ### System prompts and instructions
 
-Both [`system_prompt`](../agent.md#system-prompts) and [`instructions`](../agent.md#instructions) are included in the request sent to the model. The key difference is how they interact with the message history sent by the frontend:
+When running via AG-UI, you choose who owns the system prompt with the `manage_system_prompt` parameter on [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] (and [`handle_ag_ui_request`][pydantic_ai.ag_ui.handle_ag_ui_request] / [`run_ag_ui`][pydantic_ai.ag_ui.run_ag_ui]).
 
-- **`instructions`** are always injected fresh on each request, regardless of message history. This is the recommended default.
-- **`system_prompt`** messages are preserved across turns in the message history. When the frontend manages message history and doesn't include prior system prompts, the agent reinjects them on each request.
+- `'server'` (default): the agent's [`system_prompt`][pydantic_ai.Agent.system_prompt] is authoritative. Any `SystemMessage` found in the AG-UI message history is stripped and a warning is emitted, since a malicious client could otherwise inject arbitrary instructions via crafted API requests. The agent's configured system prompt is injected into the history whenever it is missing.
+- `'client'`: the frontend owns the system prompt. Frontend `SystemMessage`s are preserved, and the agent's configured system prompt is never injected as a fallback — the caller is fully responsible for sending it on every turn.
 
-By default, system prompts sent by the frontend (as `SystemMessage` in the AG-UI message history) are **stripped** for security, since a malicious client could inject arbitrary instructions via crafted API requests. A warning is emitted when this happens.
+If you want per-request guidance that doesn't need to live in the message history at all, use [`instructions`][pydantic_ai.Agent.instructions] instead of a system prompt: instructions are always injected fresh on each request and are the recommended default when you control the server side.
 
-To accept frontend system prompts instead, pass `accept_frontend_system_prompt=True`. When a frontend system prompt is accepted, the agent's own system prompt is not injected — since a [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] already exists in the history. If the frontend sends no system prompt, the agent's system prompt is injected as usual.
-
-```python {title="ag_ui_accept_frontend_system_prompt.py"}
+```python {title="ag_ui_client_managed_system_prompt.py"}
 from fastapi import FastAPI
 from starlette.requests import Request
 from starlette.responses import Response
@@ -309,7 +307,7 @@ app = FastAPI()
 @app.post('/')
 async def run_agent(request: Request) -> Response:
     return await AGUIAdapter.dispatch_request(
-        request, agent=agent, accept_frontend_system_prompt=True
+        request, agent=agent, manage_system_prompt='client'
     )
 ```
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Sequence
+from contextlib import nullcontext
 from dataclasses import KW_ONLY, Field, dataclass, replace
 from functools import cached_property
 from http import HTTPStatus
@@ -11,6 +12,7 @@ from typing import (
     Any,
     ClassVar,
     Generic,
+    Literal,
     Protocol,
     cast,
     runtime_checkable,
@@ -126,15 +128,19 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     accept: str | None = None
     """The `Accept` header value of the request, used to determine how to encode the protocol-specific events for the streaming response."""
 
-    accept_frontend_system_prompt: bool = False
-    """Whether to accept system prompts sent by the frontend.
+    manage_system_prompt: Literal['server', 'client'] = 'server'
+    """Who owns the system prompt.
 
-    When `False` (default), any `SystemPromptPart` found in the frontend messages will be stripped
-    and a warning emitted. The agent's own system prompt (if any) will be used instead.
-    This is a security measure to prevent users from injecting system prompts via crafted API requests.
+    `'server'` (default): the agent's configured `system_prompt` is authoritative.
+    Any `SystemPromptPart` found in frontend messages is stripped and a warning
+    is emitted, since a malicious client could otherwise inject arbitrary
+    instructions via crafted API requests. The agent's system prompt is
+    injected into the history whenever it is missing.
 
-    When `True`, frontend system prompts are accepted and take precedence over the agent's
-    configured system prompt.
+    `'client'`: the frontend owns the system prompt. Frontend `SystemPromptPart`s
+    are preserved, and the agent's configured `system_prompt` is never injected
+    as a fallback — the caller is fully responsible for sending it on every turn
+    if desired.
     """
 
     @classmethod
@@ -269,11 +275,11 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             if isinstance(msg, ModelRequest)
             for part in msg.parts
         )
-        if has_frontend_system_prompt and not self.accept_frontend_system_prompt:
+        if has_frontend_system_prompt and self.manage_system_prompt == 'server':
             warnings.warn(
-                'Frontend system prompts were provided but `accept_frontend_system_prompt` is False '
-                '(the default for security reasons), so they will be stripped. '
-                'Set `accept_frontend_system_prompt=True` to accept frontend system prompts.',
+                "Frontend system prompts were provided but `manage_system_prompt` is `'server'` "
+                '(the default), so they will be stripped. '
+                "Set `manage_system_prompt='client'` to let the frontend own the system prompt.",
                 UserWarning,
                 stacklevel=2,
             )
@@ -312,8 +318,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 stacklevel=2,
             )
 
-        token = reinject_system_prompts.set(True)
-        try:
+        ctx = reinject_system_prompts() if self.manage_system_prompt == 'server' else nullcontext()
+        with ctx:
             async for event in self.agent.run_stream_events(
                 output_type=output_type,
                 message_history=message_history,
@@ -330,8 +336,6 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 builtin_tools=builtin_tools,
             ):
                 yield event
-        finally:
-            reinject_system_prompts.reset(token)
 
     def run_stream(
         self,

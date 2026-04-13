@@ -375,7 +375,7 @@ async def test_multiple_messages() -> None:
         ),
     )
 
-    adapter = AGUIAdapter(agent=agent, run_input=run_input, accept_frontend_system_prompt=True)
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, manage_system_prompt='client')
     events: list[dict[str, Any]] = [
         json.loads(event.removeprefix('data: ')) async for event in adapter.encode_stream(adapter.run_stream())
     ]
@@ -4080,7 +4080,7 @@ async def test_dynamic_system_prompt_with_ag_ui_adapter():
 
 
 async def test_frontend_system_prompt_stripped_by_default():
-    """Test that frontend system prompts are stripped and a warning emitted when accept_frontend_system_prompt=False."""
+    """Test that frontend system prompts are stripped and a warning emitted when `manage_system_prompt='server'`."""
 
     agent = Agent(model=TestModel(), system_prompt='Agent system prompt')
 
@@ -4098,7 +4098,7 @@ async def test_frontend_system_prompt_stripped_by_default():
     adapter = AGUIAdapter(agent=agent, run_input=run_input)
 
     with capture_run_messages() as messages:
-        with pytest.warns(UserWarning, match='accept_frontend_system_prompt'):
+        with pytest.warns(UserWarning, match='manage_system_prompt'):
             async for _ in adapter.encode_stream(adapter.run_stream()):
                 pass
 
@@ -4143,7 +4143,7 @@ async def test_frontend_system_prompt_stripped_no_agent_prompt():
     adapter = AGUIAdapter(agent=agent, run_input=run_input)
 
     with capture_run_messages() as messages:
-        with pytest.warns(UserWarning, match='accept_frontend_system_prompt'):
+        with pytest.warns(UserWarning, match='manage_system_prompt'):
             async for _ in adapter.encode_stream(adapter.run_stream()):
                 pass
 
@@ -4191,7 +4191,7 @@ async def test_frontend_system_prompt_only_request_dropped():
     adapter = AGUIAdapter(agent=agent, run_input=run_input)
 
     with capture_run_messages() as messages:
-        with pytest.warns(UserWarning, match='accept_frontend_system_prompt'):
+        with pytest.warns(UserWarning, match='manage_system_prompt'):
             async for _ in adapter.encode_stream(adapter.run_stream()):
                 pass
 
@@ -4221,7 +4221,7 @@ async def test_frontend_system_prompt_only_request_dropped():
 
 
 async def test_frontend_system_prompt_accepted_when_opted_in():
-    """Test that frontend system prompts are kept and agent prompt skipped when accept_frontend_system_prompt=True."""
+    """Test that frontend system prompts are kept and agent prompt skipped when `manage_system_prompt='client'`."""
 
     agent = Agent(model=TestModel(), system_prompt='Agent system prompt')
 
@@ -4236,7 +4236,7 @@ async def test_frontend_system_prompt_accepted_when_opted_in():
         ),
     )
 
-    adapter = AGUIAdapter(agent=agent, run_input=run_input, accept_frontend_system_prompt=True)
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, manage_system_prompt='client')
 
     with capture_run_messages() as messages:
         async for _ in adapter.encode_stream(adapter.run_stream()):
@@ -4265,7 +4265,7 @@ async def test_frontend_system_prompt_accepted_when_opted_in():
 
 
 async def test_frontend_system_prompt_accepted_no_agent_prompt():
-    """Test that frontend system prompts are used when accept_frontend_system_prompt=True and agent has no system_prompt."""
+    """Test that frontend system prompts are used when `manage_system_prompt='client'` and agent has no system_prompt."""
 
     agent = Agent(model=TestModel())
 
@@ -4280,7 +4280,7 @@ async def test_frontend_system_prompt_accepted_no_agent_prompt():
         ),
     )
 
-    adapter = AGUIAdapter(agent=agent, run_input=run_input, accept_frontend_system_prompt=True)
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, manage_system_prompt='client')
 
     with capture_run_messages() as messages:
         async for _ in adapter.encode_stream(adapter.run_stream()):
@@ -4340,7 +4340,7 @@ async def test_frontend_system_prompt_accepted_multi_turn():
         forwarded_props=None,
     )
 
-    adapter = AGUIAdapter(agent=agent, run_input=run_input, accept_frontend_system_prompt=True)
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, manage_system_prompt='client')
 
     with capture_run_messages() as messages:
         async for _ in adapter.encode_stream(adapter.run_stream()):
@@ -4365,6 +4365,45 @@ async def test_frontend_system_prompt_accepted_multi_turn():
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=57, output_tokens=6),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_client_mode_does_not_reinject_agent_system_prompt():
+    """In `manage_system_prompt='client'`, the agent's configured prompt is not injected when the frontend sends none."""
+
+    agent = Agent(model=TestModel(), system_prompt='Agent system prompt')
+
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Hello',
+        ),
+    )
+
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, manage_system_prompt='client')
+
+    with capture_run_messages() as messages:
+        async for _ in adapter.encode_stream(adapter.run_stream()):
+            pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
                 timestamp=IsDatetime(),
                 provider_name='test',

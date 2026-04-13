@@ -6727,7 +6727,7 @@ async def test_system_prompt_reinjected_with_vercel_history():
 
 
 async def test_frontend_system_prompt_stripped_by_default():
-    """Test that frontend system prompts are stripped and a warning emitted when accept_frontend_system_prompt=False."""
+    """Test that frontend system prompts are stripped and a warning emitted when `manage_system_prompt='server'`."""
     agent = Agent(model=TestModel(), system_prompt='Agent system prompt')
 
     request = SubmitMessage(
@@ -6749,7 +6749,7 @@ async def test_frontend_system_prompt_stripped_by_default():
     adapter = VercelAIAdapter(agent, request)
 
     with capture_run_messages() as messages:
-        with pytest.warns(UserWarning, match='accept_frontend_system_prompt'):
+        with pytest.warns(UserWarning, match='manage_system_prompt'):
             async for _ in adapter.encode_stream(adapter.run_stream()):
                 pass
 
@@ -6798,7 +6798,7 @@ async def test_frontend_system_prompt_stripped_no_agent_prompt():
     adapter = VercelAIAdapter(agent, request)
 
     with capture_run_messages() as messages:
-        with pytest.warns(UserWarning, match='accept_frontend_system_prompt'):
+        with pytest.warns(UserWarning, match='manage_system_prompt'):
             async for _ in adapter.encode_stream(adapter.run_stream()):
                 pass
 
@@ -6824,7 +6824,7 @@ async def test_frontend_system_prompt_stripped_no_agent_prompt():
 
 
 async def test_frontend_system_prompt_accepted_when_opted_in():
-    """Test that frontend system prompts are kept and agent prompt skipped when accept_frontend_system_prompt=True."""
+    """Test that frontend system prompts are kept and agent prompt skipped when `manage_system_prompt='client'`."""
     agent = Agent(model=TestModel(), system_prompt='Agent system prompt')
 
     request = SubmitMessage(
@@ -6843,7 +6843,7 @@ async def test_frontend_system_prompt_accepted_when_opted_in():
         ],
     )
 
-    adapter = VercelAIAdapter(agent, request, accept_frontend_system_prompt=True)
+    adapter = VercelAIAdapter(agent, request, manage_system_prompt='client')
 
     with capture_run_messages() as messages:
         async for _ in adapter.encode_stream(adapter.run_stream()):
@@ -6872,7 +6872,7 @@ async def test_frontend_system_prompt_accepted_when_opted_in():
 
 
 async def test_frontend_system_prompt_accepted_no_agent_prompt():
-    """Test that frontend system prompts are used when accept_frontend_system_prompt=True and agent has no system_prompt."""
+    """Test that frontend system prompts are used when `manage_system_prompt='client'` and agent has no system_prompt."""
     agent = Agent(model=TestModel())
 
     request = SubmitMessage(
@@ -6891,7 +6891,7 @@ async def test_frontend_system_prompt_accepted_no_agent_prompt():
         ],
     )
 
-    adapter = VercelAIAdapter(agent, request, accept_frontend_system_prompt=True)
+    adapter = VercelAIAdapter(agent, request, manage_system_prompt='client')
 
     with capture_run_messages() as messages:
         async for _ in adapter.encode_stream(adapter.run_stream()):
@@ -6910,6 +6910,48 @@ async def test_frontend_system_prompt_accepted_no_agent_prompt():
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=54, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_client_mode_does_not_reinject_agent_system_prompt():
+    """In `manage_system_prompt='client'`, the agent's configured prompt is not injected when the frontend sends none."""
+    agent = Agent(model=TestModel(), system_prompt='Agent system prompt')
+
+    request = SubmitMessage(
+        id='test-request',
+        messages=[
+            UIMessage(
+                id='msg-1',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request, manage_system_prompt='client')
+
+    with capture_run_messages() as messages:
+        async for _ in adapter.encode_stream(adapter.run_stream()):
+            pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
                 timestamp=IsDatetime(),
                 provider_name='test',
