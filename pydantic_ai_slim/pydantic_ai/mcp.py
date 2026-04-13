@@ -360,7 +360,7 @@ class TextContent:
     text: str
     """The text content of the message."""
     type: Literal['text'] = 'text'
-    """The text content of the message."""
+    """Discriminator for text content."""
     annotations: Annotations | None = None
     metadata: dict[str, Any] | None = None
     """
