@@ -534,6 +534,7 @@ async def test_run_stream_response_error():
             '</response>',
             '<request>',
             "<function-tool-call name='unknown_tool'>None</function-tool-call>",
+            "<function-tool-result name='unknown_tool'>Tool execution was interrupted by an error.</function-tool-result>",
             "<error type='UnexpectedModelBehavior'>Tool 'unknown_tool' exceeded max retries count of 1</error>",
             '</request>',
             '</stream>',
