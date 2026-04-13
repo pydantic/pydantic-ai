@@ -108,6 +108,7 @@ try:
         BetaMCPToolUseBlockParam,
         BetaMemoryTool20250818Param,
         BetaMessage,
+        BetaMessageDeltaUsage,
         BetaMessageParam,
         BetaMessageTokensCount,
         BetaMetadataParam,
@@ -141,6 +142,7 @@ try:
         BetaToolUnionParam,
         BetaToolUseBlock,
         BetaToolUseBlockParam,
+        BetaUsage,
         BetaWebFetchTool20250910Param,
         BetaWebFetchToolResultBlock,
         BetaWebFetchToolResultBlockParam,
@@ -1444,43 +1446,38 @@ class AnthropicCompaction(AbstractCapability[AgentDepsT]):
         return 'AnthropicCompaction'
 
 
-def _aggregate_compaction_usage(response_usage: Any) -> tuple[dict[str, int], dict[str, int]]:
-    usage_dump = response_usage.model_dump()
-    details = {key: value for key, value in usage_dump.items() if isinstance(value, int)}
+_COMPACTION_TOKEN_KEYS = ('input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens')
 
-    raw_iterations = usage_dump.get('iterations')
-    if not isinstance(raw_iterations, list) or not raw_iterations:
-        return details, details
 
-    raw_iterations = cast(list[Any], raw_iterations)
-    iterations: list[dict[str, Any]] = []
-    for raw_iteration in raw_iterations:
-        if isinstance(raw_iteration, dict):
-            iterations.append(cast(dict[str, Any], raw_iteration))
+def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) -> dict[str, int]:
+    """Extract Anthropic usage into a flat dict, preserving compaction iteration totals.
+
+    Anthropic's top-level `input_tokens`/`output_tokens` exclude compaction iteration usage
+    (see <https://docs.anthropic.com/en/docs/build-with-claude/compaction#understanding-usage>),
+    so they're kept as-is here and the compaction iteration totals are recorded under
+    `compaction_*` keys. `_map_usage` sums them back into the request totals at extraction time,
+    which also keeps streaming correct: the fixed compaction totals set by the start event
+    survive the merge with delta events that only carry the top-level values.
+    """
+    details: dict[str, int] = {}
+    for key in _COMPACTION_TOKEN_KEYS:
+        if isinstance((value := getattr(response_usage, key, None)), int):
+            details[key] = value
+
+    iterations = response_usage.iterations
     if not iterations:
-        return details, details
+        return details
 
-    compaction_iterations = [iteration for iteration in iterations if iteration.get('type') == 'compaction']
-    message_iterations = [iteration for iteration in iterations if iteration.get('type') == 'message']
+    compaction_iterations = [it for it in iterations if it.type == 'compaction']
+    if not compaction_iterations:
+        return details
 
     details['compaction_iterations'] = len(compaction_iterations)
-    details['message_iterations'] = len(message_iterations)
-
-    aggregated = details.copy()
-    for key in ('input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'):
-        values = [value for iteration in iterations if isinstance(iteration, dict) if isinstance((value := iteration.get(key)), int)]
-        if values:
-            aggregated[key] = sum(values)
-
-        compaction_values = [
-            value
-            for iteration in compaction_iterations
-            if isinstance((value := iteration.get(key)), int)
-        ]
-        if compaction_values:
-            details[f'compaction_{key}'] = sum(compaction_values)
-
-    return details, aggregated
+    details['message_iterations'] = len(iterations) - len(compaction_iterations)
+    for key in _COMPACTION_TOKEN_KEYS:
+        if compaction_total := sum(getattr(it, key) for it in compaction_iterations):
+            details[f'compaction_{key}'] = compaction_total
+    return details
 
 
 def _map_usage(
@@ -1499,22 +1496,21 @@ def _map_usage(
     else:
         assert_never(message)
 
-    raw_details, extracted_usage_details = _aggregate_compaction_usage(response_usage)
-
     # In streaming, usage appears in different events.
     # The values are cumulative, meaning new values should replace existing ones entirely.
-    details = (existing_usage.details if existing_usage else {}) | raw_details
-    extracted_usage = {
-        key: value
-        for key, value in details.items()
-        if key in ('input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens')
-        and isinstance(value, int)
-    } | extracted_usage_details
+    details = (existing_usage.details if existing_usage else {}) | _extract_usage_details(response_usage)
+
+    # Anthropic reports top-level tokens excluding compaction iteration usage; add the
+    # compaction totals back in so the extracted `RequestUsage` reflects the real request cost.
+    usage_for_extraction = dict(details)
+    for key in _COMPACTION_TOKEN_KEYS:
+        if compaction_value := details.get(f'compaction_{key}'):
+            usage_for_extraction[key] = usage_for_extraction.get(key, 0) + compaction_value
 
     # Note: genai-prices already extracts cache_creation_input_tokens and cache_read_input_tokens
     # from the Anthropic response and maps them to cache_write_tokens and cache_read_tokens
     return usage.RequestUsage.extract(
-        dict(model=model, usage=extracted_usage),
+        dict(model=model, usage=usage_for_extraction),
         provider=provider,
         provider_url=provider_url,
         provider_fallback='anthropic',

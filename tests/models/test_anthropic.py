@@ -3452,6 +3452,59 @@ def test_streaming_usage():
     )
 
 
+def test_streaming_usage_with_compaction():
+    """Delta events don't carry the `iterations` array, so the fixed compaction totals set
+    by the start event must survive the merge and still be summed into the final totals."""
+    start = BetaRawMessageStartEvent(
+        message=anth_msg(
+            BetaUsage(
+                input_tokens=23,
+                output_tokens=1,
+                iterations=[
+                    BetaCompactionIterationUsage(
+                        type='compaction',
+                        input_tokens=180,
+                        output_tokens=3,
+                        cache_creation_input_tokens=4,
+                        cache_read_input_tokens=5,
+                    ),
+                    BetaMessageIterationUsage(
+                        type='message',
+                        input_tokens=23,
+                        output_tokens=1,
+                        cache_creation_input_tokens=0,
+                        cache_read_input_tokens=0,
+                    ),
+                ],
+            )
+        ),
+        type='message_start',
+    )
+    initial_usage = _map_usage(start, 'anthropic', '', 'unknown')
+    delta = BetaRawMessageDeltaEvent(
+        delta=Delta(), usage=BetaMessageDeltaUsage(input_tokens=23, output_tokens=500), type='message_delta'
+    )
+    final_usage = _map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
+    assert final_usage == snapshot(
+        RequestUsage(
+            input_tokens=212,
+            output_tokens=503,
+            cache_write_tokens=4,
+            cache_read_tokens=5,
+            details={
+                'input_tokens': 23,
+                'output_tokens': 500,
+                'compaction_iterations': 1,
+                'message_iterations': 1,
+                'compaction_input_tokens': 180,
+                'compaction_output_tokens': 3,
+                'compaction_cache_creation_input_tokens': 4,
+                'compaction_cache_read_input_tokens': 5,
+            },
+        )
+    )
+
+
 async def test_anthropic_model_empty_message_on_history(allow_model_requests: None, anthropic_api_key: str):
     """The Anthropic API will error if you send an empty message on the history.
 
