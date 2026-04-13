@@ -1042,9 +1042,9 @@ print(f'Output: {result.output}')
 #> Output: Hello! How can I help you today?
 ```
 
-## Pydantic Harness
+## Pydantic AI Harness
 
-[**Pydantic Harness**](harness.md) is the official capability library for Pydantic AI -- standalone capabilities like memory, guardrails, context management, and [code mode](https://github.com/pydantic/pydantic-harness/tree/main/pydantic_harness/code_mode) live there rather than in core. See [What goes where?](harness.md#what-goes-where) for the full breakdown, or jump to the [capability matrix](https://github.com/pydantic/pydantic-harness#capability-matrix).
+[**Pydantic AI Harness**](harness/overview.md) is the official capability library for Pydantic AI -- standalone capabilities like memory, guardrails, context management, and [code mode](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/code_mode) live there rather than in core. See [What goes where?](harness/overview.md#what-goes-where) for the full breakdown, or jump to the [capability matrix](https://github.com/pydantic/pydantic-ai-harness#capability-matrix).
 
 ## Third-party capabilities
 

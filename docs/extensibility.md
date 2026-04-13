@@ -16,7 +16,7 @@ Capabilities are the recommended way to extend Pydantic AI. They are useful for:
 See [Capabilities](capabilities.md) for using and building capabilities, and [Hooks](hooks.md) for the lightweight decorator-based approach.
 
 !!! tip
-    If you want to contribute a capability, open an issue on [**Pydantic Harness**](https://github.com/pydantic/pydantic-harness) rather than on pydantic-ai. Most capabilities belong in the harness -- see [What goes where?](harness.md#what-goes-where) for the distinction.
+    If you want to contribute a capability, open an issue on [**Pydantic AI Harness**](https://github.com/pydantic/pydantic-ai-harness) rather than on pydantic-ai. Most capabilities belong in the harness -- see [What goes where?](harness/overview.md#what-goes-where) for the distinction.
 
 ## Publishing capability packages
 
@@ -40,9 +40,9 @@ agent = Agent.from_file('agent.yaml', custom_capability_types=[MyCapability])
 
 See [Custom capabilities in specs](agent-spec.md#custom-capabilities-in-specs) for implementation details.
 
-## Pydantic Harness
+## Pydantic AI Harness
 
-[**Pydantic Harness**](harness.md) is the official capability library for Pydantic AI -- standalone capabilities like memory, guardrails, and context management live there rather than in core. See [What goes where?](harness.md#what-goes-where) for the full breakdown, or jump to the [capability matrix](https://github.com/pydantic/pydantic-harness#capability-matrix).
+[**Pydantic AI Harness**](harness/overview.md) is the official capability library for Pydantic AI -- standalone capabilities like memory, guardrails, and context management live there rather than in core. See [What goes where?](harness/overview.md#what-goes-where) for the full breakdown, or jump to the [capability matrix](https://github.com/pydantic/pydantic-ai-harness#capability-matrix).
 
 ## Third-party ecosystem
 
