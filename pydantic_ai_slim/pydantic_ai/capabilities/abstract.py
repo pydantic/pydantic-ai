@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, TypeAlias
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias
 
 from pydantic import ValidationError
 
@@ -51,6 +51,65 @@ WrapToolValidateHandler: TypeAlias = 'Callable[[str | dict[str, Any]], Awaitable
 
 WrapToolExecuteHandler: TypeAlias = 'Callable[[dict[str, Any]], Awaitable[Any]]'
 """Handler type for [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute]."""
+
+
+CapabilityPosition = Literal['outermost', 'innermost']
+"""Position tier for a capability in the middleware chain.
+
+- `'outermost'`: in the outermost tier, before all non-outermost capabilities.
+  Multiple capabilities can declare `'outermost'`; original list order breaks ties
+  within the tier, and `wraps`/`wrapped_by` edges refine order further.
+- `'innermost'`: in the innermost tier, after all non-innermost capabilities.
+  Same tie-breaking rules apply.
+"""
+
+CapabilityRef: TypeAlias = 'type[AbstractCapability[Any]] | AbstractCapability[Any]'
+"""Reference to a capability — either a type (matches all instances of that type) or a specific instance (matches by identity)."""
+
+
+@dataclass
+class CapabilityOrdering:
+    """Ordering constraints for a capability within a combined capability chain.
+
+    Capabilities follow middleware semantics: the first capability in the list is the
+    **outermost** layer, wrapping all others. Declare ordering constraints via
+    [`get_ordering`][pydantic_ai.capabilities.AbstractCapability.get_ordering]
+    to control a capability's position in the chain regardless of how the user lists them.
+
+    When a [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] is
+    constructed, it topologically sorts its children to satisfy these constraints,
+    preserving user-provided order as a tiebreaker.
+    """
+
+    position: CapabilityPosition | None = None
+    """Fixed position in the chain, or `None` for user-provided order."""
+
+    wraps: Sequence[CapabilityRef] = ()
+    """This capability wraps around (is outside of) these capabilities in the middleware chain.
+
+    Each entry can be a capability **type** (matches all instances of that type via `issubclass`)
+    or a specific capability **instance** (matches by identity via `is`).
+
+    Note: instance refs use identity (`is`) matching, so if a capability's
+    [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] returns a
+    new instance, refs to the original will no longer match. Use type refs
+    when the target capability uses per-run state isolation.
+    """
+
+    wrapped_by: Sequence[CapabilityRef] = ()
+    """This capability is wrapped by (is inside of) these capabilities in the middleware chain.
+
+    Each entry can be a capability **type** (matches all instances of that type via `issubclass`)
+    or a specific capability **instance** (matches by identity via `is`).
+
+    Note: instance refs use identity (`is`) matching, so if a capability's
+    [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] returns a
+    new instance, refs to the original will no longer match. Use type refs
+    when the target capability uses per-run state isolation.
+    """
+
+    requires: Sequence[type[AbstractCapability[Any]]] = ()
+    """These types must be present in the chain (no ordering implied)."""
 
 
 @dataclass
@@ -114,6 +173,18 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return cls(*args, **kwargs)
 
+    def get_ordering(self) -> CapabilityOrdering | None:
+        """Return ordering constraints for this capability, or `None` for default behavior.
+
+        Override to declare a fixed position (`'outermost'` / `'innermost'`),
+        relative ordering (`wraps` / `wrapped_by` other capability types or instances),
+        or dependency requirements (`requires`).
+
+        [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] uses
+        these to topologically sort its children at construction time.
+        """
+        return None
+
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Return the capability instance to use for this agent run.
 
@@ -164,8 +235,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Unlike the other `get_*` methods which are called once at agent construction,
         this is called each run (after [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]).
-        When multiple capabilities provide wrappers, each receives the already-wrapped
-        toolset from earlier capabilities (first capability wraps innermost).
+        When multiple capabilities provide wrappers, they follow middleware semantics:
+        the first capability in the list wraps outermost (matching `wrap_*` hooks).
 
         Use this to apply cross-cutting toolset wrappers like
         [`PreparedToolset`][pydantic_ai.toolsets.PreparedToolset],

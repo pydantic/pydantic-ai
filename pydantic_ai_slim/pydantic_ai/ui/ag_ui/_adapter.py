@@ -24,6 +24,7 @@ from ...messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     CachePoint,
+    CompactionPart,
     DocumentUrl,
     FilePart,
     ImageUrl,
@@ -658,6 +659,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             content=file_content,
                         )
                     )
+            elif isinstance(part, CompactionPart):  # pragma: no cover
+                pass  # Compaction parts are not rendered in AG-UI
             else:
                 assert_never(part)
 

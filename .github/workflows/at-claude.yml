@@ -75,6 +75,9 @@ jobs:
 
       - run: make install
 
+      - name: Install bubblewrap
+        run: sudo apt-get install -y bubblewrap
+
       - uses: anthropics/claude-code-action@2fb9ee77a029749082ac35126a09ecd05fe34cf0 # v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -113,6 +116,9 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install bubblewrap
+        run: sudo apt-get install -y bubblewrap
 
       - uses: anthropics/claude-code-action@2fb9ee77a029749082ac35126a09ecd05fe34cf0 # v1
         with:
