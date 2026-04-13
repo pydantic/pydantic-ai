@@ -1444,6 +1444,45 @@ class AnthropicCompaction(AbstractCapability[AgentDepsT]):
         return 'AnthropicCompaction'
 
 
+def _aggregate_compaction_usage(response_usage: Any) -> tuple[dict[str, int], dict[str, int]]:
+    usage_dump = response_usage.model_dump()
+    details = {key: value for key, value in usage_dump.items() if isinstance(value, int)}
+
+    raw_iterations = usage_dump.get('iterations')
+    if not isinstance(raw_iterations, list) or not raw_iterations:
+        return details, details
+
+    raw_iterations = cast(list[Any], raw_iterations)
+    iterations: list[dict[str, Any]] = []
+    for raw_iteration in raw_iterations:
+        if isinstance(raw_iteration, dict):
+            iterations.append(cast(dict[str, Any], raw_iteration))
+    if not iterations:
+        return details, details
+
+    compaction_iterations = [iteration for iteration in iterations if iteration.get('type') == 'compaction']
+    message_iterations = [iteration for iteration in iterations if iteration.get('type') == 'message']
+
+    details['compaction_iterations'] = len(compaction_iterations)
+    details['message_iterations'] = len(message_iterations)
+
+    aggregated = details.copy()
+    for key in ('input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'):
+        values = [value for iteration in iterations if isinstance(iteration, dict) if isinstance((value := iteration.get(key)), int)]
+        if values:
+            aggregated[key] = sum(values)
+
+        compaction_values = [
+            value
+            for iteration in compaction_iterations
+            if isinstance((value := iteration.get(key)), int)
+        ]
+        if compaction_values:
+            details[f'compaction_{key}'] = sum(compaction_values)
+
+    return details, aggregated
+
+
 def _map_usage(
     message: BetaMessage | BetaRawMessageStartEvent | BetaRawMessageDeltaEvent,
     provider: str,
@@ -1460,16 +1499,22 @@ def _map_usage(
     else:
         assert_never(message)
 
+    raw_details, extracted_usage_details = _aggregate_compaction_usage(response_usage)
+
     # In streaming, usage appears in different events.
     # The values are cumulative, meaning new values should replace existing ones entirely.
-    details: dict[str, int] = (existing_usage.details if existing_usage else {}) | {
-        key: value for key, value in response_usage.model_dump().items() if isinstance(value, int)
-    }
+    details = (existing_usage.details if existing_usage else {}) | raw_details
+    extracted_usage = {
+        key: value
+        for key, value in details.items()
+        if key in ('input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens')
+        and isinstance(value, int)
+    } | extracted_usage_details
 
     # Note: genai-prices already extracts cache_creation_input_tokens and cache_read_input_tokens
     # from the Anthropic response and maps them to cache_write_tokens and cache_read_tokens
     return usage.RequestUsage.extract(
-        dict(model=model, usage=details),
+        dict(model=model, usage=extracted_usage),
         provider=provider,
         provider_url=provider_url,
         provider_fallback='anthropic',

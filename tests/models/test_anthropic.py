@@ -71,6 +71,7 @@ with try_import() as imports_successful:
     from anthropic.types.beta import (
         BetaCodeExecutionResultBlock,
         BetaCodeExecutionToolResultBlock,
+        BetaCompactionIterationUsage,
         BetaContentBlock,
         BetaDirectCaller,
         BetaInputJSONDelta,
@@ -82,6 +83,7 @@ with try_import() as imports_successful:
         BetaMemoryTool20250818ViewCommand,
         BetaMessage,
         BetaMessageDeltaUsage,
+        BetaMessageIterationUsage,
         BetaMessageTokensCount,
         BetaRawContentBlockDeltaEvent,
         BetaRawContentBlockStartEvent,
@@ -3381,6 +3383,49 @@ def anth_msg(usage: BetaUsage) -> BetaMessage:
                 )
             ),
             id='AnthropicMessage-cached',
+        ),
+        pytest.param(
+            lambda: anth_msg(
+                BetaUsage(
+                    input_tokens=23,
+                    output_tokens=1,
+                    iterations=[
+                        BetaCompactionIterationUsage(
+                            type='compaction',
+                            input_tokens=180,
+                            output_tokens=3,
+                            cache_creation_input_tokens=4,
+                            cache_read_input_tokens=5,
+                        ),
+                        BetaMessageIterationUsage(
+                            type='message',
+                            input_tokens=23,
+                            output_tokens=1,
+                            cache_creation_input_tokens=0,
+                            cache_read_input_tokens=0,
+                        ),
+                    ],
+                )
+            ),
+            snapshot(
+                RequestUsage(
+                    input_tokens=212,
+                    output_tokens=4,
+                    cache_write_tokens=4,
+                    cache_read_tokens=5,
+                    details={
+                        'input_tokens': 23,
+                        'output_tokens': 1,
+                        'compaction_iterations': 1,
+                        'message_iterations': 1,
+                        'compaction_input_tokens': 180,
+                        'compaction_output_tokens': 3,
+                        'compaction_cache_creation_input_tokens': 4,
+                        'compaction_cache_read_input_tokens': 5,
+                    },
+                )
+            ),
+            id='AnthropicMessage-compaction-iterations',
         ),
         pytest.param(
             lambda: BetaRawMessageStartEvent(
