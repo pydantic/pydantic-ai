@@ -242,7 +242,7 @@ Restate **Virtual Objects** give your agents persistent, isolated sessions keyed
 
 ```python {title="restate_chat_session.py" test="skip" lint="skip"}
 agent = Agent(
-    "openai:gpt-4o-mini",
+    "openai:gpt-5.2",
     system_prompt="You are a helpful assistant.",
 )
 restate_agent = RestateAgent(agent)
