@@ -27,7 +27,9 @@ from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
 from pydantic_ai.messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    DocumentUrl,
     FilePart,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -38,10 +40,11 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    VideoUrl,
 )
-from pydantic_ai.models import Model
+from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, Model
 
-from ._inline_snapshot import customize_repr  # pyright: ignore[reportUnknownVariableType]
+from ._inline_snapshot import Builder, Custom, customize
 
 __all__ = (
     'IsDatetime',
@@ -142,19 +145,95 @@ def sanitize_filename(name: str, max_len: int) -> str:
     return re.sub('[' + re.escape('<>:"/\\|?*') + ']', '-', name)[:max_len]
 
 
-# Only runs locally when creating snapshots (customize_repr is stubbed in CI)
-@customize_repr
-def _(value: bytes):  # pragma: no cover
-    """Use IsBytes() for large byte sequences in snapshots."""
-    if len(value) > SNAPSHOT_BYTES_COLLAPSE_THRESHOLD:
-        return 'IsBytes()'
-    return bytes.__repr__(value)
+@customize
+def binary_handler(value: Any) -> Any | None:  # pragma: no cover
+    # Use IsBytes() for large byte sequences in snapshots.
+    if isinstance(value, bytes) and len(value) > SNAPSHOT_BYTES_COLLAPSE_THRESHOLD:
+        return IsBytes()
 
 
-@customize_repr
-def _(value: datetime):  # pragma: no cover
-    """Use IsDatetime() for datetime values in snapshots."""
-    return 'IsDatetime()'
+@customize
+def isdatetime_handler(value: Any, builder: Builder) -> Any | None:  # pragma: no cover
+    # Use IsDatetime() for datetime values in snapshots.
+    if isinstance(value, datetime):
+        return IsDatetime()
+
+
+@customize
+def content_handler(value: Any, builder: Builder) -> Custom | None:  # pragma: no cover
+    # special handler for types which need an identifier argument for __init__ but declare an _identifier in the class
+    if isinstance(value, BinaryImage):
+        return builder.create_call(
+            BinaryImage,
+            [],
+            {
+                # prevent generation of IsBytes() because it does not work together with Pydantic models
+                'data': builder.create_code(f'{value.data!r}'),
+                'media_type': value.media_type,
+                'identifier': builder.with_default(value.identifier, None),
+                'vendor_metadata': builder.with_default(value.vendor_metadata, None),
+                # kind is always "binary"
+                # 'kind': builder.with_default(value.kind, 'binary'),
+            },
+        )
+
+    if isinstance(value, BinaryContent):
+        return builder.create_call(
+            BinaryContent,
+            [],
+            {
+                # prevent generation of IsBytes() because it does not work together with Pydantic models
+                'data': builder.create_code(f'{value.data!r}'),
+                'media_type': value.media_type,
+                'identifier': builder.with_default(value.identifier, None),
+                'vendor_metadata': builder.with_default(value.vendor_metadata, None),
+                'kind': builder.with_default(value.kind, 'binary'),
+            },
+        )
+
+    for cls, kind in [(VideoUrl, 'video-url'), (DocumentUrl, 'document-url'), (ImageUrl, 'image-url')]:
+        if type(value) is cls:
+            return builder.create_call(
+                cls,
+                [],
+                {
+                    'url': value.url,
+                    'media_type': builder.with_default(value.media_type, None),
+                    # TODO: identifier is not used for == comparison should we ignore it?
+                    'identifier': builder.with_default(value.identifier, None),
+                    'force_download': builder.with_default(value.force_download, False),
+                    'vendor_metadata': builder.with_default(value.vendor_metadata, None),
+                    'kind': builder.with_default(value.kind, kind),
+                },
+            )
+
+
+@customize
+def variable_handler(value: Any, builder: Builder, local_vars: dict[str, Any]) -> Custom | None:  # pragma: no cover
+    for name, local_variable in local_vars.items():
+        # use local_function.__qualname__ when there exist a local_function with the wanted name
+        if hasattr(local_variable, '__qualname__') and value == local_variable.__qualname__:
+            return builder.create_code(f'{name}.__qualname__')
+
+        # use `part.tool_call_id` when there is a local variable part with the wanted id
+        if name == 'part' and hasattr(local_variable, 'tool_call_id') and local_variable.tool_call_id == value:
+            return builder.create_code(f'{name}.tool_call_id')
+
+        # skip IsSameStr variables that haven't been compared yet (no value captured)
+        if hasattr(local_variable, '_first_other') and local_variable._first_other is None:
+            continue
+
+        # uses local variables like part* *_content or thread_id when their value is equal to the wanted value in the snapshot
+        if (
+            (name.startswith('part') or name.endswith('_content') or name in ('thread_id',))
+            and name != 'parts'
+            and local_variable == value
+        ):
+            return builder.create_code(name)
+
+        # match the local var like `var := IsSameStr()` a second time
+        if type(local_variable) is IsSameStr and local_variable == value:
+            return builder.create_code(name)
 
 
 class TestEnv:
@@ -349,6 +428,12 @@ def pytest_addoption(parser: Any) -> None:
         dest='xai_proto_include_json',
         help='Include JSON representations in xAI proto cassette YAML files.',
     )
+    parser.addoption(
+        '--run-gateway-live',
+        action='store_true',
+        default=False,
+        help='Run live gateway smoke tests that make real paid model requests.',
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -378,33 +463,51 @@ def vcr_config():
     }
 
 
+_HttpClientCache: TypeAlias = 'dict[tuple[int, int], httpx.AsyncClient]'
+
+
 @pytest.fixture(autouse=True)
-async def close_cached_httpx_client(anyio_backend: str, monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[None]:
-    """Track and close cached httpx clients created during each test.
+def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClientCache]:
+    """Monkeypatch `create_async_http_client` in all loaded modules and track created clients.
 
-    Prevents reusing AsyncClient instances across tests (and event loops),
-    which can cause 'Event loop is closed' errors, without touching prod code.
+    Within a single test, calls with the same (timeout, connect) args reuse the same
+    httpx.AsyncClient. On teardown, all clients are closed — no process-global state leaks.
+
+    This is a sync fixture so it applies to both sync and async tests. For async tests, the
+    companion ``close_httpx_clients`` fixture handles async cleanup first.
     """
-    created_clients: set[httpx.AsyncClient] = set()
+    cache: _HttpClientCache = {}
+    original = pydantic_ai.models.create_async_http_client
 
-    # Patch the cached factory to record returned clients while preserving caching.
-    original_cached_func = pydantic_ai.models._cached_async_http_client  # type: ignore[reportPrivateUsage]
+    def cached_per_test(**kwargs: Any) -> httpx.AsyncClient:
+        key = (kwargs.get('timeout', DEFAULT_HTTP_TIMEOUT), kwargs.get('connect', 5))
+        if key not in cache or cache[key].is_closed:
+            cache[key] = original(**kwargs)
+        return cache[key]
 
-    def tracked_cached_async_http_client(*args: Any, **kwargs: Any):
-        client = original_cached_func(*args, **kwargs)
-        created_clients.add(client)
-        return client
+    for mod in list(sys.modules.values()):
+        if getattr(mod, 'create_async_http_client', None) is original:
+            monkeypatch.setattr(mod, 'create_async_http_client', cached_per_test)
 
-    monkeypatch.setattr(pydantic_ai.models, '_cached_async_http_client', tracked_cached_async_http_client)
+    yield cache
 
+    unclosed = [c for c in cache.values() if not c.is_closed]
+    if unclosed:  # pragma: no cover
+
+        async def _close_all() -> None:
+            for client in unclosed:
+                await client.aclose()
+
+        asyncio.run(_close_all())
+
+
+@pytest.fixture(autouse=True)
+async def close_httpx_clients(anyio_backend: str, track_httpx_clients: _HttpClientCache) -> AsyncIterator[None]:
+    """Close tracked HTTP clients after async tests."""
     yield
-
-    # Close only the clients that were actually created/accessed in this test
-    for client in created_clients:
-        await client.aclose()
-
-    # Ensure no stale cached clients persist between tests (new event loop per test)
-    original_cached_func.cache_clear()
+    for client in track_httpx_clients.values():
+        if not client.is_closed:
+            await client.aclose()
 
 
 @pytest.fixture(autouse=True, scope='session')
@@ -499,6 +602,11 @@ def groq_api_key() -> str:
 @pytest.fixture(scope='session')
 def anthropic_api_key() -> str:
     return os.getenv('ANTHROPIC_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def gateway_api_key() -> str | None:
+    return os.getenv('PYDANTIC_AI_GATEWAY_API_KEY', os.getenv('PAIG_API_KEY'))
 
 
 @pytest.fixture(scope='session')

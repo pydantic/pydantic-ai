@@ -11,8 +11,16 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 from urllib.parse import parse_qs, urlparse
 
 import anyio.to_thread
-from botocore.exceptions import ClientError
 from typing_extensions import ParamSpec, assert_never
+
+try:
+    from botocore.client import BaseClient
+    from botocore.exceptions import ClientError
+except ImportError as _import_error:
+    raise ImportError(
+        'Please install `boto3` to use the Bedrock model, '
+        'you can use the `bedrock` optional group — `pip install "pydantic-ai-slim[bedrock]"`'
+    ) from _import_error
 
 from pydantic_ai import (
     AudioUrl,
@@ -20,7 +28,9 @@ from pydantic_ai import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     CachePoint,
+    CompactionPart,
     DocumentUrl,
+    FilePart,
     FinishReason,
     ImageUrl,
     ModelMessage,
@@ -55,7 +65,6 @@ from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.tools import ToolDefinition
 
 if TYPE_CHECKING:
-    from botocore.client import BaseClient
     from botocore.eventstream import EventStream
     from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
     from mypy_boto3_bedrock_runtime.literals import (
@@ -359,7 +368,7 @@ class BedrockModelSettings(ModelSettings, total=False):
 
 
 @dataclass(init=False)
-class BedrockConverseModel(Model):
+class BedrockConverseModel(Model[BaseClient]):
     """A model that uses the Bedrock Converse API."""
 
     client: BedrockRuntimeClient
@@ -899,6 +908,9 @@ class BedrockConverseModel(Model):
                                 if item.provider_details and 'status' in item.provider_details:
                                     tool_result['status'] = item.provider_details['status']
                                 content.append({'toolResult': tool_result})
+                    elif isinstance(item, CompactionPart | FilePart):
+                        # Compaction and file parts are not sent back to models that don't support them.
+                        pass  # pragma: no cover
                     else:
                         assert isinstance(item, ToolCallPart)
                         content.append(self._map_tool_call(item))

@@ -17,12 +17,12 @@ from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
-from pydantic_ai._tool_manager import ToolManager, ValidatedToolCall
 from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, now_utc
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.tool_manager import ToolManager, ValidatedToolCall
 from pydantic_graph import BaseNode, GraphRunContext
 from pydantic_graph.beta import Graph, GraphBuilder
 from pydantic_graph.nodes import End, NodeRunEndT
@@ -246,7 +246,12 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             elif isinstance(last_message, _messages.ModelResponse):
                 if self.user_prompt is None:
                     # Align with the upcoming request step so we don't resolve dynamic toolsets twice.
-                    run_context = replace(build_run_context(ctx), run_step=ctx.state.run_step + 1)
+                    run_context = replace(
+                        build_run_context(ctx),
+                        run_step=ctx.state.run_step + 1,
+                        retry=ctx.state.retries,
+                        max_retries=ctx.deps.max_result_retries,
+                    )
                     ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
                     if last_message.tool_calls:
                         # Pending tool calls must be processed before any new ModelRequest, regardless
@@ -779,6 +784,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.run_step += 1
 
         run_context = build_run_context(ctx)
+        run_context = replace(
+            run_context,
+            retry=ctx.state.retries,
+            max_retries=ctx.deps.max_result_retries,
+        )
 
         # This will raise errors for any tool name conflicts.
         # Note: for_run_step may already have been called by UserPromptNode for the
@@ -1045,6 +1055,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     # normal retry prompt below.
 
                 text = ''
+                compaction_text = ''
                 tool_calls: list[_messages.ToolCallPart] = []
                 files: list[_messages.BinaryContent] = []
 
@@ -1064,8 +1075,16 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
                     elif isinstance(part, _messages.ThinkingPart):
                         pass
+                    elif isinstance(part, _messages.CompactionPart):
+                        if part.content:
+                            compaction_text += part.content
                     else:
                         assert_never(part)
+
+                # Use compaction content as text fallback when the response has no other
+                # actionable text (e.g. Anthropic pause_after_compaction=True)
+                if not text and compaction_text:
+                    text = compaction_text
 
                 try:
                     # At the moment, we prioritize at least executing tool calls if they are present.
@@ -1119,6 +1138,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         tool_calls: list[_messages.ToolCallPart],
     ) -> AsyncIterator[_messages.HandleResponseEvent]:
         run_context = build_run_context(ctx)
+        run_context = replace(
+            run_context,
+            retry=ctx.state.retries,
+            max_retries=ctx.deps.max_result_retries,
+        )
 
         # This will raise errors for any tool name conflicts
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
@@ -1239,6 +1263,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         run_step=ctx.state.run_step,
         run_id=ctx.state.run_id,
         metadata=ctx.state.metadata,
+        tool_manager=ctx.deps.tool_manager,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     run_context = replace(run_context, validation_context=validation_context)
@@ -1376,6 +1401,7 @@ async def process_tool_calls(  # noqa: C901
                 yield _messages.FunctionToolCallEvent(call, args_valid=False)
                 output_parts.append(validated.validation_error.tool_retry)
                 yield _messages.FunctionToolResultEvent(validated.validation_error.tool_retry)
+                ctx.state.retries += 1
                 continue
 
             # Validation passed - execute the tool
@@ -1399,6 +1425,7 @@ async def process_tool_calls(  # noqa: C901
                 yield _messages.FunctionToolCallEvent(call, args_valid=True)
                 output_parts.append(e.tool_retry)
                 yield _messages.FunctionToolResultEvent(e.tool_retry)
+                ctx.state.retries += 1
                 continue
 
             part = _messages.ToolReturnPart(
@@ -1426,9 +1453,8 @@ async def process_tool_calls(  # noqa: C901
     else:
         calls_to_run.extend(tool_calls_by_kind['function'])
 
-    # Then, we handle unknown tool calls
+    # Unknown tools use per-tool retry handling via ModelRetry in ToolManager
     if tool_calls_by_kind['unknown']:
-        ctx.state.increment_retries(ctx.deps.max_result_retries)
         calls_to_run.extend(tool_calls_by_kind['unknown'])
 
     calls_to_run_results: dict[str, DeferredToolResult] = {}
@@ -1479,6 +1505,7 @@ async def process_tool_calls(  # noqa: C901
                 else:
                     validated = await tool_manager.validate_tool_call(call)
             except exceptions.UnexpectedModelBehavior:
+                ctx.state.check_incomplete_tool_call()
                 yield _messages.FunctionToolCallEvent(call, args_valid=False)
                 raise
             validated_calls[call.tool_call_id] = validated
@@ -1687,6 +1714,7 @@ async def _call_tool(
         validated = None
         call = tool_call
 
+    tool_result: Any
     try:
         if tool_call_result is None or isinstance(tool_call_result, ToolApproved):
             if validated is not None:
@@ -1717,14 +1745,16 @@ async def _call_tool(
         return e.tool_retry, None
 
     if isinstance(tool_result, _messages.ToolReturn):
-        tool_return = tool_result
-    elif isinstance(tool_result, list) and any(isinstance(i, _messages.ToolReturn) for i in tool_result):  # pyright: ignore[reportUnknownVariableType]
+        tool_return = cast(_messages.ToolReturn[Any], tool_result)
+    elif isinstance(tool_result, list) and any(
+        isinstance(i, _messages.ToolReturn) for i in cast(list[Any], tool_result)
+    ):
         raise exceptions.UserError(
             f'The return value of tool {call.tool_name!r} contains invalid nested `ToolReturn` objects. '
             f'`ToolReturn` should be used directly.'
         )
     else:
-        tool_return = _messages.ToolReturn(return_value=tool_result)  # pyright: ignore[reportUnknownArgumentType]
+        tool_return = _messages.ToolReturn[Any](return_value=cast(Any, tool_result))
 
     return_part = _messages.ToolReturnPart(
         tool_name=call.tool_name,

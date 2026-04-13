@@ -18,6 +18,7 @@ from ..exceptions import UserError
 from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CompactionPart,
     FilePart,
     ModelMessage,
     ModelRequest,
@@ -147,6 +148,10 @@ class TestModel(Model):
             _messages=messages,
             _provider_name=self._system,
         )
+
+    @property
+    def provider(self) -> None:
+        return None
 
     @property
     def model_name(self) -> str:
@@ -340,6 +345,9 @@ class TestStreamedResponse(StreamedResponse):
             elif isinstance(part, FilePart):  # pragma: no cover
                 # NOTE: There's no way to reach this part of the code, since we don't generate FilePart on TestModel.
                 assert False, "This should be unreachable — we don't generate FilePart on TestModel."
+            elif isinstance(part, CompactionPart):  # pragma: no cover
+                # NOTE: There's no way to reach this part of the code, since we don't generate CompactionPart on TestModel.
+                assert False, "This should be unreachable — we don't generate CompactionPart on TestModel."
             else:
                 assert_never(part)
 

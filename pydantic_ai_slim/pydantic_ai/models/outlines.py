@@ -22,6 +22,7 @@ from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CompactionPart,
     FilePart,
     ImageUrl,
     ModelMessage,
@@ -232,6 +233,10 @@ class OutlinesModel(Model):
         """
         outlines_model: OutlinesBaseModel | OutlinesAsyncBaseModel = from_vllm_offline(vllm_model)
         return cls(outlines_model, provider=provider, profile=profile, settings=settings)
+
+    @property
+    def provider(self) -> None:
+        return None  # pragma: no cover
 
     @property
     def model_name(self) -> str:
@@ -489,6 +494,9 @@ class OutlinesModel(Model):
                             raise UserError(
                                 'File parts other than `BinaryImage` are not supported for Outlines models yet.'
                             )
+                    elif isinstance(part, CompactionPart):  # pragma: no cover
+                        # Compaction parts are not sent back to models that don't support compaction.
+                        pass
                     else:
                         assert_never(part)
                 if len(text_parts) == 1 and len(image_parts) == 0:

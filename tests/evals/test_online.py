@@ -31,7 +31,12 @@ with try_import() as imports_successful:
     )
     from pydantic_evals.otel.span_tree import SpanTree
 
+with try_import() as logfire_import_successful:
+    from logfire.testing import CaptureLogfire
+
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')
+
+needs_logfire = pytest.mark.skipif(not logfire_import_successful(), reason='logfire not installed')
 
 
 if TYPE_CHECKING or imports_successful():
@@ -948,8 +953,9 @@ async def test_sync_function_from_async_context():
     assert ctx.output == 42
 
 
+@needs_logfire
 @pytest.mark.anyio
-async def test_span_reference_with_configured_logfire(capfire: Any):
+async def test_span_reference_with_configured_logfire(capfire: CaptureLogfire):
     """Decorator produces valid SpanReference when logfire is configured."""
     span_refs: list[SpanReference | None] = []
 
