@@ -371,8 +371,8 @@ The [Vercel AI SDK](https://ai-sdk.dev/) can route through the Gateway by pointi
 
 A **routing group** is a named collection of providers that all serve the same model. Each member has a **priority**, a **weight**, and an **active** flag, and those three values together let a single group express two different routing strategies:
 
-- **Failover / fallback** - Assign members different priorities. The Gateway always tries the highest-priority active member first, and only falls through to a lower-priority member when the higher one is unavailable (for example if it is down, rate-limited, or returns an error).
-- **Load balancing** - Assign two or more members the same priority and give each a weight. The Gateway splits traffic across those members in proportion to their weights.
+- **Failover / fallback**: Assign members different priorities. The Gateway always tries the highest-priority active member first, and only falls through to a lower-priority member when the higher one is unavailable (for example if it is down, rate-limited, or returns an error).
+- **Load balancing**: Assign two or more members the same priority and give each a weight. The Gateway splits traffic across those members in proportion to their weights.
 
 The two strategies compose: you can have, for example, a top priority tier with two providers load-balanced 70/30, and a second priority tier that only receives traffic when both top-tier providers fail.
 
@@ -380,7 +380,7 @@ The two strategies compose: you can have, for example, a top priority tier with 
 
 Routing groups are managed from your organization's Gateway settings in Logfire:
 
-1. Open **Gateway -> Admin -> Routing Groups** and click **Add Routing Group**.
+1. Open **Gateway -> Routing Groups** and click **Add Routing Group**.
 2. Give the group a slug (e.g. `anthropic-routing`) and an optional description.
 3. Open the group's **Members** page and add one or more providers. For each member set:
     - **Priority** - higher values are tried first. Use different priorities across members for failover.
@@ -399,7 +399,7 @@ from pydantic_ai.providers.gateway import gateway_provider
 provider = gateway_provider(
     'anthropic',
     api_key='pylf_v...',
-    route='anthropic-routing',
+    route='anthropic-routing',  # (1)!
 )
 model = AnthropicModel('claude-sonnet-4-6', provider=provider)
 agent = Agent(model)
@@ -410,6 +410,8 @@ print(result.output)
 The first known use of "hello, world" was in a 1974 textbook about the C programming language.
 """
 ```
+
+1. The slug of the routing group you created in Logfire.
 
 ## Troubleshooting
 
