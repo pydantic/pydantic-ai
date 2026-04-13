@@ -12,7 +12,7 @@ Standard tool calling requires one model round-trip per tool call. An agent that
 uv add "pydantic-ai-harness[code-mode]"
 ```
 
-```python {test="skip"}
+```python {test="skip" noqa="I001"}
 from pydantic_ai import Agent
 from pydantic_ai_harness import CodeMode
 
