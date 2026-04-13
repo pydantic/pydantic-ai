@@ -2262,6 +2262,11 @@ Fix the errors and try again.\
                 'toolName': 'unknown_tool',
             },
             {'type': 'tool-input-available', 'toolCallId': IsStr(), 'toolName': 'unknown_tool', 'input': {}},
+            {
+                'type': 'tool-output-error',
+                'toolCallId': IsStr(),
+                'errorText': 'Tool execution was interrupted by an error.',
+            },
             {'type': 'error', 'errorText': "Tool 'unknown_tool' exceeded max retries count of 1"},
             {'type': 'finish-step'},
             {'type': 'finish', 'finishReason': 'error'},
