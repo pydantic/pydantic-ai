@@ -146,11 +146,9 @@ class AzureProvider(Provider[AsyncOpenAI]):
             # endpoints expose an OpenAI-compatible `/v1` API that rejects the
             # `api-version` query parameter that `AsyncAzureOpenAI` always
             # injects, so we use a plain `AsyncOpenAI` client instead.
-            if _is_openai_compatible_endpoint(azure_endpoint):
-                stripped = azure_endpoint.rstrip('/')
-                base_url = stripped if stripped.endswith('/v1') else f'{stripped}/v1'
+            if (v1_base_url := _openai_compatible_v1_base_url(azure_endpoint)) is not None:
                 self._client = AsyncOpenAI(
-                    base_url=base_url,
+                    base_url=v1_base_url,
                     api_key=api_key or os.getenv('AZURE_OPENAI_API_KEY'),
                     http_client=http_client,
                 )
@@ -173,8 +171,8 @@ class AzureProvider(Provider[AsyncOpenAI]):
         self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
 
 
-def _is_openai_compatible_endpoint(endpoint: str) -> bool:
-    """Detect Azure endpoints that expose the OpenAI-compatible `/v1` API.
+def _openai_compatible_v1_base_url(endpoint: str) -> str | None:
+    """Return the `/v1` base URL for Azure endpoints that expose the OpenAI-compatible API, or `None`.
 
     These endpoints reject the `api-version` query parameter that
     `AsyncAzureOpenAI` always injects, so callers need a plain `AsyncOpenAI`
@@ -188,8 +186,10 @@ def _is_openai_compatible_endpoint(endpoint: str) -> bool:
       model-per-endpoint deployments, which always serve an OpenAI-compatible
       `/v1` API at the root.
     """
-    parsed = urlparse(endpoint.rstrip('/'))
-    if parsed.path.rstrip('/').endswith('/v1'):
-        return True
-    host = parsed.hostname or ''
-    return host.endswith('.models.ai.azure.com')
+    stripped = endpoint.rstrip('/')
+    if stripped.endswith('/v1'):
+        return stripped
+    host = urlparse(stripped).hostname or ''
+    if host.endswith('.models.ai.azure.com'):
+        return f'{stripped}/v1'
+    return None
