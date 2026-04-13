@@ -15,6 +15,7 @@ from pydantic_ai import (
     DocumentUrl,
     FilePart,
     ImageUrl,
+    InstructionPart,
     InstrumentationSettings,
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -22,6 +23,7 @@ from pydantic_ai import (
     ModelResponse,
     MultiModalContent,
     RequestUsage,
+    TextContent,
     TextPart,
     ThinkingPart,
     ThinkingPartDelta,
@@ -31,7 +33,7 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.messages import MULTI_MODAL_CONTENT_TYPES, is_multi_modal_content
+from pydantic_ai.messages import INVALID_JSON_KEY, MULTI_MODAL_CONTENT_TYPES, is_multi_modal_content
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr
@@ -99,6 +101,12 @@ def test_document_url():
     document_url = DocumentUrl(url='https://example.com/document', media_type='application/pdf')
     assert document_url.media_type == 'application/pdf'
     assert document_url.format == 'pdf'
+
+
+def test_text_content():
+    text_content = TextContent(content='Pydantic AI!', metadata={'foo': 'bar'})
+    assert text_content.content == 'Pydantic AI!'
+    assert text_content.metadata == {'foo': 'bar'}
 
 
 @pytest.mark.parametrize(
@@ -629,6 +637,26 @@ def test_model_messages_type_adapter_preserves_run_id():
     deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
 
     assert [message.run_id for message in deserialized] == snapshot(['run-123', 'run-123'])
+
+
+def test_model_messages_type_adapter_preserves_user_text_prompt_metadata():
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[TextContent(content='What is the weather like today?', metadata={'foo': 'bar'})],
+                    timestamp=datetime.now(tz=timezone.utc),
+                )
+            ],
+            run_id='run-123',
+            metadata={'key': 'value'},
+        )
+    ]
+
+    serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='python')
+    deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
+
+    assert deserialized[0].parts[0].content[0].metadata == snapshot({'foo': 'bar'})  # type: ignore[reportUnknownMemberType]
 
 
 def test_model_response_convenience_methods():
@@ -1339,3 +1367,105 @@ def test_tool_return_part_model_response_str_and_user_content():
     text, user_content = p_file_only.model_response_str_and_user_content()
     assert text == snapshot('See file d5a901.')
     assert user_content == snapshot(['This is file d5a901:', ImageUrl(url='https://example.com/img.png')])
+
+
+def test_args_as_dict_valid_json():
+    """args_as_dict should return parsed dict for valid JSON args."""
+    part = ToolCallPart(tool_name='test_tool', args='{"key": "value"}')
+    assert part.args_as_dict() == {'key': 'value'}
+
+
+def test_args_as_dict_dict_args():
+    """args_as_dict should return the dict directly when args is already a dict."""
+    part = ToolCallPart(tool_name='test_tool', args={'key': 'value'})
+    assert part.args_as_dict() == {'key': 'value'}
+
+
+def test_args_as_dict_malformed_json_returns_invalid_json_wrapper():
+    """args_as_dict should return INVALID_JSON wrapper for malformed JSON by default."""
+    malformed = '{"query": "bad", "ids":[4556]</parameter>\n<parameter name="limit": 8}'
+    part = ToolCallPart(tool_name='test_tool', args=malformed)
+    result = part.args_as_dict()
+    assert result == {INVALID_JSON_KEY: malformed}
+
+
+def test_args_as_dict_non_dict_json_returns_invalid_json_wrapper():
+    """args_as_dict should return INVALID_JSON wrapper for valid JSON that's not a dict."""
+    json_list = '[1, 2, 3]'
+    part = ToolCallPart(tool_name='test_tool', args=json_list)
+    assert part.args_as_dict() == {INVALID_JSON_KEY: json_list}
+
+
+def test_args_as_dict_empty_args():
+    """args_as_dict should return {} when args is None/empty."""
+    part = ToolCallPart(tool_name='test_tool', args=None)
+    assert part.args_as_dict() == {}
+
+
+def test_args_as_dict_raise_if_invalid_malformed_json():
+    """args_as_dict(raise_if_invalid=True) should raise ValueError on malformed JSON."""
+    malformed = '{"query": "bad", "ids":[4556]</parameter>\n<parameter name="limit": 8}'
+    part = ToolCallPart(tool_name='test_tool', args=malformed)
+    with pytest.raises(ValueError):
+        part.args_as_dict(raise_if_invalid=True)
+
+
+def test_args_as_dict_raise_if_invalid_non_dict_json():
+    """args_as_dict(raise_if_invalid=True) should raise AssertionError on non-dict JSON."""
+    part = ToolCallPart(tool_name='test_tool', args='[1, 2, 3]')
+    with pytest.raises(AssertionError):
+        part.args_as_dict(raise_if_invalid=True)
+
+
+def test_user_prompt_part_with_text_content():
+    part = UserPromptPart(
+        content=[
+            'Hi there',
+            TextContent(content='This is text content', metadata={'key': 'value'}),
+        ]
+    )
+    assert part.content[0] == 'Hi there'
+    assert part.content[1].metadata == snapshot({'key': 'value'})  # type: ignore[reportUnknownMemberType]
+
+
+class TestInstructionParts:
+    def test_join_helper(self):
+        """InstructionPart.join produces the correct joined string."""
+        parts = [
+            InstructionPart(content='First'),
+            InstructionPart(content='Second'),
+        ]
+        assert InstructionPart.join(parts) == 'First\n\nSecond'
+        assert InstructionPart.join([]) is None
+
+    def test_join_strips_whitespace(self):
+        """InstructionPart.join strips leading/trailing whitespace."""
+        parts = [InstructionPart(content='  Hello  ')]
+        assert InstructionPart.join(parts) == 'Hello'
+
+    def test_model_request_instructions_is_plain_string(self):
+        """ModelRequest.instructions is a plain str | None field."""
+        request = ModelRequest(parts=[], instructions='Hello world')
+        assert request.instructions == 'Hello world'
+
+    def test_model_request_instructions_default_none(self):
+        request = ModelRequest(parts=[])
+        assert request.instructions is None
+
+    def test_serialization_round_trip(self):
+        """Instructions string survives serialization and deserialization."""
+        original = ModelRequest(parts=[UserPromptPart('test')], instructions='static part\n\ndynamic part')
+
+        serialized = ModelMessagesTypeAdapter.dump_json([original])
+        deserialized = ModelMessagesTypeAdapter.validate_json(serialized)
+
+        msg = deserialized[0]
+        assert isinstance(msg, ModelRequest)
+        assert msg.instructions == 'static part\n\ndynamic part'
+
+    def test_repr(self):
+        """InstructionPart repr omits default values."""
+        part = InstructionPart(content='hello')
+        assert repr(part) == "InstructionPart(content='hello')"
+        dynamic_part = InstructionPart(content='world', dynamic=True)
+        assert repr(dynamic_part) == "InstructionPart(content='world', dynamic=True)"

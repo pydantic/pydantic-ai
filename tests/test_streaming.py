@@ -44,13 +44,13 @@ from pydantic_ai import (
 )
 from pydantic_ai._agent_graph import GraphAgentState
 from pydantic_ai._output import TextOutputProcessor, TextOutputSchema
-from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai.agent import AgentRun
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel, TestStreamedResponse as ModelTestStreamedResponse
 from pydantic_ai.output import PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import AgentStream, FinalResult, RunUsage, StreamedRunResult, StreamedRunResultSync
+from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
 from pydantic_graph import End
@@ -770,7 +770,7 @@ async def test_call_tool_wrong_name():
         return x
 
     with capture_run_messages() as messages:
-        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(0\) for output validation'):
+        with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'foobar' exceeded max retries count of 0"):
             async with agent.run_stream('hello'):
                 pass
 
@@ -790,6 +790,37 @@ async def test_call_tool_wrong_name():
             ),
         ]
     )
+
+
+async def test_invalid_output_tool_args_get_output():
+    """Regression test for https://github.com/pydantic/pydantic-ai/issues/3638."""
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        assert info.output_tools is not None and len(info.output_tools) == 1
+        yield {0: DeltaToolCall(name=info.output_tools[0].name)}
+        yield {0: DeltaToolCall(json_args='{"response": ["hello", "not_an_int"]}')}
+
+    agent = Agent(FunctionModel(stream_function=stream_fn), output_type=tuple[str, int])
+
+    with pytest.raises(UnexpectedModelBehavior, match='retries are not supported in `run_stream'):
+        async with agent.run_stream('hello') as result:
+            await result.get_output()
+
+
+async def test_invalid_output_tool_args_stream_output():
+    """Regression test for https://github.com/pydantic/pydantic-ai/issues/3638."""
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        assert info.output_tools is not None and len(info.output_tools) == 1
+        yield {0: DeltaToolCall(name=info.output_tools[0].name)}
+        yield {0: DeltaToolCall(json_args='{"response": ["hello", "not_an_int"]}')}
+
+    agent = Agent(FunctionModel(stream_function=stream_fn), output_type=tuple[str, int])
+
+    with pytest.raises(UnexpectedModelBehavior, match='retries are not supported in `run_stream'):
+        async with agent.run_stream('hello') as result:
+            async for _ in result.stream_output(debounce_by=None):
+                pass
 
 
 class TestPartialOutput:
@@ -2597,6 +2628,22 @@ async def test_unknown_tool_call_events():
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
                 ),
+            ),
+            FunctionToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='known_tool',
+                    args={'x': 5},
+                    tool_call_id=IsStr(),
+                ),
+                args_valid=True,
+            ),
+            FunctionToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='unknown_tool',
+                    args={'arg': 'value'},
+                    tool_call_id=IsStr(),
+                ),
+                args_valid=False,
             ),
         ]
     )

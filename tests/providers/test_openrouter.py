@@ -63,7 +63,7 @@ def test_openrouter_provider_need_api_key(env: TestEnv) -> None:
         UserError,
         match=re.escape(
             'Set the `OPENROUTER_API_KEY` environment variable or pass it via `OpenRouterProvider(api_key=...)`'
-            'to use the OpenRouter provider.'
+            ' to use the OpenRouter provider.'
         ),
     ):
         OpenRouterProvider()
