@@ -306,6 +306,29 @@ Use the base URL that matches your Logfire region (`gateway-us` or `gateway-eu`)
     #> Hello user
     ```
 
+## Self-hosting
+
+Pydantic AI Gateway can also be deployed as part of a self-hosted Pydantic Logfire installation via the [Logfire Helm chart](https://github.com/pydantic/logfire-helm-chart). This is intended for customers who need to run the Gateway within their own infrastructure.
+
+The Gateway ships as the `logfire-ai-gateway` service in the chart and is disabled by default. To enable it, set the following in your `values.yaml`:
+
+```yaml
+logfire-ai-gateway:
+  enabled: true
+```
+
+You will also need a `logfire-gateway` Kubernetes secret with a `key` (gateway encryption key) and an `internalSecret`. The chart can manage this for you, or you can provide an existing secret via `existingGatewaySecret`:
+
+```yaml
+existingGatewaySecret:
+  enabled: true
+  name: my-logfire-gateway-secret
+```
+
+Gateway API keys are then created from your self-hosted Logfire organization's Gateway settings, and used with the [Gateway base URL](#usage) of your deployment.
+
+For the full list of configuration options (autoscaling, resources, HPA/KEDA, pod disruption budgets, etc.), see the [Logfire Helm chart README](https://github.com/pydantic/logfire-helm-chart/blob/main/charts/logfire/README.md).
+
 ## Troubleshooting
 
 ### Unable to calculate spend
