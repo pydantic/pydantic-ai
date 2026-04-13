@@ -865,10 +865,11 @@ class StreamEventsResult(Generic[OutputDataT]):
     Usage:
 
     ```python {lint="skip"}
-    async with agent.run_stream_events('Hello') as stream:
-        async for event in stream:
-            ...
-        # optional: await stream.cancel() to stop early
+    async def stream_events_example():
+        async with agent.run_stream_events('Hello') as stream:
+            async for event in stream:
+                ...
+            # optional: await stream.cancel() to stop early
     # cleanup is automatic on __aexit__
     ```
 
