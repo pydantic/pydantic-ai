@@ -9359,3 +9359,45 @@ async def test_anthropic_compaction_end_to_end(allow_model_requests: None, anthr
     # Second run: verify compacted history round-trips successfully
     result2 = await agent.run('What did I ask you to do?', message_history=result.all_messages())
     assert result2.output  # Model should respond based on compacted context
+
+
+async def test_anthropic_compaction_with_cache_real_api(allow_model_requests: None, anthropic_api_key: str):
+    """Verify usage aggregation when compaction + prompt caching interact in a real response.
+
+    The Anthropic compaction docs only say top-level `input_tokens`/`output_tokens` exclude
+    compaction iteration usage — they're silent on cache tokens. This test records the real
+    shape and pins the cassette values: top-level `cache_creation_input_tokens` is `0` even
+    though the compaction iteration wrote ~55k tokens to cache, so `_map_usage` must sum the
+    compaction cache back in to avoid understating the real cost.
+    """
+    from pydantic_ai.models.anthropic import AnthropicCompaction
+
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    padding = 'The quick brown fox jumps over the lazy dog. ' * 5000  # ~55k tokens
+    agent = Agent(
+        model=model,
+        instructions='You are a helpful assistant. Be very brief.',
+        capabilities=[AnthropicCompaction(token_threshold=50_000)],
+        model_settings=AnthropicModelSettings(anthropic_cache_messages=True),
+    )
+
+    result = await agent.run(f'Remember this context: {padding}\n\nNow say hello.')
+    assert result.usage() == snapshot(
+        RunUsage(
+            input_tokens=55376,
+            cache_write_tokens=55096,
+            output_tokens=90,
+            details={
+                'input_tokens': 180,
+                'output_tokens': 8,
+                'cache_creation_input_tokens': 0,
+                'cache_read_input_tokens': 0,
+                'compaction_iterations': 1,
+                'message_iterations': 1,
+                'compaction_input_tokens': 100,
+                'compaction_output_tokens': 82,
+                'compaction_cache_creation_input_tokens': 55096,
+            },
+            requests=1,
+        )
+    )
