@@ -3907,7 +3907,7 @@ class TestXSearchCapability:
             to_date=datetime(2024, 12, 31),
             enable_image_understanding=True,
             enable_video_understanding=True,
-            include_x_search_output=True,
+            include_output=True,
         )
         assert cap.get_builtin_tools() == snapshot(
             [

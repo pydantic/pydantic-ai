@@ -64,15 +64,17 @@ XAI_REASONING_MODEL = 'grok-4-fast-reasoning'
 
 
 @pytest.mark.parametrize(
-    'model_name,expected_thinking,expected_always',
+    'model_name,expected_thinking',
     [
-        ('grok-4-fast-reasoning', True, True),
-        ('grok-4-1-reasoning', True, True),
-        ('grok-4-fast-non-reasoning', False, False),
-        ('grok-4-1-fast-non-reasoning', False, False),
-        ('grok-3-mini', True, False),
-        ('grok-3-mini-fast', True, False),
-        ('grok-3', False, False),
+        # grok-4 reasoning models always reason but reject the reasoning_effort parameter,
+        # so pydantic-ai treats them as not supporting the unified `thinking` setting.
+        ('grok-4-fast-reasoning', False),
+        ('grok-4-1-reasoning', False),
+        ('grok-4-fast-non-reasoning', False),
+        ('grok-4-1-fast-non-reasoning', False),
+        ('grok-3-mini', True),
+        ('grok-3-mini-fast', True),
+        ('grok-3', False),
     ],
     ids=[
         'grok-4-fast-reasoning',
@@ -84,11 +86,29 @@ XAI_REASONING_MODEL = 'grok-4-fast-reasoning'
         'grok-3',
     ],
 )
-def test_grok_model_profile_thinking(model_name: str, expected_thinking: bool, expected_always: bool) -> None:
+def test_grok_model_profile_thinking(model_name: str, expected_thinking: bool) -> None:
     profile = grok_model_profile(model_name)
     assert profile is not None
     assert profile.supports_thinking == expected_thinking
-    assert profile.thinking_always_enabled == expected_always
+    assert profile.thinking_always_enabled is False
+
+
+async def test_grok_4_reasoning_model_does_not_forward_reasoning_effort(allow_model_requests: None) -> None:
+    """grok-4 reasoning models reject `reasoning_effort` with INVALID_ARGUMENT, so the profile
+    treats them as unsupported thinking targets and passing `thinking` must not forward the param
+    to the SDK. See https://docs.x.ai/docs/guides/reasoning.
+    """
+    response = create_response(content='ok')
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    settings: XaiModelSettings = {'thinking': True}
+    agent = Agent(m, model_settings=settings)
+
+    await agent.run('hi')
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert len(kwargs) == 1
+    assert 'reasoning_effort' not in kwargs[0]
 
 
 def test_grok_model_profile_builtin_tools() -> None:
@@ -154,7 +174,7 @@ async def test_xai_builtin_x_search_tool(allow_model_requests: None, xai_provide
     )
 
     result = await agent.run('What are the latest posts about PydanticAI on X? Reply with just the key topic.')
-    assert result.output == snapshot('Building AI agents and workflows with PydanticAI')
+    assert result.output == snapshot('PydanticAI v1.80 updates for AI agent development')
 
     assert result.all_messages() == snapshot(
         [
@@ -177,7 +197,7 @@ async def test_xai_builtin_x_search_tool(allow_model_requests: None, xai_provide
                     ),
                     BuiltinToolCallPart(
                         tool_name='x_search',
-                        args={'query': 'PydanticAI', 'mode': 'Latest'},
+                        args={'query': 'PydanticAI', 'limit': 10, 'mode': 'Latest'},
                         tool_call_id=IsStr(),
                         provider_name='xai',
                         provider_details={'function_name': 'x_keyword_search'},
@@ -189,7 +209,23 @@ async def test_xai_builtin_x_search_tool(allow_model_requests: None, xai_provide
                     ),
                     BuiltinToolReturnPart(
                         tool_name='x_search',
-                        content=None,
+                        content={
+                            'citations': [
+                                'https://x.com/i/status/2042562199843987834',
+                                'https://x.com/i/status/2042535641490096426',
+                                'https://x.com/i/status/2042981439357227193',
+                                'https://x.com/i/status/2042935940440822230',
+                                'https://x.com/i/status/2043733929694232605',
+                                'https://x.com/i/status/2043307387835342915',
+                                'https://x.com/i/status/2042600007912820765',
+                                'https://x.com/i/status/2043737344478527731',
+                                'https://x.com/i/status/2043307391111024980',
+                                'https://x.com/i/status/2043548524416217320',
+                                'https://x.com/i/status/2042444002595889482',
+                                'https://x.com/i/status/2042149152801620346',
+                                'https://x.com/i/status/2042935942454087800',
+                            ]
+                        },
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='xai',
@@ -199,13 +235,13 @@ async def test_xai_builtin_x_search_tool(allow_model_requests: None, xai_provide
                         signature=IsStr(),
                         provider_name='xai',
                     ),
-                    TextPart(content='Building AI agents and workflows with PydanticAI'),
+                    TextPart(content='PydanticAI v1.80 updates for AI agent development'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=3774,
-                    cache_read_tokens=1639,
-                    output_tokens=50,
-                    details={'reasoning_tokens': 439, 'server_side_tools_x_search': 1},
+                    input_tokens=5821,
+                    cache_read_tokens=2692,
+                    output_tokens=62,
+                    details={'reasoning_tokens': 524, 'server_side_tools_x_search': 1},
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -264,27 +300,41 @@ async def test_xai_builtin_x_search_tool_stream(allow_model_requests: None, xai_
                     ),
                     BuiltinToolCallPart(
                         tool_name='x_search',
-                        args={'query': 'PydanticAI OR "Pydantic AI"', 'limit': 10, 'mode': 'Latest'},
+                        args={'query': 'PydanticAI', 'limit': 10, 'mode': 'Latest'},
                         tool_call_id=IsStr(),
                         provider_name='xai',
                         provider_details={'function_name': 'x_keyword_search'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='x_search',
-                        content=None,
+                        content={
+                            'citations': [
+                                'https://x.com/i/status/2042935942454087800',
+                                'https://x.com/i/status/2042444002595889482',
+                                'https://x.com/i/status/2042981439357227193',
+                                'https://x.com/i/status/2042149152801620346',
+                                'https://x.com/i/status/2043307391111024980',
+                                'https://x.com/i/status/2042562199843987834',
+                                'https://x.com/i/status/2043307387835342915',
+                                'https://x.com/i/status/2043548524416217320',
+                                'https://x.com/i/status/2043733929694232605',
+                                'https://x.com/i/status/2042935940440822230',
+                                'https://x.com/i/status/2043737344478527731',
+                                'https://x.com/i/status/2042535641490096426',
+                                'https://x.com/i/status/2042600007912820765',
+                            ]
+                        },
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='xai',
                     ),
-                    TextPart(
-                        content='Pydantic sponsoring To The Americas hackathon with prizes for best Pydantic AI usage.'
-                    ),
+                    TextPart(content='PydanticAI v1.80: Tool call retry fixes and capability ordering primitives'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=5991,
-                    cache_read_tokens=2720,
-                    output_tokens=74,
-                    details={'reasoning_tokens': 770, 'server_side_tools_x_search': 1},
+                    input_tokens=5828,
+                    cache_read_tokens=2701,
+                    output_tokens=66,
+                    details={'reasoning_tokens': 598, 'server_side_tools_x_search': 1},
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),

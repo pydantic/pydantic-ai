@@ -195,7 +195,7 @@ agent = Agent(
     'xai:grok-4-1-fast',
     builtin_tools=[
         XSearchTool(
-            allowed_x_handles=['OpenAI', 'AnthropicAI', 'xaboratory'],
+            allowed_x_handles=['OpenAI', 'AnthropicAI', 'dasfacc'],
             from_date=datetime(2024, 1, 1),
             to_date=datetime(2024, 12, 31),
             enable_image_understanding=True,
@@ -215,6 +215,9 @@ _(This example is complete, it can be run "as is")_
 
 !!! note "Handle Filtering"
     You can only use one of `allowed_x_handles` or `excluded_x_handles`, not both. Each list is limited to 10 handles maximum.
+
+!!! note "Including raw search results"
+    By default, xAI only returns the model's text summary of the search. To get programmatic access to the underlying posts, sources, and metadata, set `include_x_search_output=True` on [`XSearchTool`][pydantic_ai.builtin_tools.XSearchTool] (analogous to [`OpenAIResponsesModelSettings.openai_include_web_search_sources`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_web_search_sources] for OpenAI web search). The raw results are then available on the [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] exposed via [`ModelResponse.builtin_tool_calls`][pydantic_ai.messages.ModelResponse.builtin_tool_calls]. As an alternative, you can enable it globally via the [`XaiModelSettings.xai_include_x_search_output`][pydantic_ai.models.xai.XaiModelSettings.xai_include_x_search_output] [model setting](agent.md#model-run-settings). See the [xAI docs](models/xai.md#x-search) for the recommended `XSearch` capability-based approach.
 
 ## Code Execution Tool
 

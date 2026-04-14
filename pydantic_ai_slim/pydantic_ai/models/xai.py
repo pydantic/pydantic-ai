@@ -4,7 +4,7 @@ import json
 from collections import defaultdict
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, Literal, cast
 
@@ -216,15 +216,15 @@ class XSearch(BuiltinOrLocalTool[AgentDepsT]):
     to_date: datetime | None
     """If provided, only posts created on or before this datetime will be included."""
 
-    enable_image_understanding: bool | None
-    """Enable image analysis from X posts."""
+    enable_image_understanding: bool
+    """Enable image analysis from X posts. Defaults to `False`."""
 
-    enable_video_understanding: bool | None
-    """Enable video analysis from X content."""
+    enable_video_understanding: bool
+    """Enable video analysis from X content. Defaults to `False`."""
 
-    include_x_search_output: bool | None
+    include_output: bool
     """Include raw X search results in the response as
-    [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart].
+    [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart]. Defaults to `False`.
     """
 
     def __init__(
@@ -238,9 +238,9 @@ class XSearch(BuiltinOrLocalTool[AgentDepsT]):
         excluded_x_handles: list[str] | None = None,
         from_date: datetime | None = None,
         to_date: datetime | None = None,
-        enable_image_understanding: bool | None = None,
-        enable_video_understanding: bool | None = None,
-        include_x_search_output: bool | None = None,
+        enable_image_understanding: bool = False,
+        enable_video_understanding: bool = False,
+        include_output: bool = False,
     ) -> None:
         self.builtin = builtin
         self.local = local
@@ -250,26 +250,19 @@ class XSearch(BuiltinOrLocalTool[AgentDepsT]):
         self.to_date = to_date
         self.enable_image_understanding = enable_image_understanding
         self.enable_video_understanding = enable_video_understanding
-        self.include_x_search_output = include_x_search_output
+        self.include_output = include_output
         self.__post_init__()
 
     def _default_builtin(self) -> XSearchTool:
-        kwargs: dict[str, Any] = {}
-        if self.allowed_x_handles is not None:
-            kwargs['allowed_x_handles'] = self.allowed_x_handles
-        if self.excluded_x_handles is not None:
-            kwargs['excluded_x_handles'] = self.excluded_x_handles
-        if self.from_date is not None:
-            kwargs['from_date'] = self.from_date
-        if self.to_date is not None:
-            kwargs['to_date'] = self.to_date
-        if self.enable_image_understanding is not None:
-            kwargs['enable_image_understanding'] = self.enable_image_understanding
-        if self.enable_video_understanding is not None:
-            kwargs['enable_video_understanding'] = self.enable_video_understanding
-        if self.include_x_search_output is not None:
-            kwargs['include_x_search_output'] = self.include_x_search_output
-        return XSearchTool(**kwargs)
+        return XSearchTool(
+            allowed_x_handles=self.allowed_x_handles,
+            excluded_x_handles=self.excluded_x_handles,
+            from_date=self.from_date,
+            to_date=self.to_date,
+            enable_image_understanding=self.enable_image_understanding,
+            enable_video_understanding=self.enable_video_understanding,
+            include_x_search_output=self.include_output,
+        )
 
     def _builtin_unique_id(self) -> str:
         return XSearchTool.kind
@@ -830,6 +823,11 @@ class XaiModel(Model):
                 )
                 parts.append(part)
 
+        # xAI returns x_search results as top-level `response.citations` (URL strings) rather than
+        # on the ROLE_TOOL message's `content`. Surface them on the corresponding return part so
+        # users who set `include_output=True` can actually see the citations.
+        _attach_x_search_citations(parts, list(response.citations))
+
         # Convert usage with detailed token information
         usage = _extract_usage(response, self._model_name, self._provider.name, self._provider.base_url)
 
@@ -960,6 +958,7 @@ class XaiStreamedResponse(StreamedResponse):
         seen_tool_call_ids: set[str],
         seen_tool_return_ids: set[str],
         last_tool_return_content: dict[str, dict[str, Any] | str | None],
+        x_search_return_parts: dict[str, BuiltinToolReturnPart],
     ) -> Iterator[ModelResponseStreamEvent]:
         """Handle a single server-side tool call delta, yielding stream events."""
         builtin_tool_name = _get_builtin_tool_name(tool_call)
@@ -1000,6 +999,8 @@ class XaiStreamedResponse(StreamedResponse):
                 tool_call_id=tool_call.id,
                 provider_name=self.system,
             )
+            if builtin_tool_name == XSearchTool.kind:
+                x_search_return_parts[return_vendor_id] = return_part
             yield self._parts_manager.handle_part(vendor_part_id=return_vendor_id, part=return_part)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -1012,9 +1013,15 @@ class XaiStreamedResponse(StreamedResponse):
             last_tool_return_content: dict[str, dict[str, Any] | str | None] = {}
             # Track previous tool call args to compute deltas (like we do for reasoning content).
             prev_tool_call_args: dict[str, str] = {}
+            # xAI exposes x_search results as top-level `response.citations` that only arrive with the
+            # final chunk. Track the emitted x_search return parts so we can backfill their content
+            # once the stream completes.
+            x_search_return_parts: dict[str, BuiltinToolReturnPart] = {}
+            last_response: chat_types.Response | None = None
 
             async for response, chunk in self._response:
                 self._update_response_state(response)
+                last_response = response
 
                 prev_reasoning_content, prev_encrypted_content, reasoning_events = self._collect_reasoning_events(
                     response=response,
@@ -1052,6 +1059,7 @@ class XaiStreamedResponse(StreamedResponse):
                                 seen_tool_call_ids=seen_tool_call_ids,
                                 seen_tool_return_ids=seen_tool_return_ids,
                                 last_tool_return_content=last_tool_return_content,
+                                x_search_return_parts=x_search_return_parts,
                             ):
                                 yield event
                         else:
@@ -1084,6 +1092,25 @@ class XaiStreamedResponse(StreamedResponse):
                                 )
                                 if maybe_event is not None:  # pragma: no branch
                                     yield maybe_event
+
+            # Backfill x_search return parts with the top-level response citations, which xAI only
+            # populates alongside the final chunk. See `_attach_x_search_citations` for background.
+            for event in self._backfill_x_search_citations(last_response, x_search_return_parts):
+                yield event
+
+    def _backfill_x_search_citations(
+        self,
+        response: chat_types.Response | None,
+        x_search_return_parts: dict[str, BuiltinToolReturnPart],
+    ) -> Iterator[ModelResponseStreamEvent]:
+        if response is None or not x_search_return_parts or not response.citations:
+            return
+        citations = list(response.citations)
+        for return_vendor_id, return_part in x_search_return_parts.items():
+            if return_part.content is not None:
+                continue
+            updated_part = replace(return_part, content={'citations': citations})
+            yield self._parts_manager.handle_part(vendor_part_id=return_vendor_id, part=updated_part)
 
     @property
     def model_name(self) -> str:
@@ -1296,6 +1323,21 @@ def _extract_usage(
         extracted.output_tokens = usage_data['completion_tokens']
 
     return extracted
+
+
+def _attach_x_search_citations(parts: list[ModelResponsePart], citations: list[str]) -> None:
+    """Populate x_search return parts' content with the top-level response citations.
+
+    xAI's API returns X search results as a flat list of URL strings on `response.citations`,
+    not on the ROLE_TOOL message's `content`. This maps those citations onto the
+    corresponding `BuiltinToolReturnPart` so they are visible to users who enabled
+    `XSearch.include_output` / `XaiModelSettings.xai_include_x_search_output`.
+    """
+    if not citations:
+        return
+    for part in parts:
+        if isinstance(part, BuiltinToolReturnPart) and part.tool_name == XSearchTool.kind and part.content is None:
+            part.content = {'citations': citations}
 
 
 def _get_tool_result_content(content: str) -> dict[str, Any] | str | None:

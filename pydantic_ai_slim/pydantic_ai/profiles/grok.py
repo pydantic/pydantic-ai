@@ -23,8 +23,10 @@ class GrokModelProfile(ModelProfile):
 def grok_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Grok model."""
     grok_supports_builtin_tools = model_name.startswith('grok-4') or 'code' in model_name
+    # Only grok-3-mini accepts the `reasoning_effort` parameter. grok-4 reasoning models
+    # always reason but reject the parameter, so we treat thinking as unsupported for them
+    # to avoid forwarding an argument the API will error on.
     # See https://docs.x.ai/docs/guides/reasoning
-    is_always_reasoning = 'reasoning' in model_name and 'non-reasoning' not in model_name
     supports_thinking_effort = model_name.startswith('grok-3-mini')
 
     supported_builtin_tools: frozenset[type[AbstractBuiltinTool]] = (
@@ -35,8 +37,7 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
         supports_tools=True,
         supports_json_schema_output=True,
         supports_json_object_output=True,
-        supports_thinking=is_always_reasoning or supports_thinking_effort,
-        thinking_always_enabled=is_always_reasoning,
+        supports_thinking=supports_thinking_effort,
         grok_supports_builtin_tools=grok_supports_builtin_tools,
         supported_builtin_tools=supported_builtin_tools,
     )
