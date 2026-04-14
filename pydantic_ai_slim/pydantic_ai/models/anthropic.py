@@ -564,8 +564,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         has_strict_tools = any(tool.get('strict') for tool in tools)
 
-        if has_strict_tools or model_request_parameters.output_mode == 'native':
-            betas.add('structured-outputs-2025-11-13')
+        # structured-outputs-2025-11-13 beta header removed — structured outputs
+        # (JSON mode via output_config.format and strict tool use) are now GA on
+        # the Claude API and Amazon Bedrock. The beta header is no longer required
+        # and will be phased out. (#4988)
+        # See: https://platform.claude.com/docs/en/build-with-claude/structured-outputs
 
         if model_settings.get('anthropic_context_management'):
             betas.add('compact-2026-01-12')

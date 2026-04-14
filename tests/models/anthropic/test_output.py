@@ -187,7 +187,10 @@ def test_native_output_supported_model(
 
     assert output_config['format']['type'] == 'json_schema'
     assert output_config['format']['schema']['type'] == 'object'
-    assert betas == snapshot(['structured-outputs-2025-11-13'])
+    # structured-outputs is GA since 2026; beta header no longer required (#4988).
+    # When no betas are set, the API receives anthropic.Omit (absent field), not [].
+    from anthropic import omit as OMIT
+    assert betas is OMIT or betas == []  # no structured-outputs beta in either case
 
 
 # =============================================================================
@@ -209,7 +212,8 @@ def create_header_verification_hook(expect_beta: bool, test_name: str):
     NOTE: the vcr config doesn't record anthropic-beta headers.
     This hook allows us to verify them in live API tests.
 
-    TODO: remove when structured outputs is generally available and no longer a beta feature.
+    Structured outputs became GA in 2026 (#4988). This hook now always asserts the beta header
+    is NOT present. The expect_beta parameter is kept for backward compat but should always be False.
     """
     errors: list[str] = []
 
@@ -282,7 +286,7 @@ def test_no_tools_native_output_strict_true(
 ) -> None:
     """Agent with NativeOutput(strict=True) → beta header + output_format."""
     model = anthropic_model('claude-sonnet-4-5')
-    hook = create_header_verification_hook(expect_beta=True, test_name='test_no_tools_native_output_strict_true')
+    hook = create_header_verification_hook(expect_beta=False, test_name='test_no_tools_native_output_strict_true')
     model.client._client.event_hooks['request'].append(hook)  # pyright: ignore[reportPrivateUsage]
 
     agent = Agent(model, output_type=NativeOutput(CityInfo, strict=True))
@@ -300,7 +304,7 @@ def test_no_tools_native_output_strict_none(
 ) -> None:
     """Agent with NativeOutput(strict=None) → forces strict=True, beta header + output_format."""
     model = anthropic_model('claude-sonnet-4-5')
-    hook = create_header_verification_hook(expect_beta=True, test_name='test_no_tools_native_output_strict_none')
+    hook = create_header_verification_hook(expect_beta=False, test_name='test_no_tools_native_output_strict_none')
     model.client._client.event_hooks['request'].append(hook)  # pyright: ignore[reportPrivateUsage]
 
     agent = Agent(model, output_type=NativeOutput(CityInfo))
@@ -334,7 +338,7 @@ def test_strict_true_tool_no_output(
 ) -> None:
     """Tool with strict=True, no output_type → beta header, tool has strict field."""
     model = anthropic_model('claude-sonnet-4-5')
-    hook = create_header_verification_hook(expect_beta=True, test_name='test_strict_true_tool_no_output')
+    hook = create_header_verification_hook(expect_beta=False, test_name='test_strict_true_tool_no_output')
     model.client._client.event_hooks['request'].append(hook)  # pyright: ignore[reportPrivateUsage]
 
     agent = Agent(model)
@@ -356,7 +360,7 @@ def test_strict_true_tool_basemodel_output(
 ) -> None:
     """Tool with strict=True, BaseModel output_type → beta header, tool has strict field."""
     model = anthropic_model('claude-sonnet-4-5')
-    hook = create_header_verification_hook(expect_beta=True, test_name='test_strict_true_tool_basemodel_output')
+    hook = create_header_verification_hook(expect_beta=False, test_name='test_strict_true_tool_basemodel_output')
     model.client._client.event_hooks['request'].append(hook)  # pyright: ignore[reportPrivateUsage]
 
     agent = Agent(model, output_type=CityInfo)
@@ -378,7 +382,7 @@ def test_strict_true_tool_native_output(
 ) -> None:
     """Tool with strict=True, NativeOutput → beta header, tool has strict field + output_format."""
     model = anthropic_model('claude-sonnet-4-5')
-    hook = create_header_verification_hook(expect_beta=True, test_name='test_strict_true_tool_native_output')
+    hook = create_header_verification_hook(expect_beta=False, test_name='test_strict_true_tool_native_output')
     model.client._client.event_hooks['request'].append(hook)  # pyright: ignore[reportPrivateUsage]
 
     agent = Agent(model, output_type=NativeOutput(CityInfo))
@@ -445,7 +449,7 @@ def test_strict_none_tool_native_output(
 ) -> None:
     """Tool with strict=None, NativeOutput → beta from native only, tool has no strict field + output_format."""
     model = anthropic_model('claude-sonnet-4-5')
-    hook = create_header_verification_hook(expect_beta=True, test_name='test_strict_none_tool_native_output')
+    hook = create_header_verification_hook(expect_beta=False, test_name='test_strict_none_tool_native_output')
     model.client._client.event_hooks['request'].append(hook)  # pyright: ignore[reportPrivateUsage]
 
     agent = Agent(model, output_type=NativeOutput(CityInfo))
@@ -490,7 +494,7 @@ def test_strict_false_tool_native_output(
 ) -> None:
     """Tool with strict=False, NativeOutput → beta from native only + output_format."""
     model = anthropic_model('claude-sonnet-4-5')
-    hook = create_header_verification_hook(expect_beta=True, test_name='test_strict_false_tool_native_output')
+    hook = create_header_verification_hook(expect_beta=False, test_name='test_strict_false_tool_native_output')
     model.client._client.event_hooks['request'].append(hook)  # pyright: ignore[reportPrivateUsage]
 
     agent = Agent(model, output_type=NativeOutput(CityInfo))
@@ -513,7 +517,7 @@ def test_mixed_tools_no_output(
 ) -> None:
     """Mixed tools (one strict=True, one strict=None), no output_type → beta, only strict=True has strict field."""
     model = anthropic_model('claude-sonnet-4-5')
-    hook = create_header_verification_hook(expect_beta=True, test_name='test_mixed_tools_no_output')
+    hook = create_header_verification_hook(expect_beta=False, test_name='test_mixed_tools_no_output')
     model.client._client.event_hooks['request'].append(hook)  # pyright: ignore[reportPrivateUsage]
 
     agent = Agent(model)
@@ -539,7 +543,7 @@ def test_mixed_tools_basemodel_output(
 ) -> None:
     """Mixed tools (one strict=True, one strict=None), BaseModel output_type → beta, only strict=True has strict field."""
     model = anthropic_model('claude-sonnet-4-5')
-    hook = create_header_verification_hook(expect_beta=True, test_name='test_mixed_tools_basemodel_output')
+    hook = create_header_verification_hook(expect_beta=False, test_name='test_mixed_tools_basemodel_output')
     model.client._client.event_hooks['request'].append(hook)  # pyright: ignore[reportPrivateUsage]
 
     agent = Agent(model, output_type=CityInfo)
@@ -565,7 +569,7 @@ def test_mixed_tools_native_output(
 ) -> None:
     """Mixed tools (one strict=True, one strict=None), NativeOutput → beta, only strict=True has strict field + output_format."""
     model = anthropic_model('claude-sonnet-4-5')
-    hook = create_header_verification_hook(expect_beta=True, test_name='test_mixed_tools_native_output')
+    hook = create_header_verification_hook(expect_beta=False, test_name='test_mixed_tools_native_output')
     model.client._client.event_hooks['request'].append(hook)  # pyright: ignore[reportPrivateUsage]
 
     agent = Agent(model, output_type=NativeOutput(CityInfo))
