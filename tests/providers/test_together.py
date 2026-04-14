@@ -42,7 +42,7 @@ def test_together_provider_need_api_key(env: TestEnv) -> None:
         UserError,
         match=re.escape(
             'Set the `TOGETHER_API_KEY` environment variable or pass it via `TogetherProvider(api_key=...)`'
-            'to use the Together AI provider.'
+            ' to use the Together AI provider.'
         ),
     ):
         TogetherProvider()

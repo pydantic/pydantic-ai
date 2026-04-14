@@ -6,6 +6,51 @@ providing its final answer.
 This capability is typically disabled by default and depends on the specific model being used.
 See the sections below for how to enable thinking for each provider.
 
+## Unified thinking settings
+
+The simplest way to enable thinking across any supported provider is the `thinking` field in [`ModelSettings`][pydantic_ai.settings.ModelSettings]:
+
+```python {title="unified_thinking.py"}
+from pydantic_ai import Agent
+
+agent = Agent('anthropic:claude-opus-4-6', model_settings={'thinking': 'high'})
+```
+
+Or using the [`Thinking`][pydantic_ai.capabilities.Thinking] capability:
+
+```python {title="thinking_capability.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Thinking
+
+agent = Agent('anthropic:claude-opus-4-6', capabilities=[Thinking(effort='high')])
+```
+
+The `thinking` setting accepts:
+
+- `True` — enable thinking with the provider's default effort level
+- `False` — disable thinking (silently ignored on always-on models)
+- `'minimal'` / `'low'` / `'medium'` / `'high'` / `'xhigh'` — enable thinking at a specific effort level (unsupported levels map to the closest available value)
+
+When omitted, the model uses its default behavior. Provider-specific settings (documented in the sections below) take precedence when both are set.
+
+### Provider translation
+
+The unified `thinking` setting maps to each provider's native format:
+
+| Provider | `thinking=True` | `thinking='high'` | Notes |
+|---|---|---|---|
+| Anthropic (Opus 4.6+) | `anthropic_thinking={'type': 'adaptive'}` | `{type: 'adaptive'}` + `effort='high'` | All truthy values → adaptive; effort via output_config |
+| Anthropic (older) | `anthropic_thinking={'type': 'enabled', 'budget_tokens': 10000}` | `budget_tokens=16384` | Budget-based; `'low'` → 2048 tokens |
+| OpenAI | `reasoning_effort='medium'` | `reasoning_effort='high'` | |
+| Google (Gemini 3+) | `include_thoughts=True` | `thinking_level='HIGH'` | |
+| Google (Gemini 2.5) | `include_thoughts=True` | `thinking_budget=24576` | |
+| Groq | `reasoning_format='parsed'` | `reasoning_format='parsed'` | `thinking=False` → `'hidden'` (no true disable) |
+| OpenRouter | `reasoning.effort='medium'` | `reasoning.effort='high'` | Via `extra_body` |
+| Cerebras | `disable_reasoning=False` | `disable_reasoning=False` | `thinking=False` → `disable_reasoning=True` |
+| xAI | `reasoning_effort='high'` | `reasoning_effort='high'` | Only `'low'` and `'high'` |
+| Bedrock (Claude) | `thinking.type='enabled'` | `budget_tokens=16384` | No adaptive support |
+| Bedrock (OpenAI) | `reasoning_effort='medium'` | `reasoning_effort='high'` | |
+
 ## OpenAI
 
 When using the [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel], text output inside `<think>` tags are converted to [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] objects.
@@ -201,11 +246,14 @@ To enable thinking, use the [`GroqModelSettings.groq_reasoning_format`][pydantic
 from pydantic_ai import Agent
 from pydantic_ai.models.groq import GroqModel, GroqModelSettings
 
-model = GroqModel('qwen-qwq-32b')
+model = GroqModel('qwen/qwen3-32b')
 settings = GroqModelSettings(groq_reasoning_format='parsed')
 agent = Agent(model, model_settings=settings)
 ...
 ```
+
+!!! note
+    Groq does not support truly disabling thinking. When `thinking=False` is set via the unified setting, Pydantic AI sends `reasoning_format='hidden'`, which suppresses reasoning output but the model may still reason internally.
 
 ## OpenRouter
 

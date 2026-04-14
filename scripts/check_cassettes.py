@@ -11,56 +11,82 @@ Usage:
 
 from __future__ import annotations
 
+import ast
 import sys
 from collections import defaultdict
 from pathlib import Path
 
-import pytest
+_FORBIDDEN_CHARS = r"""<>?%*:|"'/\\"""
 
 
-class _CollectVcrTests:
-    """Pytest plugin that collects cassette names referenced by VCR-marked tests.
+def _sanitize_cassette_name(name: str) -> str:
+    """Replicate pytest-recording's cassette name sanitization."""
+    for ch in _FORBIDDEN_CHARS:
+        name = name.replace(ch, '-')
+    return name
 
-    This is a class (not functions) because pytest's plugin system requires objects
-    with hook methods, and we need to accumulate state across all test items.
-    """
 
-    def __init__(self) -> None:
-        self.tests: dict[str, set[str]] = defaultdict(set)
+def _has_vcr_marker(decorator_list: list[ast.expr]) -> bool:
+    """Check if a decorator list contains pytest.mark.vcr (with or without parens)."""
+    for dec in decorator_list:
+        # @pytest.mark.vcr or @pytest.mark.vcr()
+        if isinstance(dec, ast.Attribute) and dec.attr == 'vcr':
+            return True
+        if isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute) and dec.func.attr == 'vcr':
+            return True
+    return False
 
-    @staticmethod
-    def _remove_yaml_ext(s: str) -> str:
-        if s.endswith('.yaml'):
-            return s[:-5]
-        return s
 
-    def pytest_collection_modifyitems(
-        self, session: pytest.Session, config: pytest.Config, items: list[pytest.Item]
-    ) -> None:
-        # prevents pytest.PytestAssertRewriteWarning: Module already imported so cannot be rewritten; pytest_recording
-        from pytest_recording.plugin import get_default_cassette_name
+def _has_cassette_marker(decorator_list: list[ast.expr]) -> bool:
+    """Check if a decorator list contains pytest.mark.ws_cassette (with or without parens)."""
+    for dec in decorator_list:
+        if isinstance(dec, ast.Attribute) and dec.attr == 'ws_cassette':
+            return True
+        if isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute) and dec.func.attr == 'ws_cassette':
+            return True
+    return False
 
-        from tests.conftest import sanitize_filename
 
-        for item in items:
-            if any(item.iter_markers('vcr')):
-                test_file_stem = Path(item.location[0]).stem
+def _has_module_vcr_marker(tree: ast.Module) -> bool:
+    """Check if the module has pytestmark = [..., pytest.mark.vcr, ...]."""
+    for node in ast.iter_child_nodes(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if not (isinstance(target, ast.Name) and target.id == 'pytestmark'):
+                continue
+            return 'vcr' in ast.dump(node.value)
+    return False
 
-                m = item.get_closest_marker('default_cassette')
-                if m and m.args:
-                    self.tests[test_file_stem].add(self._remove_yaml_ext(m.args[0]))
-                else:
-                    self.tests[test_file_stem].add(
-                        self._remove_yaml_ext(get_default_cassette_name(getattr(item, 'cls', None), item.name))
-                    )
 
-                for vm in item.iter_markers('vcr'):
-                    for arg in vm.args:
-                        self.tests[test_file_stem].add(self._remove_yaml_ext(arg))
+def _collect_vcr_tests_from_file(path: Path) -> set[str]:
+    """Parse a Python test file and return cassette names for VCR or ws_cassette-marked tests."""
+    try:
+        tree = ast.parse(path.read_text())
+    except SyntaxError:
+        return set()
 
-            elif any(item.iter_markers('ws_cassette')):
-                test_file_stem = Path(item.location[0]).stem
-                self.tests[test_file_stem].add(sanitize_filename(item.name, 240))
+    module_has_vcr = _has_module_vcr_marker(tree)
+    cassette_names: set[str] = set()
+
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            if not node.name.startswith('test_'):
+                continue
+            if module_has_vcr or _has_vcr_marker(node.decorator_list) or _has_cassette_marker(node.decorator_list):
+                cassette_names.add(_sanitize_cassette_name(node.name))
+
+        elif isinstance(node, ast.ClassDef):
+            class_has_vcr = _has_vcr_marker(node.decorator_list)
+            for method in ast.iter_child_nodes(node):
+                if not isinstance(method, ast.FunctionDef | ast.AsyncFunctionDef):
+                    continue
+                if not method.name.startswith('test_'):
+                    continue
+                if module_has_vcr or class_has_vcr or _has_vcr_marker(method.decorator_list) or _has_cassette_marker(method.decorator_list):
+                    cassette_names.add(_sanitize_cassette_name(f'{node.name}.{method.name}'))
+
+    return cassette_names
 
 
 def get_all_cassettes() -> dict[str, set[str]]:
@@ -81,12 +107,15 @@ def get_all_cassettes() -> dict[str, set[str]]:
 
 
 def get_all_tests() -> dict[str, set[str]]:
-    """Use pytest collection to get all VCR-marked tests and their cassette names."""
-    collector = _CollectVcrTests()
-    rc = pytest.main(['--collect-only', '-q', 'tests/'], plugins=[collector])
-    if rc not in (pytest.ExitCode.OK, pytest.ExitCode.NO_TESTS_COLLECTED):
-        raise SystemExit(rc)
-    return dict(collector.tests)
+    """Use AST parsing to find all VCR-marked tests and their cassette names."""
+    tests: dict[str, set[str]] = defaultdict(set)
+
+    for test_file in Path('tests').rglob('test_*.py'):
+        cassette_names = _collect_vcr_tests_from_file(test_file)
+        if cassette_names:
+            tests[test_file.stem].update(cassette_names)
+
+    return dict(tests)
 
 
 def main() -> int:
@@ -97,7 +126,7 @@ def main() -> int:
     total_cassettes = sum(len(c) for c in cassettes.values())
     print(f'Found {total_cassettes} cassettes in {len(cassettes)} test modules')
 
-    print('Collecting VCR-marked tests (this may take a moment)...')
+    print('Collecting VCR-marked tests...')
     tests = get_all_tests()
     total_tests = sum(len(t) for t in tests.values())
     print(f'Found {total_tests} tests in {len(tests)} test modules')
@@ -112,7 +141,10 @@ def main() -> int:
             print(f'Warning: No tests found for module {test_file}')
 
         for cassette in sorted(cassette_names):
-            if cassette in expected_cassettes:
+            # Parametrized tests produce cassettes like test_foo[param].yaml
+            # Strip the [param] suffix to match the base test name
+            base_name = cassette.split('[')[0]
+            if cassette in expected_cassettes or base_name in expected_cassettes:
                 matched += 1
                 if verbose:
                     print(f'  OK: {test_file}/{cassette}.yaml')
