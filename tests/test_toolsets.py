@@ -828,6 +828,47 @@ async def test_toolset_tool_max_retries_none_resolved_by_tool_manager():
         await agent.run('call always_fails', model=TestModel())
 
 
+async def test_toolset_tool_max_retries_none_uses_tool_retries_not_output_retries():
+    """When `ToolsetTool.max_retries` is `None` and `retries != output_retries`, the unresolved
+    value must fall back to the agent's **tool** retry count, not the output retry count.
+    Regression for devin r3076977400: `_resolve_max_retries` previously fell back to
+    `ctx.max_retries` which is populated from `max_result_retries`."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def always_fails(x: int) -> int:
+        """A tool that always fails."""
+        raise ModelRetry('Always fails')
+
+    agent = Agent('test', toolsets=[toolset], retries=1, output_retries=5)
+
+    with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 1'):
+        await agent.run('call always_fails', model=TestModel())
+
+
+async def test_prepare_function_sees_tool_retries_not_output_retries():
+    """Prepare functions should see the agent's **tool** retry count on `ctx.max_retries`,
+    not the output retry count. Regression for devin r3076977506: `FunctionToolset.get_tools`
+    previously fell back to `ctx.max_retries` (= `max_result_retries`) for the prepare ctx."""
+    captured: list[int] = []
+
+    async def capture_prepare(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+        captured.append(ctx.max_retries)
+        return tool_def
+
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain(prepare=capture_prepare)
+    def my_tool(x: int) -> int:
+        """A tool."""
+        return x
+
+    agent = Agent('test', toolsets=[toolset], retries=1, output_retries=5)
+    await agent.run('call my_tool', model=TestModel())
+
+    assert captured[0] == 1
+
+
 async def test_tool_manager_multiple_failed_tools():
     """Test retry logic when multiple tools fail in the same run step."""
 

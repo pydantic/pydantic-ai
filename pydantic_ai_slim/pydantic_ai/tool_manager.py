@@ -172,9 +172,14 @@ class ToolManager(Generic[AgentDepsT]):
             raise UnexpectedModelBehavior(f'Tool {name!r} exceeded max retries count of {max_retries}') from error
 
     def _resolve_max_retries(self, tool: ToolsetTool[AgentDepsT]) -> int:
-        """Resolve a tool's `max_retries`, falling back to `ctx.max_retries` when unset."""
-        assert self.ctx is not None
-        return tool.max_retries if tool.max_retries is not None else self.ctx.max_retries
+        """Resolve a tool's `max_retries`, falling back to the agent's tool-retry default when unset.
+
+        `self.default_max_retries` holds `_max_tool_retries` set by `Agent` at construction time.
+        We don't fall back to `ctx.max_retries` because that field carries `max_result_retries`
+        (the output-validation retry count), which diverges from the tool retry count when the
+        agent is built with `Agent(retries=..., output_retries=...)`.
+        """
+        return tool.max_retries if tool.max_retries is not None else self.default_max_retries
 
     @staticmethod
     def _wrap_error_as_retry(name: str, call: ToolCallPart, error: ValidationError | ModelRetry) -> ToolRetryError:
