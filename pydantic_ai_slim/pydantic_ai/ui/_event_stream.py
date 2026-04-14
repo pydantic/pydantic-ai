@@ -165,6 +165,10 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                     async for e in self._turn_to('request'):
                         yield e
                 elif isinstance(event, AgentRunResultEvent):
+                    # The output tool's call+result events have already flowed through
+                    # `_pending_tool_calls` by now, so any pending `_final_result_event`
+                    # state is stale and must not be left behind to mis-fire the error path.
+                    self._final_result_event = None
                     result = cast(AgentRunResult[OutputDataT], event.result)
                     self._result = result
 

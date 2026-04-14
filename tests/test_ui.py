@@ -640,6 +640,43 @@ async def test_run_stream_on_complete_error():
     )
 
 
+async def test_run_stream_output_tool_then_on_complete_error():
+    """Regression: when an output tool succeeds and `on_complete` raises afterwards, the error
+    handler must not re-emit a stale "interrupted" result for the already-completed output tool.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {
+            0: DeltaToolCall(
+                name='final_result',
+                json_args='{"query": "Hello world"}',
+                tool_call_id='out_1',
+            )
+        }
+
+    def web_search(query: str) -> dict[str, list[dict[str, str]]]:
+        return {'results': [{'title': 'Hello, World!', 'url': 'https://example.com'}]}
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=web_search)
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Tell me about Hello World')])
+    adapter = DummyUIAdapter(agent, request)
+
+    def raise_error(run_result: AgentRunResult[Any]) -> None:
+        raise ValueError('Faulty on_complete')
+
+    events = [event async for event in adapter.run_stream(on_complete=raise_error)]
+
+    # The output tool's success result should be present exactly once — no spurious interrupt.
+    success_results = [e for e in events if 'Final result processed.' in e]
+    interrupted_results = [e for e in events if 'interrupted by an error' in e]
+    assert len(success_results) == 1
+    assert interrupted_results == []
+    assert any("<error type='ValueError'>Faulty on_complete</error>" in e for e in events)
+
+
 async def test_run_stream_on_complete():
     agent = Agent(model=TestModel())
 
