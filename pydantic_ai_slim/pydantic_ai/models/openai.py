@@ -1586,11 +1586,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             provider_name=self.system,
             provider_details=compaction.model_dump(),
         )
+        # The `/compact` endpoint is stateless: OpenAI does not persist the compaction
+        # response and its id cannot be used as `previous_response_id` on a subsequent
+        # request. Leaving `provider_response_id` unset ensures `openai_previous_response_id='auto'`
+        # breaks the chain at the compaction boundary and falls through to passing the
+        # CompactionPart via the `input` array instead.
         return ModelResponse(
             parts=[part],
             usage=_map_usage(response, self._provider.name, self._provider.base_url, self.model_name),
             model_name=self._model_name,
-            provider_response_id=response.id,
             timestamp=_now_utc(),
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,

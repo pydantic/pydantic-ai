@@ -10308,3 +10308,44 @@ async def test_openai_responses_compact_with_instructions(allow_model_requests: 
     assert isinstance(compacted, ModelResponse)
     assert len(compacted.parts) == 1
     assert isinstance(compacted.parts[0], CompactionPart)
+
+
+async def test_openai_responses_compact_with_auto_previous_response_id_chain(
+    allow_model_requests: None, openai_api_key: str
+):
+    """Agent with OpenAICompaction + openai_previous_response_id='auto' must continue working after compaction.
+
+    Regression test: the `/compact` endpoint is stateless, so its response id cannot be
+    used as `previous_response_id` on a subsequent `responses.create` call. After
+    compaction, the next request must pass the compaction item via the input array
+    instead of chaining the compaction response id.
+    """
+    from pydantic_ai.messages import CompactionPart
+    from pydantic_ai.models.openai import OpenAICompaction
+
+    model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        model=model,
+        capabilities=[OpenAICompaction(message_count_threshold=3)],
+    )
+
+    message_history: list[Any] = []
+    for question in ['What is 2+2?', 'And 3+3?', 'And 4+4?', '91 - 16?', "What's your favorite number?"]:
+        result = await agent.run(
+            question,
+            message_history=message_history,
+            model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
+        )
+        message_history = result.all_messages()
+
+    compaction_parts = [
+        part
+        for msg in message_history
+        if isinstance(msg, ModelResponse)
+        for part in msg.parts
+        if isinstance(part, CompactionPart)
+    ]
+    assert compaction_parts, 'expected at least one compaction during the run'
+    for msg in message_history:
+        if isinstance(msg, ModelResponse) and any(isinstance(p, CompactionPart) for p in msg.parts):
+            assert msg.provider_response_id is None
