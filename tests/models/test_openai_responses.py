@@ -10346,6 +10346,10 @@ async def test_openai_responses_compact_with_auto_previous_response_id_chain(
         if isinstance(part, CompactionPart)
     ]
     assert compaction_parts, 'expected at least one compaction during the run'
+    # The compaction ModelResponse is marked via `provider_details={'compaction': True}`
+    # so `_get_previous_response_id_and_new_messages` breaks the auto-chain at it; its
+    # `provider_response_id` is still populated for observability.
     for msg in message_history:
         if isinstance(msg, ModelResponse) and any(isinstance(p, CompactionPart) for p in msg.parts):
-            assert msg.provider_response_id is None
+            assert msg.provider_details == {'compaction': True}
+            assert msg.provider_response_id is not None

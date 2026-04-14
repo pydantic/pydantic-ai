@@ -1586,15 +1586,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             provider_name=self.system,
             provider_details=compaction.model_dump(),
         )
-        # The `/compact` endpoint is stateless: OpenAI does not persist the compaction
-        # response and its id cannot be used as `previous_response_id` on a subsequent
-        # request. Leaving `provider_response_id` unset ensures `openai_previous_response_id='auto'`
-        # breaks the chain at the compaction boundary and falls through to passing the
-        # CompactionPart via the `input` array instead.
         return ModelResponse(
             parts=[part],
             usage=_map_usage(response, self._provider.name, self._provider.base_url, self.model_name),
             model_name=self._model_name,
+            provider_response_id=response.id,
+            # Marks this ModelResponse as coming from the stateless `/compact` endpoint.
+            # `_get_previous_response_id_and_new_messages` uses this to break the auto-chain,
+            # since compaction response ids cannot be used as `previous_response_id`.
+            provider_details={'compaction': True},
             timestamp=_now_utc(),
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
@@ -2113,6 +2113,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         trimmed_messages: list[ModelMessage] = []
         for m in reversed(messages):
             if isinstance(m, ModelResponse) and m.provider_name == self.system:
+                # Responses from the stateless `/compact` endpoint can't be used as
+                # `previous_response_id`, so the compaction acts as a hard chain boundary:
+                # the next request must pass the `CompactionPart` via the `input` array
+                # (handled by `_map_messages`) without a `previous_response_id`.
+                if m.provider_details and m.provider_details.get('compaction'):
+                    return None, messages
                 previous_response_id = m.provider_response_id
                 break
             else:
