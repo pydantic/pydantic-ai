@@ -12,8 +12,6 @@ from pydantic import BaseModel, TypeAdapter
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from logfire.testing import CaptureLogfire
-
     from pydantic_evals import Case, Dataset
     from pydantic_evals.evaluators import (
         ConfusionMatrixEvaluator,
@@ -36,10 +34,15 @@ with try_import() as imports_successful:
         TableResult,
     )
 
+with try_import() as logfire_import_successful:
+    from logfire.testing import CaptureLogfire
+
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'),
     pytest.mark.anyio,
 ]
+
+needs_logfire = pytest.mark.skipif(not logfire_import_successful(), reason='logfire not installed')
 
 
 # --- Test models ---
@@ -929,6 +932,7 @@ async def test_report_evaluator_failure_does_not_block_others():
     assert report.analyses[0].value == 1
 
 
+@needs_logfire
 async def test_report_evaluator_failures_set_on_span(capfire: CaptureLogfire):
     """Report evaluator failures are set as a span attribute on the experiment span."""
 

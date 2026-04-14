@@ -1094,6 +1094,42 @@ def test_messages_to_otel_events_instructions_multiple_messages():
     )
 
 
+def test_messages_to_otel_events_compaction_part():
+    """CompactionPart is not a standard OTel GenAI convention type and is skipped in OTel events."""
+    from pydantic_ai.messages import CompactionPart
+
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[CompactionPart(content='Summary of conversation.', provider_name='anthropic'), TextPart('response')]
+        ),
+    ]
+    settings = InstrumentationSettings()
+    # CompactionPart is skipped; only the TextPart appears
+    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'content': 'response',
+                'gen_ai.message.index': 0,
+                'event.name': 'gen_ai.assistant.message',
+            }
+        ]
+    )
+
+
+def test_messages_to_otel_message_parts_compaction_part():
+    """CompactionPart is skipped in otel_message_parts (not a standard GenAI convention type)."""
+    from pydantic_ai.messages import CompactionPart
+
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[CompactionPart(content='Summary.', provider_name='anthropic'), TextPart('response')]),
+    ]
+    settings = InstrumentationSettings()
+    otel_messages = settings.messages_to_otel_messages(messages)
+    # CompactionPart is skipped; only TextPart appears
+    assert otel_messages == snapshot([{'role': 'assistant', 'parts': [{'type': 'text', 'content': 'response'}]}])
+
+
 def test_messages_to_otel_events_image_url(document_content: BinaryContent):
     messages = [
         ModelRequest(

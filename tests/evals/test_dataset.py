@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 import pytest
 import yaml
-from dirty_equals import HasRepr, IsNumber
+from dirty_equals import HasRepr, IsNumber, IsOneOf
 from pydantic import BaseModel, TypeAdapter
 
 from .._inline_snapshot import snapshot
@@ -16,9 +16,6 @@ from ..conftest import IsStr, try_import
 from .utils import render_table
 
 with try_import() as imports_successful:
-    import logfire
-    from logfire.testing import CaptureLogfire
-
     from pydantic_evals import Case, Dataset, PydanticEvalsDeprecationWarning
     from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
     from pydantic_evals.evaluators import (
@@ -51,6 +48,11 @@ with try_import() as imports_successful:
             return eval(self.expression, {'ctx': ctx})
 
 
+with try_import() as logfire_import_successful:
+    import logfire
+    from logfire.testing import CaptureLogfire
+
+
 with try_import() as tenacity_import_successful:
     from tenacity import stop_after_attempt
 
@@ -59,6 +61,15 @@ with try_import() as tenacity_import_successful:
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
 
+needs_logfire = pytest.mark.skipif(not logfire_import_successful(), reason='logfire not installed')
+
+# Matchers for fields that vary depending on whether logfire is installed:
+# with CaptureLogfire, spans have sequential IDs and mock-clock durations;
+# without logfire, trace/span IDs are None and durations are real wall-clock values.
+_any_trace_id: str | None = IsOneOf(IsStr(), None)  # type: ignore[assignment]
+_any_span_id: str | None = IsOneOf(IsStr(), None)  # type: ignore[assignment]
+_any_duration: float = IsNumber()  # type: ignore[assignment]
+
 
 if sys.version_info < (3, 11):
     from exceptiongroup import ExceptionGroup  # pragma: lax no cover
@@ -66,9 +77,11 @@ else:
     ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
 
-@pytest.fixture(autouse=True)
-def use_logfire(capfire: CaptureLogfire):
-    assert capfire
+if logfire_import_successful():
+
+    @pytest.fixture(autouse=True)
+    def use_logfire(capfire: CaptureLogfire):
+        assert capfire
 
 
 class TaskInput(BaseModel):
@@ -266,11 +279,11 @@ async def test_evaluate_async(
                     'value': 1.0,
                 }
             },
-            'span_id': '0000000000000003',
+            'span_id': _any_span_id,
             'source_case_name': None,
-            'task_duration': 1.0,
-            'total_duration': 10.0,
-            'trace_id': '00000000000000000000000000000001',
+            'task_duration': _any_duration,
+            'total_duration': _any_duration,
+            'trace_id': _any_trace_id,
         }
     )
 
@@ -320,11 +333,11 @@ async def test_evaluate_sync(
                     'value': 1.0,
                 }
             },
-            'span_id': '0000000000000003',
+            'span_id': _any_span_id,
             'source_case_name': None,
-            'task_duration': IsNumber(),  # the runtime behavior is not deterministic due to threading
-            'total_duration': IsNumber(),  # the runtime behavior is not deterministic due to threading
-            'trace_id': '00000000000000000000000000000001',
+            'task_duration': _any_duration,  # the runtime behavior is not deterministic due to threading
+            'total_duration': _any_duration,  # the runtime behavior is not deterministic due to threading
+            'trace_id': _any_trace_id,
         }
     )
 
@@ -402,11 +415,11 @@ async def test_evaluate_with_retried_task_and_evaluator(
                     'value': 1.0,
                 }
             },
-            'span_id': '0000000000000003',
+            'span_id': _any_span_id,
             'source_case_name': None,
-            'task_duration': 1.0,
-            'total_duration': 19.0,
-            'trace_id': '00000000000000000000000000000001',
+            'task_duration': _any_duration,
+            'total_duration': _any_duration,
+            'trace_id': _any_trace_id,
         }
     )
 
@@ -456,11 +469,11 @@ async def test_evaluate_with_concurrency(
                     'value': 1.0,
                 }
             },
-            'span_id': '0000000000000003',
+            'span_id': _any_span_id,
             'source_case_name': None,
-            'task_duration': 1.0,
-            'total_duration': 5.0,
-            'trace_id': '00000000000000000000000000000001',
+            'task_duration': _any_duration,
+            'total_duration': _any_duration,
+            'trace_id': _any_trace_id,
         }
     )
 
@@ -499,10 +512,10 @@ async def test_evaluate_with_failing_task(
                         name='correct', value=True, reason=None, source=simple_evaluator().as_spec()
                     )
                 },
-                task_duration=1.0,
-                total_duration=5.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000007',
+                task_duration=_any_duration,
+                total_duration=_any_duration,
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
                 evaluator_failures=[],
             )
         ]
@@ -516,8 +529,8 @@ async def test_evaluate_with_failing_task(
                 expected_output=TaskOutput(answer='4', confidence=1.0),
                 error_message='ValueError: Task error',
                 error_stacktrace=IsStr(),
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000003',
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
             )
         ]
     )
@@ -549,10 +562,10 @@ async def test_evaluate_with_failing_evaluator(example_dataset: Dataset[TaskInpu
                 scores={},
                 labels={},
                 assertions={},
-                task_duration=1.0,
-                total_duration=12.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000003',
+                task_duration=_any_duration,
+                total_duration=_any_duration,
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
                 evaluator_failures=[
                     EvaluatorFailure(
                         name='FailingEvaluator',
@@ -573,10 +586,10 @@ async def test_evaluate_with_failing_evaluator(example_dataset: Dataset[TaskInpu
                 scores={},
                 labels={},
                 assertions={},
-                task_duration=1.0,
-                total_duration=10.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000007',
+                task_duration=_any_duration,
+                total_duration=_any_duration,
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
                 evaluator_failures=[
                     EvaluatorFailure(
                         name='FailingEvaluator',
@@ -617,10 +630,10 @@ async def test_increment_eval_metric(example_dataset: Dataset[TaskInput, TaskOut
                 scores={},
                 labels={},
                 assertions={},
-                task_duration=1.0,
-                total_duration=3.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000003',
+                task_duration=_any_duration,
+                total_duration=_any_duration,
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
             ),
             ReportCase(
                 name='case2',
@@ -633,10 +646,10 @@ async def test_increment_eval_metric(example_dataset: Dataset[TaskInput, TaskOut
                 scores={},
                 labels={},
                 assertions={},
-                task_duration=1.0,
-                total_duration=3.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000007',
+                task_duration=_any_duration,
+                total_duration=_any_duration,
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
             ),
         ]
     )
@@ -676,10 +689,10 @@ async def test_repeated_name_outputs(example_dataset: Dataset[TaskInput, TaskOut
                     ),
                 },
                 assertions={},
-                task_duration=1.0,
-                total_duration=18.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000003',
+                task_duration=_any_duration,
+                total_duration=_any_duration,
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
             ),
             ReportCase(
                 name='case2',
@@ -702,10 +715,10 @@ async def test_repeated_name_outputs(example_dataset: Dataset[TaskInput, TaskOut
                     ),
                 },
                 assertions={},
-                task_duration=1.0,
-                total_duration=16.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000007',
+                task_duration=_any_duration,
+                total_duration=_any_duration,
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
             ),
         ]
     )
@@ -742,10 +755,10 @@ async def test_report_round_trip_serialization(example_dataset: Dataset[TaskInpu
                         )
                     },
                     assertions={},
-                    task_duration=1.0,
-                    total_duration=10.0,
-                    trace_id='00000000000000000000000000000001',
-                    span_id='0000000000000003',
+                    task_duration=_any_duration,
+                    total_duration=_any_duration,
+                    trace_id=_any_trace_id,
+                    span_id=_any_span_id,
                 ),
                 ReportCase(
                     name='case2',
@@ -765,14 +778,14 @@ async def test_report_round_trip_serialization(example_dataset: Dataset[TaskInpu
                         )
                     },
                     assertions={},
-                    task_duration=1.0,
-                    total_duration=8.0,
-                    trace_id='00000000000000000000000000000001',
-                    span_id='0000000000000007',
+                    task_duration=_any_duration,
+                    total_duration=_any_duration,
+                    trace_id=_any_trace_id,
+                    span_id=_any_span_id,
                 ),
             ],
-            span_id='0000000000000001',
-            trace_id='00000000000000000000000000000001',
+            span_id=_any_span_id,
+            trace_id=_any_trace_id,
         )
     )
 
@@ -780,6 +793,7 @@ async def test_report_round_trip_serialization(example_dataset: Dataset[TaskInpu
     assert report == report_adapter.validate_json(report_adapter.dump_json(report, indent=2))
 
 
+@needs_logfire
 async def test_genai_attribute_collection(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
     async def my_task(inputs: TaskInput) -> TaskOutput:
         with logfire.span(
@@ -811,10 +825,10 @@ async def test_genai_attribute_collection(example_dataset: Dataset[TaskInput, Ta
                 scores={},
                 labels={},
                 assertions={},
-                task_duration=5.0,
-                total_duration=7.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000003',
+                task_duration=_any_duration,
+                total_duration=_any_duration,
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
             ),
             ReportCase(
                 name='case2',
@@ -827,10 +841,10 @@ async def test_genai_attribute_collection(example_dataset: Dataset[TaskInput, Ta
                 scores={},
                 labels={},
                 assertions={},
-                task_duration=5.0,
-                total_duration=7.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='000000000000000b',
+                task_duration=_any_duration,
+                total_duration=_any_duration,
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
             ),
         ]
     )
@@ -1078,10 +1092,10 @@ async def test_invalid_evaluator_output_type(example_dataset: Dataset[TaskInput,
                 scores={},
                 labels={},
                 assertions={},
-                task_duration=1.0,
-                total_duration=12.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000003',
+                task_duration=_any_duration,
+                total_duration=_any_duration,
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
                 evaluator_failures=[
                     EvaluatorFailure(
                         name='Python',
@@ -1106,10 +1120,10 @@ async def test_invalid_evaluator_output_type(example_dataset: Dataset[TaskInput,
                 scores={},
                 labels={},
                 assertions={},
-                task_duration=1.0,
-                total_duration=10.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000007',
+                task_duration=_any_duration,
+                total_duration=_any_duration,
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
                 evaluator_failures=[
                     EvaluatorFailure(
                         name='Python',
@@ -1145,8 +1159,8 @@ async def test_dataset_evaluate_with_failing_task(example_dataset: Dataset[TaskI
                 expected_output=TaskOutput(answer='4', confidence=1.0),
                 error_message='ValueError: Task failed',
                 error_stacktrace=IsStr(),
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000003',
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
             ),
             ReportCaseFailure(
                 name='case2',
@@ -1155,8 +1169,8 @@ async def test_dataset_evaluate_with_failing_task(example_dataset: Dataset[TaskI
                 expected_output=TaskOutput(answer='Paris', confidence=1.0),
                 error_message='ValueError: Task failed',
                 error_stacktrace=IsStr(),
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000007',
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
             ),
         ]
     )
@@ -1188,10 +1202,10 @@ async def test_dataset_evaluate_with_failing_evaluator(example_dataset: Dataset[
                 scores={},
                 labels={},
                 assertions={},
-                task_duration=1.0,
-                total_duration=12.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000003',
+                task_duration=_any_duration,
+                total_duration=_any_duration,
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
                 evaluator_failures=[
                     EvaluatorFailure(
                         name='FailingEvaluator',
@@ -1212,10 +1226,10 @@ async def test_dataset_evaluate_with_failing_evaluator(example_dataset: Dataset[
                 scores={},
                 labels={},
                 assertions={},
-                task_duration=1.0,
-                total_duration=10.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000007',
+                task_duration=_any_duration,
+                total_duration=_any_duration,
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
                 evaluator_failures=[
                     EvaluatorFailure(
                         name='FailingEvaluator',
@@ -1262,10 +1276,10 @@ async def test_dataset_evaluate_with_invalid_evaluator_result(
                 scores={},
                 labels={},
                 assertions={},
-                task_duration=1.0,
-                total_duration=12.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000003',
+                task_duration=_any_duration,
+                total_duration=_any_duration,
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
                 evaluator_failures=[
                     EvaluatorFailure(
                         name='InvalidEvaluator',
@@ -1291,10 +1305,10 @@ async def test_dataset_evaluate_with_invalid_evaluator_result(
                 scores={},
                 labels={},
                 assertions={},
-                task_duration=1.0,
-                total_duration=10.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000007',
+                task_duration=_any_duration,
+                total_duration=_any_duration,
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
                 evaluator_failures=[
                     EvaluatorFailure(
                         name='InvalidEvaluator',
@@ -1498,6 +1512,7 @@ def test_import_generate_dataset():
     assert generate_dataset
 
 
+@needs_logfire
 def test_evaluate_non_serializable_inputs():
     @dataclass
     class MyInputs:
@@ -1543,6 +1558,7 @@ def test_evaluate_non_serializable_inputs():
 """)
 
 
+@needs_logfire
 async def test_evaluate_async_logfire(
     example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
     simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
@@ -1613,8 +1629,8 @@ async def test_evaluate_async_logfire(
                             'labels': {},
                             'metrics': {},
                             'assertions': 1.0,
-                            'task_duration': 1.0,
-                            'total_duration': 9.0,
+                            'task_duration': _any_duration,
+                            'total_duration': _any_duration,
                         },
                     },
                     'name': 'mock_async_task',
@@ -1633,7 +1649,7 @@ async def test_evaluate_async_logfire(
                     'logfire.msg': 'case: case1',
                     'logfire.span_type': 'span',
                     'output': {'answer': '4', 'confidence': 1.0},
-                    'task_duration': 1.0,
+                    'task_duration': _any_duration,
                     'metrics': {},
                     'attributes': {},
                     'assertions': {
@@ -1702,7 +1718,7 @@ async def test_evaluate_async_logfire(
                     'logfire.msg': 'case: case2',
                     'logfire.span_type': 'span',
                     'output': {'answer': 'Paris', 'confidence': 1.0},
-                    'task_duration': 1.0,
+                    'task_duration': _any_duration,
                     'metrics': {},
                     'attributes': {},
                     'assertions': {
