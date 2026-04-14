@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import asyncio
+import anyio
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
@@ -50,7 +50,17 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         return any(c.has_wrap_run_event_stream for c in self.capabilities)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-        new_caps = await asyncio.gather(*(c.for_run(ctx) for c in self.capabilities))
+        # Use anyio.create_task_group for structured concurrency (#5073)
+        results: dict[int, AbstractCapability[AgentDepsT]] = {}
+
+        async def _for_run(idx: int, cap: AbstractCapability[AgentDepsT]) -> None:
+            results[idx] = await cap.for_run(ctx)
+
+        async with anyio.create_task_group() as tg:
+            for i, cap in enumerate(self.capabilities):
+                tg.start_soon(_for_run, i, cap)
+
+        new_caps = [results[i] for i in range(len(self.capabilities))]
         if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
         return replace(self, capabilities=list(new_caps))

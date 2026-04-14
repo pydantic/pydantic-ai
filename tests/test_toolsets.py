@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from typing import Any, TypeVar
 from unittest.mock import AsyncMock
 
+import anyio
 import pytest
 from typing_extensions import Self
 
@@ -2087,3 +2088,115 @@ async def test_toolset_empty_instructions_filtered():
     result = await agent.run('Hello')
     first_message = result.all_messages()[0]
     assert first_message.instructions == 'valid instruction\n\nanother valid'  # type: ignore[union-attr]
+
+
+# =============================================================================
+# CombinedToolset structured concurrency tests (#5073)
+# =============================================================================
+
+@pytest.mark.anyio
+async def test_combined_toolset_get_tools_cancels_siblings_on_failure() -> None:
+    """When one toolset.get_tools raises, siblings must be cancelled — no leaked tasks.
+
+    Bug (#5073): asyncio.gather does not cancel remaining coroutines when one
+    raises.  They run as unmanaged background tasks until they complete, causing
+    resource leaks and unpredictable state.
+
+    With anyio.create_task_group, a failing task cancels the whole group, so
+    the sibling never completes.
+    """
+    completed: list[int] = []
+    cancelled: list[int] = []
+
+    class SlowToolset(AbstractToolset[None]):
+        def __init__(self, idx: int, delay: float, should_fail: bool = False):
+            self._idx = idx
+            self._delay = delay
+            self._should_fail = should_fail
+
+        @property
+        def id(self) -> str | None:
+            return None
+
+        @property
+        def label(self) -> str:
+            return f'slow-{self._idx}'
+
+        async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
+            if self._should_fail:
+                raise RuntimeError(f'toolset-{self._idx} failed')
+            try:
+                await anyio.sleep(self._delay)
+                completed.append(self._idx)
+            except anyio.get_cancelled_exc_class():
+                cancelled.append(self._idx)
+                raise
+            return {}
+
+        async def call_tool(self, name: str, tool_args: Any, ctx: RunContext[None], tool: Any) -> Any:
+            pass  # pragma: no cover
+
+    ctx = build_run_context(None)
+
+    # toolset 0 fails immediately; toolset 1 would sleep for 10s if not cancelled
+    combined = CombinedToolset([SlowToolset(0, 0.0, should_fail=True), SlowToolset(1, 10.0)])
+
+    # anyio.create_task_group wraps exceptions in an ExceptionGroup;
+    # unwrap it to verify the original RuntimeError is present.
+    try:
+        await combined.get_tools(ctx)
+        pytest.fail("Expected RuntimeError to be raised")
+    except* RuntimeError as eg:
+        assert any('toolset-0 failed' in str(e) for e in eg.exceptions)
+
+    # toolset 1 must NOT have completed — it should have been cancelled
+    assert 1 not in completed, (
+        'toolset-1 completed after toolset-0 failed — sibling task was not cancelled (#5073)'
+    )
+    # toolset 1 must have been cancelled (not just silently ignored)
+    assert 1 in cancelled, (
+        'toolset-1 was not cancelled when toolset-0 raised — structured concurrency not enforced (#5073)'
+    )
+
+
+@pytest.mark.anyio
+async def test_combined_toolset_get_instructions_cancels_siblings_on_failure() -> None:
+    """Same structured-concurrency guarantee for get_instructions (#5073)."""
+    completed: list[int] = []
+
+    class SlowInstructionToolset(AbstractToolset[None]):
+        def __init__(self, idx: int, should_fail: bool = False):
+            self._idx = idx
+            self._should_fail = should_fail
+
+        @property
+        def id(self) -> str | None:
+            return None
+
+        @property
+        def label(self) -> str:
+            return f'inst-{self._idx}'
+
+        async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
+            return {}
+
+        async def get_instructions(self, ctx: RunContext[None]) -> list[Any] | None:
+            if self._should_fail:
+                raise RuntimeError(f'instructions-{self._idx} failed')
+            await anyio.sleep(1.0)
+            completed.append(self._idx)
+            return [f'instruction from {self._idx}']
+
+        async def call_tool(self, name: str, tool_args: Any, ctx: RunContext[None], tool: Any) -> Any:
+            pass  # pragma: no cover
+
+    ctx = build_run_context(None)
+    combined = CombinedToolset([SlowInstructionToolset(0, should_fail=True), SlowInstructionToolset(1)])
+
+    try:
+        await combined.get_instructions(ctx)
+        pytest.fail("Expected RuntimeError to be raised")
+    except* RuntimeError as eg:
+        assert any('instructions-0 failed' in str(e) for e in eg.exceptions)
+
+    assert 1 not in completed, 'Sibling get_instructions task was not cancelled on failure'

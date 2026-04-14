@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import asyncio
+import anyio
 from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field, replace
@@ -64,7 +64,19 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
             self._exit_stack = None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        toolsets_tools = await asyncio.gather(*(toolset.get_tools(ctx) for toolset in self.toolsets))
+        # Use anyio.create_task_group instead of asyncio.gather so that when one
+        # toolset raises, the remaining sibling tasks are cancelled immediately
+        # rather than running as leaked background tasks. (#5073)
+        results: dict[int, dict[str, ToolsetTool[AgentDepsT]]] = {}
+
+        async def _get(idx: int, toolset: AbstractToolset[AgentDepsT]) -> None:
+            results[idx] = await toolset.get_tools(ctx)
+
+        async with anyio.create_task_group() as tg:
+            for i, toolset in enumerate(self.toolsets):
+                tg.start_soon(_get, i, toolset)
+
+        toolsets_tools = [results[i] for i in range(len(self.toolsets))]
         all_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
 
         for toolset, tools in zip(self.toolsets, toolsets_tools):
@@ -103,7 +115,17 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
         return replace(self, toolsets=[toolset.visit_and_replace(visitor) for toolset in self.toolsets])
 
     async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> list[str | InstructionPart] | None:
-        results = await asyncio.gather(*(ts.get_instructions(ctx) for ts in self.toolsets))
+        # Use anyio.create_task_group for structured concurrency (#5073)
+        raw: dict[int, list[str | InstructionPart] | None] = {}
+
+        async def _get_instr(idx: int, ts: AbstractToolset[AgentDepsT]) -> None:
+            raw[idx] = await ts.get_instructions(ctx)
+
+        async with anyio.create_task_group() as tg:
+            for i, ts in enumerate(self.toolsets):
+                tg.start_soon(_get_instr, i, ts)
+
+        results = [raw[i] for i in range(len(self.toolsets))]
         parts: list[str | InstructionPart] = []
         for r in results:
             if r is not None:
