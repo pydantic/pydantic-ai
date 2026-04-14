@@ -341,7 +341,35 @@ reasons (filtering out sensitive information), to save costs on tokens, to give 
 custom processing logic.
 
 Pydantic AI provides a `history_processors` parameter on `Agent` that allows you to intercept and modify
-the message history before each model request. History processors can also be provided via the [`HistoryProcessor`][pydantic_ai.capabilities.HistoryProcessor] capability.
+the message history before each model request.
+
+!!! warning "Prefer `before_model_request` hooks"
+    Since the release of [hooks](hooks.md), the [`before_model_request`](hooks.md#model-request-hooks) hook is the recommended way to intercept and modify messages before each model call. It supersedes `history_processors` for all use cases and exposes [`ModelRequestContext`][pydantic_ai.models.ModelRequestContext], which includes `model_request_parameters.function_tools` — letting you inspect the exact tool definitions the model will see, useful for token-aware compaction.
+
+    `history_processors` may be removed in a future major version — see the [migration guide](https://github.com/pydantic/pydantic-ai/blob/main/V2.md#history_processors--before_model_request). New code should use hooks.
+
+Here's an equivalent `before_model_request` hook for message compaction:
+
+```python {title="compaction_hook.py"}
+from pydantic_ai import Agent, ModelRequestContext, RunContext
+from pydantic_ai.capabilities import Hooks
+
+hooks = Hooks()
+
+
+@hooks.on.before_model_request
+async def compact(
+    ctx: RunContext[None], request_context: ModelRequestContext
+) -> ModelRequestContext:
+    tool_defs = request_context.model_request_parameters.function_tools
+    # More tool schemas consume more of the context window, so keep fewer messages.
+    keep_n = max(1, 20 - len(tool_defs))
+    request_context.messages = request_context.messages[-keep_n:]
+    return request_context
+
+
+agent = Agent('openai:gpt-5.2', capabilities=[hooks])
+```
 
 !!! warning "History processors replace the message history"
     History processors replace the message history in the state with the processed messages, including the new user prompt part.

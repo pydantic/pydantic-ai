@@ -24,7 +24,16 @@ if TYPE_CHECKING:
 
 @dataclass
 class HistoryProcessor(AbstractCapability[AgentDepsT]):
-    """A capability that processes message history before model requests."""
+    """A capability that processes message history before model requests.
+
+    !!! warning "Deprecated: prefer `before_model_request` hooks"
+        This capability is a thin wrapper around the [`before_model_request`](../hooks.md#model-request-hooks)
+        hook on the [`Hooks`][pydantic_ai.capabilities.Hooks] capability. The hook supersedes this capability
+        for all use cases and additionally exposes per-step tool definitions via
+        [`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]. `HistoryProcessor` may be removed
+        in a future major version — see the
+        [migration guide](https://github.com/pydantic/pydantic-ai/blob/main/V2.md#history_processors--before_model_request).
+    """
 
     processor: HistoryProcessorFunc[AgentDepsT]
 
