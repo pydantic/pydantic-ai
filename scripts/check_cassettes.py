@@ -40,23 +40,27 @@ class _CollectVcrTests:
         # prevents pytest.PytestAssertRewriteWarning: Module already imported so cannot be rewritten; pytest_recording
         from pytest_recording.plugin import get_default_cassette_name
 
+        from tests.conftest import sanitize_filename
+
         for item in items:
-            if not any(item.iter_markers('vcr')):
-                continue
+            if any(item.iter_markers('vcr')):
+                test_file_stem = Path(item.location[0]).stem
 
-            test_file_stem = Path(item.location[0]).stem
+                m = item.get_closest_marker('default_cassette')
+                if m and m.args:
+                    self.tests[test_file_stem].add(self._remove_yaml_ext(m.args[0]))
+                else:
+                    self.tests[test_file_stem].add(
+                        self._remove_yaml_ext(get_default_cassette_name(getattr(item, 'cls', None), item.name))
+                    )
 
-            m = item.get_closest_marker('default_cassette')
-            if m and m.args:
-                self.tests[test_file_stem].add(self._remove_yaml_ext(m.args[0]))
-            else:
-                self.tests[test_file_stem].add(
-                    self._remove_yaml_ext(get_default_cassette_name(getattr(item, 'cls', None), item.name))
-                )
+                for vm in item.iter_markers('vcr'):
+                    for arg in vm.args:
+                        self.tests[test_file_stem].add(self._remove_yaml_ext(arg))
 
-            for vm in item.iter_markers('vcr'):
-                for arg in vm.args:
-                    self.tests[test_file_stem].add(self._remove_yaml_ext(arg))
+            elif any(item.iter_markers('ws_cassette')):
+                test_file_stem = Path(item.location[0]).stem
+                self.tests[test_file_stem].add(sanitize_filename(item.name, 240))
 
 
 def get_all_cassettes() -> dict[str, set[str]]:

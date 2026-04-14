@@ -6,6 +6,7 @@ import json
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cached_property
@@ -82,6 +83,7 @@ from . import (
 
 try:
     from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream, Omit, omit
+    from openai.resources.responses.responses import AsyncResponsesConnection
     from openai.types import AllModels, chat, responses
     from openai.types.chat import (
         ChatCompletionChunk,
@@ -182,6 +184,25 @@ _OPENAI_ASPECT_RATIO_TO_SIZE: dict[ImageAspectRatio, Literal['1024x1024', '1024x
 
 _OPENAI_IMAGE_SIZE = Literal['auto', '1024x1024', '1024x1536', '1536x1024']
 _OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = _utils.get_args(_OPENAI_IMAGE_SIZE)
+
+_WS_CONNECTION: ContextVar[AsyncResponsesConnection | None] = ContextVar(
+    'pydantic_ai.openai_ws_connection', default=None
+)
+
+
+@dataclass
+class _WSState:
+    """Mutable state shared across tasks forked from the same connect() context.
+
+    ContextVar copies the reference (shallow), so mutations to `in_use` are visible
+    across tasks created via asyncio.gather — which is how we detect concurrent use
+    of a single WS connection that doesn't support multiplexing.
+    """
+
+    in_use: bool = False
+
+
+_WS_STATE: ContextVar[_WSState | None] = ContextVar('pydantic_ai.openai_ws_state', default=None)
 
 
 class _AzureContentFilterResultDetail(BaseModel):
@@ -1415,6 +1436,37 @@ class OpenAIResponsesModel(Model):
         """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool})
 
+    @asynccontextmanager
+    async def connect(
+        self,
+        **kwargs: Any,
+    ) -> AsyncIterator[OpenAIResponsesModel]:
+        """Open a persistent WebSocket connection to the OpenAI Responses API.
+
+        While the connection is active, all calls to `request()` and `request_stream()`
+        (including those made by `agent.run()`) are routed over WebSocket instead of HTTP.
+
+        Uses a `ContextVar` for isolation — safe for concurrent use via `asyncio.gather`
+        when each coroutine has its own `connect()` context.
+
+        ```python
+        model = OpenAIResponsesModel('gpt-4o')
+        agent = Agent(model)
+
+        async with model.connect():
+            result = await agent.run('Hello')  # uses WebSocket
+        result2 = await agent.run('Hello')     # back to HTTP
+        ```
+        """
+        async with self.client.responses.connect(**kwargs) as connection:
+            conn_token = _WS_CONNECTION.set(connection)
+            state_token = _WS_STATE.set(_WSState())
+            try:
+                yield self
+            finally:
+                _WS_STATE.reset(state_token)
+                _WS_CONNECTION.reset(conn_token)
+
     async def request(
         self,
         messages: list[ModelRequest | ModelResponse],
@@ -1426,17 +1478,17 @@ class OpenAIResponsesModel(Model):
             model_settings,
             model_request_parameters,
         )
-        response = await self._responses_create(
-            messages, False, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
-        )
+        settings = cast(OpenAIResponsesModelSettings, model_settings or {})
 
-        # Handle ModelResponse
+        ws_conn = _WS_CONNECTION.get()
+        if ws_conn is not None:
+            response = await self._ws_send_request(ws_conn, messages, settings, model_request_parameters)
+            return self._process_response(response, settings, model_request_parameters)
+
+        response = await self._responses_create(messages, False, settings, model_request_parameters)
         if isinstance(response, ModelResponse):
             return response
-
-        return self._process_response(
-            response, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
-        )
+        return self._process_response(response, settings, model_request_parameters)
 
     @asynccontextmanager
     async def request_stream(
@@ -1451,13 +1503,16 @@ class OpenAIResponsesModel(Model):
             model_settings,
             model_request_parameters,
         )
-        response = await self._responses_create(
-            messages, True, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
-        )
-        async with response:
-            yield await self._process_streamed_response(
-                response, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
-            )
+        settings = cast(OpenAIResponsesModelSettings, model_settings or {})
+
+        ws_conn = _WS_CONNECTION.get()
+        if ws_conn is not None:
+            event_stream = self._ws_send_stream(ws_conn, messages, settings, model_request_parameters)
+            yield await self._process_streamed_response(event_stream, settings, model_request_parameters)
+        else:
+            response = await self._responses_create(messages, True, settings, model_request_parameters)
+            async with response:
+                yield await self._process_streamed_response(response, settings, model_request_parameters)
 
     def _process_response(  # noqa: C901
         self,
@@ -1599,7 +1654,7 @@ class OpenAIResponsesModel(Model):
 
     async def _process_streamed_response(
         self,
-        response: AsyncStream[responses.ResponseStreamEvent],
+        response: AsyncIterable[responses.ResponseStreamEvent],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> OpenAIResponsesStreamedResponse:
@@ -1622,6 +1677,190 @@ class OpenAIResponsesModel(Model):
             else None,
         )
 
+    async def _build_response_params(
+        self,
+        messages: list[ModelRequest | ModelResponse],
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[
+        str | Omit,
+        list[responses.ResponseInputItemParam],
+        list[Any],
+        Literal['none', 'required', 'auto'] | None,
+        str | None,
+        Reasoning | Omit,
+        responses.ResponseTextConfigParam | None,
+        list[responses.ResponseIncludable],
+    ]:
+        """Build common parameters shared between HTTP and WebSocket request paths."""
+        tools = (
+            self._get_builtin_tools(model_request_parameters)
+            + list(model_settings.get('openai_builtin_tools', []))
+            + self._get_tools(model_request_parameters)
+        )
+        profile = OpenAIModelProfile.from_profile(self.profile)
+        tool_choice: Literal['none', 'required', 'auto'] | None = None
+        if tools:
+            if not model_request_parameters.allow_text_output and profile.openai_supports_tool_choice_required:
+                tool_choice = 'required'
+            else:
+                tool_choice = 'auto'
+
+        previous_response_id = model_settings.get('openai_previous_response_id')
+        if previous_response_id == 'auto':
+            previous_response_id, messages = self._get_previous_response_id_and_new_messages(messages)
+
+        instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
+        reasoning = self._get_reasoning(model_settings)
+
+        text: responses.ResponseTextConfigParam | None = None
+        if model_request_parameters.output_mode == 'native':
+            output_object = model_request_parameters.output_object
+            assert output_object is not None
+            text = {'format': self._map_json_schema(output_object)}
+        elif (
+            model_request_parameters.output_mode == 'prompted' and self.profile.supports_json_object_output
+        ):  # pragma: no branch
+            text = {'format': {'type': 'json_object'}}
+            assert isinstance(instructions, str)
+            system_prompt_count = sum(1 for m in openai_messages if m.get('role') == 'system')
+            openai_messages.insert(
+                system_prompt_count, responses.EasyInputMessageParam(role='system', content=instructions)
+            )
+            instructions = OMIT
+
+        if verbosity := model_settings.get('openai_text_verbosity'):
+            text = text or {}
+            text['verbosity'] = verbosity
+
+        _drop_sampling_params_for_reasoning(profile, model_settings)
+        _drop_unsupported_params(profile, model_settings)
+
+        include: list[responses.ResponseIncludable] = []
+        if profile.openai_supports_encrypted_reasoning_content:
+            include.append('reasoning.encrypted_content')
+        if model_settings.get('openai_include_code_execution_outputs'):
+            include.append('code_interpreter_call.outputs')
+        if model_settings.get('openai_include_web_search_sources'):
+            include.append('web_search_call.action.sources')
+        if model_settings.get('openai_include_file_search_results'):
+            include.append('file_search_call.results')
+        if model_settings.get('openai_logprobs'):
+            include.append('message.output_text.logprobs')
+
+        if not openai_messages and not previous_response_id:
+            openai_messages.append(responses.EasyInputMessageParam(role='user', content=''))
+
+        return instructions, openai_messages, tools, tool_choice, previous_response_id, reasoning, text, include
+
+    def _ws_acquire(self) -> None:
+        """Mark the WS connection as in-use; raise if already in use."""
+        state = _WS_STATE.get()
+        assert state is not None
+        if state.in_use:
+            raise RuntimeError(
+                'This WebSocket connection is already handling a request. '
+                'For parallel requests, use separate `model.connect()` contexts.'
+            )
+        state.in_use = True
+
+    def _ws_release(self) -> None:
+        """Release the WS connection."""
+        state = _WS_STATE.get()
+        assert state is not None
+        state.in_use = False
+
+    async def _ws_create(
+        self,
+        connection: AsyncResponsesConnection,
+        messages: list[ModelRequest | ModelResponse],
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> None:
+        """Send a response.create over WebSocket using the shared param builder."""
+        (
+            instructions,
+            openai_messages,
+            tools,
+            tool_choice,
+            previous_response_id,
+            reasoning,
+            text,
+            include,
+        ) = await self._build_response_params(messages, model_settings, model_request_parameters)
+        await connection.response.create(
+            input=openai_messages,
+            model=self.model_name,
+            instructions=instructions,
+            parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
+            tools=tools or OMIT,
+            tool_choice=tool_choice or OMIT,
+            max_output_tokens=model_settings.get('max_tokens', OMIT),
+            stream=True,
+            temperature=model_settings.get('temperature', OMIT),
+            top_p=model_settings.get('top_p', OMIT),
+            truncation=model_settings.get('openai_truncation', OMIT),
+            service_tier=model_settings.get('openai_service_tier', OMIT),
+            previous_response_id=previous_response_id or OMIT,
+            top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
+            store=model_settings.get('openai_store', OMIT),
+            reasoning=reasoning,
+            user=model_settings.get('openai_user', OMIT),
+            text=text or OMIT,
+            include=include or OMIT,
+            prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
+            # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory'
+            prompt_cache_retention=cast(Any, model_settings.get('openai_prompt_cache_retention', OMIT)),
+        )
+
+    async def _ws_send_request(
+        self,
+        connection: AsyncResponsesConnection,
+        messages: list[ModelRequest | ModelResponse],
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> responses.Response:
+        """Send a request over WS and collect events until completion, returning the final Response."""
+        self._ws_acquire()
+        try:
+            await self._ws_create(connection, messages, model_settings, model_request_parameters)
+
+            async for event in connection:
+                if isinstance(event, responses.ResponseCompletedEvent):
+                    return event.response
+                elif isinstance(event, (responses.ResponseFailedEvent, responses.ResponseIncompleteEvent)):
+                    return event.response
+        finally:
+            self._ws_release()
+
+        raise UnexpectedModelBehavior('WebSocket stream ended without a terminal response event')
+
+    async def _ws_send_stream(
+        self,
+        connection: AsyncResponsesConnection,
+        messages: list[ModelRequest | ModelResponse],
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncIterator[responses.ResponseStreamEvent]:
+        """Send a request over WS and yield events until a terminal event."""
+        self._ws_acquire()
+        try:
+            await self._ws_create(connection, messages, model_settings, model_request_parameters)
+
+            async for event in connection:
+                yield event
+                if isinstance(
+                    event,
+                    (
+                        responses.ResponseCompletedEvent,
+                        responses.ResponseFailedEvent,
+                        responses.ResponseIncompleteEvent,
+                    ),
+                ):
+                    return
+        finally:
+            self._ws_release()
+
     @overload
     async def _responses_create(
         self,
@@ -1640,84 +1879,23 @@ class OpenAIResponsesModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncStream[responses.ResponseStreamEvent]: ...
 
-    async def _responses_create(  # noqa: C901
+    async def _responses_create(
         self,
         messages: list[ModelRequest | ModelResponse],
         stream: bool,
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ModelResponse:
-        tools = (
-            self._get_builtin_tools(model_request_parameters)
-            + list(model_settings.get('openai_builtin_tools', []))
-            + self._get_tools(model_request_parameters)
-        )
-        profile = OpenAIModelProfile.from_profile(self.profile)
-        if not tools:
-            tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_output and profile.openai_supports_tool_choice_required:
-            tool_choice = 'required'
-        else:
-            tool_choice = 'auto'
-
-        previous_response_id = model_settings.get('openai_previous_response_id')
-        if previous_response_id == 'auto':
-            previous_response_id, messages = self._get_previous_response_id_and_new_messages(messages)
-
-        instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
-        reasoning = self._get_reasoning(model_settings)
-
-        text: responses.ResponseTextConfigParam | None = None
-        if model_request_parameters.output_mode == 'native':
-            output_object = model_request_parameters.output_object
-            assert output_object is not None
-            text = {'format': self._map_json_schema(output_object)}
-        elif (
-            model_request_parameters.output_mode == 'prompted' and self.profile.supports_json_object_output
-        ):  # pragma: no branch
-            text = {'format': {'type': 'json_object'}}
-
-            # Without this trick, we'd hit this error:
-            # > Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'.
-            # Apparently they're only checking input messages for "JSON", not instructions.
-            assert isinstance(instructions, str)
-            system_prompt_count = sum(1 for m in openai_messages if m.get('role') == 'system')
-            openai_messages.insert(
-                system_prompt_count, responses.EasyInputMessageParam(role='system', content=instructions)
-            )
-            instructions = OMIT
-
-        if verbosity := model_settings.get('openai_text_verbosity'):
-            text = text or {}
-            text['verbosity'] = verbosity
-
-        _drop_sampling_params_for_reasoning(profile, model_settings)
-
-        _drop_unsupported_params(profile, model_settings)
-
-        include: list[responses.ResponseIncludable] = []
-        if profile.openai_supports_encrypted_reasoning_content:
-            include.append('reasoning.encrypted_content')
-        if model_settings.get('openai_include_code_execution_outputs'):
-            include.append('code_interpreter_call.outputs')
-        if model_settings.get('openai_include_web_search_sources'):
-            include.append('web_search_call.action.sources')
-        if model_settings.get('openai_include_file_search_results'):
-            include.append('file_search_call.results')
-        if model_settings.get('openai_logprobs'):
-            include.append('message.output_text.logprobs')
-
-        # When there are no input messages and we're not reusing a previous response,
-        # the OpenAI API will reject a request without any input,
-        # even if there are instructions.
-        # To avoid this provide an explicit empty user message.
-        if not openai_messages and not previous_response_id:
-            openai_messages.append(
-                responses.EasyInputMessageParam(
-                    role='user',
-                    content='',
-                )
-            )
+        (
+            instructions,
+            openai_messages,
+            tools,
+            tool_choice,
+            previous_response_id,
+            reasoning,
+            text,
+            include,
+        ) = await self._build_response_params(messages, model_settings, model_request_parameters)
 
         try:
             extra_headers = model_settings.get('extra_headers', {})

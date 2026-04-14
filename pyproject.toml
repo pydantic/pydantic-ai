@@ -236,6 +236,9 @@ strict = true
 [tool.pytest.ini_options]
 testpaths = ["tests", "docs/.hooks"]
 xfail_strict = true
+markers = [
+    "ws_cassette: marks tests backed by WebSocket cassettes (recorded/replayed via custom fixture)",
+]
 filterwarnings = [
     "error",
     # Issue with python-multipart - we don't want to bump the minimum version of starlette.
