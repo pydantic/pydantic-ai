@@ -71,6 +71,7 @@ with try_import() as imports_successful:
     from anthropic.types.beta import (
         BetaCodeExecutionResultBlock,
         BetaCodeExecutionToolResultBlock,
+        BetaCompactionIterationUsage,
         BetaContentBlock,
         BetaDirectCaller,
         BetaInputJSONDelta,
@@ -82,6 +83,7 @@ with try_import() as imports_successful:
         BetaMemoryTool20250818ViewCommand,
         BetaMessage,
         BetaMessageDeltaUsage,
+        BetaMessageIterationUsage,
         BetaMessageTokensCount,
         BetaRawContentBlockDeltaEvent,
         BetaRawContentBlockStartEvent,
@@ -103,6 +105,7 @@ with try_import() as imports_successful:
     from anthropic.types.beta.beta_raw_message_delta_event import Delta
 
     from pydantic_ai.models.anthropic import (
+        AnthropicCompaction,
         AnthropicModel,
         AnthropicModelSettings,
         _map_usage,  # pyright: ignore[reportPrivateUsage]
@@ -999,7 +1002,6 @@ async def test_beta_header_merge_builtin_tools_and_native_output(allow_model_req
             'context-management-2025-06-27',
             'custom-feature-1',
             'custom-feature-2',
-            'structured-outputs-2025-11-13',
         ]
     )
 
@@ -1099,7 +1101,6 @@ async def test_anthropic_betas_merge_with_other_sources(allow_model_requests: No
     betas = completion_kwargs['betas']
     assert 'interleaved-thinking-2025-05-14' in betas
     assert 'custom-feature-1' in betas
-    assert 'structured-outputs-2025-11-13' in betas
 
 
 async def test_anthropic_mixed_strict_tool_run(allow_model_requests: None, anthropic_api_key: str):
@@ -3383,6 +3384,49 @@ def anth_msg(usage: BetaUsage) -> BetaMessage:
             id='AnthropicMessage-cached',
         ),
         pytest.param(
+            lambda: anth_msg(
+                BetaUsage(
+                    input_tokens=23,
+                    output_tokens=1,
+                    iterations=[
+                        BetaCompactionIterationUsage(
+                            type='compaction',
+                            input_tokens=180,
+                            output_tokens=3,
+                            cache_creation_input_tokens=4,
+                            cache_read_input_tokens=5,
+                        ),
+                        BetaMessageIterationUsage(
+                            type='message',
+                            input_tokens=23,
+                            output_tokens=1,
+                            cache_creation_input_tokens=0,
+                            cache_read_input_tokens=0,
+                        ),
+                    ],
+                )
+            ),
+            snapshot(
+                RequestUsage(
+                    input_tokens=212,
+                    output_tokens=4,
+                    cache_write_tokens=4,
+                    cache_read_tokens=5,
+                    details={
+                        'input_tokens': 23,
+                        'output_tokens': 1,
+                        'compaction_iterations': 1,
+                        'message_iterations': 1,
+                        'compaction_input_tokens': 180,
+                        'compaction_output_tokens': 3,
+                        'compaction_cache_creation_input_tokens': 4,
+                        'compaction_cache_read_input_tokens': 5,
+                    },
+                )
+            ),
+            id='AnthropicMessage-compaction-iterations',
+        ),
+        pytest.param(
             lambda: BetaRawMessageStartEvent(
                 message=anth_msg(BetaUsage(input_tokens=1, output_tokens=1)), type='message_start'
             ),
@@ -3404,6 +3448,59 @@ def test_streaming_usage():
     final_usage = _map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
     assert final_usage == snapshot(
         RequestUsage(input_tokens=1, output_tokens=5, details={'input_tokens': 1, 'output_tokens': 5})
+    )
+
+
+def test_streaming_usage_with_compaction():
+    """Delta events don't carry the `iterations` array, so the fixed compaction totals set
+    by the start event must survive the merge and still be summed into the final totals."""
+    start = BetaRawMessageStartEvent(
+        message=anth_msg(
+            BetaUsage(
+                input_tokens=23,
+                output_tokens=1,
+                iterations=[
+                    BetaCompactionIterationUsage(
+                        type='compaction',
+                        input_tokens=180,
+                        output_tokens=3,
+                        cache_creation_input_tokens=4,
+                        cache_read_input_tokens=5,
+                    ),
+                    BetaMessageIterationUsage(
+                        type='message',
+                        input_tokens=23,
+                        output_tokens=1,
+                        cache_creation_input_tokens=0,
+                        cache_read_input_tokens=0,
+                    ),
+                ],
+            )
+        ),
+        type='message_start',
+    )
+    initial_usage = _map_usage(start, 'anthropic', '', 'unknown')
+    delta = BetaRawMessageDeltaEvent(
+        delta=Delta(), usage=BetaMessageDeltaUsage(input_tokens=23, output_tokens=500), type='message_delta'
+    )
+    final_usage = _map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
+    assert final_usage == snapshot(
+        RequestUsage(
+            input_tokens=212,
+            output_tokens=503,
+            cache_write_tokens=4,
+            cache_read_tokens=5,
+            details={
+                'input_tokens': 23,
+                'output_tokens': 500,
+                'compaction_iterations': 1,
+                'message_iterations': 1,
+                'compaction_input_tokens': 180,
+                'compaction_output_tokens': 3,
+                'compaction_cache_creation_input_tokens': 4,
+                'compaction_cache_read_input_tokens': 5,
+            },
+        )
     )
 
 
@@ -8983,4 +9080,354 @@ Fix the errors and try again.\
                 ],
             },
         ]
+    )
+
+
+async def test_anthropic_compaction_capability_settings(allow_model_requests: None, anthropic_api_key: str):
+    """Test that AnthropicCompaction capability correctly configures model settings."""
+    from unittest.mock import Mock
+
+    cap = AnthropicCompaction(token_threshold=100_000, instructions='Keep it short.')
+
+    settings_resolver = cap.get_model_settings()
+    assert callable(settings_resolver)
+    settings = settings_resolver(Mock(model_settings=None))
+    assert settings is not None
+    assert settings.get('anthropic_context_management') == {
+        'edits': [
+            {
+                'type': 'compact_20260112',
+                'trigger': {'type': 'input_tokens', 'value': 100_000},
+                'instructions': 'Keep it short.',
+            }
+        ]
+    }
+
+
+async def test_anthropic_compaction_capability_settings_with_pause(allow_model_requests: None, anthropic_api_key: str):
+    """Test that AnthropicCompaction correctly includes pause_after_compaction."""
+    from unittest.mock import Mock
+
+    cap = AnthropicCompaction(pause_after_compaction=True)
+    settings_resolver = cap.get_model_settings()
+    assert callable(settings_resolver)
+    settings = settings_resolver(Mock(model_settings=None))
+    assert settings is not None
+    anthropic_settings = cast(AnthropicModelSettings, settings)
+    edit = anthropic_settings['anthropic_context_management']['edits'][0]  # type: ignore[reportUnknownMemberType]
+    assert edit['pause_after_compaction'] is True
+
+
+async def test_anthropic_compaction_capability_preserves_existing_edits(
+    allow_model_requests: None, anthropic_api_key: str
+):
+    """Test that AnthropicCompaction appends its edit to existing user-configured edits."""
+    from unittest.mock import Mock
+
+    cap = AnthropicCompaction(token_threshold=100_000)
+    settings_resolver = cap.get_model_settings()
+    assert callable(settings_resolver)
+
+    # Simulate existing user-configured edits in model_settings
+    existing_settings = {
+        'anthropic_context_management': {
+            'edits': [{'type': 'some_other_edit', 'custom': True}],
+        }
+    }
+    settings = settings_resolver(Mock(model_settings=existing_settings))
+    assert settings is not None
+    cm = cast(dict[str, Any], settings.get('anthropic_context_management'))
+    edits = cast(list[dict[str, Any]], cm['edits'])
+    assert len(edits) == 2
+    assert edits[0] == {'type': 'some_other_edit', 'custom': True}
+    assert edits[1] == {'type': 'compact_20260112', 'trigger': {'type': 'input_tokens', 'value': 100_000}}
+
+
+async def test_anthropic_compaction_round_trip(allow_model_requests: None, anthropic_api_key: str):
+    """Test that CompactionPart is correctly round-tripped in Anthropic message mapping."""
+    from pydantic_ai.messages import CompactionPart
+
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    # Create a message history that includes a CompactionPart
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello!')]),
+        ModelResponse(
+            parts=[
+                CompactionPart(content='Summary: user said hello.', provider_name='anthropic'),
+                TextPart(content='Hello! How can I help?'),
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(parts=[UserPromptPart(content='What did I say earlier?')]),
+    ]
+
+    # Run the agent with the compaction in history
+    agent = Agent(model=model, instructions='Be brief.')
+    result = await agent.run('What did I say earlier?', message_history=messages)
+
+    # The model should be able to respond based on the compacted context
+    assert result.output  # Just verify we got a response
+
+
+async def test_anthropic_compaction_beta_header(allow_model_requests: None):
+    """Test that compact-2026-01-12 beta is added when anthropic_context_management is set."""
+    c = completion_message([BetaTextBlock(text='response', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m, model_settings=AnthropicModelSettings(anthropic_context_management={'edits': [{'type': 'compact_20260112'}]})
+    )
+
+    result = await agent.run('hello')
+    assert result.output == 'response'
+
+    # Verify the beta header was included in the API call
+    kwargs = cast(MockAnthropic, mock_client).chat_completion_kwargs[0]
+    assert 'compact-2026-01-12' in kwargs['betas']
+
+
+async def test_anthropic_compaction_in_response(allow_model_requests: None):
+    """Test that BetaCompactionBlock in API response is mapped to CompactionPart."""
+    from anthropic.types.beta import BetaCompactionBlock
+
+    from pydantic_ai.messages import CompactionPart
+
+    c = completion_message(
+        [
+            BetaCompactionBlock(content='Summary of prior conversation.', type='compaction'),
+            BetaTextBlock(text='Based on our conversation, here is my response.', type='text'),
+        ],
+        BetaUsage(input_tokens=100, output_tokens=20),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('Continue our conversation')
+    assert result.output == 'Based on our conversation, here is my response.'
+
+    # Verify the CompactionPart is in the response messages
+    response_msgs = [msg for msg in result.all_messages() if isinstance(msg, ModelResponse)]
+    assert len(response_msgs) == 1
+    compaction_parts = [p for p in response_msgs[0].parts if isinstance(p, CompactionPart)]
+    assert len(compaction_parts) == 1
+    assert compaction_parts[0].content == 'Summary of prior conversation.'
+    assert compaction_parts[0].provider_name == 'anthropic'
+
+
+async def test_anthropic_compaction_streaming(allow_model_requests: None):
+    """Test that BetaCompactionBlock in streaming response is handled correctly."""
+    from anthropic.types.beta import (
+        BetaCompactionBlock,
+        BetaCompactionContentBlockDelta,
+    )
+
+    from pydantic_ai.messages import CompactionPart
+
+    stream: list[BetaRawMessageStreamEvent] = [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id='msg_123',
+                model='claude-sonnet-4-6',
+                role='assistant',
+                type='message',
+                content=[],
+                stop_reason=None,
+                usage=BetaUsage(input_tokens=100, output_tokens=0),
+            ),
+        ),
+        BetaRawContentBlockStartEvent(
+            type='content_block_start',
+            index=0,
+            content_block=BetaCompactionBlock(content='Summary of conversation.', type='compaction'),
+        ),
+        BetaRawContentBlockDeltaEvent(
+            type='content_block_delta',
+            index=0,
+            delta=BetaCompactionContentBlockDelta(content='Updated summary of conversation.', type='compaction_delta'),
+        ),
+        BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
+        BetaRawContentBlockStartEvent(
+            type='content_block_start',
+            index=1,
+            content_block=BetaTextBlock(text='', type='text'),
+        ),
+        BetaRawContentBlockDeltaEvent(
+            type='content_block_delta',
+            index=1,
+            delta=BetaTextDelta(type='text_delta', text='Here is my response.'),
+        ),
+        BetaRawContentBlockStopEvent(type='content_block_stop', index=1),
+        BetaRawMessageDeltaEvent(
+            type='message_delta',
+            delta=Delta(stop_reason='end_turn'),
+            usage=BetaMessageDeltaUsage(output_tokens=15),
+        ),
+        BetaRawMessageStopEvent(type='message_stop'),
+    ]
+
+    mock_client = MockAnthropic.create_stream_mock(stream)
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('Continue') as result:
+        output = await result.get_output()
+    assert output == 'Here is my response.'
+
+    # Verify CompactionPart is in the response
+    response_msgs = [msg for msg in result.all_messages() if isinstance(msg, ModelResponse)]
+    assert len(response_msgs) == 1
+    compaction_parts = [p for p in response_msgs[0].parts if isinstance(p, CompactionPart)]
+    assert len(compaction_parts) == 1
+    assert compaction_parts[0].content == 'Updated summary of conversation.'
+    assert compaction_parts[0].provider_name == 'anthropic'
+
+
+async def test_anthropic_compaction_only_response(allow_model_requests: None):
+    """Test that a compaction-only response (pause_after_compaction=True) uses content as text output."""
+    from anthropic.types.beta import BetaCompactionBlock
+
+    from pydantic_ai.messages import CompactionPart
+
+    # Single response: compaction only (simulating pause_after_compaction=True)
+    # The compaction content is treated as text output, no retry needed
+    mock_client = MockAnthropic.create_mock(
+        completion_message(
+            [BetaCompactionBlock(content='Summary of prior conversation.', type='compaction')],
+            BetaUsage(input_tokens=100, output_tokens=20),
+        ),
+    )
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('Continue our conversation')
+    # CompactionPart content is treated as text output
+    assert result.output == 'Summary of prior conversation.'
+
+    # Verify the compaction is preserved in the message history
+    all_msgs = result.all_messages()
+    compaction_parts = [
+        p for msg in all_msgs if isinstance(msg, ModelResponse) for p in msg.parts if isinstance(p, CompactionPart)
+    ]
+    assert len(compaction_parts) >= 1
+    assert compaction_parts[0].content == 'Summary of prior conversation.'
+
+
+async def test_anthropic_compaction_end_to_end(allow_model_requests: None, anthropic_api_key: str):
+    """End-to-end test: Anthropic returns a compaction block when context exceeds threshold."""
+    from pydantic_ai.messages import CompactionPart
+
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    # Use a 50k threshold (minimum) and pad with enough text to exceed it (~4 chars/token)
+    padding = 'The quick brown fox jumps over the lazy dog. ' * 5000  # ~230k chars ≈ ~55k tokens
+    agent = Agent(
+        model=model,
+        instructions='You are a helpful assistant. Be very brief.',
+        capabilities=[AnthropicCompaction(token_threshold=50_000)],
+    )
+
+    # First run with padded content to exceed 50k tokens
+    result = await agent.run(f'Remember this context: {padding}\n\nNow say hello.')
+
+    # The response should contain a CompactionPart (the API compacted the long context)
+    all_msgs = result.all_messages()
+    compaction_parts = [
+        part
+        for msg in all_msgs
+        if isinstance(msg, ModelResponse)
+        for part in msg.parts
+        if isinstance(part, CompactionPart)
+    ]
+    assert len(compaction_parts) >= 1, (
+        f'Expected compaction in response, got parts: {[type(p).__name__ for msg in all_msgs if isinstance(msg, ModelResponse) for p in msg.parts]}'
+    )
+    compaction = compaction_parts[0]
+    assert compaction.provider_name == 'anthropic'
+    assert compaction.content is not None  # Anthropic compaction has readable text
+
+    # Second run: verify compacted history round-trips successfully
+    result2 = await agent.run('What did I ask you to do?', message_history=result.all_messages())
+    assert result2.output  # Model should respond based on compacted context
+
+
+async def test_anthropic_compaction_usage_with_cache(allow_model_requests: None, anthropic_api_key: str):
+    """Verify usage aggregation when compaction + prompt caching interact in a real response.
+
+    The Anthropic compaction docs only say top-level `input_tokens`/`output_tokens` exclude
+    compaction iteration usage — they're silent on cache tokens. This cassette pins the real
+    shape: top-level `cache_creation_input_tokens` is `0` even though the compaction iteration
+    wrote ~55k tokens to cache, so `_map_usage` must sum the compaction cache back in to avoid
+    understating the real cost.
+    """
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    padding = 'The quick brown fox jumps over the lazy dog. ' * 5000  # ~55k tokens
+    agent = Agent(
+        model=model,
+        instructions='You are a helpful assistant. Be very brief.',
+        capabilities=[AnthropicCompaction(token_threshold=50_000)],
+        model_settings=AnthropicModelSettings(anthropic_cache_messages=True),
+    )
+
+    result = await agent.run(f'Remember this context: {padding}\n\nNow say hello.')
+    assert result.usage() == snapshot(
+        RunUsage(
+            input_tokens=55376,
+            cache_write_tokens=55096,
+            output_tokens=90,
+            details={
+                'input_tokens': 180,
+                'output_tokens': 8,
+                'cache_creation_input_tokens': 0,
+                'cache_read_input_tokens': 0,
+                'compaction_iterations': 1,
+                'message_iterations': 1,
+                'compaction_input_tokens': 100,
+                'compaction_output_tokens': 82,
+                'compaction_cache_creation_input_tokens': 55096,
+            },
+            requests=1,
+        )
+    )
+
+
+async def test_anthropic_compaction_usage_with_cache_streaming(allow_model_requests: None, anthropic_api_key: str):
+    """Same as the non-streaming variant, but via `agent.run_stream`. The real API sends the
+    `iterations` array on the `message_delta` event (not `message_start`), so this pins the
+    merge-across-events path — specifically that the compaction cache (55k tokens) survives
+    the delta overwriting top-level `cache_creation_input_tokens` back to 0.
+    """
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    padding = 'The quick brown fox jumps over the lazy dog. ' * 5000
+    agent = Agent(
+        model=model,
+        instructions='You are a helpful assistant. Be very brief.',
+        capabilities=[AnthropicCompaction(token_threshold=50_000)],
+        model_settings=AnthropicModelSettings(anthropic_cache_messages=True),
+    )
+
+    async with agent.run_stream(f'Remember this context: {padding}\n\nNow say hello.') as result:
+        async for _ in result.stream_text():
+            pass
+        usage = result.usage()
+    assert usage == snapshot(
+        RunUsage(
+            input_tokens=55368,
+            cache_write_tokens=55096,
+            output_tokens=76,
+            details={
+                'input_tokens': 172,
+                'output_tokens': 5,
+                'cache_creation_input_tokens': 0,
+                'cache_read_input_tokens': 0,
+                'compaction_iterations': 1,
+                'message_iterations': 1,
+                'compaction_input_tokens': 100,
+                'compaction_output_tokens': 71,
+                'compaction_cache_creation_input_tokens': 55096,
+            },
+            requests=1,
+        )
     )

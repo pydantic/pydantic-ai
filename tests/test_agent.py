@@ -3511,7 +3511,7 @@ def test_unknown_tool():
     agent = Agent(FunctionModel(empty))
 
     with capture_run_messages() as messages:
-        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for output validation'):
+        with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'foobar' exceeded max retries count of 1"):
             agent.run_sync('Hello')
     assert messages == snapshot(
         [
@@ -3607,7 +3607,7 @@ def test_unknown_tool_multiple_retries():
     agent = Agent(FunctionModel(empty), retries=num_retries)
 
     with capture_run_messages() as messages:
-        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(2\) for output validation'):
+        with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'foobar' exceeded max retries count of 2"):
             agent.run_sync('Hello')
     assert messages == snapshot(
         [
@@ -6354,10 +6354,10 @@ async def test_agent_context_manager_no_model():
 
 
 def test_cached_async_http_client_deprecated():
-    from pydantic_ai.models import cached_async_http_client
+    from pydantic_ai.models import cached_async_http_client  # pyright: ignore[reportDeprecated]
 
-    with pytest.warns(DeprecationWarning, match='cached_async_http_client is deprecated'):
-        cached_async_http_client()
+    with pytest.warns(DeprecationWarning, match='cached_async_http_client.*is deprecated'):
+        cached_async_http_client()  # pyright: ignore[reportDeprecated]
 
 
 @requires_openai
@@ -9147,6 +9147,263 @@ class TestOverrideWithModelSettings:
 
         result = agent.run_sync('Hello')
         assert result.output == 'max_tokens=100 temperature=None'
+
+
+def test_output_validator_retry_consistency_across_paths():
+    """Output validators should see global retry info, matching the text-output path.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4385:
+    the text path sets ctx.retry/max_retries to the global output retry counter,
+    but the tool-output path was using the per-tool counter, causing inconsistent
+    ctx.retry and ctx.max_retries values in @agent.output_validator.
+
+    Using ToolOutput(max_retries=5) with output_retries=2 exposes the bug:
+    without the fix, the validator would see max_retries=5 (per-tool value)
+    instead of max_retries=2 (global output_retries, matching the text path).
+    """
+    retries_log: list[int] = []
+    max_retries_log: list[int] = []
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        args_json = '{"a": 1, "b": "foo"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=ToolOutput(Foo, max_retries=5),
+        output_retries=2,
+    )
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+        retries_log.append(ctx.retry)
+        max_retries_log.append(ctx.max_retries)
+        if ctx.retry == 2:
+            return o
+        raise ModelRetry(f'Retry {ctx.retry}')
+
+    result = agent.run_sync('Hello')
+    assert isinstance(result.output, Foo)
+
+    assert retries_log == [0, 1, 2]
+    assert max_retries_log == [2, 2, 2]
+
+
+def test_output_validator_exceeds_output_retries():
+    """Output validator that never succeeds should respect output_retries limit.
+
+    When the output_validator always raises ModelRetry, the agent should stop
+    after output_retries attempts. The per-tool limit from ToolManager enforces
+    this via output_retries flowing into ToolsetTool.max_retries.
+    """
+    retries_log: list[int] = []
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        args_json = '{"a": 1, "b": "foo"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=ToolOutput(Foo),
+        output_retries=2,
+    )
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+        retries_log.append(ctx.retry)
+        raise ModelRetry(f'Retry {ctx.retry}')
+
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries \\(2\\) for output validation'):
+        agent.run_sync('Hello')
+
+    assert retries_log == [0, 1, 2]
+
+
+async def test_concurrent_runs_output_retry_isolation():
+    """Concurrent runs on the same agent must not share output retry state.
+
+    OutputToolset.for_run_step returns a shallow copy so each run gets
+    isolated _output_retry/_output_max_retries values across await points.
+    """
+    retries_by_run: dict[str, list[int]] = {'fast': [], 'slow': []}
+
+    call_count = 0
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        assert info.output_tools is not None
+        args_json = '{"a": 1, "b": "foo"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=ToolOutput(Foo),
+        output_retries=3,
+    )
+
+    @agent.output_validator
+    async def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+        # Use the prompt to identify which run this is
+        run_id = 'slow' if 'slow' in (ctx.prompt or '') else 'fast'
+        retries_by_run[run_id].append(ctx.retry)
+        if ctx.retry < 2:
+            if run_id == 'slow':
+                await asyncio.sleep(0.05)
+            raise ModelRetry(f'{run_id} retry {ctx.retry}')
+        return o
+
+    result_fast, result_slow = await asyncio.gather(
+        agent.run('fast'),
+        agent.run('slow'),
+    )
+
+    assert isinstance(result_fast.output, Foo)
+    assert isinstance(result_slow.output, Foo)
+    assert retries_by_run['fast'] == [0, 1, 2]
+    assert retries_by_run['slow'] == [0, 1, 2]
+
+
+def test_output_validator_retry_counter_with_tool_switch():
+    """Global retry counter tracks across output tool switches.
+
+    When the model switches from one output tool to another, the global
+    retry counter (visible to output validators via ctx.retry) keeps
+    incrementing. Each tool's per-tool counter is independent.
+    """
+    validator_retries: list[int] = []
+    validator_max_retries: list[int] = []
+
+    def output_a(value: str) -> str:
+        return value
+
+    def output_b(value: str) -> str:
+        return value
+
+    call_count = 0
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        assert info.output_tools is not None
+        tool_names: dict[str, str] = {}
+        tool_names.update({t.name: t.name for t in info.output_tools})
+
+        name_a = next(n for n in tool_names if 'output_a' in n)
+        name_b = next(n for n in tool_names if 'output_b' in n)
+
+        call_count += 1
+        # First call: output_b (will fail validation), second+: output_a
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(name_b, '{"value": "x"}')])
+        return ModelResponse(parts=[ToolCallPart(name_a, '{"value": "hello"}')])
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=[
+            ToolOutput(output_a, max_retries=3),
+            ToolOutput(output_b, max_retries=1),
+        ],
+        retries=0,
+    )
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], o: str) -> str:
+        validator_retries.append(ctx.retry)
+        validator_max_retries.append(ctx.max_retries)
+        if ctx.retry < 2:
+            raise ModelRetry(f'Retry {ctx.retry}')
+        return o
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'hello'
+
+    # Global retry counter increments across tool switches
+    assert validator_retries == [0, 1, 2]
+    # max_retries reflects the agent-level default (0) since output_retries not set
+    assert validator_max_retries == [0, 0, 0]
+
+
+def test_output_tool_validation_vs_execution_retry_counting():
+    """Both validation failures and execution failures increment the global retry counter.
+
+    Validation failure (bad args from model) and execution failure (ModelRetry from
+    output function) both go through process_tool_calls and should both increment
+    ctx.state.retries for output validator context tracking.
+    """
+    validator_retries: list[int] = []
+    call_count = 0
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        assert info.output_tools is not None
+        call_count += 1
+        tool_name = info.output_tools[0].name
+        # First call: send invalid args (validation failure path)
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name, '{"bad_field": 1}')])
+        # Subsequent calls: send valid args (execution path)
+        return ModelResponse(parts=[ToolCallPart(tool_name, '{"a": 1, "b": "foo"}')])
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=ToolOutput(Foo),
+        output_retries=5,
+    )
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+        validator_retries.append(ctx.retry)
+        if ctx.retry < 2:
+            raise ModelRetry(f'Retry {ctx.retry}')
+        return o
+
+    result = agent.run_sync('Hello')
+    assert isinstance(result.output, Foo)
+
+    # retry 0: never reached validator (validation failure from bad args)
+    # retry 1: reached validator, raised ModelRetry (execution failure)
+    # retry 2: reached validator, succeeded
+    assert validator_retries == [1, 2]
+
+
+def test_unknown_tool_with_valid_tool_does_not_exhaust_retries():
+    """Unknown tool calls should not increment the global retry counter.
+
+    When the model returns both an unknown tool and a valid tool in the same
+    response, the unknown tool is handled via per-tool retries (ModelRetry)
+    downstream. The global retry counter should only reflect output validation
+    retries, not unknown-tool retries, so valid tools keep working.
+
+    We set retries=2 (per-tool max for unknown tools) and output_retries=1
+    (global max for output validation) to isolate the bug: per-tool retries
+    allow 2 rounds of the unknown tool, but the old code's global increment
+    would exhaust output_retries after just 2 rounds.
+    """
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count <= 2:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('nonexistent_tool', '{}'),
+                    ToolCallPart('valid_tool', '{"x": 1}'),
+                ]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_function), retries=2, output_retries=1)
+
+    @agent.tool_plain
+    def valid_tool(x: int) -> str:
+        return f'result={x}'
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'done'
+    assert call_count == 3
 
 
 # endregion

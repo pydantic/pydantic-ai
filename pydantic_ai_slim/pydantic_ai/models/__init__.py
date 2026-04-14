@@ -19,7 +19,7 @@ from types import TracebackType
 from typing import Any, Generic, Literal, TypeVar, cast, get_args, overload
 
 import httpx
-from typing_extensions import Self, TypeAliasType, TypedDict
+from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 
 from .. import _utils
 from .._json_schema import JsonSchemaTransformer
@@ -48,7 +48,7 @@ from ..messages import (
     ToolCallPart,
     VideoUrl,
 )
-from ..output import OutputMode
+from ..output import OutputMode, StructuredOutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
 from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
@@ -543,6 +543,17 @@ class ModelRequestParameters:
             return StructuredTextOutputSchema.build_instructions(self.prompted_output_template, self.output_object)
         return None
 
+    def with_default_output_mode(self, output_mode: StructuredOutputMode) -> ModelRequestParameters:
+        """Set the default output mode if the current mode is 'auto', atomically updating allow_text_output.
+
+        No-op if the current output_mode is not 'auto'. This ensures the two fields stay in sync —
+        output_mode='tool' implies allow_text_output=False, while 'native' and 'prompted' imply
+        allow_text_output=True.
+        """
+        if self.output_mode != 'auto':
+            return self
+        return replace(self, output_mode=output_mode, allow_text_output=output_mode in ('native', 'prompted'))
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
@@ -631,6 +642,20 @@ class Model(ABC, Generic[InterfaceClient]):
         # This method is not required, but you need to implement it if you want to support `UsageLimits.count_tokens_before_request`.
         raise NotImplementedError(f'Token counting ahead of the request is not supported by {self.__class__.__name__}')
 
+    async def compact_messages(
+        self,
+        request_context: ModelRequestContext,
+        *,
+        instructions: str | None = None,
+    ) -> ModelResponse:
+        """Compact messages to reduce conversation context size.
+
+        This method is optional and only supported by specific providers
+        (e.g. OpenAI Responses API). Providers that support compaction
+        override this method with their implementation.
+        """
+        raise NotImplementedError(f'Message compaction is not supported by {self.__class__.__name__}')
+
     @asynccontextmanager
     async def request_stream(
         self,
@@ -667,7 +692,7 @@ class Model(ABC, Generic[InterfaceClient]):
 
         return model_request_parameters
 
-    def prepare_request(  # noqa: C901
+    def prepare_request(
         self,
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
@@ -701,13 +726,7 @@ class Model(ABC, Generic[InterfaceClient]):
                 builtin_tools=list({tool.unique_id: tool for tool in builtin_tools}.values()),
             )
 
-        if params.output_mode == 'auto':
-            output_mode = self.profile.default_structured_output_mode
-            params = replace(
-                params,
-                output_mode=output_mode,
-                allow_text_output=output_mode in ('native', 'prompted'),
-            )
+        params = params.with_default_output_mode(self.profile.default_structured_output_mode)
 
         # Reset irrelevant fields
         if params.output_tools and params.output_mode != 'tool':
@@ -1326,16 +1345,11 @@ def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: in
     )
 
 
+@deprecated('`cached_async_http_client` is deprecated, use `create_async_http_client` instead.')
 def cached_async_http_client(
     *, provider: str | None = None, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5
 ) -> httpx.AsyncClient:
-    """Deprecated. Use [`create_async_http_client`][pydantic_ai.models.create_async_http_client] instead."""
-    warnings.warn(
-        'cached_async_http_client is deprecated, use create_async_http_client instead. '
-        'Note: the new function creates a new client per call instead of returning a cached one.',
-        DeprecationWarning,
-        stacklevel=2,
-    )
+    """Use [`create_async_http_client`][pydantic_ai.models.create_async_http_client] instead."""
     return create_async_http_client(timeout=timeout, connect=connect)
 
 
