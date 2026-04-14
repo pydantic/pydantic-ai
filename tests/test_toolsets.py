@@ -809,6 +809,25 @@ async def test_prepare_function_sees_agent_max_retries():
     assert captured_last_attempt[0] is False
 
 
+async def test_toolset_tool_max_retries_none_resolved_by_tool_manager():
+    """`ToolsetTool.max_retries` stays `None` out of `get_tools` when unset, and `ToolManager`
+    resolves it to `ctx.max_retries` at execution time."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def always_fails(x: int) -> int:
+        """A tool that always fails."""
+        raise ModelRetry('Always fails')
+
+    ctx = build_run_context(None, max_retries=2)
+    tools = await toolset.get_tools(ctx)
+    assert tools['always_fails'].max_retries is None
+
+    agent = Agent('test', toolsets=[toolset], retries=2)
+    with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 2'):
+        await agent.run('call always_fails', model=TestModel())
+
+
 async def test_tool_manager_multiple_failed_tools():
     """Test retry logic when multiple tools fail in the same run step."""
 

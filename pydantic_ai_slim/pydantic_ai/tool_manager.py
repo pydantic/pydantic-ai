@@ -171,6 +171,11 @@ class ToolManager(Generic[AgentDepsT]):
         if self.ctx.retries.get(name, 0) == max_retries:
             raise UnexpectedModelBehavior(f'Tool {name!r} exceeded max retries count of {max_retries}') from error
 
+    def _resolve_max_retries(self, tool: ToolsetTool[AgentDepsT]) -> int:
+        """Resolve a tool's `max_retries`, falling back to `ctx.max_retries` when unset."""
+        assert self.ctx is not None
+        return tool.max_retries if tool.max_retries is not None else self.ctx.max_retries
+
     @staticmethod
     def _wrap_error_as_retry(name: str, call: ToolCallPart, error: ValidationError | ModelRetry) -> ToolRetryError:
         """Convert a ValidationError or ModelRetry to a ToolRetryError with a RetryPromptPart."""
@@ -197,7 +202,7 @@ class ToolManager(Generic[AgentDepsT]):
             tool_name=call.tool_name,
             tool_call_id=call.tool_call_id,
             retry=self.ctx.retries.get(call.tool_name, 0),
-            max_retries=tool.max_retries,
+            max_retries=self._resolve_max_retries(tool),
             tool_call_approved=approved,
             tool_call_metadata=metadata,
             partial_output=allow_partial,
@@ -325,7 +330,7 @@ class ToolManager(Generic[AgentDepsT]):
             except ModelRetry as e:
                 # Hook raised ModelRetry — convert to ToolRetryError for retry handling
                 name = call.tool_name
-                self._check_max_retries(name, validated.tool.max_retries, e)
+                self._check_max_retries(name, self._resolve_max_retries(validated.tool), e)
                 self.failed_tools.add(name)
                 raise self._wrap_error_as_retry(name, call, e) from e
         else:
@@ -399,7 +404,7 @@ class ToolManager(Generic[AgentDepsT]):
                 validation_error=None,
             )
         except (ValidationError, ModelRetry) as e:
-            max_retries = tool.max_retries if tool is not None else self.default_max_retries
+            max_retries = self._resolve_max_retries(tool) if tool is not None else self.default_max_retries
             self._check_max_retries(name, max_retries, e)
 
             if not allow_partial:
@@ -503,7 +508,7 @@ class ToolManager(Generic[AgentDepsT]):
                 validated.tool,
             )
         except ModelRetry as e:
-            self._check_max_retries(name, validated.tool.max_retries, e)
+            self._check_max_retries(name, self._resolve_max_retries(validated.tool), e)
             self.failed_tools.add(name)
             raise self._wrap_error_as_retry(name, validated.call, e) from e
 

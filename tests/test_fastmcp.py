@@ -13,6 +13,7 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import BinaryContent, InstructionPart
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage
 
 from ._inline_snapshot import snapshot
@@ -302,23 +303,27 @@ class TestFastMCPToolsetToolDiscovery:
 
             test_tool = tools['test_tool']
             assert test_tool.toolset is toolset
-            assert {
-                'name': test_tool.tool_def.name,
-                'description': test_tool.tool_def.description,
-                'max_retries': test_tool.max_retries,
-                'parameters_json_schema': test_tool.tool_def.parameters_json_schema,
-            } == snapshot(
+            assert test_tool.tool_def.name == 'test_tool'
+            assert test_tool.tool_def.description == 'A test tool that returns a formatted string.'
+            assert test_tool.max_retries is None
+            assert test_tool.tool_def.parameters_json_schema == snapshot(
                 {
-                    'name': 'test_tool',
-                    'description': 'A test tool that returns a formatted string.',
-                    'max_retries': 0,
-                    'parameters_json_schema': {
-                        'properties': {'param1': {'type': 'string'}, 'param2': {'default': 0, 'type': 'integer'}},
-                        'required': ['param1'],
-                        'type': 'object',
-                    },
+                    'properties': {'param1': {'type': 'string'}, 'param2': {'default': 0, 'type': 'integer'}},
+                    'required': ['param1'],
+                    'type': 'object',
                 }
             )
+
+    async def test_fastmcp_tool_for_tool_def_uses_toolset_max_retries(self, fastmcp_client: Client[FastMCPTransport]):
+        """`tool_for_tool_def` mirrors `self.max_retries` — `None` by default, explicit int when set —
+        so durable execution paths inherit the agent's retries via `ToolManager` at execution time."""
+        tool_def = ToolDefinition(name='x', description='', parameters_json_schema={})
+
+        toolset_default = FastMCPToolset(fastmcp_client)
+        assert toolset_default.tool_for_tool_def(tool_def).max_retries is None
+
+        toolset_explicit = FastMCPToolset(fastmcp_client, max_retries=5)
+        assert toolset_explicit.tool_for_tool_def(tool_def).max_retries == 5
 
     async def test_get_tools_with_empty_server(self, run_context: RunContext[None]):
         """Test getting tools from an empty FastMCP server."""
