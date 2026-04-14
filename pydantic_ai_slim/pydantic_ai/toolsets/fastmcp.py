@@ -241,11 +241,13 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
                 else:
                     raise e
 
-        # If we have structured content, return that
-        if call_tool_result.structured_content:
-            return call_tool_result.structured_content
+        if structured := call_tool_result.structured_content:
+            # The MCP SDK wraps primitives and generic types like list in a `result` key, but we want to use the raw value returned by the tool function.
+            # See https://github.com/modelcontextprotocol/python-sdk#structured-output
+            if isinstance(structured, dict) and len(structured) == 1 and 'result' in structured:
+                return structured['result']
+            return structured
 
-        # Otherwise, return the content
         return _map_fastmcp_tool_results(parts=call_tool_result.content)
 
     async def call_tool(

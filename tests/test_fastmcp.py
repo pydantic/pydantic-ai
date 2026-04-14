@@ -353,7 +353,7 @@ class TestFastMCPToolsetToolCalling:
                 name='test_tool', tool_args={'param1': 'hello', 'param2': 42}, ctx=run_context, tool=test_tool
             )
 
-            assert result == {'result': 'param1=hello, param2=42'}
+            assert result == 'param1=hello, param2=42'
 
     async def test_call_tool_with_structured_content(
         self,
@@ -419,7 +419,7 @@ class TestFastMCPToolsetToolCalling:
                 name='text_tool', tool_args={'message': 'Hello World'}, ctx=run_context, tool=text_tool
             )
 
-            assert result == snapshot({'result': 'Echo: Hello World'})
+            assert result == snapshot('Echo: Hello World')
 
             text_list_tool = tools['text_list_tool']
 
@@ -462,8 +462,7 @@ class TestFastMCPToolsetToolCalling:
                 name='json_tool', tool_args={'data': {'key': 'value'}}, ctx=run_context, tool=json_tool
             )
 
-            # Should parse the JSON string into a dict
-            assert result == snapshot({'result': '{"received": {"key": "value"}, "processed": true}'})
+            assert result == snapshot('{"received": {"key": "value"}, "processed": true}')
 
     async def test_call_tool_with_resource_link(
         self,
@@ -574,7 +573,7 @@ class TestFastMCPToolsetToolCalling:
             tools = await toolset.get_tools(run_context)
             test_tool = tools['test_tool']
             result = await toolset.call_tool('test_tool', {'param1': 'hello', 'param2': 42}, run_context, test_tool)
-        assert result == {'result': 'param1=hello, param2=42'}
+        assert result == 'param1=hello, param2=42'
         assert called
 
     async def test_process_tool_call_none_calls_direct(
@@ -590,7 +589,7 @@ class TestFastMCPToolsetToolCalling:
             result = await fastmcp_toolset.call_tool(
                 'test_tool', {'param1': 'world', 'param2': 0}, run_context, test_tool
             )
-        assert result == {'result': 'param1=world, param2=0'}
+        assert result == 'param1=world, param2=0'
 
 
 class TestFastMCPToolsetFactoryMethods:
@@ -680,7 +679,7 @@ server.run()"""
             result = await toolset.call_tool(
                 name='test_tool', tool_args={'param1': 'hello', 'param2': 42}, ctx=run_context, tool=tools['test_tool']
             )
-            assert result == {'result': 'param1=hello, param2=42'}
+            assert result == 'param1=hello, param2=42'
 
     async def test_from_mcp_config_dict(self):
         """Test creating toolset from MCP config dictionary."""
