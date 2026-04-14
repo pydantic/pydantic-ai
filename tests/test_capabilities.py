@@ -1996,9 +1996,9 @@ async def test_combined_capability_for_run_cancels_siblings_on_failure():
     class SlowCap(AbstractCapability[None]):
         async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
             nonlocal sibling_completed
-            await anyio.sleep(0.5)
-            sibling_completed = True
-            return self
+            await anyio.sleep(0.1)
+            sibling_completed = True  # pragma: no cover
+            return self  # pragma: no cover
 
     combined = CombinedCapability([FailingCap(), SlowCap()])
     ctx = _build_run_context()
@@ -2006,7 +2006,7 @@ async def test_combined_capability_for_run_cancels_siblings_on_failure():
     with pytest.raises(RuntimeError, match='boom'):
         await combined.for_run(ctx)
 
-    await anyio.sleep(0.6)
+    await anyio.sleep(0.2)
     assert sibling_completed is False
 
 
