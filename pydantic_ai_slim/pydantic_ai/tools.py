@@ -692,16 +692,13 @@ class ToolDefinition:
     """
 
     @cached_property
-    def function_signature(self) -> FunctionSignature | None:
+    def function_signature(self) -> FunctionSignature:
         """The function signature shape for this tool.
 
         Lazily computed from `parameters_json_schema` and `return_schema` on first access.
-        Returns `None` for output tools. Name and description are not stored on the
-        signature — pass them at render time via
-        `sig.render(body, name=td.name, description=td.description)`.
+        Name and description are not stored on the signature — pass them at render time
+        via `sig.render(body, name=td.name, description=td.description)`.
         """
-        if self.kind == 'output':
-            return None
         return FunctionSignature.from_schema(
             name=self.name,
             parameters_schema=self.parameters_json_schema,
@@ -714,7 +711,6 @@ class ToolDefinition:
         Convenience wrapper around `self.function_signature.render()` that
         supplies `name` and `description` from this tool definition.
         """
-        assert self.function_signature is not None, 'function_signature is not available for output tools'
         return self.function_signature.render(body, name=self.name, description=self.description, **kwargs)
 
     @property
