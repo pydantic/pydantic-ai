@@ -31,7 +31,6 @@ from ._utils import (
     run_in_executor,
     takes_run_context,
 )
-from .function_signature import FunctionSignature
 from .messages import ToolReturn
 
 if TYPE_CHECKING:
@@ -58,8 +57,6 @@ class FunctionSchema:
     var_positional_field: str | None = None
     return_schema: ObjectJsonSchema = field(default_factory=dict[str, Any])
     """JSON schema for the function's return type. At minimum `{}` (equivalent to `Any`)."""
-    function_signature: FunctionSignature | None = None
-    """Function signature shape for this function. `None` for output tools."""
 
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
         args, kwargs = self._call_args(args_dict, ctx)
@@ -246,13 +243,6 @@ def function_schema(  # noqa: C901
         )
         return_schema = {}
 
-    # Compute function signature eagerly alongside the other schemas
-    func_sig = FunctionSignature.from_schema(
-        name=name,
-        parameters_schema=checked_json_schema,
-        return_schema=return_schema,
-    )
-
     return FunctionSchema(
         name=name,
         description=description,
@@ -265,7 +255,6 @@ def function_schema(  # noqa: C901
         is_async=is_async_callable(function),
         function=function,
         return_schema=return_schema,
-        function_signature=func_sig,
     )
 
 

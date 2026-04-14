@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import inspect
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field
+from functools import cached_property
 from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, Union, cast
 
 from pydantic import Discriminator, Tag
@@ -564,7 +565,6 @@ class Tool(Generic[ToolAgentDepsT]):
             kind='unapproved' if self.requires_approval else 'function',
             return_schema=self.function_schema.return_schema,
             include_return_schema=self.include_return_schema,
-            function_signature=self.function_schema.function_signature,
         )
 
     async def prepare_tool_def(self, ctx: RunContext[ToolAgentDepsT]) -> ToolDefinition | None:
@@ -691,21 +691,22 @@ class ToolDefinition:
     [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
     """
 
-    function_signature: FunctionSignature | None = field(default=None, repr=False, compare=False)
-    """The function signature shape for this tool.
+    @cached_property
+    def function_signature(self) -> FunctionSignature | None:
+        """The function signature shape for this tool.
 
-    If not provided, computed from the JSON schema in `__post_init__`.
-    Name and description are not stored on the signature — pass them at render time
-    via `sig.render(body, name=td.name, description=td.description)`.
-    """
-
-    def __post_init__(self) -> None:
-        if self.function_signature is None and self.kind != 'output':
-            self.function_signature = FunctionSignature.from_schema(
-                name=self.name,
-                parameters_schema=self.parameters_json_schema,
-                return_schema=self.return_schema,
-            )
+        Lazily computed from `parameters_json_schema` and `return_schema` on first access.
+        Returns `None` for output tools. Name and description are not stored on the
+        signature — pass them at render time via
+        `sig.render(body, name=td.name, description=td.description)`.
+        """
+        if self.kind == 'output':
+            return None
+        return FunctionSignature.from_schema(
+            name=self.name,
+            parameters_schema=self.parameters_json_schema,
+            return_schema=self.return_schema,
+        )
 
     def render_signature(self, body: str, **kwargs: Any) -> str:
         """Render the function signature with this tool's name and description.
