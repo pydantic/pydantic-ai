@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Annotated, Any
 
@@ -39,12 +40,40 @@ _SEARCH_TOOL_SCHEMA = _search_tool_args_ta.json_schema()
 _SEARCH_TOOL_SCHEMA['title'] = 'SearchToolArgs'
 
 
+_WORD_SPLIT_RE = re.compile(r'[_\-\s]+')
+_TOKEN_STRIP_RE = re.compile(r'^[^\w]+|[^\w]+$')
+
+
+def _tokenize(text: str) -> frozenset[str]:
+    """Split text into lower-case word tokens for whole-word keyword matching.
+
+    Splits on underscores, hyphens, and whitespace (the natural word separators
+    in tool names and natural-language descriptions), then strips leading/trailing
+    punctuation from each token so that "profile." in a description matches the
+    query token "profile".
+
+    Using a frozenset allows O(1) intersection with the query tokens, replacing
+    the previous O(n*m) substring scan and preventing false positives like "me"
+    matching inside "comment", or a prefix like "github" flooding results with
+    every github_* tool when a more specific keyword was also provided. (#4994)
+    """
+    return frozenset(_TOKEN_STRIP_RE.sub('', t) for t in _WORD_SPLIT_RE.split(text.lower()) if t)
+
+
 @dataclass(kw_only=True)
 class _SearchIndexEntry:
     name: str
     name_lower: str
     description: str | None
     description_lower: str | None
+    #: Pre-computed word tokens from name (split on _, -, spaces).
+    name_tokens: frozenset[str] = None  # type: ignore[assignment]
+    #: Pre-computed word tokens from description (split on _, -, spaces).
+    description_tokens: frozenset[str] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        self.name_tokens = _tokenize(self.name)
+        self.description_tokens = _tokenize(self.description) if self.description else frozenset()
 
 
 @dataclass(kw_only=True)
@@ -159,12 +188,16 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         if not keywords:
             raise ModelRetry('Please provide search keywords.')
 
-        terms = keywords.lower().split()
+        # Tokenize the query on whitespace — each keyword must match a whole word
+        # token in the tool name or description (split on _, -, spaces).
+        # This prevents false positives like 'me' matching inside 'comment',
+        # or a common prefix like 'github' flooding results with every github_* tool. (#4994)
+        query_tokens = _tokenize(keywords)
 
         matches: list[dict[str, str | None]] = []
         for entry in search_tool.search_index:
-            searchable = entry.name_lower + (' ' + entry.description_lower if entry.description_lower else '')
-            if any(term in searchable for term in terms):
+            all_tokens = entry.name_tokens | entry.description_tokens
+            if query_tokens & all_tokens:  # at least one token in common
                 matches.append({'name': entry.name, 'description': entry.description})
                 if len(matches) >= _MAX_SEARCH_RESULTS:
                     break

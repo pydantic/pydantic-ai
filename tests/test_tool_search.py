@@ -855,3 +855,210 @@ async def test_deferred_loading_toolset_marks_specific_tools():
     assert 'search_tools' in tools
     assert 'tool_a' in tools
     assert 'tool_b' not in tools
+
+
+# =============================================================================
+# Regression tests for buggy substring matching (#4994)
+# =============================================================================
+
+
+def _create_github_toolset() -> FunctionToolset[None]:
+    """Toolset with GitHub-prefixed tools to reproduce the greedy prefix bug."""
+    toolset: FunctionToolset[None] = FunctionToolset()
+
+    @toolset.tool_plain
+    def get_time(timezone: str) -> str:  # pragma: no cover
+        """Get current time in a timezone."""
+        return f'Time in {timezone}'
+
+    @toolset.tool_plain(defer_loading=True)
+    def github_get_me() -> str:  # pragma: no cover
+        """Get the authenticated GitHub user profile."""
+        return 'profile'
+
+    @toolset.tool_plain(defer_loading=True)
+    def github_create_gist(content: str) -> str:  # pragma: no cover
+        """Create a new GitHub gist."""
+        return 'gist created'
+
+    @toolset.tool_plain(defer_loading=True)
+    def github_add_comment_to_pending_review(comment: str) -> str:  # pragma: no cover
+        """Add a comment to a pending code review."""
+        return 'comment added'
+
+    @toolset.tool_plain(defer_loading=True)
+    def github_list_repos() -> str:  # pragma: no cover
+        """List GitHub repositories."""
+        return 'repos'
+
+    @toolset.tool_plain(defer_loading=True)
+    def github_create_issue(title: str, body: str) -> str:  # pragma: no cover
+        """Create a GitHub issue."""
+        return 'issue created'
+
+    @toolset.tool_plain(defer_loading=True)
+    def github_close_issue(issue_id: int) -> str:  # pragma: no cover
+        """Close an existing GitHub issue."""
+        return 'issue closed'
+
+    @toolset.tool_plain(defer_loading=True)
+    def github_add_label(issue_id: int, label: str) -> str:  # pragma: no cover
+        """Add a label to an issue."""
+        return 'label added'
+
+    @toolset.tool_plain(defer_loading=True)
+    def github_merge_pull_request(pr_id: int) -> str:  # pragma: no cover
+        """Merge an open pull request."""
+        return 'pr merged'
+
+    @toolset.tool_plain(defer_loading=True)
+    def github_fork_repo(repo: str) -> str:  # pragma: no cover
+        """Fork a GitHub repository."""
+        return 'forked'
+
+    @toolset.tool_plain(defer_loading=True)
+    def github_star_repo(repo: str) -> str:  # pragma: no cover
+        """Star a GitHub repository."""
+        return 'starred'
+
+    return toolset
+
+
+@pytest.mark.anyio
+async def test_search_profile_keyword_finds_tool_via_description(allow_model_requests: None) -> None:
+    """Searching 'profile' should find github_get_me via its description token.
+
+    Bug (#4994): the previous implementation used substring matching, so 'me'
+    matched inside 'comment' (github_add_comment_to_pending_review).
+    After the fix, tokens are split on word-separators (_/-/space) and stripped
+    of punctuation, so 'profile' correctly matches the word 'profile' in
+    "Get the authenticated GitHub user profile." but does NOT match tools whose
+    descriptions don't contain the word 'profile'.
+    """
+    toolset = _create_github_toolset()
+    searchable = ToolSearchToolset(wrapped=toolset)
+    ctx = _build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+    search_tool = tools[_SEARCH_TOOLS_NAME]
+
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'profile'}, ctx, search_tool)
+    assert isinstance(result, ToolReturn)
+    rv: list[dict[str, str | None]] = result.return_value  # pyright: ignore[reportAssignmentType]
+    names = [r['name'] for r in rv]
+
+    # Must find the intended tool — 'profile' is a token in its description
+    assert 'github_get_me' in names, f'Expected github_get_me in results for "profile", got: {names}'
+
+    # Tools without "profile" in name or description should NOT match
+    assert 'github_create_gist' not in names, '"profile" should not match github_create_gist'
+    assert 'github_merge_pull_request' not in names, '"profile" should not match github_merge_pull_request'
+    assert 'github_fork_repo' not in names, '"profile" should not match github_fork_repo'
+
+
+@pytest.mark.anyio
+async def test_search_does_not_match_substring_mid_word(allow_model_requests: None) -> None:
+    """Searching 'get me' should NOT match github_add_co*me*nt_to_pending_review.
+
+    Bug (#4994): 'me' is a substring of 'comment', so any tool whose name or
+    description contains 'comment' would incorrectly match the keyword 'me'.
+
+    After the fix, 'me' must match a whole word token, not a substring inside
+    another word like 'comment'.
+    """
+    toolset = _create_github_toolset()
+    searchable = ToolSearchToolset(wrapped=toolset)
+    ctx = _build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+    search_tool = tools[_SEARCH_TOOLS_NAME]
+
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'get me'}, ctx, search_tool)
+    assert isinstance(result, ToolReturn)
+    rv: list[dict[str, str | None]] = result.return_value  # pyright: ignore[reportAssignmentType]
+    names = [r['name'] for r in rv]
+
+    # 'comment' contains 'me' as substring — must NOT match
+    assert 'github_add_comment_to_pending_review' not in names, (
+        f"'me' matched inside 'comment' — mid-word substring match bug still present: {names}"
+    )
+
+    # The intended tool 'github_get_me' SHOULD match — 'me' and 'get' are whole tokens
+    assert 'github_get_me' in names, f'Expected github_get_me in results for "get me", got: {names}'
+
+
+@pytest.mark.anyio
+async def test_search_whole_word_prefix_token(allow_model_requests: None) -> None:
+    """'create' should match github_create_gist and github_create_issue but NOT
+    github_fork_repo or github_merge_pull_request."""
+    toolset = _create_github_toolset()
+    searchable = ToolSearchToolset(wrapped=toolset)
+    ctx = _build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+    search_tool = tools[_SEARCH_TOOLS_NAME]
+
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'create'}, ctx, search_tool)
+    assert isinstance(result, ToolReturn)
+    rv: list[dict[str, str | None]] = result.return_value  # pyright: ignore[reportAssignmentType]
+    names = [r['name'] for r in rv]
+
+    assert 'github_create_gist' in names
+    assert 'github_create_issue' in names
+    # 'fork' and 'merge' don't contain 'create' as a token
+    assert 'github_fork_repo' not in names
+    assert 'github_merge_pull_request' not in names
+
+
+@pytest.mark.anyio
+async def test_search_issue_keyword_does_not_match_close(allow_model_requests: None) -> None:
+    """'issue' should match tools about issues, not 'close_issue' via substring
+    matching inside 'close'.
+
+    Specifically, 'issue' IS a whole word in 'github_create_issue' and
+    'github_close_issue' — both should match.  But 'iss' (a sub-term) should
+    NOT match 'mission' or similar unrelated words.
+    """
+    toolset = _create_github_toolset()
+    searchable = ToolSearchToolset(wrapped=toolset)
+    ctx = _build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+    search_tool = tools[_SEARCH_TOOLS_NAME]
+
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'issue'}, ctx, search_tool)
+    assert isinstance(result, ToolReturn)
+    rv: list[dict[str, str | None]] = result.return_value  # pyright: ignore[reportAssignmentType]
+    names = [r['name'] for r in rv]
+
+    # Both contain 'issue' as a whole token
+    assert 'github_create_issue' in names
+    assert 'github_close_issue' in names
+    # These don't contain 'issue'
+    assert 'github_create_gist' not in names
+    assert 'github_fork_repo' not in names
+
+
+@pytest.mark.anyio
+async def test_existing_search_still_works_after_fix(allow_model_requests: None) -> None:
+    """Verify existing search tests still pass after the word-boundary fix.
+
+    This is a regression guard: tools with simple non-compound names
+    (mortgage, stock, crypto) must still match single-keyword queries.
+    """
+    toolset = _create_function_toolset()
+    searchable = ToolSearchToolset(wrapped=toolset)
+    ctx = _build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+    search_tool = tools[_SEARCH_TOOLS_NAME]
+
+    # 'mortgage' is a whole word — must still match
+    r1 = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'mortgage'}, ctx, search_tool)
+    assert isinstance(r1, ToolReturn)
+    assert r1.return_value[0]['name'] == 'calculate_mortgage'  # type: ignore[index]
+
+    # 'crypto' is a whole word — must still match
+    r2 = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'cryptocurrency'}, ctx, search_tool)
+    assert isinstance(r2, ToolReturn)
+    assert r2.return_value[0]['name'] == 'crypto_price'  # type: ignore[index]
