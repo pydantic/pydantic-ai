@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import anyio
 import pytest
 
 from pydantic_ai._run_context import RunContext
@@ -1980,6 +1981,33 @@ async def test_combined_capability_for_run_returns_new_when_child_changes():
     new_per_run = result.capabilities[1]
     assert isinstance(new_per_run, PerRunCap)
     assert new_per_run.run_id == 1
+
+
+async def test_combined_capability_for_run_cancels_siblings_on_failure():
+    """When one child's for_run fails, siblings are cancelled instead of leaking as orphan tasks."""
+    sibling_completed = False
+
+    @dataclass
+    class FailingCap(AbstractCapability[None]):
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            raise RuntimeError('boom')
+
+    @dataclass
+    class SlowCap(AbstractCapability[None]):
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            nonlocal sibling_completed
+            await anyio.sleep(0.1)
+            sibling_completed = True  # pragma: no cover
+            return self  # pragma: no cover
+
+    combined = CombinedCapability([FailingCap(), SlowCap()])
+    ctx = _build_run_context()
+
+    with pytest.raises(RuntimeError, match='boom'):
+        await combined.for_run(ctx)
+
+    await anyio.sleep(0.2)
+    assert sibling_completed is False
 
 
 def test_apply_single_capability():
