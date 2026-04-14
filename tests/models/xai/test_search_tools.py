@@ -19,7 +19,7 @@ from pydantic_ai import (
     UserPromptPart,
     XSearchTool,
 )
-from pydantic_ai.messages import RequestUsage
+from pydantic_ai.messages import PartStartEvent, RequestUsage
 from pydantic_ai.profiles.grok import GrokModelProfile, grok_model_profile
 from pydantic_ai.usage import RunUsage
 
@@ -36,7 +36,8 @@ from ..mock_xai import (
 )
 
 with try_import() as imports_successful:
-    from xai_sdk.proto import chat_pb2, usage_pb2
+    from xai_sdk import chat as chat_types
+    from xai_sdk.proto import chat_pb2, sample_pb2, usage_pb2
 
     from pydantic_ai.models.xai import XaiModel, XaiModelSettings
     from pydantic_ai.providers.xai import XaiProvider
@@ -346,6 +347,125 @@ async def test_xai_builtin_x_search_tool_stream(allow_model_requests: None, xai_
             ),
         ]
     )
+
+
+async def test_xai_x_search_streaming_citations_no_duplicate_part_start_event(allow_model_requests: None):
+    """Regression: streaming x_search citation backfill must not emit a duplicate `PartStartEvent`.
+
+    xAI returns x_search results as top-level `response.citations` that only arrive with the
+    final stream chunk, so we backfill them onto the already-emitted `BuiltinToolReturnPart`.
+    The fix mutates the part in place rather than re-calling `_parts_manager.handle_part`,
+    which would have emitted a second `PartStartEvent` at the same index. This test exercises
+    that path with mocked stream chunks (citation arrives only on the final chunk) and asserts:
+    1. the final return part's `content` ends up populated with the citations, and
+    2. exactly one `PartStartEvent` is emitted for the x_search return part vendor id.
+    """
+    tool_call_id = 'x_search_stream_001'
+    citations = ['https://x.com/i/status/1', 'https://x.com/i/status/2']
+
+    def _build_x_search_tool_call(status: chat_pb2.ToolCallStatus) -> chat_pb2.ToolCall:
+        return chat_pb2.ToolCall(
+            id=tool_call_id,
+            type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_X_SEARCH_TOOL,
+            status=status,
+            function=chat_pb2.FunctionCall(name='x_keyword_search', arguments='{"query":"PydanticAI"}'),
+        )
+
+    def _build_chunk(
+        *,
+        role: chat_pb2.MessageRole,
+        tool_calls: list[chat_pb2.ToolCall] | None = None,
+        content: str = '',
+        finish_reason: str | None = None,
+    ) -> chat_types.Chunk:
+        proto = chat_pb2.GetChatCompletionChunk(id='grok-stream')
+        proto.created.GetCurrentTime()
+        output_chunk = chat_pb2.CompletionOutputChunk(
+            index=0,
+            delta=chat_pb2.Delta(role=role, tool_calls=tool_calls or [], content=content),
+        )
+        if finish_reason == 'stop':
+            output_chunk.finish_reason = sample_pb2.FinishReason.REASON_STOP
+        elif finish_reason == 'tool_calls':
+            output_chunk.finish_reason = sample_pb2.FinishReason.REASON_TOOL_CALLS
+        proto.outputs.append(output_chunk)
+        return chat_types.Chunk(proto, index=None)
+
+    def _build_response(
+        *,
+        tool_calls: list[chat_pb2.ToolCall] | None = None,
+        content: str = '',
+        finish_reason: str = 'stop',
+        with_citations: bool = False,
+    ) -> chat_types.Response:
+        proto = chat_pb2.GetChatCompletionResponse(id='grok-stream')
+        proto.created.GetCurrentTime()
+        proto.outputs.append(
+            chat_pb2.CompletionOutput(
+                index=0,
+                finish_reason=sample_pb2.FinishReason.REASON_STOP
+                if finish_reason == 'stop'
+                else sample_pb2.FinishReason.REASON_TOOL_CALLS,
+                message=chat_pb2.CompletionMessage(
+                    role=chat_pb2.MessageRole.ROLE_ASSISTANT, content=content, tool_calls=tool_calls or []
+                ),
+            )
+        )
+        if with_citations:
+            proto.citations.extend(citations)
+        return chat_types.Response(proto, index=None)
+
+    completed_call = _build_x_search_tool_call(chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED)
+
+    stream = [
+        # Assistant emits the x_search call.
+        (
+            _build_response(tool_calls=[completed_call], finish_reason='tool_calls'),
+            _build_chunk(
+                role=chat_pb2.MessageRole.ROLE_ASSISTANT,
+                tool_calls=[completed_call],
+                finish_reason='tool_calls',
+            ),
+        ),
+        # ROLE_TOOL message marks the tool result. Note: no `content` and no `citations` yet.
+        (
+            _build_response(tool_calls=[completed_call], finish_reason='tool_calls'),
+            _build_chunk(role=chat_pb2.MessageRole.ROLE_TOOL, tool_calls=[completed_call]),
+        ),
+        # Final chunk: assistant reply + citations populated on the accumulated response.
+        (
+            _build_response(content='done', with_citations=True),
+            _build_chunk(role=chat_pb2.MessageRole.ROLE_ASSISTANT, content='done', finish_reason='stop'),
+        ),
+    ]
+
+    mock_client = MockXai.create_mock_stream([stream])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, builtin_tools=[XSearchTool()])
+
+    events: list[Any] = []
+    async with agent.iter(user_prompt='find PydanticAI posts') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        events.append(event)
+
+    assert agent_run.result is not None
+    parts = agent_run.result.all_messages()[1].parts
+    return_parts = [p for p in parts if isinstance(p, BuiltinToolReturnPart) and p.tool_name == XSearchTool.kind]
+    assert len(return_parts) == 1
+    assert return_parts[0].content == {'citations': citations}
+
+    # Locate the return part by index in the final parts list, then verify exactly one
+    # `PartStartEvent` was emitted for that index.
+    return_part_index = parts.index(return_parts[0])
+    start_events_at_return_index = [
+        e
+        for e in events
+        if isinstance(e, PartStartEvent) and e.index == return_part_index and isinstance(e.part, BuiltinToolReturnPart)
+    ]
+    assert len(start_events_at_return_index) == 1
 
 
 # =============================================================================

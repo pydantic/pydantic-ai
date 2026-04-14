@@ -4,7 +4,7 @@ import json
 from collections import defaultdict
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, cast
 
@@ -1098,23 +1098,24 @@ class XaiStreamedResponse(StreamedResponse):
                                     yield maybe_event
 
             # Backfill x_search return parts with the top-level response citations, which xAI only
-            # populates alongside the final chunk. See `_attach_x_search_citations` for background.
-            for event in self._backfill_x_search_citations(last_response, x_search_return_parts):
-                yield event
+            # populates alongside the final chunk. We mutate the existing part in place rather than
+            # re-emitting via `handle_part`: the parts manager holds the same object reference we
+            # tracked in `x_search_return_parts`, so the mutation is reflected in the final
+            # `ModelResponse` without emitting a duplicate `PartStartEvent` at the same index.
+            # See `_attach_x_search_citations` for the equivalent non-streaming path.
+            self._backfill_x_search_citations(last_response, x_search_return_parts)
 
+    @staticmethod
     def _backfill_x_search_citations(
-        self,
         response: chat_types.Response | None,
         x_search_return_parts: dict[str, BuiltinToolReturnPart],
-    ) -> Iterator[ModelResponseStreamEvent]:
+    ) -> None:
         if response is None or not x_search_return_parts or not response.citations:
             return
         citations = list(response.citations)
-        for return_vendor_id, return_part in x_search_return_parts.items():
-            if return_part.content is not None:
-                continue
-            updated_part = replace(return_part, content={'citations': citations})
-            yield self._parts_manager.handle_part(vendor_part_id=return_vendor_id, part=updated_part)
+        for return_part in x_search_return_parts.values():
+            if return_part.content is None:
+                return_part.content = {'citations': citations}
 
     @property
     def model_name(self) -> str:
