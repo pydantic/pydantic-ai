@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from typing import Any, TypeVar
 from unittest.mock import AsyncMock
 
+import anyio
 import pytest
 from typing_extensions import Self
 
@@ -1275,6 +1276,49 @@ async def test_combined_toolset_with_nested_list_instructions():
         InstructionPart(content='Instruction B.', dynamic=False),
         InstructionPart(content='Instruction C.', dynamic=False),
     ]
+
+
+async def test_combined_toolset_cancels_siblings_on_get_tools_failure():
+    """When one child's get_tools fails, siblings are cancelled instead of leaking as orphan tasks."""
+    sibling_completed = False
+
+    class FailingToolset(AbstractToolset[Any]):
+        @property
+        def id(self) -> str | None:
+            return None
+
+        async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
+            raise RuntimeError('boom')
+
+        async def call_tool(
+            self, name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any]
+        ) -> Any:
+            return None  # pragma: no cover
+
+    class SlowToolset(AbstractToolset[Any]):
+        @property
+        def id(self) -> str | None:
+            return None
+
+        async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
+            nonlocal sibling_completed
+            await anyio.sleep(0.5)
+            sibling_completed = True
+            return {}
+
+        async def call_tool(
+            self, name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any]
+        ) -> Any:
+            return None  # pragma: no cover
+
+    combined = CombinedToolset([FailingToolset(), SlowToolset()])
+    ctx = build_run_context(None)
+
+    with pytest.raises(RuntimeError, match='boom'):
+        await combined.get_tools(ctx)
+
+    await anyio.sleep(0.6)
+    assert sibling_completed is False
 
 
 async def test_dynamic_toolset_instructions_before_resolution():
