@@ -42,11 +42,11 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
         return f'{self.__class__.__name__}({", ".join(toolset.label for toolset in self.toolsets)})'  # pragma: no cover
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        new_toolsets = [await t.for_run(ctx) for t in self.toolsets]
+        new_toolsets = await gather(*(t.for_run(ctx) for t in self.toolsets))
         return replace(self, toolsets=new_toolsets)
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        new_toolsets = [await t.for_run_step(ctx) for t in self.toolsets]
+        new_toolsets = await gather(*(t.for_run_step(ctx) for t in self.toolsets))
         if all(new is old for new, old in zip(new_toolsets, self.toolsets)):
             return self
         return replace(self, toolsets=new_toolsets)
