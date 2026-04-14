@@ -108,6 +108,7 @@ try:
         BetaMCPToolUseBlockParam,
         BetaMemoryTool20250818Param,
         BetaMessage,
+        BetaMessageDeltaUsage,
         BetaMessageParam,
         BetaMessageTokensCount,
         BetaMetadataParam,
@@ -141,6 +142,7 @@ try:
         BetaToolUnionParam,
         BetaToolUseBlock,
         BetaToolUseBlockParam,
+        BetaUsage,
         BetaWebFetchTool20250910Param,
         BetaWebFetchToolResultBlock,
         BetaWebFetchToolResultBlockParam,
@@ -265,7 +267,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """List of Anthropic beta features to enable for API requests.
 
     Each item can be a known beta name (e.g. 'interleaved-thinking-2025-05-14') or a custom string.
-    Merged with auto-added betas (e.g. structured-outputs, builtin tools) and any betas from
+    Merged with auto-added betas (e.g. builtin tools) and any betas from
     extra_headers['anthropic-beta']. See the Anthropic docs for available beta features.
     """
 
@@ -496,7 +498,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._limit_cache_points(system_prompt, anthropic_messages, tools)
         output_config = self._build_output_config(model_request_parameters, model_settings)
-        betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
+        betas, extra_headers = self._get_betas_and_extra_headers(model_settings)
         betas.update(builtin_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         container = self._get_container(messages, model_settings)
@@ -546,8 +548,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     def _get_betas_and_extra_headers(
         self,
-        tools: list[BetaToolUnionParam],
-        model_request_parameters: ModelRequestParameters,
         model_settings: AnthropicModelSettings,
     ) -> tuple[set[str], dict[str, str]]:
         """Prepare beta features list and extra headers for API request.
@@ -559,11 +559,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         extra_headers.setdefault('User-Agent', get_user_agent())
 
         betas: set[str] = set()
-
-        has_strict_tools = any(tool.get('strict') for tool in tools)
-
-        if has_strict_tools or model_request_parameters.output_mode == 'native':
-            betas.add('structured-outputs-2025-11-13')
 
         if model_settings.get('anthropic_context_management'):
             betas.add('compact-2026-01-12')
@@ -606,7 +601,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._limit_cache_points(system_prompt, anthropic_messages, tools)
         output_config = self._build_output_config(model_request_parameters, model_settings)
-        betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
+        betas, extra_headers = self._get_betas_and_extra_headers(model_settings)
         betas.update(builtin_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         with _map_api_errors(self.model_name):
@@ -1444,6 +1439,40 @@ class AnthropicCompaction(AbstractCapability[AgentDepsT]):
         return 'AnthropicCompaction'
 
 
+_COMPACTION_TOKEN_KEYS = ('input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens')
+
+
+def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) -> dict[str, int]:
+    """Extract Anthropic usage into a flat dict, preserving compaction iteration totals.
+
+    Anthropic's top-level `input_tokens`/`output_tokens` exclude compaction iteration usage
+    (see <https://docs.anthropic.com/en/docs/build-with-claude/compaction#understanding-usage>),
+    so they're kept as-is here and the compaction iteration totals are recorded under
+    `compaction_*` keys. `_map_usage` sums them back into the request totals at extraction time,
+    which also keeps streaming correct: the fixed compaction totals set by the start event
+    survive the merge with delta events that only carry the top-level values.
+    """
+    details: dict[str, int] = {}
+    for key in _COMPACTION_TOKEN_KEYS:
+        if isinstance((value := getattr(response_usage, key, None)), int):
+            details[key] = value
+
+    iterations = response_usage.iterations
+    if not iterations:
+        return details
+
+    compaction_iterations = [it for it in iterations if it.type == 'compaction']
+    if not compaction_iterations:
+        return details
+
+    details['compaction_iterations'] = len(compaction_iterations)
+    details['message_iterations'] = len(iterations) - len(compaction_iterations)
+    for key in _COMPACTION_TOKEN_KEYS:
+        if compaction_total := sum(getattr(it, key) for it in compaction_iterations):
+            details[f'compaction_{key}'] = compaction_total
+    return details
+
+
 def _map_usage(
     message: BetaMessage | BetaRawMessageStartEvent | BetaRawMessageDeltaEvent,
     provider: str,
@@ -1462,14 +1491,19 @@ def _map_usage(
 
     # In streaming, usage appears in different events.
     # The values are cumulative, meaning new values should replace existing ones entirely.
-    details: dict[str, int] = (existing_usage.details if existing_usage else {}) | {
-        key: value for key, value in response_usage.model_dump().items() if isinstance(value, int)
-    }
+    details = (existing_usage.details if existing_usage else {}) | _extract_usage_details(response_usage)
+
+    # Anthropic reports top-level tokens excluding compaction iteration usage; add the
+    # compaction totals back in so the extracted `RequestUsage` reflects the real request cost.
+    usage_for_extraction = dict(details)
+    for key in _COMPACTION_TOKEN_KEYS:
+        if compaction_value := details.get(f'compaction_{key}'):
+            usage_for_extraction[key] = usage_for_extraction.get(key, 0) + compaction_value
 
     # Note: genai-prices already extracts cache_creation_input_tokens and cache_read_input_tokens
     # from the Anthropic response and maps them to cache_write_tokens and cache_read_tokens
     return usage.RequestUsage.extract(
-        dict(model=model, usage=details),
+        dict(model=model, usage=usage_for_extraction),
         provider=provider,
         provider_url=provider_url,
         provider_fallback='anthropic',

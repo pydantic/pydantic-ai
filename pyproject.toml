@@ -270,6 +270,12 @@ filterwarnings = [
     "ignore:UnsupportedFieldAttributeWarning:UserWarning",
     # coolname (prefect dep) uses codecs.open(), deprecated in Python 3.14
     "ignore:codecs.open\\(\\) is deprecated:DeprecationWarning",
+    # fastmcp v3 does standard OTel distributed tracing (inject on client, extract on server).
+    # logfire's default config wraps the global propagator to warn on extract via warnings.warn(),
+    # which crashes tool execution when filterwarnings=["error"]. The proper upstream fix is for
+    # logfire to use logging.warning() instead of warnings.warn() for this diagnostic — it's
+    # informational, not a deprecation, and should never be able to crash execution.
+    "ignore:Found propagated trace context:RuntimeWarning",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
