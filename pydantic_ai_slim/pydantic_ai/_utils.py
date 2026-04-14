@@ -208,7 +208,9 @@ async def gather(*coros: Awaitable[T]) -> list[T]:
                 tg.start_soon(_run, i, coro)
     except BaseExceptionGroup as eg:
         if len(eg.exceptions) == 1:
-            raise eg.exceptions[0] from None
+            exc = eg.exceptions[0]
+            exc.__suppress_context__ = True
+            raise exc
         raise
 
     return results

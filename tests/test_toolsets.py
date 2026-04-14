@@ -1310,6 +1310,24 @@ async def test_combined_toolset_cancels_siblings_on_get_tools_failure():
     assert sibling_completed is False
 
 
+async def test_combined_toolset_get_tools_preserves_exception_cause():
+    """Unwrapping the single-failure exception must preserve the original `__cause__` chain."""
+    original = ValueError('underlying')
+
+    class FailingToolset(WrapperToolset[Any]):
+        async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
+            raise RuntimeError('wrapper') from original
+
+    inner = FunctionToolset[None]()
+    combined = CombinedToolset([FailingToolset(inner)])
+    ctx = build_run_context(None)
+
+    with pytest.raises(RuntimeError, match='wrapper') as exc_info:
+        await combined.get_tools(ctx)
+
+    assert exc_info.value.__cause__ is original
+
+
 async def test_combined_toolset_get_tools_raises_group_on_multiple_failures():
     """When multiple children fail concurrently, their errors surface as an ExceptionGroup."""
 
