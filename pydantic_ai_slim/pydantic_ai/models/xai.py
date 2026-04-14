@@ -1114,8 +1114,7 @@ class XaiStreamedResponse(StreamedResponse):
             return
         citations = list(response.citations)
         for return_part in x_search_return_parts.values():
-            if return_part.content is None:
-                return_part.content = {'citations': citations}
+            return_part.content = {'citations': citations}
 
     @property
     def model_name(self) -> str:
