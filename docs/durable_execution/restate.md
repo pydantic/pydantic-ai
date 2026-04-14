@@ -17,10 +17,10 @@ A durable agent has three building blocks:
 3. **Tool executions**: wrapped in durable steps so side effects are not duplicated.
 
 ```text
-                    Clients 
-               (HTTP, Kafka, etc.)
-                      |
-                      v
+                  Clients
+              (HTTP, Kafka, etc.)
+                     |
+                     v
             +---------------------+
             |   Restate Server    |      (Journals execution,
             +---------------------+       retries on failure,
