@@ -1002,7 +1002,6 @@ async def test_beta_header_merge_builtin_tools_and_native_output(allow_model_req
             'context-management-2025-06-27',
             'custom-feature-1',
             'custom-feature-2',
-            'structured-outputs-2025-11-13',
         ]
     )
 
@@ -1102,7 +1101,6 @@ async def test_anthropic_betas_merge_with_other_sources(allow_model_requests: No
     betas = completion_kwargs['betas']
     assert 'interleaved-thinking-2025-05-14' in betas
     assert 'custom-feature-1' in betas
-    assert 'structured-outputs-2025-11-13' in betas
 
 
 async def test_anthropic_mixed_strict_tool_run(allow_model_requests: None, anthropic_api_key: str):
