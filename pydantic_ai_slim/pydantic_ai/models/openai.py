@@ -4,7 +4,7 @@ import base64
 import itertools
 import json
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Iterable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
@@ -1571,7 +1571,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         Uses a `ContextVar` for isolation — safe for concurrent use via `asyncio.gather`
         when each coroutine has its own `connect()` context.
 
-        ```python
+        ```python {test="skip" lint="skip"}
         model = OpenAIResponsesModel('gpt-4o')
         agent = Agent(model)
 
@@ -2014,7 +2014,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             input=openai_messages,
             model=self.model_name,
             instructions=instructions,
-            parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
+            parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT) if tools else OMIT,
             tools=tools or OMIT,
             tool_choice=tool_choice or OMIT,
             max_output_tokens=model_settings.get('max_tokens', OMIT),
@@ -2063,7 +2063,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         messages: list[ModelRequest | ModelResponse],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> AsyncIterator[responses.ResponseStreamEvent]:
+    ) -> AsyncGenerator[responses.ResponseStreamEvent, None]:
         """Send a request over WS and yield events until a terminal event."""
         self._ws_acquire()
         try:
