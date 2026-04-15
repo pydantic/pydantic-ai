@@ -80,8 +80,14 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
             'anyio',
             'sniffio',
             'httpcore',
-            # Used by fastmcp via py-key-value-aio
+            # Used by fastmcp via py-key-value-aio; beartype.claw uses global state
+            # that can cause circular import errors if sandboxed separately
             'beartype',
+            # FastMCP and its dependencies (docket, key_value) must pass through
+            # because they import beartype.claw at module load time
+            'fastmcp',
+            'docket',
+            'key_value',
             # Imported inside `logfire._internal.json_encoder` when running `logfire.info` inside an activity with attributes to serialize
             'attrs',
             # Imported inside `logfire._internal.json_schema` when running `logfire.info` inside an activity with attributes to serialize

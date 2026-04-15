@@ -4043,3 +4043,65 @@ async def test_text_content_serialization_in_workflow(client: Client):
                 run_id=IsStr(),
             )
         )
+
+
+# --- Issue #5092: FastMCPToolset + Temporal worker conflict test ---
+# https://github.com/pydantic/pydantic-ai/issues/5092
+#
+# This test verifies that importing FastMCPToolset at module level does not
+# cause circular import errors with beartype.claw when starting a Temporal worker.
+# The issue was that beartype.claw uses global state, and when FastMCP's dependencies
+# (docket, key_value) import beartype.claw, the sandbox validation could cause
+# "cannot import name 'claw_state' from partially initialized module" errors.
+
+
+@workflow.defn
+class Issue5092Workflow:
+    """Workflow for testing FastMCPToolset + Temporal compatibility (issue #5092)."""
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        # Simple workflow that doesn't actually use FastMCPToolset
+        # The test is about import compatibility, not runtime behavior
+        return f'processed: {prompt}'
+
+
+async def test_issue_5092_fastmcp_temporal_worker_no_circular_import(client: Client):
+    """Test that FastMCPToolset can coexist with Temporal workers without circular import errors.
+
+    This test validates the fix for issue #5092:
+    https://github.com/pydantic/pydantic-ai/issues/5092
+
+    The issue was that importing FastMCPToolset anywhere in the project would cause
+    "ImportError: cannot import name 'claw_state' from partially initialized module
+    'beartype.claw._clawstate'" when starting a Temporal worker.
+
+    The fix adds 'fastmcp', 'docket', and 'key_value' to the Temporal sandbox
+    passthrough_modules, ensuring they don't get re-imported in an isolated way
+    that breaks beartype.claw's global state.
+
+    Since FastMCPToolset is already imported at the top of this test file via
+    `from pydantic_ai.toolsets.fastmcp import FastMCPToolset`, this test verifies
+    that the worker can start successfully without the circular import error.
+    """
+    # Verify FastMCPToolset is already imported (it's imported at module level)
+    assert FastMCPToolset is not None
+
+    # If the fix is not applied, creating the Worker would fail with:
+    # RuntimeError: Failed validating workflow Issue5092Workflow
+    # Caused by: ImportError: cannot import name 'claw_state' from partially
+    # initialized module 'beartype.claw._clawstate' (most likely due to a circular import)
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[Issue5092Workflow],
+        activities=[],
+    ):
+        # Execute the workflow to verify everything works
+        output = await client.execute_workflow(
+            Issue5092Workflow.run,
+            args=['test_5092'],
+            id='test_issue_5092',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'processed: test_5092'
