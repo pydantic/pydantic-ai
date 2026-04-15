@@ -103,6 +103,7 @@ nav:
 
   - Integrations:
       - Debugging & Monitoring with Pydantic Logfire: logfire.md
+      - Managed Agents: managed.md
       - Durable Execution:
           - Overview: durable_execution/overview.md
           - Temporal: durable_execution/temporal.md
@@ -155,6 +156,7 @@ nav:
           - api/ext.md
           - api/format_prompt.md
           - api/function_signature.md
+          - api/managed.md
           - api/mcp.md
           - api/messages.md
           - api/models/anthropic.md
@@ -426,6 +428,7 @@ plugins:
           - testing.md
           - cli.md
           - logfire.md
+          - managed.md
           - contributing.md
           - changelog.md
           - version-policy.md
