@@ -9036,12 +9036,9 @@ async def test_agent_allows_none_output_validator_called():
 
 async def test_agent_allows_none_output_validator_retry():
     """Test that output validator raising ModelRetry triggers a retry when output is None."""
-    call_count = 0
 
     async def model_then_text(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
+        if len(messages) == 1:
             return ModelResponse(parts=[])
         return ModelResponse(parts=[TextPart(content='hello')])
 
@@ -9056,7 +9053,40 @@ async def test_agent_allows_none_output_validator_retry():
 
     result = await agent.run('hello')
     assert result.output == 'hello'
-    assert call_count == 2
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[],
+                usage=RequestUsage(input_tokens=51),
+                model_name='function:model_then_text:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='None not acceptable, please respond',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='hello')],
+                usage=RequestUsage(input_tokens=65, output_tokens=1),
+                model_name='function:model_then_text:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_agent_still_fails_if_none_not_allowed():

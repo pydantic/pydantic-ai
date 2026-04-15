@@ -755,6 +755,35 @@ async def test_empty_response():
     )
 
 
+async def test_run_stream_allows_none_output_empty_response():
+    """`run_stream()` with `output_type=str | None` should return `None` on an empty model response."""
+
+    async def empty_stream(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {}
+
+    agent = Agent(FunctionModel(stream_function=empty_stream), output_type=str | None)
+
+    async with agent.run_stream('hello') as result:
+        assert await result.get_output() is None
+        assert result.is_complete
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[],
+                    usage=RequestUsage(input_tokens=50),
+                    model_name='function::empty_stream',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+
 async def test_call_tool_wrong_name():
     async def stream_structured_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
         yield {0: DeltaToolCall(name='foobar', json_args='{}')}
