@@ -168,19 +168,29 @@ _GOOGLE_IMAGE_OUTPUT_FORMAT = Literal['png', 'jpeg', 'webp']
 _GOOGLE_IMAGE_OUTPUT_FORMATS: tuple[_GOOGLE_IMAGE_OUTPUT_FORMAT, ...] = _utils.get_args(_GOOGLE_IMAGE_OUTPUT_FORMAT)
 
 
-GoogleServiceTier = Literal['pt_then_on_demand', 'pt_only', 'pt_then_flex', 'on_demand', 'flex_only']
+GoogleServiceTier = Literal[
+    'pt_then_on_demand',
+    'pt_only',
+    'pt_then_flex',
+    'pt_then_priority',
+    'on_demand',
+    'flex_only',
+    'priority_only',
+]
 """Values for the `google_service_tier` field on [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings].
 
 Controls Vertex AI HTTP headers for [Provisioned Throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput/use-provisioned-throughput)
-(PT) and [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo). Only applies when using the Vertex AI API.
+(PT), [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo), and [Priority PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/priority-paygo). Only applies when using the Vertex AI API.
 
 **Values:**
 
 - `'pt_then_on_demand'` (**default**): PT when quota allows, then standard on-demand spillover. No headers sent.
 - `'pt_only'`: PT only (`X-Vertex-AI-LLM-Request-Type: dedicated`). No on-demand spillover; returns 429 when over quota.
 - `'pt_then_flex'`: PT when quota allows, then [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) spillover (`X-Vertex-AI-LLM-Shared-Request-Type: flex`).
+- `'pt_then_priority'`: PT when quota allows, then [Priority PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/priority-paygo) spillover (`X-Vertex-AI-LLM-Shared-Request-Type: priority`).
 - `'on_demand'`: Standard on-demand only (`X-Vertex-AI-LLM-Request-Type: shared`). Bypasses PT for this request.
 - `'flex_only'`: [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) only (`X-Vertex-AI-LLM-Request-Type: shared` and `X-Vertex-AI-LLM-Shared-Request-Type: flex`). Bypasses PT.
+- `'priority_only'`: [Priority PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/priority-paygo) only (`X-Vertex-AI-LLM-Request-Type: shared` and `X-Vertex-AI-LLM-Shared-Request-Type: priority`). Bypasses PT.
 
 Not every model or region supports every value; see the linked Google docs.
 
@@ -244,14 +254,14 @@ class GoogleModelSettings(ModelSettings, total=False):
     """
 
     google_service_tier: GoogleServiceTier
-    """Vertex AI routing for Provisioned Throughput and Flex PayGo. Defaults to `'pt_then_on_demand'`.
+    """Vertex AI routing for Provisioned Throughput, Flex PayGo, and Priority PayGo. Defaults to `'pt_then_on_demand'`.
 
     See [`GoogleServiceTier`][pydantic_ai.models.google.GoogleServiceTier] for all values, headers sent, and links to Google docs.
     """
 
 
 def _google_vertex_service_tier_headers(service_tier: GoogleServiceTier) -> dict[str, str]:
-    """HTTP headers for Vertex AI Provisioned Throughput and Flex PayGo routing."""
+    """HTTP headers for Vertex AI Provisioned Throughput, Flex PayGo, and Priority PayGo routing."""
     if service_tier == 'pt_then_on_demand':
         return {}
     if service_tier == 'pt_only':
@@ -260,10 +270,17 @@ def _google_vertex_service_tier_headers(service_tier: GoogleServiceTier) -> dict
         return {'X-Vertex-AI-LLM-Request-Type': 'shared'}
     if service_tier == 'pt_then_flex':
         return {'X-Vertex-AI-LLM-Shared-Request-Type': 'flex'}
+    if service_tier == 'pt_then_priority':
+        return {'X-Vertex-AI-LLM-Shared-Request-Type': 'priority'}
     if service_tier == 'flex_only':
         return {
             'X-Vertex-AI-LLM-Request-Type': 'shared',
             'X-Vertex-AI-LLM-Shared-Request-Type': 'flex',
+        }
+    if service_tier == 'priority_only':
+        return {
+            'X-Vertex-AI-LLM-Request-Type': 'shared',
+            'X-Vertex-AI-LLM-Shared-Request-Type': 'priority',
         }
     assert_never(service_tier)  # pragma: no cover
 
