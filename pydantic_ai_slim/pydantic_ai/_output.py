@@ -5,6 +5,7 @@ import json
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
+from types import NoneType
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
 from pydantic import Json, TypeAdapter, ValidationError
@@ -39,7 +40,6 @@ if TYPE_CHECKING:
 
 T = TypeVar('T')
 """An invariant TypeVar."""
-NoneType = type(None)
 OutputDataT_inv = TypeVar('OutputDataT_inv', default=str)
 """
 An invariant type variable for the result data of a model.

@@ -670,30 +670,28 @@ Once upon a time, in a hidden underwater cave, lived a curious axolotl named Pip
 
 ## Optional output (allowing `None`) {#optional-output}
 
-In some cases, you may want the agent to complete a run without producing any text output. For example, an agent that calls tools and then stops without generating a final message, or a text extractor that returns nothing when no relevant content is found.
+Some agents perform their work entirely through tool calls and don't need to produce a final text message — for example, an agent that updates a record via a tool and then stops. Certain models (notably [Anthropic](models/anthropic.md)) will return an empty response in this case, which by default causes Pydantic AI to retry until the model produces text.
 
-You can allow this by including `None` in the `output_type` union:
+To instead treat an empty response as a successful run, include `None` in the `output_type` union:
 
-```python {title="optional_output.py" test="skip"}
+```python {title="optional_output.py"}
 from pydantic_ai import Agent
 
 agent = Agent('anthropic:claude-opus-4-6', output_type=str | None)
 
 
 @agent.tool_plain
-def read_file(path: str) -> str:
-    """Read a file and return its contents."""
-    return 'File contents here'
+def mark_task_done(task_id: int) -> str:
+    """Mark the task as done."""
+    return f'Task {task_id} marked done.'
 
 
-result = agent.run_sync('Read the readme file, then stop without saying anything.')
-if result.output is None:
-    print('Agent completed without output')
-else:
-    print(result.output)
+result = agent.run_sync('Mark task 1 as done, then stop without saying anything.')
+print(result.output)
+#> None
 ```
 
-When the model returns an empty response and `None` is an allowed output type, the agent will return `None` instead of retrying. [Output validators](#output-validator-functions) are still called with `None`, so you can validate or transform it as needed.
+When the model returns an empty response and `None` is an allowed output type, the agent will return `None` instead of retrying. [Output validator functions](#output-validator-functions) still run with `None` as the argument, so you can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject it if needed.
 
 !!! note
     `output_type=None` on its own is not valid — at least one other output type must be provided alongside `None`.

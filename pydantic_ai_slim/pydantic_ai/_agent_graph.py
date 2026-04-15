@@ -1020,16 +1020,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
                     # If the output type allows None, an empty response is a valid result.
                     if is_empty and output_schema.allows_none:
-                        result_data = cast(NodeRunEndT, None)
-                        run_context = build_run_context(ctx)
-                        run_context = replace(
-                            run_context,
-                            retry=ctx.state.retries,
-                            max_retries=ctx.deps.max_result_retries,
-                        )
+                        run_context = _build_output_run_context(ctx)
                         try:
-                            for validator in ctx.deps.output_validators:
-                                result_data = await validator.validate(result_data, run_context)
+                            result_data = await _run_output_validators(ctx, cast(NodeRunEndT, None), run_context)
                             self._next_node = self._handle_final_result(ctx, result.FinalResult(result_data), [])
                         except ToolRetryError as e:
                             ctx.state.increment_retries(ctx.deps.max_result_retries, error=e)

@@ -625,9 +625,19 @@ async def model_logic(  # noqa: C901
         return ModelResponse(parts=[TextPart('The document contains just the text "Dummy PDF file."')])
     elif isinstance(m, ToolReturnPart) and m.tool_name in ('_add', 'add'):
         return ModelResponse(parts=[TextPart(f'The answer is {m.content}')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'mark_task_done':
+        return ModelResponse(parts=[])
     elif isinstance(m, UserPromptPart):
         assert isinstance(m.content, str)
-        if m.content == 'What is 2 + 3?' and any(t.name in ('_add', 'add') for t in info.function_tools):
+        if m.content == 'Mark task 1 as done, then stop without saying anything.' and any(
+            t.name == 'mark_task_done' for t in info.function_tools
+        ):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='mark_task_done', args={'task_id': 1}, tool_call_id='pyd_ai_tool_call_id')
+                ]
+            )
+        elif m.content == 'What is 2 + 3?' and any(t.name in ('_add', 'add') for t in info.function_tools):
             add_name = next(t.name for t in info.function_tools if t.name in ('_add', 'add'))
             return ModelResponse(
                 parts=[ToolCallPart(tool_name=add_name, args={'a': 2, 'b': 3}, tool_call_id='pyd_ai_tool_call_id')]
