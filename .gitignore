@@ -29,6 +29,11 @@ node_modules/
 .claude/skills/*
 !.claude/skills/address-feedback
 !.claude/skills/pre-push-review
+!.claude/hooks/
+.claude/hooks/*
+!.claude/hooks/contributor-context.md
+!.claude/hooks/inject-contributor-context.sh
+!.claude/hooks/reject-no-verify.sh
 .github/.review-context/
 /.cursor/
 /.devcontainer/
