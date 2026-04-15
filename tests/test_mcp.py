@@ -103,7 +103,7 @@ async def test_stdio_server(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         tools = [tool.tool_def for tool in (await server.get_tools(run_context)).values()]
-        assert len(tools) == snapshot(20)
+        assert len(tools) == snapshot(21)
         assert tools[0].name == 'celsius_to_fahrenheit'
         assert isinstance(tools[0].description, str)
         assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
@@ -207,7 +207,7 @@ async def test_stdio_server_with_cwd(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['mcp_server.py'], cwd=test_dir)
     async with server:
         tools = await server.get_tools(run_context)
-        assert len(tools) == snapshot(20)
+        assert len(tools) == snapshot(21)
 
 
 async def test_process_tool_call(run_context: RunContext[int]) -> int:
@@ -230,6 +230,48 @@ async def test_process_tool_call(run_context: RunContext[int]) -> int:
         result = await agent.run('Echo with deps set to 42', deps=42)
         assert result.output == snapshot('{"echo_deps":{"echo":"This is an echo message","deps":42}}')
         assert called, 'process_tool_call should have been called'
+
+
+async def test_request_meta_in_tool_call(run_context: RunContext[int]):
+    server = MCPServerStdio(
+        'python',
+        ['-m', 'tests.mcp_server'],
+        request_meta={'io.modelcontextprotocol/server-variant': 'compact', 'custom_key': 'custom_val'},
+    )
+    async with server:
+        result = await server.direct_call_tool('echo_request_meta', {})
+        assert result == snapshot(
+            {
+                'io.modelcontextprotocol/server-variant': 'compact',
+                'custom_key': 'custom_val',
+            }
+        )
+
+
+async def test_request_meta_merges_with_per_call_metadata(run_context: RunContext[int]):
+    server = MCPServerStdio(
+        'python',
+        ['-m', 'tests.mcp_server'],
+        request_meta={'base_key': 'base_val', 'shared_key': 'from_request_meta'},
+    )
+    async with server:
+        result = await server.direct_call_tool(
+            'echo_request_meta', {}, metadata={'call_key': 'call_val', 'shared_key': 'from_per_call'}
+        )
+        assert result == snapshot(
+            {
+                'base_key': 'base_val',
+                'call_key': 'call_val',
+                'shared_key': 'from_per_call',
+            }
+        )
+
+
+async def test_request_meta_none_by_default(run_context: RunContext[int]):
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        result = await server.direct_call_tool('echo_request_meta', {})
+        assert result == snapshot({})
 
 
 async def test_server_instructions_disabled_by_default(run_context: RunContext[int]):
@@ -1921,7 +1963,7 @@ async def test_read_resource_error(mcp_server: MCPServerStdio) -> None:
     async with mcp_server:
         with patch.object(
             mcp_server._client,  # pyright: ignore[reportPrivateUsage]
-            'read_resource',
+            'send_request',
             new=AsyncMock(side_effect=mcp_error),
         ):
             with pytest.raises(MCPError, match='Failed to read resource') as exc_info:
@@ -1943,7 +1985,7 @@ async def test_read_resource_empty_contents(mcp_server: MCPServerStdio) -> None:
     async with mcp_server:
         with patch.object(
             mcp_server._client,  # pyright: ignore[reportPrivateUsage]
-            'read_resource',
+            'send_request',
             new=AsyncMock(return_value=empty_result),
         ):
             result = await mcp_server.read_resource('resource://empty')
@@ -2239,6 +2281,19 @@ def test_load_mcp_servers_with_mixed_syntax(tmp_path: Path, monkeypatch: pytest.
     assert isinstance(server, MCPServerStdio)
     assert server.command == 'required_value'
     assert server.args == ['default_arg']
+
+
+def test_load_mcp_servers_with_request_meta(tmp_path: Path):
+    config = tmp_path / 'mcp.json'
+
+    config.write_text(
+        '{"mcpServers": {"potato": {"command": "python", "args": ["-m", "tests.mcp_server"], '
+        '"request_meta": {"io.modelcontextprotocol/server-variant": "compact"}}}}',
+        encoding='utf-8',
+    )
+    server = load_mcp_servers(config)[0]
+    assert isinstance(server, MCPServerStdio)
+    assert server.request_meta == {'io.modelcontextprotocol/server-variant': 'compact'}
 
 
 async def test_server_info(mcp_server: MCPServerStdio) -> None:
