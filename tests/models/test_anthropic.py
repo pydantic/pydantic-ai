@@ -1300,19 +1300,8 @@ async def test_anthropic_cache_messages_deprecated_custom_ttl(allow_model_reques
     assert completion_kwargs['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '1h'})
 
 
-@pytest.mark.parametrize(
-    'cache_val,messages_val',
-    [
-        (True, True),
-        (True, False),
-        (False, True),
-        (False, False),
-    ],
-)
-async def test_anthropic_cache_and_cache_messages_conflict(
-    allow_model_requests: None, cache_val: bool, messages_val: bool
-):
-    """Test that setting both anthropic_cache and anthropic_cache_messages raises UserError."""
+async def test_anthropic_cache_and_cache_messages_conflict(allow_model_requests: None):
+    """Test that enabling both anthropic_cache and anthropic_cache_messages raises UserError."""
     c = completion_message(
         [BetaTextBlock(text='Response', type='text')],
         usage=BetaUsage(input_tokens=10, output_tokens=5),
@@ -1323,12 +1312,12 @@ async def test_anthropic_cache_and_cache_messages_conflict(
         m,
         system_prompt='System instructions.',
         model_settings=AnthropicModelSettings(
-            anthropic_cache=cache_val,
-            anthropic_cache_messages=messages_val,
+            anthropic_cache=True,
+            anthropic_cache_messages=True,
         ),
     )
 
-    with pytest.raises(UserError, match='cannot both be set'):
+    with pytest.raises(UserError, match='cannot both be enabled'):
         await agent.run('User message')
 
 

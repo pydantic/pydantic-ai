@@ -1211,10 +1211,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         auto_cache = model_settings.get('anthropic_cache')
         cache_messages = model_settings.get('anthropic_cache_messages')
 
-        if auto_cache is not None and cache_messages is not None:
-            raise UserError('`anthropic_cache` and `anthropic_cache_messages` cannot both be set.')
+        if auto_cache and cache_messages:
+            raise UserError('`anthropic_cache` and `anthropic_cache_messages` cannot both be enabled.')
 
-        if cache_messages is not None:
+        if cache_messages:
             warnings.warn(
                 '`anthropic_cache_messages` is deprecated, use `anthropic_cache` instead',
                 DeprecationWarning,
