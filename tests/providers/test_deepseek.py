@@ -31,7 +31,7 @@ def test_deep_seek_provider_need_api_key(env: TestEnv) -> None:
         UserError,
         match=re.escape(
             'Set the `DEEPSEEK_API_KEY` environment variable or pass it via `DeepSeekProvider(api_key=...)`'
-            'to use the DeepSeek provider.'
+            ' to use the DeepSeek provider.'
         ),
     ):
         DeepSeekProvider()

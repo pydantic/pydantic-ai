@@ -43,7 +43,7 @@ def test_ollama_provider_need_base_url(env: TestEnv) -> None:
         UserError,
         match=re.escape(
             'Set the `OLLAMA_BASE_URL` environment variable or pass it via `OllamaProvider(base_url=...)`'
-            'to use the Ollama provider.'
+            ' to use the Ollama provider.'
         ),
     ):
         OllamaProvider()

@@ -100,9 +100,7 @@ agent = Agent(model)
 
 ## OpenAI Responses API
 
-Pydantic AI also supports OpenAI's [Responses API](https://platform.openai.com/docs/api-reference/responses) through the
-
-You can use [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] by name:
+Pydantic AI also supports OpenAI's [Responses API](https://platform.openai.com/docs/api-reference/responses) through [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]:
 
 ```python
 from pydantic_ai import Agent
@@ -208,12 +206,39 @@ print(result2.output)
 #> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
 ```
 
+#### Message Compaction
+
+The Responses API supports [compacting message history](https://platform.openai.com/docs/guides/conversation-state#compaction-advanced) to reduce token usage in long conversations. Compaction produces an encrypted summary that replaces older messages while preserving context.
+
+The easiest way to enable compaction is with the [`OpenAICompaction`][pydantic_ai.models.openai.OpenAICompaction] capability, which automatically calls the compact endpoint when the message count exceeds a threshold:
+
+```python {title="openai_compaction.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAICompaction
+
+agent = Agent(
+    'openai-responses:gpt-4o',
+    capabilities=[OpenAICompaction(message_count_threshold=10)],
+)
+
+message_history = []
+for question in ['What is 2+2?', 'And 3+3?', 'And 4+4?']:
+    result = agent.run_sync(question, message_history=message_history)
+    message_history = result.all_messages()
+    # After 10 messages, history is automatically compacted before each request
+```
+
+For advanced use cases, you can call [`compact_messages`][pydantic_ai.models.openai.OpenAIResponsesModel.compact_messages] directly on the model.
+
+!!! tip
+    For best results, combine compaction with [`openai_previous_response_id='auto'`](#automatically-referencing-earlier-responses) in your model settings. This lets OpenAI's server-side history work alongside compaction for improved context continuity. Note that this sends conversation data to OpenAI's server-side storage.
+
 ## OpenAI-compatible Models
 
 Many providers and models are compatible with the OpenAI API, and can be used with `OpenAIChatModel` in Pydantic AI.
 Before getting started, check the [installation and configuration](#install) instructions above.
 
-To use another OpenAI-compatible API, you can make use of the `base_url` and `api_key` arguments from `OpenAIProvider`:
+To use another OpenAI-compatible API, you can set the `OPENAI_BASE_URL` and `OPENAI_API_KEY` environment variables, or make use of the `base_url` and `api_key` arguments from [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider]:
 
 ```python
 from pydantic_ai import Agent
@@ -231,9 +256,9 @@ agent = Agent(model)
 ```
 
 Various providers also have their own provider classes so that you don't need to specify the base URL yourself and you can use the standard `<PROVIDER>_API_KEY` environment variable to set the API key.
-When a provider has its own provider class, you can use the `Agent("<provider>:<model>")` shorthand, e.g. `Agent("deepseek:deepseek-chat")` or `Agent("moonshotai:kimi-k2-0711-preview")`, instead of building the `OpenAIChatModel` explicitly. Similarly, you can pass the provider name as a string to the `provider` argument on `OpenAIChatModel` instead of building instantiating the provider class explicitly.
+When a provider has its own provider class, you can use the `Agent("<provider>:<model>")` shorthand, e.g. `Agent("deepseek:deepseek-chat")` or `Agent("moonshotai:kimi-k2-0711-preview")`, instead of building the `OpenAIChatModel` explicitly. Similarly, you can pass the provider name as a string to the `provider` argument on `OpenAIChatModel` instead of instantiating the provider class explicitly.
 
-#### Model Profile
+### Model Profile
 
 Sometimes, the provider or model you're using will have slightly different requirements than OpenAI's API or models, like having different restrictions on JSON schemas for tool definitions, or not supporting tool definitions to be marked as strict.
 
@@ -399,7 +424,7 @@ print(result.usage())
 
 ### Azure AI Foundry
 
-To use [Azure AI Foundry](https://ai.azure.com/) as your provider, you can set the `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and `OPENAI_API_VERSION` environment variables and use [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] by name:
+To use [Azure AI Foundry](https://ai.azure.com/) as your provider, set `AZURE_OPENAI_ENDPOINT` to a URL whose path ends in `/v1` (for example `https://<resource>.openai.azure.com/openai/v1/` or `https://<resource>.services.ai.azure.com/openai/v1/`), set `AZURE_OPENAI_API_KEY`, and use [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] by name:
 
 ```python
 from pydantic_ai import Agent
@@ -418,14 +443,64 @@ from pydantic_ai.providers.azure import AzureProvider
 model = OpenAIChatModel(
     'gpt-5.2',
     provider=AzureProvider(
-        azure_endpoint='your-azure-endpoint',
-        api_version='your-api-version',
+        azure_endpoint='https://your-resource.openai.azure.com/openai/v1/',
         api_key='your-api-key',
     ),
 )
 agent = Agent(model)
 ...
 ```
+
+This targets the [Azure OpenAI v1 API](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/api-version-lifecycle), which Microsoft recommends for all new projects. It also pairs naturally with the Responses API — see [Using Azure with the Responses API](#using-azure-with-the-responses-api) below.
+
+[`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] also recognises [Azure AI Foundry serverless model deployments](https://learn.microsoft.com/en-us/azure/ai-foundry/foundry-models/concepts/endpoints) at `https://<model>.<region>.models.ai.azure.com` and connects to them the same way.
+
+#### Connecting to an existing `api-version`-based deployment
+
+If your resource still uses the dated `api-version` API, pass `api_version` (or set the `OPENAI_API_VERSION` environment variable) and point `azure_endpoint` at the resource root instead:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.azure import AzureProvider
+
+model = OpenAIChatModel(
+    'gpt-5.2',
+    provider=AzureProvider(
+        azure_endpoint='https://your-resource.openai.azure.com/',
+        api_version='2024-12-01-preview',
+        api_key='your-api-key',
+    ),
+)
+agent = Agent(model)
+...
+```
+
+#### Using Azure with the Responses API
+
+Azure AI Foundry also supports the OpenAI Responses API through [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]. This is particularly recommended when working with document inputs ([`DocumentUrl`][pydantic_ai.DocumentUrl] and [`BinaryContent`][pydantic_ai.BinaryContent]), as Azure's Chat Completions API does not support these input types.
+
+??? example "Document processing with Azure using Responses API"
+    ```python
+    from pydantic_ai import Agent, BinaryContent
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.azure import AzureProvider
+
+    pdf_bytes = b'%PDF-1.4 ...'  # Your PDF content
+
+    model = OpenAIResponsesModel(
+        'gpt-5.2',
+        provider=AzureProvider(
+            azure_endpoint='https://your-resource.openai.azure.com/openai/v1/',
+            api_key='your-api-key',
+        ),
+    )
+    agent = Agent(model)
+    result = agent.run_sync([
+        'Summarize this document',
+        BinaryContent(data=pdf_bytes, media_type='application/pdf'),
+    ])
+    ```
 
 ### Vercel AI Gateway
 
@@ -516,7 +591,7 @@ GitHub Models supports various model families with different prefixes. You can s
 ### Perplexity
 
 Follow the Perplexity [getting started](https://docs.perplexity.ai/guides/getting-started)
-guide to create an API key.
+guide to create an API key, then initialise the model and provider directly:
 
 ```python
 from pydantic_ai import Agent
@@ -594,7 +669,7 @@ agent = Agent(model)
 
 To use [Heroku AI](https://www.heroku.com/ai), first create an API key.
 
-You can set the `HEROKU_INFERENCE_KEY` and (optionally )`HEROKU_INFERENCE_URL` environment variables and use [`HerokuProvider`][pydantic_ai.providers.heroku.HerokuProvider] by name:
+You can set the `HEROKU_INFERENCE_KEY` and (optionally) `HEROKU_INFERENCE_URL` environment variables and use [`HerokuProvider`][pydantic_ai.providers.heroku.HerokuProvider] by name:
 
 ```python
 from pydantic_ai import Agent

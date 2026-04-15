@@ -1,6 +1,5 @@
 # Image, Audio, Video & Document Input
 
-Some LLMs are now capable of understanding audio, video, image and document content.
 
 ## Image Input
 
@@ -102,6 +101,40 @@ print(result.output)
 #> The document discusses...
 ```
 
+!!! tip
+    If neither `DocumentUrl` nor `BinaryContent` is suitable for your use case (e.g., the model doesn't support
+    `DocumentUrl`, or you want to provide a document in a non-binary format), you can still provide document content as
+    text input by extracting the text yourself and passing it as a string or [`TextContent`][pydantic_ai.TextContent].
+
+
+## Text Input
+
+You can use [`TextContent`][pydantic_ai.TextContent] to provide text input with additional metadata:
+
+```py {title="text_content_input.py" test="skip" lint="skip"}
+from pydantic_ai import Agent, TextContent
+
+agent = Agent(model='openai:gpt-5.2')
+result = agent.run_sync([
+    'Summarize the key points from this text.',
+    TextContent(
+        content=(
+            'Pydantic AI is a Python agent framework. '
+            'It supports text, image, audio, video, and document input.'
+        ),
+        metadata={'source': 'pydantic_ai_inputs.txt'},
+    ),
+])
+```
+
+This is equivalent to passing the text as a `str`, but allows you to include additional `metadata` that can be accessed
+programmatically in your agent logic.
+
+!!! note
+    The `content` field is treated as input to the model, but the `metadata` is **not sent to the model**.
+    It is preserved in messages for programmatic access.
+
+
 ## User-side download vs. direct file URL
 
 When using one of `ImageUrl`, `AudioUrl`, `VideoUrl` or `DocumentUrl`, Pydantic AI will default to sending the URL to the model provider, so the file is downloaded on their side.
@@ -110,7 +143,7 @@ Support for file URLs varies depending on type and provider:
 
 | Model | Send URL directly | Download and send bytes | Unsupported |
 |-------|-------------------|-------------------------|-------------|
-| [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] | `ImageUrl` | `AudioUrl`, `DocumentUrl` | `VideoUrl` |
+| [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] | `ImageUrl` | `AudioUrl`, `DocumentUrl` | `VideoUrl`. `DocumentUrl` [not supported with `AzureProvider`](models/openai.md#using-azure-with-the-responses-api) |
 | [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] | `ImageUrl`, `AudioUrl`, `DocumentUrl` | — | `VideoUrl` |
 | [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] | `ImageUrl`, `DocumentUrl` (PDF) | `DocumentUrl` (`text/plain`) | `AudioUrl`, `VideoUrl` |
 | [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (Vertex) | All URL types | — | — |
@@ -120,7 +153,9 @@ Support for file URLs varies depending on type and provider:
 | [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] | S3 URLs (`s3://`) | `ImageUrl`, `DocumentUrl`, `VideoUrl` | `AudioUrl` |
 | [`OpenRouterModel`][pydantic_ai.models.openrouter.OpenRouterModel] | `ImageUrl`, `DocumentUrl`, `VideoUrl` | `AudioUrl` | — |
 
-A model API may be unable to download a file (e.g., because of crawling or access restrictions) even if it supports file URLs. For example, [`GoogleModel`][pydantic_ai.models.google.GoogleModel] on Vertex AI limits YouTube video URLs to one URL per request. In such cases, you can instruct Pydantic AI to download the file content locally and send that instead of the URL by setting `force_download` on the URL object:
+A model API may be unable to download a file (e.g., because of crawling or access restrictions) even if it supports file URLs. For example, [`GoogleModel`][pydantic_ai.models.google.GoogleModel] on Vertex AI limits YouTube video URLs to one URL per request.
+
+In such cases, you can instruct Pydantic AI to download the file content locally and send that instead of the URL by setting `force_download` on the URL object:
 
 ```py {title="force_download.py" test="skip" lint="skip"}
 from pydantic_ai import ImageUrl, AudioUrl, VideoUrl, DocumentUrl

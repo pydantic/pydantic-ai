@@ -78,13 +78,10 @@ agent = Agent(model=model, model_settings=bedrock_model_settings)
 
 Bedrock supports [prompt caching](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html) on Anthropic models so you can reuse expensive context across requests. Pydantic AI provides four ways to use prompt caching:
 
-1. **Cache User Messages with [`CachePoint`][pydantic_ai.messages.CachePoint]**: Insert a `CachePoint` marker to cache everything before it in the current user message.
-2. **Cache System Instructions**: Enable [`BedrockModelSettings.bedrock_cache_instructions`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_instructions] to append a cache point after the system prompt.
-3. **Cache Tool Definitions**: Enable [`BedrockModelSettings.bedrock_cache_tool_definitions`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_tool_definitions] to cache your tool schemas.
-4. **Cache All Messages**: Set [`BedrockModelSettings.bedrock_cache_messages`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_messages] to `True` to automatically cache the last user message.
-
-!!! note "No TTL Support"
-    Unlike the direct Anthropic API, Bedrock manages cache TTL automatically. All cache settings are boolean only — no `'5m'` or `'1h'` options.
+1. **Cache User Messages with [`CachePoint`][pydantic_ai.messages.CachePoint]**: Insert a `CachePoint` marker to cache everything before it in the current user message. Pass `CachePoint(ttl='1h')` to opt into the extended cache duration.
+2. **Cache System Instructions**: Set [`BedrockModelSettings.bedrock_cache_instructions`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_instructions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly. When you have both static and dynamic [instructions](../agent.md#instructions), the cache point is placed after the last static instruction, so dynamic instructions can change without invalidating the static cache.
+3. **Cache Tool Definitions**: Set [`BedrockModelSettings.bedrock_cache_tool_definitions`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_tool_definitions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly.
+4. **Cache All Messages**: Set [`BedrockModelSettings.bedrock_cache_messages`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_messages] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly to automatically cache the last user message.
 
 !!! note "Minimum Token Threshold"
     AWS only serves cached content once a segment crosses the provider-specific minimum token thresholds (see the [Bedrock prompt caching docs](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html)). Short prompts or tool definitions below those limits will bypass the cache, so don't expect savings for tiny payloads.
@@ -128,7 +125,7 @@ agent = Agent(
     system_prompt='Detailed instructions...',
     model_settings=BedrockModelSettings(
         bedrock_cache_instructions=True,       # Cache system instructions
-        bedrock_cache_tool_definitions=True,   # Cache tool definitions
+        bedrock_cache_tool_definitions='1h',   # Cache tool definitions with 1h TTL
         bedrock_cache_messages=True,           # Also cache the last message
     ),
 )

@@ -4,7 +4,7 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
@@ -19,17 +19,17 @@ interactions:
       - parts:
         - text: Hello, world!
         role: user
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:countTokens
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2-preview:countTokens
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '115'
+      - '82'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=63
+      - gfet4t7; dur=164
       transfer-encoding:
       - chunked
       vary:
