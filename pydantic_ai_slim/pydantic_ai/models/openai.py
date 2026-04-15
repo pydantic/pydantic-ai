@@ -13,7 +13,7 @@ from typing import Any, Literal, cast, overload
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import to_json
-from typing_extensions import assert_never, deprecated
+from typing_extensions import Never, assert_never, deprecated
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
@@ -35,6 +35,7 @@ from ..builtin_tools import (
     MCPServerTool,
     WebSearchTool,
 )
+from ..capabilities.abstract import AbstractCapability
 from ..exceptions import UserError
 from ..messages import (
     AudioUrl,
@@ -43,6 +44,7 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     CachePoint,
+    CompactionPart,
     DocumentUrl,
     FilePart,
     FinishReason,
@@ -70,9 +72,10 @@ from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP, SAMPLING_PARAMS, OpenAIModelProfile, OpenAISystemPromptRole
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
-from ..tools import ToolDefinition
+from ..tools import AgentDepsT, ToolDefinition
 from . import (
     Model,
+    ModelRequestContext,
     ModelRequestParameters,
     OpenAIChatCompatibleProvider,
     OpenAIResponsesCompatibleProvider,
@@ -109,7 +112,13 @@ try:
         WebSearchOptionsUserLocation,
         WebSearchOptionsUserLocationApproximate,
     )
-    from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
+    from openai.types.responses import (
+        ComputerToolParam,
+        FileSearchToolParam,
+        ResponseCompactionItem,
+        WebSearchToolParam,
+    )
+    from openai.types.responses.response_compaction_item_param_param import ResponseCompactionItemParamParam
     from openai.types.responses.response_input_file_content_param import ResponseInputFileContentParam
     from openai.types.responses.response_input_image_content_param import ResponseInputImageContentParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
@@ -1060,6 +1069,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     self._map_response_builtin_part(item)
                 elif isinstance(item, FilePart):  # pragma: no cover
                     self._map_response_file_part(item)
+                elif isinstance(item, CompactionPart):  # pragma: no cover
+                    # Compaction parts are not sent back to the Chat Completions API.
+                    pass
                 else:
                     assert_never(item)
             return self._into_message_param()
@@ -1308,6 +1320,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 audio = InputAudio(data=item.base64, format=item.format)
             return ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio')
         elif item.is_document:
+            if not profile.openai_chat_supports_document_input:
+                self._raise_document_input_not_supported_error()
             return File(
                 file=FileFile(
                     file_data=item.data_uri,
@@ -1353,6 +1367,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 identifier=item.identifier,
             )
         else:
+            if not profile.openai_chat_supports_document_input:
+                self._raise_document_input_not_supported_error()
             downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
             return File(
                 file=FileFile(
@@ -1420,6 +1436,16 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 if mapped_item is not None:
                     content.append(mapped_item)
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
+
+    def _raise_document_input_not_supported_error(self) -> Never:
+        if self._provider.name == 'azure':
+            raise UserError(
+                "Azure's Chat Completions API does not support document input. "
+                'Use `OpenAIResponsesModel` with `AzureProvider` instead.'
+            )
+        raise UserError(
+            f'The {self._provider.name!r} provider does not support document input via the Chat Completions API.'
+        )
 
     @staticmethod
     def _inline_text_file_part(text: str, *, media_type: str, identifier: str) -> ChatCompletionContentPartTextParam:
@@ -1510,6 +1536,104 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool})
+
+    async def compact_messages(
+        self,
+        request_context: ModelRequestContext,
+        *,
+        instructions: str | None = None,
+    ) -> ModelResponse:
+        """Compact messages using the OpenAI Responses compaction endpoint.
+
+        This calls OpenAI's `responses.compact` API to produce an encrypted compaction
+        that summarizes the conversation history. The returned `ModelResponse` contains
+        a single `CompactionPart` that must be round-tripped in subsequent requests.
+
+        Args:
+            request_context: The model request context containing messages, settings, and parameters.
+            instructions: Optional custom instructions for the compaction summarization.
+                If provided, these override the agent-level instructions.
+
+        Returns:
+            A `ModelResponse` with a single `CompactionPart` containing the encrypted compaction data.
+        """
+        check_allow_model_requests()
+        model_settings, model_request_parameters = self.prepare_request(
+            request_context.model_settings,
+            request_context.model_request_parameters,
+        )
+        response = await self._responses_compact(
+            request_context.messages,
+            cast(OpenAIResponsesModelSettings, model_settings or {}),
+            model_request_parameters,
+            instructions_override=instructions,
+        )
+
+        # Handle ModelResponse (e.g. from content filter)
+        if isinstance(response, ModelResponse):  # pragma: no cover
+            return response
+
+        if not response.output:  # pragma: no cover
+            raise UnexpectedModelBehavior('CompactedResponse returned with no output items')
+
+        compaction = response.output[-1]
+        if not isinstance(compaction, ResponseCompactionItem):  # pragma: no cover
+            raise UnexpectedModelBehavior(f'Last item in response is not a compaction, got: {compaction.type}')
+
+        part = CompactionPart(
+            content=None,
+            id=compaction.id,
+            provider_name=self.system,
+            provider_details=compaction.model_dump(),
+        )
+        return ModelResponse(
+            parts=[part],
+            usage=_map_usage(response, self._provider.name, self._provider.base_url, self.model_name),
+            model_name=self._model_name,
+            provider_response_id=response.id,
+            # Marks this ModelResponse as coming from the stateless `/compact` endpoint.
+            # `_get_previous_response_id_and_new_messages` uses this to break the auto-chain,
+            # since compaction response ids cannot be used as `previous_response_id`.
+            provider_details={'compaction': True},
+            timestamp=_now_utc(),
+            provider_name=self._provider.name,
+            provider_url=self._provider.base_url,
+        )
+
+    async def _responses_compact(
+        self,
+        messages: list[ModelMessage],
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+        *,
+        instructions_override: str | None = None,
+    ) -> responses.CompactedResponse | ModelResponse:
+        """Call the OpenAI Responses compaction endpoint."""
+        previous_response_id = model_settings.get('openai_previous_response_id')
+        if previous_response_id == 'auto':
+            previous_response_id, messages = self._get_previous_response_id_and_new_messages(
+                messages, allow_no_new_messages=True
+            )
+
+        instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
+        if instructions_override is not None:
+            instructions = instructions_override
+
+        try:
+            return await self.client.responses.compact(
+                input=openai_messages,
+                model=self.model_name,
+                instructions=instructions,
+                previous_response_id=previous_response_id or OMIT,
+            )
+        except APIStatusError as e:  # pragma: no cover
+            if model_response := _check_azure_content_filter(e, self.system, self.model_name):
+                return model_response
+            if (status_code := e.status_code) >= 400:
+                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
+            raise
+        except APIConnectionError as e:  # pragma: no cover
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
     async def request(
         self,
@@ -1978,7 +2102,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         }
 
     def _get_previous_response_id_and_new_messages(
-        self, messages: list[ModelMessage]
+        self, messages: list[ModelMessage], *, allow_no_new_messages: bool = False
     ) -> tuple[str | None, list[ModelMessage]]:
         # When `openai_previous_response_id` is set to 'auto', the most recent
         # `provider_response_id` from the message history is selected and all
@@ -1989,12 +2113,18 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         trimmed_messages: list[ModelMessage] = []
         for m in reversed(messages):
             if isinstance(m, ModelResponse) and m.provider_name == self.system:
+                # Responses from the stateless `/compact` endpoint can't be used as
+                # `previous_response_id`, so the compaction acts as a hard chain boundary:
+                # the next request must pass the `CompactionPart` via the `input` array
+                # (handled by `_map_messages`) without a `previous_response_id`.
+                if m.provider_details and m.provider_details.get('compaction'):
+                    return None, messages
                 previous_response_id = m.provider_response_id
                 break
             else:
                 trimmed_messages.append(m)
 
-        if previous_response_id and trimmed_messages:
+        if previous_response_id and (allow_no_new_messages or trimmed_messages):
             return previous_response_id, list(reversed(trimmed_messages))
         else:
             return None, messages
@@ -2256,6 +2386,19 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             openai_messages.append(
                                 responses.EasyInputMessageParam(
                                     role='assistant', content='\n'.join([start_tag, item.content, end_tag])
+                                )
+                            )
+                    elif isinstance(item, CompactionPart):
+                        if (
+                            item.provider_name == self.system
+                            and item.provider_details
+                            and 'encrypted_content' in item.provider_details
+                        ):  # pragma: no branch
+                            openai_messages.append(
+                                ResponseCompactionItemParamParam(
+                                    id=item.id,
+                                    encrypted_content=item.provider_details['encrypted_content'],
+                                    type='compaction',
                                 )
                             )
                     else:
@@ -3014,6 +3157,91 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
+class OpenAICompaction(AbstractCapability[AgentDepsT]):
+    """Compaction capability for OpenAI Responses API.
+
+    Calls the `responses.compact` endpoint via a `before_model_request` hook
+    when the trigger condition is met. The compacted history replaces the
+    original messages, keeping conversation context within manageable limits.
+
+    Example usage::
+
+        from pydantic_ai import Agent
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        agent = Agent(
+            'openai-responses:gpt-4o',
+            capabilities=[OpenAICompaction(message_count_threshold=10)],
+        )
+    """
+
+    def __init__(
+        self,
+        *,
+        message_count_threshold: int | None = None,
+        trigger: Callable[[list[ModelMessage]], bool] | None = None,
+        instructions: str | None = None,
+    ) -> None:
+        """Initialize the OpenAI compaction capability.
+
+        Args:
+            message_count_threshold: Compact when the message count exceeds this threshold.
+            trigger: Custom callable that decides whether to compact based on the current messages.
+                Takes precedence over `message_count_threshold`.
+            instructions: Custom instructions for the compaction summarization.
+        """
+        self.message_count_threshold = message_count_threshold
+        self.trigger = trigger
+        self.instructions = instructions
+
+    def _should_compact(self, messages: list[ModelMessage]) -> bool:
+        if self.trigger is not None:
+            return self.trigger(messages)
+        if self.message_count_threshold is not None:
+            return len(messages) > self.message_count_threshold
+        return False
+
+    async def before_model_request(
+        self,
+        ctx: RunContext[AgentDepsT],
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
+        if not self._should_compact(request_context.messages):
+            return request_context
+
+        from .wrapper import WrapperModel
+
+        model = request_context.model
+        while isinstance(model, WrapperModel):
+            model = model.wrapped
+        if not isinstance(model, OpenAIResponsesModel):
+            raise UserError(
+                f'OpenAICompaction requires OpenAIResponsesModel, got {type(model).__name__}. '
+                f'Use the provider-specific compaction capability for your model.'
+            )
+
+        # Need at least 2 messages (history + current request) to compact
+        if len(request_context.messages) < 2:  # pragma: no cover
+            return request_context
+
+        # Compact all messages except the last (current) request
+        compact_ctx = ModelRequestContext(
+            model=request_context.model,
+            messages=request_context.messages[:-1],
+            model_settings=request_context.model_settings,
+            model_request_parameters=request_context.model_request_parameters,
+        )
+        compacted_response = await request_context.model.compact_messages(compact_ctx, instructions=self.instructions)
+
+        # Replace message history with compaction + last request
+        request_context.messages = [compacted_response, request_context.messages[-1]]
+        return request_context
+
+    @classmethod
+    def get_serialization_name(cls) -> str | None:
+        return 'OpenAICompaction'
+
+
 def _make_raw_content_updater(delta: str, index: int) -> Callable[[dict[str, Any] | None], dict[str, Any]]:
     """Create a callback that updates `provider_details['raw_content']`.
 
@@ -3052,7 +3280,7 @@ def _map_logprobs(
 
 
 def _map_usage(
-    response: chat.ChatCompletion | ChatCompletionChunk | responses.Response,
+    response: chat.ChatCompletion | ChatCompletionChunk | responses.Response | responses.CompactedResponse,
     provider: str,
     provider_url: str,
     model: str,

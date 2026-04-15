@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import io
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Iterator
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -21,6 +21,7 @@ from ..builtin_tools import (
     WebFetchTool,
     WebSearchTool,
 )
+from ..capabilities.abstract import AbstractCapability
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     AudioUrl,
@@ -28,6 +29,7 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     CachePoint,
+    CompactionPart,
     DocumentUrl,
     FilePart,
     FinishReason,
@@ -54,7 +56,7 @@ from ..profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP, AnthropicModelPr
 from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import ModelSettings, ThinkingEffort, merge_model_settings
-from ..tools import ToolDefinition
+from ..tools import AgentDepsT, ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
@@ -89,9 +91,13 @@ try:
         BetaCodeExecutionToolResultBlockContent,
         BetaCodeExecutionToolResultBlockParam,
         BetaCodeExecutionToolResultBlockParamContentParam,
+        BetaCompactionBlock,
+        BetaCompactionBlockParam,
+        BetaCompactionContentBlockDelta,
         BetaContainerParams,
         BetaContentBlock,
         BetaContentBlockParam,
+        BetaContextManagementConfigParam,
         BetaFileDocumentSourceParam,
         BetaFileImageSourceParam,
         BetaImageBlockParam,
@@ -102,6 +108,7 @@ try:
         BetaMCPToolUseBlockParam,
         BetaMemoryTool20250818Param,
         BetaMessage,
+        BetaMessageDeltaUsage,
         BetaMessageParam,
         BetaMessageTokensCount,
         BetaMetadataParam,
@@ -135,6 +142,7 @@ try:
         BetaToolUnionParam,
         BetaToolUseBlock,
         BetaToolUseBlockParam,
+        BetaUsage,
         BetaWebFetchTool20250910Param,
         BetaWebFetchToolResultBlock,
         BetaWebFetchToolResultBlockParam,
@@ -259,8 +267,18 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """List of Anthropic beta features to enable for API requests.
 
     Each item can be a known beta name (e.g. 'interleaved-thinking-2025-05-14') or a custom string.
-    Merged with auto-added betas (e.g. structured-outputs, builtin tools) and any betas from
+    Merged with auto-added betas (e.g. builtin tools) and any betas from
     extra_headers['anthropic-beta']. See the Anthropic docs for available beta features.
+    """
+
+    anthropic_context_management: BetaContextManagementConfigParam
+    """Context management configuration for automatic compaction.
+
+    When configured, Anthropic will automatically compact older context when the
+    input token count exceeds the configured threshold. The compaction produces
+    a summary that replaces the compacted messages.
+
+    See [the Anthropic docs](https://docs.anthropic.com/en/docs/build-with-claude/compaction) for more details.
     """
 
 
@@ -402,10 +420,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 thinking_enabled = True
 
         if model_request_parameters.output_tools and thinking_enabled:
-            if model_request_parameters.output_mode == 'auto':
-                output_mode = 'native' if self.profile.supports_json_schema_output else 'prompted'
-                model_request_parameters = replace(model_request_parameters, output_mode=output_mode)
-            elif (
+            output_mode = 'native' if self.profile.supports_json_schema_output else 'prompted'
+            model_request_parameters = model_request_parameters.with_default_output_mode(output_mode)
+            if (
                 model_request_parameters.output_mode == 'tool' and not model_request_parameters.allow_text_output
             ):  # pragma: no branch
                 # This would result in `tool_choice=required`, which Anthropic does not support with thinking.
@@ -481,8 +498,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._limit_cache_points(system_prompt, anthropic_messages, tools)
         output_config = self._build_output_config(model_request_parameters, model_settings)
-        betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
+        betas, extra_headers = self._get_betas_and_extra_headers(model_settings)
         betas.update(builtin_tool_betas)
+        context_management = self._add_compaction_params(messages, betas, model_settings)
         container = self._get_container(messages, model_settings)
         with _map_api_errors(self.model_name):
             return await self.client.beta.messages.create(
@@ -502,15 +520,34 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 top_p=model_settings.get('top_p', OMIT),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 metadata=model_settings.get('anthropic_metadata', OMIT),
+                context_management=context_management or OMIT,
                 container=container or OMIT,
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
 
+    @staticmethod
+    def _add_compaction_params(
+        messages: list[ModelMessage],
+        betas: set[str],
+        model_settings: AnthropicModelSettings,
+    ) -> BetaContextManagementConfigParam | None:
+        """Add compaction beta and default context_management when messages contain CompactionParts.
+
+        This ensures CompactionParts can be round-tripped even without AnthropicCompaction active.
+        """
+        has_compaction_parts = any(
+            isinstance(part, CompactionPart) for msg in messages if isinstance(msg, ModelResponse) for part in msg.parts
+        )
+        if has_compaction_parts:
+            betas.add('compact-2026-01-12')
+        context_management = model_settings.get('anthropic_context_management')
+        if has_compaction_parts and context_management is None:
+            context_management = cast(BetaContextManagementConfigParam, {'edits': [{'type': 'compact_20260112'}]})
+        return context_management
+
     def _get_betas_and_extra_headers(
         self,
-        tools: list[BetaToolUnionParam],
-        model_request_parameters: ModelRequestParameters,
         model_settings: AnthropicModelSettings,
     ) -> tuple[set[str], dict[str, str]]:
         """Prepare beta features list and extra headers for API request.
@@ -523,10 +560,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         betas: set[str] = set()
 
-        has_strict_tools = any(tool.get('strict') for tool in tools)
-
-        if has_strict_tools or model_request_parameters.output_mode == 'native':
-            betas.add('structured-outputs-2025-11-13')
+        if model_settings.get('anthropic_context_management'):
+            betas.add('compact-2026-01-12')
 
         if betas_from_setting := model_settings.get('anthropic_betas'):
             betas.update(str(b) for b in betas_from_setting)
@@ -566,8 +601,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._limit_cache_points(system_prompt, anthropic_messages, tools)
         output_config = self._build_output_config(model_request_parameters, model_settings)
-        betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
+        betas, extra_headers = self._get_betas_and_extra_headers(model_settings)
         betas.update(builtin_tool_betas)
+        context_management = self._add_compaction_params(messages, betas, model_settings)
         with _map_api_errors(self.model_name):
             return await self.client.beta.messages.count_tokens(
                 system=system_prompt or OMIT,
@@ -579,6 +615,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 betas=sorted(betas) or OMIT,
                 output_config=output_config or OMIT,
                 thinking=self._translate_thinking(model_settings, model_request_parameters),
+                context_management=context_management or OMIT,
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
@@ -614,6 +651,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             elif isinstance(item, BetaMCPToolResultBlock):
                 call_part = builtin_tool_calls.get(item.tool_use_id)
                 items.append(_map_mcp_server_result_block(item, call_part, self.system))
+            elif isinstance(item, BetaCompactionBlock):
+                items.append(CompactionPart(content=item.content, provider_name=self.system))
             else:
                 assert isinstance(item, BetaToolUseBlock), f'unexpected item type {type(item)}'
                 items.append(
@@ -853,6 +892,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     | BetaRedactedThinkingBlockParam
                     | BetaMCPToolUseBlockParam
                     | BetaMCPToolResultBlock
+                    | BetaCompactionBlockParam
                 ] = []
                 for response_part in m.parts:
                     if isinstance(response_part, TextPart):
@@ -988,6 +1028,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                         **response_part.content,  # pyright: ignore[reportUnknownMemberType]
                                     )
                                 )
+                    elif isinstance(response_part, CompactionPart):
+                        if response_part.provider_name == self.system:  # pragma: no branch
+                            assistant_content_params.append(
+                                BetaCompactionBlockParam(content=response_part.content, type='compaction')
+                            )
                     elif isinstance(response_part, FilePart):  # pragma: no cover
                         # Files generated by models are not sent back to models that don't themselves generate files.
                         pass
@@ -1328,6 +1373,106 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return config
 
 
+class AnthropicCompaction(AbstractCapability[AgentDepsT]):
+    """Compaction capability for Anthropic models.
+
+    Configures automatic context management via Anthropic's `context_management`
+    API parameter. Compaction triggers server-side when input tokens exceed
+    the configured threshold.
+
+    Example usage::
+
+        from pydantic_ai import Agent
+        from pydantic_ai.models.anthropic import AnthropicCompaction
+
+        agent = Agent(
+            'anthropic:claude-sonnet-4-6',
+            capabilities=[AnthropicCompaction(token_threshold=100_000)],
+        )
+    """
+
+    def __init__(
+        self,
+        *,
+        token_threshold: int = 150_000,
+        instructions: str | None = None,
+        pause_after_compaction: bool = False,
+    ) -> None:
+        """Initialize the Anthropic compaction capability.
+
+        Args:
+            token_threshold: Compact when input tokens exceed this threshold. Minimum 50,000.
+            instructions: Custom instructions for the compaction summarization.
+            pause_after_compaction: If `True`, the response will stop after the compaction block
+                with `stop_reason='compaction'`, allowing explicit handling.
+        """
+        self.token_threshold = token_threshold
+        self.instructions = instructions
+        self.pause_after_compaction = pause_after_compaction
+
+    def get_model_settings(self) -> Callable[[RunContext[AgentDepsT]], ModelSettings]:
+        edit: dict[str, Any] = {
+            'type': 'compact_20260112',
+            'trigger': {'type': 'input_tokens', 'value': self.token_threshold},
+        }
+        if self.pause_after_compaction:
+            edit['pause_after_compaction'] = True
+        if self.instructions is not None:
+            edit['instructions'] = self.instructions
+
+        def resolve(ctx: RunContext[AgentDepsT]) -> ModelSettings:
+            # Append our edit to any existing context_management the user may have configured,
+            # preserving other fields (not just edits).
+            existing_cm: dict[str, Any] = {}
+            if ctx.model_settings:
+                raw_cm = cast(dict[str, Any], ctx.model_settings).get('anthropic_context_management')
+                if isinstance(raw_cm, dict):  # pragma: no branch
+                    existing_cm = {**cast(dict[str, Any], raw_cm)}
+            existing_edits = cast(list[dict[str, Any]], existing_cm.get('edits', []))
+            existing_cm['edits'] = [*existing_edits, edit]
+            return cast(ModelSettings, {'anthropic_context_management': existing_cm})
+
+        return resolve
+
+    @classmethod
+    def get_serialization_name(cls) -> str | None:
+        return 'AnthropicCompaction'
+
+
+_COMPACTION_TOKEN_KEYS = ('input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens')
+
+
+def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) -> dict[str, int]:
+    """Extract Anthropic usage into a flat dict, preserving compaction iteration totals.
+
+    Anthropic's top-level `input_tokens`/`output_tokens` exclude compaction iteration usage
+    (see <https://docs.anthropic.com/en/docs/build-with-claude/compaction#understanding-usage>),
+    so they're kept as-is here and the compaction iteration totals are recorded under
+    `compaction_*` keys. `_map_usage` sums them back into the request totals at extraction time,
+    which also keeps streaming correct: the fixed compaction totals set by the start event
+    survive the merge with delta events that only carry the top-level values.
+    """
+    details: dict[str, int] = {}
+    for key in _COMPACTION_TOKEN_KEYS:
+        if isinstance((value := getattr(response_usage, key, None)), int):
+            details[key] = value
+
+    iterations = response_usage.iterations
+    if not iterations:
+        return details
+
+    compaction_iterations = [it for it in iterations if it.type == 'compaction']
+    if not compaction_iterations:
+        return details
+
+    details['compaction_iterations'] = len(compaction_iterations)
+    details['message_iterations'] = len(iterations) - len(compaction_iterations)
+    for key in _COMPACTION_TOKEN_KEYS:
+        if compaction_total := sum(getattr(it, key) for it in compaction_iterations):
+            details[f'compaction_{key}'] = compaction_total
+    return details
+
+
 def _map_usage(
     message: BetaMessage | BetaRawMessageStartEvent | BetaRawMessageDeltaEvent,
     provider: str,
@@ -1346,14 +1491,19 @@ def _map_usage(
 
     # In streaming, usage appears in different events.
     # The values are cumulative, meaning new values should replace existing ones entirely.
-    details: dict[str, int] = (existing_usage.details if existing_usage else {}) | {
-        key: value for key, value in response_usage.model_dump().items() if isinstance(value, int)
-    }
+    details = (existing_usage.details if existing_usage else {}) | _extract_usage_details(response_usage)
+
+    # Anthropic reports top-level tokens excluding compaction iteration usage; add the
+    # compaction totals back in so the extracted `RequestUsage` reflects the real request cost.
+    usage_for_extraction = dict(details)
+    for key in _COMPACTION_TOKEN_KEYS:
+        if compaction_value := details.get(f'compaction_{key}'):
+            usage_for_extraction[key] = usage_for_extraction.get(key, 0) + compaction_value
 
     # Note: genai-prices already extracts cache_creation_input_tokens and cache_read_input_tokens
     # from the Anthropic response and maps them to cache_write_tokens and cache_read_tokens
     return usage.RequestUsage.extract(
-        dict(model=model, usage=details),
+        dict(model=model, usage=usage_for_extraction),
         provider=provider,
         provider_url=provider_url,
         provider_fallback='anthropic',
@@ -1464,6 +1614,11 @@ class AnthropicStreamedResponse(StreamedResponse):
                             vendor_part_id=event.index,
                             part=_map_mcp_server_result_block(current_block, call_part, self.provider_name),
                         )
+                    elif isinstance(current_block, BetaCompactionBlock):
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=event.index,
+                            part=CompactionPart(content=current_block.content, provider_name=self.provider_name),
+                        )
 
                 elif isinstance(event, BetaRawContentBlockDeltaEvent):
                     if isinstance(event.delta, BetaTextDelta):
@@ -1492,6 +1647,13 @@ class AnthropicStreamedResponse(StreamedResponse):
                         )
                         if maybe_event is not None:  # pragma: no branch
                             yield maybe_event
+                    elif isinstance(event.delta, BetaCompactionContentBlockDelta):
+                        if event.delta.content:  # pragma: no branch
+                            # Re-emit part with updated content; replaces the initial block start part
+                            yield self._parts_manager.handle_part(
+                                vendor_part_id=event.index,
+                                part=CompactionPart(content=event.delta.content, provider_name=self.provider_name),
+                            )
                     # TODO(Marcelo): We need to handle citations.
                     elif isinstance(event.delta, BetaCitationsDelta):
                         pass
