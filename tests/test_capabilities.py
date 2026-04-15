@@ -1128,9 +1128,9 @@ Supported by:
                             'title': 'Enable Video Understanding',
                             'type': 'boolean',
                         },
-                        'include_x_search_output': {
+                        'include_output': {
                             'default': False,
-                            'title': 'Include X Search Output',
+                            'title': 'Include Output',
                             'type': 'boolean',
                         },
                     },
