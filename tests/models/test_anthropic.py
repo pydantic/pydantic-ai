@@ -69,7 +69,6 @@ with try_import() as imports_successful:
     from anthropic.lib.tools import BetaAbstractMemoryTool
     from anthropic.resources.beta import AsyncBeta
     from anthropic.types.beta import (
-        BetaCacheControlEphemeralParam,
         BetaCodeExecutionResultBlock,
         BetaCodeExecutionToolResultBlock,
         BetaCompactionIterationUsage,
@@ -85,7 +84,6 @@ with try_import() as imports_successful:
         BetaMessage,
         BetaMessageDeltaUsage,
         BetaMessageIterationUsage,
-        BetaMessageParam,
         BetaMessageTokensCount,
         BetaRawContentBlockDeltaEvent,
         BetaRawContentBlockStartEvent,
@@ -96,7 +94,6 @@ with try_import() as imports_successful:
         BetaRawMessageStreamEvent,
         BetaServerToolUseBlock,
         BetaTextBlock,
-        BetaTextBlockParam,
         BetaTextDelta,
         BetaToolUseBlock,
         BetaUsage,
@@ -489,116 +486,118 @@ def test_build_cache_control_includes_ttl():
     assert cache_control_1h == {'type': 'ephemeral', 'ttl': '1h'}
 
 
-async def test_automatic_cache_control_none_on_unsupported_clients(allow_model_requests: None):
-    """Test that the top-level cache_control parameter is None for Bedrock and Vertex.
+@pytest.mark.parametrize(
+    'cache_value,expected_ttl',
+    [
+        pytest.param(True, '5m', id='default-5m'),
+        pytest.param('1h', '1h', id='custom-1h'),
+    ],
+)
+@pytest.mark.parametrize(
+    'client_cls_name',
+    [
+        pytest.param('AsyncAnthropicBedrock', id='bedrock'),
+        pytest.param('AsyncAnthropicVertex', id='vertex'),
+    ],
+)
+async def test_anthropic_cache_fallback_on_unsupported_clients(
+    allow_model_requests: None,
+    cache_value: bool | Literal['1h'],
+    expected_ttl: str,
+    client_cls_name: str,
+):
+    """Test that anthropic_cache falls back to per-block caching on Bedrock and Vertex.
 
-    Bedrock and Vertex do not support the top-level cache_control parameter
-    (automatic caching). Per-block fallback is handled by _apply_per_block_caching_fallback.
-    Foundry supports automatic caching.
-    See https://github.com/anthropics/anthropic-sdk-python/issues/939
+    On these platforms the top-level cache_control parameter is not supported,
+    so per-block cache_control is applied to the last user message instead.
     """
-    from unittest.mock import MagicMock
+    from unittest.mock import AsyncMock, MagicMock
 
-    from anthropic import AsyncAnthropicBedrock, AsyncAnthropicVertex
+    import anthropic
 
-    for client_cls, base_url in [
-        (AsyncAnthropicBedrock, 'https://bedrock.amazonaws.com'),
-        (AsyncAnthropicVertex, 'https://us-central1-aiplatform.googleapis.com'),
-    ]:
-        mock_client = MagicMock(spec=client_cls)
-        mock_client.base_url = base_url
-        model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    client_cls = getattr(anthropic, client_cls_name)
+    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
 
-        settings = AnthropicModelSettings(anthropic_cache=True)
-        assert model._build_automatic_cache_control(settings) is None  # pyright: ignore[reportPrivateUsage]
+    mock_client = MagicMock()
+    mock_client.__class__ = client_cls
+    mock_client.base_url = 'https://bedrock.amazonaws.com'
+    mock_client.beta.messages.create = AsyncMock(return_value=c)
 
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model, model_settings=AnthropicModelSettings(anthropic_cache=cache_value))
 
-@pytest.mark.parametrize('cache_value', [True, '1h'])
-def test_anthropic_cache_per_block_fallback_on_unsupported_clients(cache_value: bool | Literal['1h']):
-    """Test that anthropic_cache falls back to per-block caching on Bedrock and Vertex."""
-    from unittest.mock import MagicMock
+    result = await agent.run('Hello')
+    assert result.output == 'Response'
 
-    from anthropic import AsyncAnthropicBedrock, AsyncAnthropicVertex
-
-    for client_cls, base_url in [
-        (AsyncAnthropicBedrock, 'https://bedrock.amazonaws.com'),
-        (AsyncAnthropicVertex, 'https://us-central1-aiplatform.googleapis.com'),
-    ]:
-        mock_client = MagicMock(spec=client_cls)
-        mock_client.base_url = base_url
-        model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-
-        settings = AnthropicModelSettings(anthropic_cache=cache_value)
-        assert model._build_automatic_cache_control(settings) is None  # pyright: ignore[reportPrivateUsage]
-
-        messages: list[BetaMessageParam] = [
-            BetaMessageParam(role='user', content=[BetaTextBlockParam(type='text', text='Hello')]),
-        ]
-        model._apply_per_block_caching_fallback(settings, messages)  # pyright: ignore[reportPrivateUsage]
-
-        expected_ttl = '5m' if cache_value is True else cache_value
-        content = cast(list[dict[str, Any]], messages[-1]['content'])
-        assert content[-1]['cache_control'] == {'type': 'ephemeral', 'ttl': expected_ttl}
+    call_kwargs = mock_client.beta.messages.create.call_args.kwargs
+    assert not isinstance(call_kwargs.get('cache_control'), dict)
+    last_user_msg = call_kwargs['messages'][-1]
+    content = last_user_msg['content']
+    assert content[-1]['cache_control'] == {'type': 'ephemeral', 'ttl': expected_ttl}
 
 
-@pytest.mark.parametrize('cache_value', [True, '1h'])
-def test_deprecated_cache_messages_per_block_fallback_on_unsupported_clients(cache_value: bool | Literal['1h']):
-    """Test that deprecated anthropic_cache_messages also triggers per-block fallback on Bedrock and Vertex."""
-    from unittest.mock import MagicMock
-
-    from anthropic import AsyncAnthropicBedrock, AsyncAnthropicVertex
-
-    for client_cls, base_url in [
-        (AsyncAnthropicBedrock, 'https://bedrock.amazonaws.com'),
-        (AsyncAnthropicVertex, 'https://us-central1-aiplatform.googleapis.com'),
-    ]:
-        mock_client = MagicMock(spec=client_cls)
-        mock_client.base_url = base_url
-        model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-
-        settings = AnthropicModelSettings(anthropic_cache_messages=cache_value)
-
-        with pytest.warns(DeprecationWarning, match='`anthropic_cache_messages` is deprecated'):
-            result = model._build_automatic_cache_control(settings)  # pyright: ignore[reportPrivateUsage]
-        assert result is None
-
-        messages: list[BetaMessageParam] = [
-            BetaMessageParam(role='user', content=[BetaTextBlockParam(type='text', text='Hello')]),
-        ]
-        model._apply_per_block_caching_fallback(settings, messages)  # pyright: ignore[reportPrivateUsage]
-
-        expected_ttl = '5m' if cache_value is True else cache_value
-        content = cast(list[dict[str, Any]], messages[-1]['content'])
-        assert content[-1]['cache_control'] == {'type': 'ephemeral', 'ttl': expected_ttl}
-
-
-def test_per_block_fallback_preserves_existing_cache_control():
-    """Test that per-block fallback does not overwrite explicit CachePoint cache_control."""
-    from unittest.mock import MagicMock
+@pytest.mark.parametrize(
+    'cache_value,expected_ttl',
+    [
+        pytest.param(True, '5m', id='default-5m'),
+        pytest.param('1h', '1h', id='custom-1h'),
+    ],
+)
+async def test_anthropic_cache_messages_deprecated_fallback_on_bedrock(
+    allow_model_requests: None,
+    cache_value: bool | Literal['1h'],
+    expected_ttl: str,
+):
+    """Test that deprecated anthropic_cache_messages triggers per-block fallback on Bedrock."""
+    from unittest.mock import AsyncMock, MagicMock
 
     from anthropic import AsyncAnthropicBedrock
 
-    mock_bedrock_client = MagicMock(spec=AsyncAnthropicBedrock)
-    mock_bedrock_client.base_url = 'https://bedrock.amazonaws.com'
-    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_bedrock_client))
+    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
 
-    settings = AnthropicModelSettings(anthropic_cache=True)
+    mock_client = MagicMock()
+    mock_client.__class__ = AsyncAnthropicBedrock  # pyright: ignore[reportAttributeAccessIssue]
+    mock_client.base_url = 'https://bedrock.amazonaws.com'
+    mock_client.beta.messages.create = AsyncMock(return_value=c)
 
-    messages: list[BetaMessageParam] = [
-        BetaMessageParam(
-            role='user',
-            content=[
-                BetaTextBlockParam(
-                    type='text',
-                    text='Hello',
-                    cache_control=BetaCacheControlEphemeralParam(type='ephemeral', ttl='1h'),
-                ),
-            ],
-        ),
-    ]
-    model._apply_per_block_caching_fallback(settings, messages)  # pyright: ignore[reportPrivateUsage]
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model, model_settings=AnthropicModelSettings(anthropic_cache_messages=cache_value))
 
-    content = cast(list[dict[str, Any]], messages[-1]['content'])
+    with pytest.warns(DeprecationWarning, match='`anthropic_cache_messages` is deprecated'):
+        result = await agent.run('Hello')
+    assert result.output == 'Response'
+
+    call_kwargs = mock_client.beta.messages.create.call_args.kwargs
+    assert not isinstance(call_kwargs.get('cache_control'), dict)
+    last_user_msg = call_kwargs['messages'][-1]
+    content = last_user_msg['content']
+    assert content[-1]['cache_control'] == {'type': 'ephemeral', 'ttl': expected_ttl}
+
+
+async def test_anthropic_cache_fallback_preserves_existing_cache_control(allow_model_requests: None):
+    """Test that per-block fallback does not overwrite explicit CachePoint cache_control on Bedrock."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from anthropic import AsyncAnthropicBedrock
+
+    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+
+    mock_client = MagicMock()
+    mock_client.__class__ = AsyncAnthropicBedrock  # pyright: ignore[reportAttributeAccessIssue]
+    mock_client.base_url = 'https://bedrock.amazonaws.com'
+    mock_client.beta.messages.create = AsyncMock(return_value=c)
+
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model, model_settings=AnthropicModelSettings(anthropic_cache=True))
+
+    # CachePoint(ttl='1h') attaches to the preceding block, making it the last content block
+    # with cache_control already set. The fallback should preserve the user's '1h' TTL.
+    result = await agent.run(['Some context', CachePoint(ttl='1h')])
+    assert result.output == 'Response'
+
+    call_kwargs = mock_client.beta.messages.create.call_args.kwargs
+    last_user_msg = call_kwargs['messages'][-1]
+    content = last_user_msg['content']
     assert content[-1]['cache_control'] == {'type': 'ephemeral', 'ttl': '1h'}
 
 
@@ -9723,7 +9722,7 @@ async def test_anthropic_compaction_usage_with_cache(allow_model_requests: None,
         model=model,
         instructions='You are a helpful assistant. Be very brief.',
         capabilities=[AnthropicCompaction(token_threshold=50_000)],
-        model_settings=AnthropicModelSettings(anthropic_cache_messages=True),
+        model_settings=AnthropicModelSettings(anthropic_cache=True),
     )
 
     result = await agent.run(f'Remember this context: {padding}\n\nNow say hello.')
@@ -9760,7 +9759,7 @@ async def test_anthropic_compaction_usage_with_cache_streaming(allow_model_reque
         model=model,
         instructions='You are a helpful assistant. Be very brief.',
         capabilities=[AnthropicCompaction(token_threshold=50_000)],
-        model_settings=AnthropicModelSettings(anthropic_cache_messages=True),
+        model_settings=AnthropicModelSettings(anthropic_cache=True),
     )
 
     async with agent.run_stream(f'Remember this context: {padding}\n\nNow say hello.') as result:
