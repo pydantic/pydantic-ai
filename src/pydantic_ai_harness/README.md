@@ -69,7 +69,7 @@ We studied leading coding agents, agent frameworks, and Claw-style assistants to
 | Category | Capability | Description | Status | Community&nbsp;alternatives |
 |---|---|---|---|---|
 | **Tools &&nbsp;execution** | **Code mode** | Sandboxed Python execution via [Monty](https://github.com/pydantic/monty) -- one `run_code` call replaces N tool calls | :white_check_mark: [Docs](pydantic_ai_harness/code_mode/) | |
-| | **Tool search** | Progressive tool discovery for large tool sets | :white_check_mark: [Pydantic&nbsp;AI](https://ai.pydantic.dev/deferred-tools/) | |
+| | **Tool search** | Progressive tool discovery for large tool sets | :white_check_mark: [Pydantic&nbsp;AI](https://pydantic.dev/docs/ai/tools-toolsets/toolsets/#deferred-loading) | |
 | | **File system** | Read, write, edit, search files with path traversal prevention | :construction: [PR&nbsp;#177](https://github.com/pydantic/pydantic-ai-harness/pull/177) | [pydantic-ai-backend](https://github.com/vstorm-co/pydantic-ai-backend) (vstorm&#8209;co) |
 | | **Shell** | Execute commands with allowlists, denylists, and timeouts | :construction: [PR&nbsp;#177](https://github.com/pydantic/pydantic-ai-harness/pull/177) | [pydantic-ai-backend](https://github.com/vstorm-co/pydantic-ai-backend) (vstorm&#8209;co) |
 | | **Repo context injection** | Auto-load CLAUDE.md/AGENTS.md and repo structure | :construction: [PR&nbsp;#175](https://github.com/pydantic/pydantic-ai-harness/pull/175) | [pydantic-deep](https://github.com/vstorm-co/pydantic-deepagents) (vstorm&#8209;co) |
