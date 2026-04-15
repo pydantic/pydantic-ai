@@ -2524,7 +2524,7 @@ async def test_bedrock_cache_messages_with_multiple_trailing_documents(
     assert bedrock_messages[0]['content'] == snapshot(
         [
             {'text': 'Analyze these files.'},
-            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
+            {'cachePoint': {'type': 'default'}},
             {
                 'document': {
                     'name': 'Document 1',
@@ -2672,7 +2672,7 @@ async def test_bedrock_cache_tool_definitions(allow_model_requests: None, bedroc
         BedrockModelSettings(bedrock_cache_tool_definitions=True),
     )
     assert tool_config and len(tool_config['tools']) == 3
-    assert tool_config['tools'][-1] == {'cachePoint': {'type': 'default', 'ttl': '5m'}}
+    assert tool_config['tools'][-1] == {'cachePoint': {'type': 'default'}}
 
 
 async def test_bedrock_cache_instructions(allow_model_requests: None, bedrock_provider: BedrockProvider):
@@ -2688,7 +2688,7 @@ async def test_bedrock_cache_instructions(allow_model_requests: None, bedrock_pr
     assert system_prompt == snapshot(
         [
             {'text': 'System instructions to cache.'},
-            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
+            {'cachePoint': {'type': 'default'}},
         ]
     )
 
@@ -2720,7 +2720,7 @@ async def test_bedrock_cache_instructions_mixed_static_dynamic(
     assert system_prompt == snapshot(
         [
             {'text': 'Static instructions.'},
-            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
+            {'cachePoint': {'type': 'default'}},
             {'text': 'Dynamic context.'},
         ]
     )
@@ -2771,7 +2771,7 @@ async def test_bedrock_cache_messages(allow_model_requests: None, bedrock_provid
                 'role': 'user',
                 'content': [
                     {'text': 'User message to cache.'},
-                    {'cachePoint': {'type': 'default', 'ttl': '5m'}},
+                    {'cachePoint': {'type': 'default'}},
                 ],
             }
         ]
@@ -2879,7 +2879,7 @@ async def test_bedrock_cache_messages_with_binary_content(
     assert bedrock_messages[0]['content'] == snapshot(
         [
             {'text': 'See attached document(s).'},
-            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
+            {'cachePoint': {'type': 'default'}},
             {
                 'document': {
                     'name': 'Document 1',
@@ -2921,7 +2921,7 @@ async def test_bedrock_cache_messages_with_tool_result(allow_model_requests: Non
                     'status': 'success',
                 }
             },
-            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
+            {'cachePoint': {'type': 'default'}},
         ]
     )
 

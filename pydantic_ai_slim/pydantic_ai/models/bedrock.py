@@ -1129,8 +1129,9 @@ class BedrockConverseModel(Model[BaseClient]):
 
     @staticmethod
     def _get_cache_point(cache_setting: bool | Literal['5m', '1h']) -> ContentBlockUnionTypeDef:
-        ttl: Literal['5m', '1h'] = cache_setting if isinstance(cache_setting, str) else '5m'
-        cache_point: CachePointBlockTypeDef = {'type': 'default', 'ttl': ttl}
+        cache_point: CachePointBlockTypeDef = {'type': 'default'}
+        if isinstance(cache_setting, str):
+            cache_point['ttl'] = cache_setting
         return cast('ContentBlockUnionTypeDef', {'cachePoint': cache_point})
 
     @staticmethod
