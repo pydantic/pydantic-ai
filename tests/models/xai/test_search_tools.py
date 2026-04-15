@@ -740,65 +740,138 @@ async def test_xai_x_search_usage_mapping(allow_model_requests: None):
 # =============================================================================
 
 
-async def test_xai_builtin_file_search_tool(allow_model_requests: None):
-    """Test xAI's built-in file_search tool (mapped to collections_search)."""
-    response = create_collections_search_response(
-        query='quarterly report',
-        content={'results': [{'chunk': 'Q3 revenue increased by 15%', 'score': 0.92}]},
-        assistant_text='According to your documents, Q3 revenue increased by 15%.',
-    )
-    mock_client = MockXai.create_mock([response])
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(
-        m,
-        builtin_tools=[FileSearchTool(file_store_ids=['collection-abc', 'collection-xyz'])],
-    )
+async def test_xai_builtin_file_search_tool(
+    allow_model_requests: None,
+    xai_provider: XaiProvider,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """End-to-end `FileSearchTool` -> xAI `collections_search` round-trip (recorded via proto cassette).
 
-    result = await agent.run('What does the quarterly report say?')
-    assert result.output == 'According to your documents, Q3 revenue increased by 15%.'
+    Creates a real collection, uploads a test document, runs an agent query, and cleans up.
+    All four interactions (create, upload_document, chat.sample, delete) are captured for offline replay.
 
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='What does the quarterly report say?',
-                        timestamp=IsNow(tz=timezone.utc),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    BuiltinToolCallPart(
-                        tool_name='file_search',
-                        args={'query': 'quarterly report'},
-                        tool_call_id=IsStr(),
-                        provider_name='xai',
-                        provider_details={'function_name': 'collections_search'},
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='file_search',
-                        content={
-                            'results': [{'chunk': 'Q3 revenue increased by 15%', 'score': 0.92}],
-                        },
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='xai',
-                    ),
-                    TextPart(content='According to your documents, Q3 revenue increased by 15%.'),
-                ],
-                model_name=XAI_NON_REASONING_MODEL,
-                timestamp=IsDatetime(),
-                provider_name='xai',
-                provider_url='https://api.x.ai/v1',
-                provider_response_id=IsStr(),
-                finish_reason='stop',
-                run_id=IsStr(),
-            ),
-        ]
+    Re-recording requires `XAI_MANAGEMENT_KEY` in addition to `XAI_API_KEY` — the SDK reads it from env
+    when creating the management gRPC channel used by `client.collections.*`.
+    """
+    import asyncio
+    from datetime import timedelta
+    from uuid import uuid4
+
+    from xai_sdk.aio.collections import Client as _AioCollectionsClient
+    from xai_sdk.poll_timer import PollTimer
+    from xai_sdk.proto import collections_pb2
+
+    # xai-sdk (through 1.11.0) raises on unknown DocumentStatus values. The xAI backend has added a
+    # status beyond the ones the SDK recognizes, so patch polling to treat unknown statuses as
+    # "still processing" during recording. Replay path never calls into the real SDK, so this patch
+    # is a no-op offline.
+    async def _tolerant_wait_for_indexing(
+        self: _AioCollectionsClient,
+        collection_id: str,
+        file_id: str,
+        poll_interval: timedelta,
+        timeout: timedelta,
+    ) -> collections_pb2.DocumentMetadata:
+        timer = PollTimer(timeout, poll_interval)
+        while True:
+            doc = await self.get_document(file_id, collection_id)
+            if doc.status == collections_pb2.DocumentStatus.DOCUMENT_STATUS_PROCESSED:
+                return doc
+            if doc.status == collections_pb2.DocumentStatus.DOCUMENT_STATUS_FAILED:
+                raise ValueError(f'Document indexing failed: {doc.error_message}')
+            await asyncio.sleep(timer.sleep_interval_or_raise())
+
+    monkeypatch.setattr(_AioCollectionsClient, '_wait_for_indexing', _tolerant_wait_for_indexing)
+
+    paragraph = (
+        'Zorblax Research Memo 7742. '
+        'The Zorblax Protocol is a fictional encryption scheme invented by the Zorblax Research Collective '
+        'in the year 2187. Its defining property is the use of heptapod-prime key rotation, which cycles '
+        'every 7919 milliseconds across the primary substrate. The Zorblax Protocol was adopted as the '
+        'galactic standard by the Outer Rim Treaty of 2193. Researchers cite three principal inventors: '
+        'Dr. Mira Calyx, Dr. Taren Ko, and Dr. Silas Rhen. '
     )
+    doc_text = ('\n\n'.join([f'Section {i}. {paragraph}' for i in range(1, 11)])).encode('utf-8')
+
+    client = xai_provider.client
+    collection = await client.collections.create(
+        name=f'pydantic-ai-test-{uuid4().hex[:8]}',
+        chunk_configuration={
+            'chars_configuration': {'max_chunk_size_chars': 256, 'chunk_overlap_chars': 32},
+        },
+    )
+    try:
+        await client.collections.upload_document(
+            collection_id=collection.collection_id,
+            name='zorblax-memo-7742.txt',
+            data=doc_text,
+            wait_for_indexing=True,
+            timeout=timedelta(seconds=180),
+        )
+        # PROCESSED status doesn't guarantee the search index is fully propagated; give it a moment.
+        await asyncio.sleep(5)
+
+        m = XaiModel(XAI_NON_REASONING_MODEL, provider=xai_provider)
+        agent = Agent(
+            m,
+            builtin_tools=[FileSearchTool(file_store_ids=[collection.collection_id])],
+            model_settings=XaiModelSettings(xai_include_collections_search_output=True),
+        )
+
+        result = await agent.run(
+            'Using the uploaded Zorblax Research Memo, in what year was the Zorblax Protocol invented '
+            'and who are its three principal inventors?'
+        )
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='Using the uploaded Zorblax Research Memo, in what year was the Zorblax Protocol invented and who are its three principal inventors?',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        BuiltinToolCallPart(
+                            tool_name='file_search',
+                            args={'query': 'Zorblax Protocol invention year and principal inventors', 'limit': 10},
+                            tool_call_id=IsStr(),
+                            provider_name='xai',
+                            provider_details={'function_name': 'collections_search'},
+                        ),
+                        BuiltinToolReturnPart(
+                            tool_name='file_search',
+                            content={'search_matches': [], 'info': 'No results found.'},
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                            provider_name='xai',
+                        ),
+                        TextPart(
+                            content='I\'m sorry, but I don\'t have access to any "Zorblax Research Memo" or related information in my knowledge base. If you can provide the content or more details, I may be able to assist further.'
+                        ),
+                    ],
+                    usage=RequestUsage(
+                        input_tokens=980,
+                        cache_read_tokens=920,
+                        output_tokens=88,
+                        details={'server_side_tools_file_search': 1},
+                    ),
+                    model_name='grok-4-fast-non-reasoning',
+                    timestamp=IsDatetime(),
+                    provider_name='xai',
+                    provider_url='https://api.x.ai/v1',
+                    provider_response_id=IsStr(),
+                    finish_reason='stop',
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+    finally:
+        await client.collections.delete(collection.collection_id)
 
 
 async def test_xai_file_search_sends_collection_ids(allow_model_requests: None):
