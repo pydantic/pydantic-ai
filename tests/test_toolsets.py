@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import re
+import sys
 from collections import defaultdict
 from dataclasses import dataclass, replace
 from typing import Any, TypeVar
 from unittest.mock import AsyncMock
 
+import anyio
 import pytest
 from typing_extensions import Self
+
+if sys.version_info < (3, 11):
+    from exceptiongroup import BaseExceptionGroup as BaseExceptionGroup  # pragma: lax no cover
+else:
+    BaseExceptionGroup = BaseExceptionGroup  # pragma: lax no cover
 
 from pydantic_ai import (
     AbstractToolset,
@@ -1275,6 +1282,74 @@ async def test_combined_toolset_with_nested_list_instructions():
         InstructionPart(content='Instruction B.', dynamic=False),
         InstructionPart(content='Instruction C.', dynamic=False),
     ]
+
+
+async def test_combined_toolset_cancels_siblings_on_get_tools_failure():
+    """When one child's get_tools fails, siblings are cancelled instead of leaking as orphan tasks."""
+    sibling_completed = False
+
+    class FailingToolset(WrapperToolset[Any]):
+        async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
+            raise RuntimeError('boom')
+
+    class SlowToolset(WrapperToolset[Any]):
+        async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
+            nonlocal sibling_completed
+            await anyio.sleep(0.1)
+            sibling_completed = True  # pragma: no cover
+            return await self.wrapped.get_tools(ctx)  # pragma: no cover
+
+    inner = FunctionToolset[None]()
+    combined = CombinedToolset([FailingToolset(inner), SlowToolset(inner)])
+    ctx = build_run_context(None)
+
+    with pytest.raises(RuntimeError, match='boom'):
+        await combined.get_tools(ctx)
+
+    await anyio.sleep(0.2)
+    assert sibling_completed is False
+
+
+async def test_combined_toolset_get_tools_preserves_exception_cause():
+    """Unwrapping the single-failure exception must preserve the original `__cause__` chain."""
+    original = ValueError('underlying')
+
+    class FailingToolset(WrapperToolset[Any]):
+        async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
+            raise RuntimeError('wrapper') from original
+
+    inner = FunctionToolset[None]()
+    combined = CombinedToolset([FailingToolset(inner)])
+    ctx = build_run_context(None)
+
+    with pytest.raises(RuntimeError, match='wrapper') as exc_info:
+        await combined.get_tools(ctx)
+
+    assert exc_info.value.__cause__ is original
+
+
+async def test_combined_toolset_get_tools_raises_group_on_multiple_failures():
+    """When multiple children fail concurrently, their errors surface as an ExceptionGroup."""
+
+    @dataclass
+    class RaisingToolset(WrapperToolset[Any]):
+        message: str = ''
+
+        async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
+            await anyio.sleep(0)
+            raise RuntimeError(self.message)
+
+    inner = FunctionToolset[None]()
+    combined = CombinedToolset(
+        [RaisingToolset(wrapped=inner, message='first'), RaisingToolset(wrapped=inner, message='second')]
+    )
+    ctx = build_run_context(None)
+
+    with pytest.raises(BaseExceptionGroup) as exc_info:
+        await combined.get_tools(ctx)
+
+    messages = {str(e) for e in exc_info.value.exceptions}
+    assert messages == {'first', 'second'}
 
 
 async def test_dynamic_toolset_instructions_before_resolution():

@@ -521,22 +521,6 @@ def test_logfire(
                                 'prefer_builtin': None,
                                 'return_schema': None,
                                 'include_return_schema': None,
-                                'function_signature': {
-                                    'kind': 'function',
-                                    'name': 'my_ret',
-                                    'description': None,
-                                    'params': {
-                                        'x': {
-                                            'kind': 'param',
-                                            'name': 'x',
-                                            'type': {'name': 'int', 'kind': 'simple'},
-                                            'default': None,
-                                        }
-                                    },
-                                    'return_type': {'name': 'str', 'kind': 'simple'},
-                                    'referenced_types': [],
-                                    'is_async': False,
-                                },
                             }
                         ],
                         'builtin_tools': [],
@@ -1037,7 +1021,6 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                                 'prefer_builtin': None,
                                 'return_schema': None,
                                 'include_return_schema': None,
-                                'function_signature': None,
                             }
                         ],
                         'prompted_output_template': None,
