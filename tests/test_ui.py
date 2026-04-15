@@ -677,6 +677,53 @@ async def test_run_stream_output_tool_then_on_complete_error():
     assert any("<error type='ValueError'>Faulty on_complete</error>" in e for e in events)
 
 
+async def test_run_stream_output_tool_error_between_result_and_run_result():
+    """Regression for the narrow window between `FunctionToolResultEvent` and `AgentRunResultEvent`:
+    if an error fires during `handle_function_tool_result` for the output tool, the error handler
+    must not re-emit a stale "interrupted" result via `_final_result_event`.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {
+            0: DeltaToolCall(
+                name='final_result',
+                json_args='{"query": "Hello world"}',
+                tool_call_id='out_1',
+            )
+        }
+
+    def web_search(query: str) -> dict[str, list[dict[str, str]]]:
+        return {'results': [{'title': 'Hello, World!', 'url': 'https://example.com'}]}
+
+    class RaisingUIEventStream(DummyUIEventStream[AgentDepsT, OutputDataT]):
+        raised: bool = False
+
+        async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[str]:
+            async for e in super().handle_function_tool_result(event):
+                yield e
+            if not self.raised:
+                self.raised = True
+                raise ValueError('Faulty handler')
+
+    class RaisingUIAdapter(DummyUIAdapter[AgentDepsT, OutputDataT]):
+        def build_event_stream(self) -> UIEventStream[DummyUIRunInput, str, AgentDepsT, OutputDataT]:
+            return RaisingUIEventStream[AgentDepsT, OutputDataT](self.run_input, accept=self.accept)
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=web_search)
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Tell me about Hello World')])
+    adapter = RaisingUIAdapter(agent, request)
+
+    events = [event async for event in adapter.run_stream()]
+
+    success_results = [e for e in events if 'Final result processed.' in e]
+    interrupted_results = [e for e in events if 'interrupted by an error' in e]
+    assert len(success_results) == 1
+    assert interrupted_results == []
+    assert any("<error type='ValueError'>Faulty handler</error>" in e for e in events)
+
+
 async def test_run_stream_on_complete():
     agent = Agent(model=TestModel())
 

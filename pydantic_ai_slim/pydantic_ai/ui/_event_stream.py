@@ -165,10 +165,6 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                     async for e in self._turn_to('request'):
                         yield e
                 elif isinstance(event, AgentRunResultEvent):
-                    # The output tool's call+result events have already flowed through
-                    # `_pending_tool_calls` by now, so any pending `_final_result_event`
-                    # state is stale and must not be left behind to mis-fire the error path.
-                    self._final_result_event = None
                     result = cast(AgentRunResult[OutputDataT], event.result)
                     self._result = result
 
@@ -189,6 +185,10 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 elif isinstance(event, FunctionToolResultEvent):
                     tool_call_id = event.result.tool_call_id
                     self._pending_tool_calls.pop(tool_call_id, None)
+                    # Clear `_final_result_event` once the matching output tool is done, so an
+                    # error fired before `AgentRunResultEvent` can't re-add it via the error handler.
+                    if self._final_result_event and self._final_result_event.tool_call_id == tool_call_id:
+                        self._final_result_event = None
 
                 elif isinstance(event, BuiltinToolCallEvent | BuiltinToolResultEvent):  # pyright: ignore[reportDeprecated]
                     # These events were deprecated before this feature was introduced
