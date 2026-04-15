@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from pydantic_ai.history_processors import repair_orphaned_tool_parts
 from pydantic_ai.messages import (
     ModelRequest,
@@ -91,9 +89,7 @@ def test_empty_message_removed():
     messages = [
         ModelRequest(parts=[UserPromptPart(content='hello')]),
         ModelResponse(parts=[ToolCallPart(tool_name='lost', tool_call_id='call_lost')]),
-        ModelRequest(
-            parts=[ToolReturnPart(tool_name='ghost', content='data', tool_call_id='call_ghost')]
-        ),
+        ModelRequest(parts=[ToolReturnPart(tool_name='ghost', content='data', tool_call_id='call_ghost')]),
         ModelResponse(parts=[TextPart(content='end')]),
     ]
     result = repair_orphaned_tool_parts(messages)
@@ -165,9 +161,7 @@ def test_retry_prompt_matches_call():
     messages = [
         ModelRequest(parts=[UserPromptPart(content='try')]),
         ModelResponse(parts=[ToolCallPart(tool_name='flaky', tool_call_id='id_retry')]),
-        ModelRequest(
-            parts=[RetryPromptPart(content='bad args', tool_name='flaky', tool_call_id='id_retry')]
-        ),
+        ModelRequest(parts=[RetryPromptPart(content='bad args', tool_name='flaky', tool_call_id='id_retry')]),
         ModelResponse(parts=[TextPart(content='ok')]),
     ]
     result = repair_orphaned_tool_parts(messages)

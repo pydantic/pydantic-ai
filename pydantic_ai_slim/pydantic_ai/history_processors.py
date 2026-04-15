@@ -44,7 +44,7 @@ def repair_orphaned_tool_parts(
         from pydantic_ai import Agent
         from pydantic_ai.history_processors import repair_orphaned_tool_parts
 
-        agent = Agent('openai:gpt-4o', history_processors=[repair_orphaned_tool_parts])
+        agent = Agent('openai:gpt-4o-mini', history_processors=[repair_orphaned_tool_parts])
         ```
     """
     call_ids: set[str] = set()
@@ -58,9 +58,8 @@ def repair_orphaned_tool_parts(
     for message in messages:
         if isinstance(message, _messages.ModelRequest):
             for part in message.parts:
-                if isinstance(part, (_messages.ToolReturnPart, _messages.RetryPromptPart)):
-                    if part.tool_call_id:
-                        return_ids.add(part.tool_call_id)
+                if isinstance(part, (_messages.ToolReturnPart, _messages.RetryPromptPart)) and part.tool_call_id:
+                    return_ids.add(part.tool_call_id)
 
     repaired: list[_messages.ModelMessage] = []
     for message in messages:
@@ -68,14 +67,14 @@ def repair_orphaned_tool_parts(
             kept_parts: list[_messages.ModelRequestPart] = []
             for part in message.parts:
                 if isinstance(part, _messages.ToolReturnPart):
-                    if part.tool_call_id and part.tool_call_id not in call_ids:
+                    if part.tool_call_id not in call_ids:
                         logger.debug(
                             'Removing orphaned ToolReturnPart with tool_call_id=%r (no matching ToolCallPart)',
                             part.tool_call_id,
                         )
                         continue
                 elif isinstance(part, _messages.RetryPromptPart):
-                    if part.tool_name is not None and part.tool_call_id and part.tool_call_id not in call_ids:
+                    if part.tool_name is not None and part.tool_call_id not in call_ids:
                         logger.debug(
                             'Removing orphaned RetryPromptPart with tool_call_id=%r (no matching ToolCallPart)',
                             part.tool_call_id,
@@ -89,11 +88,11 @@ def repair_orphaned_tool_parts(
                 else:
                     repaired.append(message)
 
-        elif isinstance(message, _messages.ModelResponse):
+        elif isinstance(message, _messages.ModelResponse):  # pragma: no branch
             kept_response_parts: list[_messages.ModelResponsePart] = []
             for part in message.parts:
                 if isinstance(part, _messages.ToolCallPart):
-                    if part.tool_call_id and part.tool_call_id not in return_ids:
+                    if part.tool_call_id not in return_ids:
                         logger.debug(
                             'Removing orphaned ToolCallPart with tool_call_id=%r (no matching return)',
                             part.tool_call_id,
