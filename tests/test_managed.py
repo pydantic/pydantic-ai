@@ -12,14 +12,29 @@ import logfire
 
 from pydantic_ai.agent import Agent
 from pydantic_ai.managed.logfire import Managed
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.usage import RequestUsage
+
+from ._inline_snapshot import snapshot
+from .conftest import IsDatetime, IsStr
 
 pytestmark = [pytest.mark.anyio]
 
 
 def _echo_model() -> FunctionModel:
-    """A `FunctionModel` that reflects the effective instructions and model settings back as text."""
+    """A `FunctionModel` that reflects the effective instructions and model settings back as text.
+
+    Model settings aren't otherwise visible from `result.all_messages()` (they live in
+    `ModelRequestParameters`), so the echo model lets snapshot-based assertions confirm
+    that managed values actually reach the model request.
+    """
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(
@@ -45,7 +60,23 @@ async def test_instructions_from_variable_default() -> None:
 
     result = await agent.run('hi')
 
-    assert "instructions='Default instructions.'" in result.output
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hi', timestamp=IsDatetime())],
+                instructions='Default instructions.',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content="instructions='Default instructions.';settings=None")],
+                usage=RequestUsage(input_tokens=51, output_tokens=3),
+                model_name='function:respond:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_instructions_from_variable_override() -> None:
@@ -54,7 +85,23 @@ async def test_instructions_from_variable_override() -> None:
     with _instructions_var.override('Overridden instructions.'):
         result = await agent.run('hi')
 
-    assert "instructions='Overridden instructions.'" in result.output
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hi', timestamp=IsDatetime())],
+                instructions='Overridden instructions.',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content="instructions='Overridden instructions.';settings=None")],
+                usage=RequestUsage(input_tokens=51, output_tokens=3),
+                model_name='function:respond:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_instructions_merged_with_agent_level_instructions() -> None:
@@ -67,9 +114,27 @@ async def test_instructions_merged_with_agent_level_instructions() -> None:
     with _instructions_var.override('From variable.'):
         result = await agent.run('hi')
 
-    # Both layers should be present in the final prompt.
-    assert 'Agent-level instructions.' in result.output
-    assert 'From variable.' in result.output
+    # Both layers appear, concatenated in order: agent first, then managed.
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hi', timestamp=IsDatetime())],
+                instructions="""\
+Agent-level instructions.
+From variable.\
+""",
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content="instructions='Agent-level instructions.\\nFrom variable.';settings=None")],
+                usage=RequestUsage(input_tokens=51, output_tokens=5),
+                model_name='function:respond:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_model_settings_from_variable() -> None:
@@ -78,8 +143,16 @@ async def test_model_settings_from_variable() -> None:
     with _settings_var.override({'temperature': 0.9, 'max_tokens': 123}):
         result = await agent.run('hi')
 
-    assert "'temperature': 0.9" in result.output
-    assert "'max_tokens': 123" in result.output
+    # Model settings aren't stored on `ModelRequest`, so we verify via the echo response.
+    assert result.all_messages()[-1] == snapshot(
+        ModelResponse(
+            parts=[TextPart(content="instructions=None;settings={'temperature': 0.9, 'max_tokens': 123}")],
+            usage=RequestUsage(input_tokens=51, output_tokens=5),
+            model_name='function:respond:',
+            timestamp=IsDatetime(),
+            run_id=IsStr(),
+        )
+    )
 
 
 async def test_model_settings_merged_with_agent_level_settings() -> None:
@@ -92,23 +165,51 @@ async def test_model_settings_merged_with_agent_level_settings() -> None:
     with _settings_var.override({'temperature': 0.9}):
         result = await agent.run('hi')
 
-    # Variable temperature replaces agent default; agent's max_tokens survives.
-    assert "'temperature': 0.9" in result.output
-    assert "'max_tokens': 50" in result.output
+    # Managed temperature replaces agent default; agent's max_tokens survives.
+    assert result.all_messages()[-1] == snapshot(
+        ModelResponse(
+            parts=[TextPart(content="instructions=None;settings={'temperature': 0.9, 'max_tokens': 50}")],
+            usage=RequestUsage(input_tokens=51, output_tokens=5),
+            model_name='function:respond:',
+            timestamp=IsDatetime(),
+            run_id=IsStr(),
+        )
+    )
 
 
 async def test_resolves_fresh_per_run() -> None:
     agent = Agent(_echo_model(), capabilities=[Managed(instructions=_instructions_var)])
 
     result_a = await agent.run('a')
-    assert "instructions='Default instructions.'" in result_a.output
+    assert result_a.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[UserPromptPart(content='a', timestamp=IsDatetime())],
+            instructions='Default instructions.',
+            timestamp=IsDatetime(),
+            run_id=IsStr(),
+        )
+    )
 
     with _instructions_var.override('mid-run value'):
         result_b = await agent.run('b')
-    assert "instructions='mid-run value'" in result_b.output
+    assert result_b.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[UserPromptPart(content='b', timestamp=IsDatetime())],
+            instructions='mid-run value',
+            timestamp=IsDatetime(),
+            run_id=IsStr(),
+        )
+    )
 
     result_c = await agent.run('c')
-    assert "instructions='Default instructions.'" in result_c.output
+    assert result_c.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[UserPromptPart(content='c', timestamp=IsDatetime())],
+            instructions='Default instructions.',
+            timestamp=IsDatetime(),
+            run_id=IsStr(),
+        )
+    )
 
 
 async def test_no_variables_is_noop() -> None:
@@ -121,4 +222,20 @@ async def test_no_variables_is_noop() -> None:
 
     result = await agent.run('hi')
 
-    assert "instructions='Just the agent.'" in result.output
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hi', timestamp=IsDatetime())],
+                instructions='Just the agent.',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content="instructions='Just the agent.';settings=None")],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='function:respond:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
