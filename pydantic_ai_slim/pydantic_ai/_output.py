@@ -331,6 +331,12 @@ class OutputSchema(ABC, Generic[OutputDataT]):
             else:
                 other_outputs.append(output)
 
+        # If `None` is allowed and we're building output tools, expose `NoneType` as its own
+        # output tool so the model can commit to `None` through the structured schema alongside
+        # any other output types, matching how the model would pick between them.
+        if allows_none and (tool_outputs or other_outputs):
+            other_outputs.append(cast(OutputTypeOrFunction[OutputDataT], NoneType))
+
         toolset = OutputToolset.build(tool_outputs + other_outputs, name=name, description=description, strict=strict)
 
         text_processor: BaseOutputProcessor[OutputDataT] | None = None

@@ -670,9 +670,9 @@ Once upon a time, in a hidden underwater cave, lived a curious axolotl named Pip
 
 ## Optional output (allowing `None`) {#optional-output}
 
-Some agents perform their work entirely through tool calls and don't need to produce a final text message — for example, an agent that updates a record via a tool and then stops. Certain models (notably [Anthropic](models/anthropic.md)) will return an empty response in this case, which by default causes Pydantic AI to retry until the model produces text.
+Some agents perform their work entirely through tool calls and don't need to produce a final output — for example, an agent that updates a record via a tool and then stops. Certain models (notably [Anthropic](models/anthropic.md)) will return an empty response in this case, which by default causes Pydantic AI to retry until the model produces content.
 
-To instead treat an empty response as a successful run, include `None` in the `output_type` union:
+To instead treat an empty response as a successful run, include `None` in the `output_type`:
 
 ```python {title="optional_output.py"}
 from pydantic_ai import Agent
@@ -692,6 +692,12 @@ print(result.output)
 ```
 
 When the model returns an empty response and `None` is an allowed output type, the agent will return `None` instead of retrying. [Output validator functions](#output-validator-functions) still run with `None` as the argument, so you can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject it if needed.
+
+`None` is supported in every output mode, and — when the mode has a structured schema — the model can commit to `None` explicitly rather than relying on an empty response:
+
+- **[Text output](#text-output)** (e.g. `output_type=str | None`): no schema involved, so `None` is only reachable via an empty response.
+- **[Tool output](#tool-output)** (e.g. `output_type=int | None`, `output_type=ToolOutput(int | None)`, or `output_type=[int, None]`): a dedicated `final_result_NoneType` output tool is exposed alongside the other output tools, so the model can call it to commit to `None` through the structured schema. An empty response is also still accepted as a fallback.
+- **[Native output](#native-output)** (e.g. `output_type=NativeOutput([int, None])`) and **[prompted output](#prompted-output)** (e.g. `output_type=PromptedOutput([int, None])`): `None` is included as a branch of the structured schema the model is asked to produce. An empty response is *not* accepted — for structured modes we want the model to commit explicitly.
 
 !!! note
     `output_type=None` on its own is not valid — at least one other output type must be provided alongside `None`.

@@ -9108,6 +9108,105 @@ def test_agent_output_type_bare_none_error():
         Agent('test', output_type=None)  # type: ignore[arg-type]
 
 
+async def test_agent_allows_none_output_tool_mode_none_via_tool():
+    """Test that `int | None` exposes a separate `final_result_NoneType` tool the model can call."""
+    seen_tool_names: list[str] = []
+
+    async def call_none_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        seen_tool_names[:] = [t.name for t in info.output_tools]
+        none_tool = next(t for t in info.output_tools if 'NoneType' in t.name)
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name=none_tool.name, args={'response': None}, tool_call_id='pyd_ai_id')]
+        )
+
+    agent = Agent(FunctionModel(function=call_none_tool), output_type=int | None)
+    result = await agent.run('hello')
+    assert result.output is None
+    assert seen_tool_names == snapshot(['final_result_int', 'final_result_NoneType'])
+
+
+async def test_agent_allows_none_output_tool_mode_int_via_tool():
+    """Test that `int | None` still resolves the int branch via the int tool."""
+
+    async def call_int_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        int_tool = next(t for t in info.output_tools if t.name == 'final_result_int')
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name=int_tool.name, args={'response': 42}, tool_call_id='pyd_ai_id')]
+        )
+
+    agent = Agent(FunctionModel(function=call_int_tool), output_type=int | None)
+    result = await agent.run('hello')
+    assert result.output == 42
+
+
+async def test_agent_allows_none_output_tool_mode_empty_response():
+    """Test that `int | None` still falls back to `None` on an empty response."""
+
+    async def empty(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[])
+
+    agent = Agent(FunctionModel(function=empty), output_type=int | None)
+    result = await agent.run('hello')
+    assert result.output is None
+
+
+async def test_agent_allows_none_output_native_structured_none():
+    """Test that `NativeOutput(int | None)` returns `None` when the model emits the NoneType branch."""
+
+    async def native_none(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart(content=json.dumps({'result': {'kind': 'NoneType', 'data': {'response': None}}}))]
+        )
+
+    agent = Agent(FunctionModel(function=native_none), output_type=NativeOutput([int, type(None)]))
+    result = await agent.run('hello')
+    assert result.output is None
+
+
+async def test_agent_allows_none_output_prompted_structured_none():
+    """Test that `PromptedOutput(int | None)` returns `None` when the model emits the NoneType branch."""
+
+    async def prompted_none(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart(content=json.dumps({'result': {'kind': 'NoneType', 'data': {'response': None}}}))]
+        )
+
+    agent = Agent(FunctionModel(function=prompted_none), output_type=PromptedOutput([int, type(None)]))
+    result = await agent.run('hello')
+    assert result.output is None
+
+
+async def test_agent_allows_none_output_tool_output_union_null():
+    """Test that `ToolOutput(int | None)` accepts a JSON `null` via the tool's `anyOf` schema."""
+
+    async def call_final_result(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='final_result', args={'response': None}, tool_call_id='pyd_ai_id')]
+        )
+
+    agent = Agent(FunctionModel(function=call_final_result), output_type=ToolOutput(int | None))  # type: ignore[arg-type]
+    result = await agent.run('hello')
+    assert result.output is None
+
+
+async def test_agent_allows_none_output_explicit_none_tool():
+    """Test that `[ToolOutput(int), ToolOutput(type(None))]` surfaces one tool per type."""
+
+    async def call_none_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='final_result_NoneType', args={'response': None}, tool_call_id='pyd_ai_id')]
+        )
+
+    agent = Agent(
+        FunctionModel(function=call_none_tool),
+        output_type=[ToolOutput(int), ToolOutput(type(None))],
+    )
+    result = await agent.run('hello')
+    assert result.output is None
+
+
 # region Dynamic model_settings
 
 
