@@ -10353,3 +10353,30 @@ async def test_openai_responses_compact_with_auto_previous_response_id_chain(
         if isinstance(msg, ModelResponse) and any(isinstance(p, CompactionPart) for p in msg.parts):
             assert msg.provider_details == {'compaction': True}
             assert msg.provider_response_id is not None
+
+
+async def test_openai_responses_compact_inline_mode(allow_model_requests: None, openai_api_key: str):
+    """Inline-mode `OpenAICompaction` injects `context_management` on the regular /responses call.
+
+    No `before_model_request` hook fires and no `/compact` endpoint call is made — the
+    server handles compaction internally when the token threshold is crossed.
+    """
+    from pydantic_ai.models.openai import OpenAICompaction
+
+    model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        model=model,
+        capabilities=[OpenAICompaction(token_threshold=50_000)],
+    )
+
+    result = await agent.run('What is 2+2?')
+    assert '4' in result.output
+    # Inline mode never produces a CompactionPart locally — compaction happens server-side.
+    from pydantic_ai.messages import CompactionPart
+
+    assert not any(
+        isinstance(part, CompactionPart)
+        for msg in result.all_messages()
+        if isinstance(msg, ModelResponse)
+        for part in msg.parts
+    )

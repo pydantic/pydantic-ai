@@ -119,6 +119,7 @@ try:
         WebSearchToolParam,
     )
     from openai.types.responses.response_compaction_item_param_param import ResponseCompactionItemParamParam
+    from openai.types.responses.response_create_params import ContextManagement
     from openai.types.responses.response_input_file_content_param import ResponseInputFileContentParam
     from openai.types.responses.response_input_image_content_param import ResponseInputImageContentParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
@@ -552,6 +553,18 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     in the `provider_details['annotations']` field of text parts.
     This is opt-in since there may be overlap with native annotation support once
     added via https://github.com/pydantic/pydantic-ai/issues/3126.
+    """
+
+    openai_context_management: list[ContextManagement]
+    """Context management configuration for the request.
+
+    This enables OpenAI's server-side automatic compaction inside the regular
+    `/responses` call, as opposed to the standalone `/responses/compact` endpoint.
+    See [OpenAI's compaction guide](https://developers.openai.com/api/docs/guides/compaction)
+    for details.
+
+    The [`OpenAICompaction`][pydantic_ai.models.openai.OpenAICompaction] capability
+    sets this automatically in its default (inline) mode.
     """
 
 
@@ -1963,6 +1976,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     timeout=model_settings.get('timeout', NOT_GIVEN),
                     service_tier=model_settings.get('openai_service_tier', OMIT),
                     previous_response_id=previous_response_id or OMIT,
+                    context_management=model_settings.get('openai_context_management', OMIT),
                     top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
                     store=model_settings.get('openai_store', OMIT),
                     reasoning=reasoning,
@@ -3160,24 +3174,62 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 class OpenAICompaction(AbstractCapability[AgentDepsT]):
     """Compaction capability for OpenAI Responses API.
 
-    Calls the `responses.compact` endpoint via a `before_model_request` hook
-    when the trigger condition is met. The compacted history replaces the
-    original messages, keeping conversation context within manageable limits.
+    Automatically compacts conversation history to keep long-running agent
+    runs within manageable context limits. Two modes are supported, selected
+    by the `stateless` flag:
+
+    - **Inline mode** (default, `stateless=False`): configures
+      [OpenAI's server-side auto-compaction](https://developers.openai.com/api/docs/guides/compaction)
+      via the `context_management` field on the regular `/responses` request.
+      The server triggers compaction when input tokens cross a threshold,
+      and the compacted item is returned alongside the normal response.
+      Compatible with [`openai_previous_response_id='auto'`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id]
+      and server-side conversation state.
+
+      Configurable with `token_threshold` (`compact_threshold` on the API).
+      If omitted, OpenAI picks a server-side default.
+
+    - **Dedicated mode** (`stateless=True`): calls the stateless
+      `/responses/compact` endpoint from a `before_model_request` hook when
+      your trigger condition is met. Fully stateless and ZDR-friendly — use
+      this when you can't have conversation data persisted server-side, or
+      when you need explicit out-of-band control over when compaction runs.
+
+      Requires either `message_count_threshold` or a custom `trigger` callable.
+
+    If `stateless` is not set, it is inferred from which parameters you
+    provide: passing any dedicated-mode-only parameter (`message_count_threshold`
+    or `trigger`) implies `stateless=True`; otherwise inline mode is used.
 
     Example usage::
 
         from pydantic_ai import Agent
         from pydantic_ai.models.openai import OpenAICompaction
 
+        # Inline mode with OpenAI's server-side default threshold:
         agent = Agent(
-            'openai-responses:gpt-4o',
-            capabilities=[OpenAICompaction(message_count_threshold=10)],
+            'openai-responses:gpt-5.2',
+            capabilities=[OpenAICompaction()],
+        )
+
+        # Inline mode with a custom token threshold:
+        agent = Agent(
+            'openai-responses:gpt-5.2',
+            capabilities=[OpenAICompaction(token_threshold=100_000)],
+        )
+
+        # Dedicated mode for ZDR environments or explicit control:
+        agent = Agent(
+            'openai-responses:gpt-5.2',
+            capabilities=[OpenAICompaction(message_count_threshold=20)],
         )
     """
 
     def __init__(
         self,
         *,
+        stateless: bool | None = None,
+        token_threshold: int | None = None,
         message_count_threshold: int | None = None,
         trigger: Callable[[list[ModelMessage]], bool] | None = None,
         instructions: str | None = None,
@@ -3185,21 +3237,96 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
         """Initialize the OpenAI compaction capability.
 
         Args:
-            message_count_threshold: Compact when the message count exceeds this threshold.
-            trigger: Custom callable that decides whether to compact based on the current messages.
-                Takes precedence over `message_count_threshold`.
-            instructions: Custom instructions for the compaction summarization.
+            stateless: Select the compaction mode explicitly. If `None` (the
+                default), the mode is inferred from the other parameters:
+                passing any dedicated-mode-only parameter (`message_count_threshold`
+                or `trigger`) implies `stateless=True`; otherwise inline mode
+                is used.
+            token_threshold: Inline-mode only. Input token threshold at which
+                OpenAI's server-side compaction is triggered. Corresponds to
+                `compact_threshold` in the `context_management` API field. If
+                `None`, OpenAI picks a server-side default.
+            message_count_threshold: Dedicated-mode only. Compact when the
+                message count exceeds this threshold.
+            trigger: Dedicated-mode only. Custom callable that decides whether
+                to compact based on the current messages. Takes precedence
+                over `message_count_threshold`.
+            instructions: Deprecated. OpenAI's `/compact` endpoint treats
+                `instructions` as a system/developer message inserted into
+                the compaction model's context, not as a directive for how
+                to summarize the conversation. This does not match
+                [`AnthropicCompaction.instructions`][pydantic_ai.models.anthropic.AnthropicCompaction]
+                semantics, so the field is deprecated and will be removed
+                in a future version.
         """
+        if instructions is not None:
+            warnings.warn(
+                '`OpenAICompaction(instructions=...)` is deprecated and will be removed in a future version. '
+                "OpenAI's `/compact` endpoint treats `instructions` as a system/developer message inserted "
+                "into the compaction model's context, not as a directive for how to summarize the conversation, "
+                'so this field does not match `AnthropicCompaction(instructions=...)` semantics.',
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+        has_dedicated_only = message_count_threshold is not None or trigger is not None
+        has_inline_only = token_threshold is not None
+
+        if stateless is None:
+            stateless = has_dedicated_only
+
+        if stateless:
+            if has_inline_only:
+                raise UserError(
+                    '`token_threshold` is only valid for inline compaction (`stateless=False`). '
+                    'For dedicated `/compact` endpoint compaction, use `message_count_threshold` or `trigger`.'
+                )
+            if not has_dedicated_only:
+                raise UserError(
+                    '`stateless=True` requires `message_count_threshold` or `trigger` '
+                    'to determine when to invoke the dedicated `/compact` endpoint.'
+                )
+        else:
+            if has_dedicated_only:
+                raise UserError(
+                    '`message_count_threshold` and `trigger` are only valid for dedicated-endpoint compaction '
+                    '(`stateless=True`). For inline server-side compaction, use `token_threshold` '
+                    '(or omit it to use the OpenAI-managed default).'
+                )
+
+        self.stateless = stateless
+        self.token_threshold = token_threshold
         self.message_count_threshold = message_count_threshold
         self.trigger = trigger
         self.instructions = instructions
 
+    def get_model_settings(self) -> Callable[[RunContext[AgentDepsT]], ModelSettings] | None:
+        if self.stateless:
+            return None
+        edit: ContextManagement = {'type': 'compaction'}
+        if self.token_threshold is not None:
+            edit['compact_threshold'] = self.token_threshold
+
+        def resolve(ctx: RunContext[AgentDepsT]) -> ModelSettings:
+            # Append to any existing `openai_context_management` a user may have set
+            # directly on model settings, preserving their entries.
+            existing: list[ContextManagement] = []
+            if ctx.model_settings:
+                raw = cast(dict[str, Any], ctx.model_settings).get('openai_context_management')
+                if isinstance(raw, list):  # pragma: no branch
+                    existing = list(cast(list[ContextManagement], raw))
+            return cast(ModelSettings, {'openai_context_management': [*existing, edit]})
+
+        return resolve
+
     def _should_compact(self, messages: list[ModelMessage]) -> bool:
+        if not self.stateless:
+            return False
         if self.trigger is not None:
             return self.trigger(messages)
         if self.message_count_threshold is not None:
             return len(messages) > self.message_count_threshold
-        return False
+        return False  # pragma: no cover
 
     async def before_model_request(
         self,

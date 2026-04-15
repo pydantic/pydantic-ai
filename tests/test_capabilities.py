@@ -8605,12 +8605,84 @@ class TestCompaction:
         )
 
     def test_openai_compaction_should_compact_no_config(self):
-        """OpenAICompaction._should_compact returns False when nothing is configured."""
+        """Bare `OpenAICompaction()` is inline mode and never triggers the before_model_request hook."""
         pytest.importorskip('openai')
         from pydantic_ai.models.openai import OpenAICompaction
 
         cap = OpenAICompaction()
+        assert cap.stateless is False
         assert not cap._should_compact([ModelRequest(parts=[UserPromptPart(content='hi')])])  # pyright: ignore[reportPrivateUsage]
+
+    def test_openai_compaction_mode_inference(self):
+        """`stateless` is inferred from which mode-specific fields are passed."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        assert OpenAICompaction().stateless is False
+        assert OpenAICompaction(token_threshold=1000).stateless is False
+        assert OpenAICompaction(message_count_threshold=5).stateless is True
+        assert OpenAICompaction(trigger=lambda _msgs: True).stateless is True
+
+    def test_openai_compaction_inline_model_settings(self):
+        """Inline mode returns `openai_context_management` via get_model_settings, merging with existing entries."""
+        pytest.importorskip('openai')
+        from types import SimpleNamespace
+        from typing import cast
+
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        def _resolve(cap: OpenAICompaction[None], model_settings: dict[str, Any] | None = None) -> dict[str, Any]:
+            resolver = cap.get_model_settings()
+            assert resolver is not None
+            ctx = SimpleNamespace(model_settings=model_settings)
+            return cast(dict[str, Any], resolver(cast(Any, ctx)))
+
+        assert _resolve(OpenAICompaction()) == {'openai_context_management': [{'type': 'compaction'}]}
+        assert _resolve(OpenAICompaction(token_threshold=50_000)) == {
+            'openai_context_management': [{'type': 'compaction', 'compact_threshold': 50_000}]
+        }
+        # User-provided entries are preserved and appended to.
+        assert _resolve(
+            OpenAICompaction(token_threshold=50_000),
+            model_settings={'openai_context_management': [{'type': 'compaction', 'compact_threshold': 200_000}]},
+        ) == {
+            'openai_context_management': [
+                {'type': 'compaction', 'compact_threshold': 200_000},
+                {'type': 'compaction', 'compact_threshold': 50_000},
+            ]
+        }
+        # Dedicated mode does not inject model settings
+        assert OpenAICompaction(message_count_threshold=5).get_model_settings() is None
+
+    def test_openai_compaction_rejects_mixed_fields(self):
+        """Mixing inline-only and dedicated-only fields raises UserError."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        with pytest.raises(UserError, match='`token_threshold` is only valid for inline compaction'):
+            OpenAICompaction(stateless=True, token_threshold=1000, message_count_threshold=5)
+
+        with pytest.raises(UserError, match='only valid for dedicated-endpoint compaction'):
+            OpenAICompaction(stateless=False, message_count_threshold=5)
+
+        with pytest.raises(UserError, match='only valid for dedicated-endpoint compaction'):
+            OpenAICompaction(stateless=False, trigger=lambda _msgs: True)
+
+    def test_openai_compaction_stateless_requires_trigger(self):
+        """`stateless=True` without message_count_threshold or trigger raises UserError."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        with pytest.raises(UserError, match='requires `message_count_threshold` or `trigger`'):
+            OpenAICompaction(stateless=True)
+
+    def test_openai_compaction_instructions_deprecated(self):
+        """Passing `instructions` emits a DeprecationWarning because OpenAI semantics differ from Anthropic."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        with pytest.warns(DeprecationWarning, match='OpenAICompaction\\(instructions='):
+            OpenAICompaction(message_count_threshold=5, instructions='Summarize briefly')
 
     def test_openai_compaction_serialization_name(self):
         """OpenAICompaction has the correct serialization name."""
