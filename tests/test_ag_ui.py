@@ -4220,7 +4220,7 @@ async def test_frontend_system_prompt_only_request_dropped():
     )
 
 
-async def test_frontend_system_prompt_accepted_when_opted_in():
+async def test_client_mode_keeps_frontend_system_prompt():
     """Test that frontend system prompts are kept and agent prompt skipped when `manage_system_prompt='client'`."""
 
     agent = Agent(model=TestModel(), system_prompt='Agent system prompt')
@@ -4264,7 +4264,7 @@ async def test_frontend_system_prompt_accepted_when_opted_in():
     )
 
 
-async def test_frontend_system_prompt_accepted_no_agent_prompt():
+async def test_client_mode_keeps_frontend_system_prompt_no_agent_prompt():
     """Test that frontend system prompts are used when `manage_system_prompt='client'` and agent has no system_prompt."""
 
     agent = Agent(model=TestModel())
@@ -4308,8 +4308,8 @@ async def test_frontend_system_prompt_accepted_no_agent_prompt():
     )
 
 
-async def test_frontend_system_prompt_accepted_multi_turn():
-    """Test that accepted frontend system prompts are preserved on multi-turn conversations."""
+async def test_client_mode_keeps_frontend_system_prompt_multi_turn():
+    """Test that client-managed frontend system prompts are preserved across multi-turn conversations."""
 
     agent = Agent(model=TestModel(), system_prompt='Agent system prompt')
 

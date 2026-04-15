@@ -22,7 +22,7 @@ from pydantic import BaseModel, ValidationError
 from typing_extensions import Self, TypeVar
 
 from pydantic_ai import DeferredToolRequests, DeferredToolResults, _instructions
-from pydantic_ai._agent_graph import reinject_system_prompts
+from pydantic_ai._agent_graph import UserPromptNode
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.agent.abstract import AgentMetadata
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
@@ -131,16 +131,18 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     manage_system_prompt: Literal['server', 'client'] = 'server'
     """Who owns the system prompt.
 
+    Only affects `system_prompt` — [`instructions`][pydantic_ai.Agent.instructions]
+    are always injected by the agent on every request regardless of this setting.
+
     `'server'` (default): the agent's configured `system_prompt` is authoritative.
-    Any `SystemPromptPart` found in frontend messages is stripped and a warning
-    is emitted, since a malicious client could otherwise inject arbitrary
-    instructions via crafted API requests. The agent's system prompt is
-    injected into the history whenever it is missing.
+    Any `SystemPromptPart` sent by the frontend is stripped with a warning (since a
+    malicious client could otherwise inject arbitrary instructions via crafted API
+    requests), and the agent's own system prompt is injected on every request.
 
     `'client'`: the frontend owns the system prompt. Frontend `SystemPromptPart`s
-    are preserved, and the agent's configured `system_prompt` is never injected
-    as a fallback — the caller is fully responsible for sending it on every turn
-    if desired.
+    are preserved as-is, and the agent's configured `system_prompt` is never
+    injected — the caller is fully responsible for sending it on every turn if
+    desired.
     """
 
     @classmethod
@@ -318,7 +320,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 stacklevel=2,
             )
 
-        ctx = reinject_system_prompts() if self.manage_system_prompt == 'server' else nullcontext()
+        ctx = UserPromptNode.reinject_system_prompts() if self.manage_system_prompt == 'server' else nullcontext()
         with ctx:
             async for event in self.agent.run_stream_events(
                 output_type=output_type,

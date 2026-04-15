@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import field, replace
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeGuard, cast
 
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
@@ -172,6 +172,8 @@ def is_agent_node(
 class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that handles the user prompt and instructions."""
 
+    _reinject_system_prompts_var: ClassVar[ContextVar[bool]] = ContextVar('_reinject_system_prompts', default=False)
+
     user_prompt: str | Sequence[_messages.UserContent] | None
 
     _: dataclasses.KW_ONLY
@@ -190,6 +192,20 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[DepsT]] = dataclasses.field(
         default_factory=dict[str, _system_prompt.SystemPromptRunner[DepsT]]
     )
+
+    @staticmethod
+    @contextmanager
+    def reinject_system_prompts() -> Iterator[None]:
+        """Force the agent's configured system prompt to be injected on every request.
+
+        Used by [`UIAdapter`][pydantic_ai.ui.UIAdapter] when `manage_system_prompt='server'`
+        so the server-owned prompt is always applied, regardless of what the frontend sent.
+        """
+        token = UserPromptNode._reinject_system_prompts_var.set(True)
+        try:
+            yield
+        finally:
+            UserPromptNode._reinject_system_prompts_var.reset(token)
 
     async def run(  # noqa: C901
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -275,12 +291,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
         if next_message:
             await self._reevaluate_dynamic_prompts([next_message], run_context)
-            if _reinject_system_prompts_var.get() and not any(
-                isinstance(part, _messages.SystemPromptPart)
-                for msg in (*messages, next_message)
-                if isinstance(msg, _messages.ModelRequest)
-                for part in msg.parts
-            ):
+            if UserPromptNode._reinject_system_prompts_var.get():
                 sys_parts = await self._sys_parts(run_context)
                 if sys_parts:
                     next_message.parts = [*sys_parts, *next_message.parts]
@@ -1781,17 +1792,6 @@ class _RunMessages:
 
 
 _messages_ctx_var: ContextVar[_RunMessages] = ContextVar('var')
-
-_reinject_system_prompts_var: ContextVar[bool] = ContextVar('_reinject_system_prompts', default=False)
-
-
-@contextmanager
-def reinject_system_prompts() -> Iterator[None]:
-    token = _reinject_system_prompts_var.set(True)
-    try:
-        yield
-    finally:
-        _reinject_system_prompts_var.reset(token)
 
 
 @contextmanager

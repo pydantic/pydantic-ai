@@ -284,12 +284,14 @@ uvicorn ag_ui_tool_events:app --host 0.0.0.0 --port 9000
 
 ### System prompts and instructions
 
-When running via AG-UI, you choose who owns the system prompt with the `manage_system_prompt` parameter on [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] (and [`handle_ag_ui_request`][pydantic_ai.ag_ui.handle_ag_ui_request] / [`run_ag_ui`][pydantic_ai.ag_ui.run_ag_ui]).
+Pydantic AI supports two ways to provide guidance to the model: [`system_prompt`](../agent.md#system-prompts) (stored in the message history as `SystemPromptPart`s) and [`instructions`](../agent.md#instructions) (injected fresh on every request, never persisted). When you control the server side, `instructions` is the recommended default.
 
-- `'server'` (default): the agent's [`system_prompt`][pydantic_ai.Agent.system_prompt] is authoritative. Any `SystemMessage` found in the AG-UI message history is stripped and a warning is emitted, since a malicious client could otherwise inject arbitrary instructions via crafted API requests. The agent's configured system prompt is injected into the history whenever it is missing.
-- `'client'`: the frontend owns the system prompt. Frontend `SystemMessage`s are preserved, and the agent's configured system prompt is never injected as a fallback — the caller is fully responsible for sending it on every turn.
+The rest of this section only matters if you use `system_prompt`. If you only use `instructions`, there's nothing to configure — they're always applied regardless of the AG-UI message history.
 
-If you want per-request guidance that doesn't need to live in the message history at all, use [`instructions`][pydantic_ai.Agent.instructions] instead of a system prompt: instructions are always injected fresh on each request and are the recommended default when you control the server side.
+For `system_prompt`, you choose who owns it with the `manage_system_prompt` parameter on [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] (and [`handle_ag_ui_request`][pydantic_ai.ag_ui.handle_ag_ui_request] / [`run_ag_ui`][pydantic_ai.ag_ui.run_ag_ui]):
+
+- `'server'` (default): the agent's configured `system_prompt` is authoritative. Any `SystemMessage` sent by the frontend is stripped with a warning (a malicious client could otherwise inject arbitrary instructions via crafted API requests), and the agent's own system prompt is injected on every request.
+- `'client'`: the frontend owns the system prompt. Frontend `SystemMessage`s are preserved as-is, and the agent's configured `system_prompt` is never injected — the caller is fully responsible for sending it on every turn if desired.
 
 ```python {title="ag_ui_client_managed_system_prompt.py"}
 from fastapi import FastAPI
