@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import inspect
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
 from concurrent.futures import Executor
@@ -11,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
 
 import anyio
 from pydantic import TypeAdapter
-from typing_extensions import Self, TypeIs, TypeVar, deprecated
+from typing_extensions import TypeIs, TypeVar, deprecated
 
 from pydantic_graph import End
 
@@ -51,6 +52,7 @@ if TYPE_CHECKING:
     from fasta2a.broker import Broker
     from fasta2a.schema import AgentProvider, Skill
     from fasta2a.storage import Storage
+    from mcp.server.lowlevel import Server
     from starlette.middleware import Middleware
     from starlette.routing import BaseRoute, Route
     from starlette.types import ExceptionHandler, Lifespan
@@ -747,7 +749,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 node = cast(_agent_graph.AgentNode[Any, Any], next_node)
 
         if not yielded:
-            raise exceptions.AgentRunError('Agent run finished without producing a final result')  # pragma: no cover
+            raise exceptions.AgentRunError('Agent run finished without producing a final result')
 
     @overload
     def run_stream_sync(
@@ -1571,8 +1573,50 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             lifespan=lifespan,
         )
 
+    def to_mcp(
+        self,
+        *,
+        server_name: str | None = None,
+        tool_name: str | None = None,
+        tool_description: str | None = None,
+        deps: AgentDepsT = None,
+    ) -> Server:
+        """Convert the agent to an MCP server, exposing it as a tool.
+
+        !!! warning "Experimental"
+            This method is experimental and may change in the future.
+
+        Example:
+        ```python
+        from pydantic_ai import Agent
+
+        agent = Agent('openai:gpt-5.2')
+        server = agent.to_mcp()
+        ```
+
+        Args:
+            server_name: Custom name for the MCP server. Defaults to the agent name.
+            tool_name: Custom name for the tool. Defaults to the agent name.
+            tool_description: Custom description for the tool.
+            deps: Dependencies to pass to the agent on each tool call.
+
+        Returns:
+            An MCP `Server` instance with the agent registered as a tool.
+        """
+        from .._mcp import agent_to_mcp
+
+        warnings.warn('The `to_mcp` method is experimental, and may change in the future.', UserWarning)
+
+        return agent_to_mcp(
+            self,
+            server_name=server_name,
+            tool_name=tool_name,
+            tool_description=tool_description,
+            deps=deps,
+        )
+
     async def to_cli(
-        self: Self,
+        self,
         deps: AgentDepsT = None,
         prog_name: str = 'pydantic-ai',
         message_history: Sequence[_messages.ModelMessage] | None = None,
@@ -1615,7 +1659,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         )
 
     def to_cli_sync(
-        self: Self,
+        self,
         deps: AgentDepsT = None,
         prog_name: str = 'pydantic-ai',
         message_history: Sequence[_messages.ModelMessage] | None = None,
