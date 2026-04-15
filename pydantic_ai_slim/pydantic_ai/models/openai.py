@@ -3271,10 +3271,11 @@ def _map_logprobs(
     return [
         {
             'token': lp.token,
-            'bytes': lp.bytes,
+            'bytes': getattr(lp, 'bytes', None),
             'logprob': lp.logprob,
             'top_logprobs': [
-                {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
+                {'token': tlp.token, 'bytes': getattr(tlp, 'bytes', None), 'logprob': tlp.logprob}
+                for tlp in (lp.top_logprobs or [])
             ],
         }
         for lp in logprobs
