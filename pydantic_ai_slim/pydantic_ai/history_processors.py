@@ -7,7 +7,6 @@ used with `capabilities.HistoryProcessor(processor=...)`.
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
 from dataclasses import replace
 
 from pydantic_ai import messages as _messages
@@ -54,11 +53,11 @@ def repair_orphaned_tool_parts(
     repaired: list[_messages.ModelMessage] = []
     for message in messages:
         if isinstance(message, _messages.ModelRequest):
-            repaired_msg = _repair_request(message, call_ids)
-        elif isinstance(message, _messages.ModelResponse):  # pragma: no branch
-            repaired_msg = _repair_response(message, return_ids)
-        if repaired_msg is not None:
-            repaired.append(repaired_msg)
+            result = _repair_request(message, call_ids)
+        else:
+            result = _repair_response(message, return_ids)
+        if result is not None:
+            repaired.append(result)
 
     return repaired
 
@@ -94,7 +93,10 @@ def _is_orphaned_request_part(part: _messages.ModelRequestPart, call_ids: set[st
     return False
 
 
-def _repair_request(message: _messages.ModelRequest, call_ids: set[str]) -> _messages.ModelMessage | None:
+def _repair_request(
+    message: _messages.ModelRequest,
+    call_ids: set[str],
+) -> _messages.ModelRequest | None:
     """Remove orphaned ToolReturnPart/RetryPromptPart from a ModelRequest."""
     kept: list[_messages.ModelRequestPart] = []
     for part in message.parts:
@@ -106,10 +108,17 @@ def _repair_request(message: _messages.ModelRequest, call_ids: set[str]) -> _mes
             )
             continue
         kept.append(part)
-    return _rebuild_or_drop(message, message.parts, kept)
+    if not kept:
+        return None
+    if len(kept) != len(message.parts):
+        return replace(message, parts=kept)
+    return message
 
 
-def _repair_response(message: _messages.ModelResponse, return_ids: set[str]) -> _messages.ModelMessage | None:
+def _repair_response(
+    message: _messages.ModelResponse,
+    return_ids: set[str],
+) -> _messages.ModelResponse | None:
     """Remove orphaned ToolCallPart from a ModelResponse."""
     kept: list[_messages.ModelResponsePart] = []
     for part in message.parts:
@@ -120,17 +129,8 @@ def _repair_response(message: _messages.ModelResponse, return_ids: set[str]) -> 
             )
             continue
         kept.append(part)
-    return _rebuild_or_drop(message, message.parts, kept)
-
-
-def _rebuild_or_drop(
-    message: _messages.ModelMessage,
-    original_parts: Sequence[object],
-    kept_parts: list[object],
-) -> _messages.ModelMessage | None:
-    """Return the message with filtered parts, or None if all parts were removed."""
-    if not kept_parts:
+    if not kept:
         return None
-    if len(kept_parts) != len(original_parts):
-        return replace(message, parts=kept_parts)  # type: ignore[arg-type]
+    if len(kept) != len(message.parts):
+        return replace(message, parts=kept)
     return message
