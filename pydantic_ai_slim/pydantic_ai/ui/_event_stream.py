@@ -165,26 +165,6 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                     async for e in self._turn_to('request'):
                         yield e
                 elif isinstance(event, AgentRunResultEvent):
-                    if (
-                        self._final_result_event
-                        and (tool_call_id := self._final_result_event.tool_call_id)
-                        and (tool_name := self._final_result_event.tool_name)
-                    ):
-                        async for e in self._turn_to('request'):
-                            yield e
-
-                        self._final_result_event = None
-                        # Ensure the stream does not end on a dangling tool call without a result.
-                        output_tool_result_event = FunctionToolResultEvent(
-                            result=ToolReturnPart(
-                                tool_call_id=tool_call_id,
-                                tool_name=tool_name,
-                                content='Final result processed.',
-                            )
-                        )
-                        async for e in self.handle_function_tool_result(output_tool_result_event):
-                            yield e
-
                     result = cast(AgentRunResult[OutputDataT], event.result)
                     self._result = result
 
@@ -205,6 +185,10 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 elif isinstance(event, FunctionToolResultEvent):
                     tool_call_id = event.result.tool_call_id
                     self._pending_tool_calls.pop(tool_call_id, None)
+                    # Clear `_final_result_event` once the matching output tool is done, so an
+                    # error fired before `AgentRunResultEvent` can't re-add it via the error handler.
+                    if self._final_result_event and self._final_result_event.tool_call_id == tool_call_id:
+                        self._final_result_event = None
 
                 elif isinstance(event, BuiltinToolCallEvent | BuiltinToolResultEvent):  # pyright: ignore[reportDeprecated]
                     # These events were deprecated before this feature was introduced
