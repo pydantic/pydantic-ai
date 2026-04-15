@@ -3265,7 +3265,7 @@ def _make_raw_content_updater(delta: str, index: int) -> Callable[[dict[str, Any
 # Convert logprobs to a serializable format
 def _map_logprobs(
     logprobs: list[chat_completion_token_logprob.ChatCompletionTokenLogprob]
-    | list[responses.response_output_text.Logprob],
+    | List[responses.response_output_text.Logprob],
 ) -> list[dict[str, Any]]:
     return [
         {
