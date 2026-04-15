@@ -1312,7 +1312,7 @@ async def test_anthropic_cache_messages_deprecated_custom_ttl(allow_model_reques
 async def test_anthropic_cache_and_cache_messages_conflict(
     allow_model_requests: None, cache_val: bool, messages_val: bool
 ):
-    """Test that setting both anthropic_cache and anthropic_cache_messages raises ValueError."""
+    """Test that setting both anthropic_cache and anthropic_cache_messages raises UserError."""
     c = completion_message(
         [BetaTextBlock(text='Response', type='text')],
         usage=BetaUsage(input_tokens=10, output_tokens=5),
