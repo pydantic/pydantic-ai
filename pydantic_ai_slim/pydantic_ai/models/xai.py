@@ -1024,11 +1024,11 @@ class XaiStreamedResponse(StreamedResponse):
             # final chunk. Track the emitted x_search return parts so we can backfill their content
             # once the stream completes.
             x_search_return_parts: dict[str, BuiltinToolReturnPart] = {}
-            last_response: chat_types.Response | None = None
+            last_citations: Sequence[str] = ()
 
             async for response, chunk in self._response:
                 self._update_response_state(response)
-                last_response = response
+                last_citations = response.citations
 
                 prev_reasoning_content, prev_encrypted_content, reasoning_events = self._collect_reasoning_events(
                     response=response,
@@ -1105,8 +1105,7 @@ class XaiStreamedResponse(StreamedResponse):
             # re-emitting via `handle_part`: the parts manager holds the same object reference we
             # tracked in `x_search_return_parts`, so the mutation is reflected in the final
             # `ModelResponse` without emitting a duplicate `PartStartEvent` at the same index.
-            if last_response is not None:
-                _attach_x_search_citations(x_search_return_parts.values(), last_response.citations)
+            _attach_x_search_citations(x_search_return_parts.values(), last_citations)
 
     @property
     def model_name(self) -> str:

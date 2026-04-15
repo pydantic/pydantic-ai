@@ -765,7 +765,7 @@ async def test_xai_builtin_file_search_tool(
     # status beyond the ones the SDK recognizes, so patch polling to treat unknown statuses as
     # "still processing" during recording. Replay path never calls into the real SDK, so this patch
     # is a no-op offline.
-    async def _tolerant_wait_for_indexing(
+    async def _tolerant_wait_for_indexing(  # pragma: no cover
         self: _AioCollectionsClient,
         collection_id: str,
         file_id: str,
