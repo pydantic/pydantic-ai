@@ -379,6 +379,29 @@ def test_add_usages():
     assert RunUsage() + RunUsage() == RunUsage()
 
 
+def test_output_audio_tokens_increment():
+    """Test that output_audio_tokens is correctly incremented in _incr_usage_tokens."""
+    usage1 = RequestUsage(
+        input_tokens=10,
+        output_tokens=20,
+        output_audio_tokens=15,
+    )
+    usage2 = RequestUsage(
+        input_tokens=5,
+        output_tokens=10,
+        output_audio_tokens=8,
+    )
+    result = usage1 + usage2
+    assert result.output_audio_tokens == 23
+    assert result.input_tokens == 15
+    assert result.output_tokens == 30
+
+    # Also test through RunUsage.incr with RequestUsage
+    run_usage = RunUsage(requests=1, output_audio_tokens=10)
+    run_usage.incr(RequestUsage(output_audio_tokens=5))
+    assert run_usage.output_audio_tokens == 15
+
+
 def test_add_usages_with_none_detail_value():
     """Test that None values in details are skipped when incrementing usage."""
     usage = RunUsage(
