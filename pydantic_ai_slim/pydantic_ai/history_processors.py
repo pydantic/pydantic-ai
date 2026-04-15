@@ -44,7 +44,7 @@ def repair_orphaned_tool_parts(
         from pydantic_ai import Agent
         from pydantic_ai.history_processors import repair_orphaned_tool_parts
 
-        agent = Agent('openai:gpt-4o-mini', history_processors=[repair_orphaned_tool_parts])
+        agent = Agent('openai:gpt-5.2', history_processors=[repair_orphaned_tool_parts])
         ```
     """
     call_ids: set[str] = set()
