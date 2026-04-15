@@ -242,7 +242,7 @@ class XSearchTool(AbstractBuiltinTool):
     * xAI, see <https://docs.x.ai/developers/tools/x-search>
     """
 
-    include_x_search_output: bool = False
+    include_output: bool = False
     """Include raw X search results in the response as
     [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart].
 

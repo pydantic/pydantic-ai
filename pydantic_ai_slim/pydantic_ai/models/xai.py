@@ -262,7 +262,7 @@ class XSearch(BuiltinOrLocalTool[AgentDepsT]):
             to_date=self.to_date,
             enable_image_understanding=self.enable_image_understanding,
             enable_video_understanding=self.enable_video_understanding,
-            include_x_search_output=self.include_output,
+            include_output=self.include_output,
         )
 
     def _builtin_unique_id(self) -> str:
@@ -726,7 +726,7 @@ class XaiModel(Model[AsyncClient]):
         if model_settings.get('xai_include_inline_citations'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_INLINE_CITATIONS)
         if model_settings.get('xai_include_x_search_output') or any(
-            isinstance(bt, XSearchTool) and bt.include_x_search_output for bt in model_request_parameters.builtin_tools
+            isinstance(bt, XSearchTool) and bt.include_output for bt in model_request_parameters.builtin_tools
         ):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_X_SEARCH_CALL_OUTPUT)
         if model_settings.get('xai_include_collections_search_output'):
