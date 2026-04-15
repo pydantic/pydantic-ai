@@ -11,7 +11,8 @@ try:
 except ImportError as e:  # pragma: no cover
     raise ImportError(
         'The `pydantic_ai.managed.logfire` module requires `logfire>=4.24.0`. '
-        'Install it with `pip install "pydantic-ai-slim[logfire]"`.'
+        'Install it with `pip install "pydantic-ai-slim[logfire]"`, '
+        'or upgrade an existing install with `pip install -U "logfire>=4.24.0"`.'
     ) from e
 
 from pydantic_ai._instructions import AgentInstructions
@@ -42,8 +43,9 @@ class Managed(AbstractCapability[AgentDepsT]):
     fields set) to layer variables. Capability ordering rules apply: the first
     in the list is outermost, and later contributions merge on top.
 
-    Phase 1 supports `instructions` and `model_settings`. Additional fields
-    (model, metadata, whole-spec variables) are planned follow-ups.
+    Currently, `instructions` and `model_settings` are supported. Support for
+    additional fields (including the model itself, per-run metadata, and
+    whole-spec variables) is planned.
 
     Example:
     ```python {test="skip"}
@@ -62,7 +64,7 @@ class Managed(AbstractCapability[AgentDepsT]):
     )
 
     agent = Agent(
-        'openai:gpt-4o',
+        'openai:gpt-5.2',
         capabilities=[Managed(instructions=prompt, model_settings=settings)],
     )
     ```

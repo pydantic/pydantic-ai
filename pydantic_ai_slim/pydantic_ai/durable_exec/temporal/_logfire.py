@@ -49,6 +49,10 @@ class LogfirePlugin(SimplePlugin):
         if self.metrics:
             logfire_config = logfire.config
             token = logfire_config.token
+            # Logfire supports multi-project tokens (list) since 4.24; pick the primary token
+            # for the temporal metrics OTel export, which points at a single project.
+            if isinstance(token, list):
+                token = token[0] if token else None
             if logfire_config.send_to_logfire and token is not None and logfire_config.metrics is not False:
                 base_url = logfire_config.advanced.generate_base_url(token)
                 metrics_url = base_url + '/v1/metrics'

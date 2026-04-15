@@ -10,12 +10,12 @@ Today, [Logfire managed variables](https://logfire.pydantic.dev/docs/reference/a
 
 The [`Managed`][pydantic_ai.managed.logfire.Managed] capability connects [Logfire managed variables](https://logfire.pydantic.dev/docs/reference/advanced/managed-variables/) to agent fields. Each run, the capability reads the current value of each configured variable and feeds it into the matching agent field. You change the value in the Logfire UI; the next run picks it up — no redeploy.
 
-Phase 1 supports two fields:
+Two fields are currently supported:
 
 - **[`instructions`][pydantic_ai.managed.logfire.Managed.instructions]** — a [`Variable[str]`](https://logfire.pydantic.dev/docs/reference/advanced/managed-variables/) whose value is appended to the agent's static [instructions](agent.md#instructions) on every run.
 - **[`model_settings`][pydantic_ai.managed.logfire.Managed.model_settings]** — a `Variable[dict]` whose value is merged on top of the agent's static [model settings](agent.md#model-run-settings).
 
-More fields (including the model itself and per-run metadata) are planned follow-ups.
+Support for additional fields (including the model itself and per-run metadata) is planned.
 
 ### Installation
 
@@ -48,7 +48,7 @@ settings = logfire.var(
 )
 
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5.2',
     capabilities=[Managed(instructions=prompt, model_settings=settings)],
 )
 
@@ -62,10 +62,8 @@ The variables are declared once at module load. On every [`agent.run()`][pydanti
 
 Values contributed by a `Managed` capability are **additive**:
 
-- Managed instructions are appended to any static instructions set on the agent or passed to `run()`.
-- Managed model settings are merged on top of the agent's static model settings. Keys set by the variable override the agent defaults; keys only set on the agent survive.
-
-Call-site arguments to [`agent.run()`][pydantic_ai.agent.Agent.run] always win over both.
+- Managed instructions are concatenated with the agent's static instructions and any `instructions=` passed to [`agent.run()`][pydantic_ai.agent.Agent.run]; nothing is overridden.
+- Managed model settings are dict-merged with the agent's static settings and any `model_settings=` passed to [`agent.run()`][pydantic_ai.agent.Agent.run]. For overlapping keys, call-site settings take precedence over managed settings, which take precedence over agent defaults.
 
 ### Layering multiple variables
 
@@ -83,7 +81,7 @@ base_prompt = logfire.var('base_prompt', default='You are helpful.')
 tone_overlay = logfire.var('tone_overlay', default='Be concise.')
 
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5.2',
     capabilities=[
         Managed(instructions=base_prompt),
         Managed(instructions=tone_overlay),
