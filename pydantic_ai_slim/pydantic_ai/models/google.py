@@ -791,6 +791,7 @@ class GoogleModel(Model):
     ) -> tuple[ContentDict | None, list[ContentUnionDict]]:
         contents: list[ContentUnionDict] = []
         system_parts: list[PartDict] = []
+        supports_tool_combination = GoogleModelProfile.from_profile(self.profile).google_supports_tool_combination
 
         for m in messages:
             if isinstance(m, ModelRequest):
@@ -842,7 +843,9 @@ class GoogleModel(Model):
 
                     contents.append({'role': 'user', 'parts': content_parts})
             elif isinstance(m, ModelResponse):
-                maybe_content = _content_model_response(m, self.system)
+                maybe_content = _content_model_response(
+                    m, self.system, supports_tool_combination=supports_tool_combination
+                )
                 if maybe_content:
                     contents.append(maybe_content)
             else:
@@ -1292,7 +1295,9 @@ class GeminiStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict | None:  # noqa: C901
+def _content_model_response(  # noqa: C901
+    m: ModelResponse, provider_name: str, *, supports_tool_combination: bool = True
+) -> ContentDict | None:
     parts: list[PartDict] = []
     thinking_part_signature: str | None = None
     function_call_requires_signature: bool = True
@@ -1336,7 +1341,14 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
                 if item.tool_name == CodeExecutionTool.kind:
                     part['executable_code'] = cast(ExecutableCodeDict, item.args_as_dict())
                 elif tool_type := _BUILTIN_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name):
-                    part['tool_call'] = {'id': item.tool_call_id, 'tool_type': tool_type, 'args': item.args_as_dict()}
+                    if supports_tool_combination:
+                        part['tool_call'] = {
+                            'id': item.tool_call_id,
+                            'tool_type': tool_type,
+                            'args': item.args_as_dict(),
+                        }
+                    else:
+                        part.pop('thought_signature', None)
                 else:  # pragma: no cover
                     raise UnexpectedModelBehavior(f'Unknown builtin tool name: {item.tool_name!r}')
         elif isinstance(item, BuiltinToolReturnPart):
@@ -1344,14 +1356,17 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
                 if item.tool_name == CodeExecutionTool.kind and isinstance(item.content, dict):
                     part['code_execution_result'] = cast(CodeExecutionResultDict, item.content)  # pyright: ignore[reportUnknownMemberType]
                 elif tool_type := _BUILTIN_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name):
-                    tool_content: dict[str, Any] = (  # pyright: ignore[reportUnknownVariableType]
-                        item.content if isinstance(item.content, dict) else {'result': item.content}  # pyright: ignore[reportUnknownMemberType]
-                    )
-                    part['tool_response'] = {
-                        'id': item.tool_call_id,
-                        'tool_type': tool_type,
-                        'response': tool_content,
-                    }
+                    if supports_tool_combination:
+                        tool_content: dict[str, Any] = (  # pyright: ignore[reportUnknownVariableType]
+                            item.content if isinstance(item.content, dict) else {'result': item.content}  # pyright: ignore[reportUnknownMemberType]
+                        )
+                        part['tool_response'] = {
+                            'id': item.tool_call_id,
+                            'tool_type': tool_type,
+                            'response': tool_content,
+                        }
+                    else:
+                        part.pop('thought_signature', None)
                 else:  # pragma: no cover
                     raise UnexpectedModelBehavior(f'Unknown builtin tool name: {item.tool_name!r}')
         elif isinstance(item, FilePart):

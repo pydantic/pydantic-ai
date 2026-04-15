@@ -52,6 +52,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.builtin_tools import (
+    CodeExecutionTool,
     FileSearchTool,
     ImageGenerationTool,
     UrlContextTool,  # pyright: ignore[reportDeprecated]
@@ -5158,6 +5159,131 @@ def test_google_missing_tool_call_thought_signature():
                     'thought_signature': b'skip_thought_signature_validator',
                 },
                 {'function_call': {'name': 'tool2', 'args': {}, 'id': 'tool_call_id2'}},
+            ],
+        }
+    )
+
+
+def test_content_model_response_pre_gemini_3_drops_builtin_tool_parts():
+    response = ModelResponse(
+        parts=[
+            BuiltinToolCallPart(
+                tool_name=WebSearchTool.kind,
+                provider_name='google-gla',
+                tool_call_id='web_search_call',
+                args={'query': 'foo'},
+            ),
+            BuiltinToolReturnPart(
+                tool_name=WebSearchTool.kind,
+                provider_name='google-gla',
+                tool_call_id='web_search_call',
+                content={'result': 'ok'},
+            ),
+            BuiltinToolCallPart(
+                tool_name=FileSearchTool.kind,
+                provider_name='google-gla',
+                tool_call_id='file_search_call',
+                args={'query': 'bar'},
+            ),
+            BuiltinToolReturnPart(
+                tool_name=FileSearchTool.kind,
+                provider_name='google-gla',
+                tool_call_id='file_search_call',
+                content={'result': 'ok'},
+            ),
+            TextPart(content='hello'),
+        ],
+        provider_name='google-gla',
+    )
+
+    assert _content_model_response(response, 'google-gla', supports_tool_combination=False) == snapshot(
+        {'role': 'model', 'parts': [{'text': 'hello'}]}
+    )
+    assert _content_model_response(response, 'google-gla', supports_tool_combination=True) == snapshot(
+        {
+            'role': 'model',
+            'parts': [
+                {
+                    'tool_call': {
+                        'id': 'web_search_call',
+                        'tool_type': ToolType.GOOGLE_SEARCH_WEB,
+                        'args': {'query': 'foo'},
+                    }
+                },
+                {
+                    'tool_response': {
+                        'id': 'web_search_call',
+                        'tool_type': ToolType.GOOGLE_SEARCH_WEB,
+                        'response': {'result': 'ok'},
+                    }
+                },
+                {
+                    'tool_call': {
+                        'id': 'file_search_call',
+                        'tool_type': ToolType.FILE_SEARCH,
+                        'args': {'query': 'bar'},
+                    }
+                },
+                {
+                    'tool_response': {
+                        'id': 'file_search_call',
+                        'tool_type': ToolType.FILE_SEARCH,
+                        'response': {'result': 'ok'},
+                    }
+                },
+                {'text': 'hello'},
+            ],
+        }
+    )
+
+    builtin_only = ModelResponse(
+        parts=[
+            BuiltinToolCallPart(
+                tool_name=WebSearchTool.kind,
+                provider_name='google-gla',
+                tool_call_id='web_search_call',
+                args={'query': 'foo'},
+            ),
+            BuiltinToolReturnPart(
+                tool_name=WebSearchTool.kind,
+                provider_name='google-gla',
+                tool_call_id='web_search_call',
+                content={'result': 'ok'},
+            ),
+        ],
+        provider_name='google-gla',
+    )
+    assert _content_model_response(builtin_only, 'google-gla', supports_tool_combination=False) is None
+
+
+@pytest.mark.parametrize('supports_tool_combination', [False, True])
+def test_content_model_response_pre_gemini_3_preserves_code_execution(supports_tool_combination: bool):
+    response = ModelResponse(
+        parts=[
+            BuiltinToolCallPart(
+                tool_name=CodeExecutionTool.kind,
+                provider_name='google-gla',
+                tool_call_id='code_exec_call',
+                args={'language': 'PYTHON', 'code': 'print(1)'},
+            ),
+            BuiltinToolReturnPart(
+                tool_name=CodeExecutionTool.kind,
+                provider_name='google-gla',
+                tool_call_id='code_exec_call',
+                content={'outcome': 'OUTCOME_OK', 'output': '1\n'},
+            ),
+        ],
+        provider_name='google-gla',
+    )
+
+    assert _content_model_response(
+        response, 'google-gla', supports_tool_combination=supports_tool_combination
+    ) == snapshot(
+        {
+            'role': 'model',
+            'parts': [
+                {'executable_code': {'language': 'PYTHON', 'code': 'print(1)'}},
+                {'code_execution_result': {'outcome': 'OUTCOME_OK', 'output': '1\n'}},
             ],
         }
     )
