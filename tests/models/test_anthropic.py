@@ -494,10 +494,10 @@ def test_build_cache_control_includes_ttl():
     ],
 )
 @pytest.mark.parametrize(
-    'client_cls_name',
+    'client_cls_name,base_url',
     [
-        pytest.param('AsyncAnthropicBedrock', id='bedrock'),
-        pytest.param('AsyncAnthropicVertex', id='vertex'),
+        pytest.param('AsyncAnthropicBedrock', 'https://bedrock.amazonaws.com', id='bedrock'),
+        pytest.param('AsyncAnthropicVertex', 'https://us-central1-aiplatform.googleapis.com', id='vertex'),
     ],
 )
 async def test_anthropic_cache_fallback_on_unsupported_clients(
@@ -505,6 +505,7 @@ async def test_anthropic_cache_fallback_on_unsupported_clients(
     cache_value: bool | Literal['1h'],
     expected_ttl: str,
     client_cls_name: str,
+    base_url: str,
 ):
     """Test that anthropic_cache falls back to per-block caching on Bedrock and Vertex.
 
@@ -520,7 +521,7 @@ async def test_anthropic_cache_fallback_on_unsupported_clients(
 
     mock_client = MagicMock()
     mock_client.__class__ = client_cls
-    mock_client.base_url = 'https://bedrock.amazonaws.com'
+    mock_client.base_url = base_url
     mock_client.beta.messages.create = AsyncMock(return_value=c)
 
     model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
@@ -530,7 +531,7 @@ async def test_anthropic_cache_fallback_on_unsupported_clients(
     assert result.output == 'Response'
 
     call_kwargs = mock_client.beta.messages.create.call_args.kwargs
-    assert not isinstance(call_kwargs.get('cache_control'), dict)
+    assert call_kwargs['cache_control'] is anthropic.omit
     last_user_msg = call_kwargs['messages'][-1]
     content = last_user_msg['content']
     assert content[-1]['cache_control'] == {'type': 'ephemeral', 'ttl': expected_ttl}
@@ -551,6 +552,7 @@ async def test_anthropic_cache_messages_deprecated_fallback_on_bedrock(
     """Test that deprecated anthropic_cache_messages triggers per-block fallback on Bedrock."""
     from unittest.mock import AsyncMock, MagicMock
 
+    import anthropic
     from anthropic import AsyncAnthropicBedrock
 
     c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
@@ -568,7 +570,7 @@ async def test_anthropic_cache_messages_deprecated_fallback_on_bedrock(
     assert result.output == 'Response'
 
     call_kwargs = mock_client.beta.messages.create.call_args.kwargs
-    assert not isinstance(call_kwargs.get('cache_control'), dict)
+    assert call_kwargs['cache_control'] is anthropic.omit
     last_user_msg = call_kwargs['messages'][-1]
     content = last_user_msg['content']
     assert content[-1]['cache_control'] == {'type': 'ephemeral', 'ttl': expected_ttl}
