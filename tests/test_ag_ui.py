@@ -2405,6 +2405,40 @@ async def test_adapter_sets_current_run_id_on_trailing_mapped_request() -> None:
     assert run_result.new_messages() == messages[-2:]
 
 
+async def test_adapter_includes_system_prompt_for_frontend_only_user_message() -> None:
+    captured_results: list[AgentRunResult[Any]] = []
+
+    def sync_callback(run_result: AgentRunResult[Any]) -> None:
+        captured_results.append(run_result)
+
+    agent = Agent(TestModel(), system_prompt='Be fun!')
+    run_input = create_input(UserMessage(id='msg1', content='Hello!'))
+
+    await run_and_collect_events(agent, run_input, on_complete=sync_callback)
+
+    assert len(captured_results) == 1
+    assert captured_results[0].all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Be fun!', timestamp=IsDatetime()),
+                    UserPromptPart(content='Hello!', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt()),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
 async def test_callback_async() -> None:
     """Test that async callbacks work correctly."""
 

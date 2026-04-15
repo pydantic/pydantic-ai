@@ -275,6 +275,8 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
         if next_message:
             await self._reevaluate_dynamic_prompts([next_message], run_context)
+            if not messages and not any(isinstance(part, _messages.SystemPromptPart) for part in next_message.parts):
+                next_message.parts = [*await self._sys_parts(run_context), *next_message.parts]
         else:
             parts: list[_messages.ModelRequestPart] = []
             if not messages:

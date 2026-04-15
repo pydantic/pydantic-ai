@@ -2514,6 +2514,54 @@ async def test_run_stream_on_complete():
     )
 
 
+async def test_run_stream_on_complete_includes_system_prompt_for_frontend_only_user_message():
+    agent = Agent(model=TestModel(), system_prompt='Be fun!')
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request)
+
+    result: AgentRunResult[Any] | None = None
+
+    def capture_result(r: AgentRunResult[Any]) -> None:
+        nonlocal result
+        result = r
+
+    async for _event in adapter.encode_stream(adapter.run_stream(on_complete=capture_result)):
+        pass
+
+    assert result is not None
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Be fun!', timestamp=IsDatetime()),
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=53, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
 async def test_data_chunk_with_id_and_transient():
     """Test DataChunk supports optional id and transient fields for AI SDK compatibility."""
     agent = Agent(model=TestModel())

@@ -3236,6 +3236,32 @@ def test_run_with_history_ending_on_model_response_without_tool_calls_or_user_pr
     assert result.new_messages() == snapshot([])
 
 
+def test_run_with_history_ending_on_user_prompt_includes_system_prompt():
+    agent = Agent(TestModel(), system_prompt='Be fun!')
+
+    result = agent.run_sync(message_history=[ModelRequest(parts=[UserPromptPart(content='Hello')])])
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Be fun!', timestamp=IsNow(tz=timezone.utc)),
+                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=53, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
 async def test_message_history_ending_on_model_response_with_instructions():
     model = TestModel(custom_output_text='James likes cars in general, especially the Fiat 126p that his parents had.')
     summarize_agent = Agent(
