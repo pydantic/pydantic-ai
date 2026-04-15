@@ -1,4 +1,4 @@
-Pydantic AI — provider-agnostic agent framework by the Pydantic team. Docs: <https://ai.pydantic.dev>
+Pydantic AI is a provider-agnostic GenAI agent framework by the team behind [Pydantic Validation](https://docs.pydantic.dev/) and [Pydantic Logfire](https://pydantic.dev/logfire), used by hundreds of thousands of Python developers. People pick it because the code is simple to read and write, the same API works across every major LLM provider, and the abstractions are flexible enough to build anything from a single-tool chatbot to a multi-agent system without locking them into a particular shape. We optimize for modern idiomatic Python, end-to-end type safety, a tasteful public API, and a developer experience that doesn't fight you. [`README.md`](README.md) has the full 'why use it' pitch; docs live at <https://ai.pydantic.dev>.
 
 # Repo invariants (assume true; never try to disprove)
 
