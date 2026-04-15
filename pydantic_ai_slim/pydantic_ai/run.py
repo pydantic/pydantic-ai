@@ -1,13 +1,14 @@
 from __future__ import annotations as _annotations
 
 import dataclasses
-from collections.abc import AsyncIterator, Sequence
+import warnings
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from copy import deepcopy
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Generic, Literal, overload
 
 from pydantic_graph import BaseNode, End, GraphRunContext
-from pydantic_graph.beta.graph import EndMarker, GraphRun, GraphTaskRequest, JoinItem
+from pydantic_graph.beta.graph import EndMarker, ErrorMarker, GraphRun, GraphTaskRequest, JoinItem
 from pydantic_graph.beta.step import NodeStep
 
 from . import (
@@ -21,6 +22,7 @@ from .output import OutputDataT
 from .tools import AgentDepsT
 
 if TYPE_CHECKING:
+    from ._run_context import RunContext
     from .result import FinalResult
 
 
@@ -91,6 +93,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     _graph_run: GraphRun[
         _agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any], FinalResult[OutputDataT]
     ]
+    _result_override: AgentRunResult[OutputDataT] | None = dataclasses.field(default=None, repr=False, init=False)
+    _node_error: BaseException | None = dataclasses.field(default=None, repr=False, init=False)
+    """Stores the original exception from node execution, before context manager __aexit__ may transform it."""
 
     @overload
     def _traceparent(self, *, required: Literal[False]) -> str | None: ...
@@ -118,6 +123,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         This is the next node that will be used during async iteration, or if a node is not passed to `self.next(...)`.
         """
         task = self._graph_run.next_task
+        if isinstance(task, ErrorMarker):
+            raise task.error
         return self._task_to_node(task)
 
     @property
@@ -127,6 +134,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         Once the run returns an [`End`][pydantic_graph.nodes.End] node, `result` is populated
         with an [`AgentRunResult`][pydantic_ai.agent.AgentRunResult].
         """
+        if self._result_override is not None:
+            return self._result_override
         graph_run_output = self._graph_run.output
         if graph_run_output is None:
             return None
@@ -172,13 +181,33 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         self,
     ) -> AsyncIterator[_agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]]:
         """Provide async-iteration over the nodes in the agent run."""
+        if self.ctx.deps.root_capability.has_wrap_node_run:
+            warnings.warn(
+                'A capability has `wrap_node_run` hooks, but bare `async for node in agent_run` '
+                'does not fire them. Use `agent_run.next(node)` to advance the run, or use '
+                '`agent.run()` which drives via `next()` automatically.',
+                UserWarning,
+                stacklevel=2,
+            )
         return self
 
     async def __anext__(
         self,
     ) -> _agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]:
-        """Advance to the next node automatically based on the last returned node."""
-        task = await anext(self._graph_run)
+        """Advance to the next node automatically based on the last returned node.
+
+        Note: this uses the graph run's internal iteration which does NOT call
+        node hooks (`before_node_run`, `wrap_node_run`, `after_node_run`,
+        `on_node_run_error`). Use `next()` for capability-hooked iteration, or
+        use `agent.run()` which drives via `next()` automatically.
+        """
+        if self._result_override is not None:
+            raise StopAsyncIteration
+        try:
+            task = await anext(self._graph_run)
+        except BaseException as exc:
+            self._node_error = exc
+            raise
         return self._task_to_node(task)
 
     def _task_to_node(
@@ -200,6 +229,81 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
 
     def _node_to_task(self, node: _agent_graph.AgentNode[AgentDepsT, OutputDataT]) -> GraphTaskRequest:
         return GraphTaskRequest(NodeStep(type(node)).id, inputs=node, fork_stack=())
+
+    def _sync_graph_state(self, result: _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]) -> None:
+        """Synchronize the graph runner's state to match a hook-modified result.
+
+        After a capability hook changes the result (e.g. `on_node_run_error` recovering,
+        or `after_node_run` converting End↔node), the graph runner's internal `_next` must
+        be updated so that `output` and `next_node` reflect the hook's decision.
+        """
+        if isinstance(result, End):
+            self._graph_run.override_next(EndMarker(result.data))
+        else:
+            self._graph_run.override_next([self._node_to_task(result)])
+
+    async def _advance_graph(
+        self,
+        node: _agent_graph.AgentNode[AgentDepsT, Any],
+    ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+        """Execute a single graph step without firing capability hooks."""
+        task = [self._node_to_task(node)]
+        try:
+            task = await self._graph_run.next(task)
+        except StopAsyncIteration:
+            pass
+        return self._task_to_node(task)
+
+    async def _wrap_and_advance(
+        self,
+        run_context: RunContext[AgentDepsT],
+        node: _agent_graph.AgentNode[AgentDepsT, Any],
+        step_fn: Callable[
+            [_agent_graph.AgentNode[AgentDepsT, Any]],
+            Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
+        ],
+    ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+        """Execute `wrap_node_run(step_fn)` → `on_node_run_error` → `after_node_run`.
+
+        This is the portion of the hook lifecycle after `before_node_run` has already fired.
+        Used by both `_run_node_with_hooks` and directly by `run_stream()` which calls
+        `before_node_run` separately (before streaming).
+        """
+        cap = self.ctx.deps.root_capability
+        try:
+            result = await cap.wrap_node_run(run_context, node=node, handler=step_fn)
+        except Exception as e:
+            result = await cap.on_node_run_error(run_context, node=node, error=e)
+            # on_node_run_error recovered by returning a result.
+            # The graph runner is in ErrorMarker state; update it to match.
+            self._sync_graph_state(result)
+        pre_hook_result = result
+        result = await cap.after_node_run(run_context, node=node, result=result)
+
+        # If after_node_run changed the result, sync the graph runner state so
+        # agent_run.result correctly reflects whether the run is finished.
+        if result is not pre_hook_result:
+            self._sync_graph_state(result)
+
+        return result
+
+    async def _run_node_with_hooks(
+        self,
+        node: _agent_graph.AgentNode[AgentDepsT, Any],
+        step_fn: Callable[
+            [_agent_graph.AgentNode[AgentDepsT, Any]],
+            Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
+        ],
+    ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+        """Run a node through the full capability hook lifecycle with a custom step function.
+
+        Fires hooks in order: `before_node_run` → `wrap_node_run(step_fn)` → `after_node_run`,
+        with `on_node_run_error` handling exceptions from `wrap_node_run`.
+        """
+        run_context = _agent_graph.build_run_context(self.ctx)
+        cap = self.ctx.deps.root_capability
+        node = await cap.before_node_run(run_context, node=node)
+        return await self._wrap_and_advance(run_context, node, step_fn)
 
     async def next(
         self,
@@ -273,12 +377,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """
         # Note: It might be nice to expose a synchronous interface for iteration, but we shouldn't do it
         # on this class, or else IDEs won't warn you if you accidentally use `for` instead of `async for` to iterate.
-        task = [self._node_to_task(node)]
-        try:
-            task = await self._graph_run.next(task)
-        except StopAsyncIteration:
-            pass
-        return self._task_to_node(task)
+        return await self._run_node_with_hooks(node, self._advance_graph)
 
     # TODO (v2): Make this a property
     def usage(self) -> _usage.RunUsage:
