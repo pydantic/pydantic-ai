@@ -288,7 +288,7 @@ def test_agent_output_validator_with_intermediary_deps_change_and_validation_con
                         tool_name='final_result', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__final_result'
                     )
                 ],
-                usage=RequestUsage(input_tokens=51, output_tokens=6),
+                usage=RequestUsage(input_tokens=50, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),

@@ -1,14 +1,17 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import copy
 import functools
 import inspect
 import re
+import sys
 import time
 import uuid
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator
+from concurrent.futures import Executor
 from contextlib import asynccontextmanager, contextmanager, suppress
-from contextvars import ContextVar
+from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime, timezone
 from functools import partial
@@ -25,8 +28,15 @@ from typing import (
     overload,
 )
 
+import anyio
 from anyio.to_thread import run_sync
+
+if sys.version_info < (3, 11):
+    from exceptiongroup import BaseExceptionGroup as BaseExceptionGroup  # pragma: lax no cover
+else:
+    BaseExceptionGroup = BaseExceptionGroup  # pragma: lax no cover
 from pydantic import BaseModel, TypeAdapter
+from pydantic._internal import _decorators, _typing_extra
 from pydantic.json_schema import JsonSchemaValue
 from typing_extensions import (
     ParamSpec,
@@ -53,6 +63,7 @@ _P = ParamSpec('_P')
 _R = TypeVar('_R')
 
 _disable_threads: ContextVar[bool] = ContextVar('_disable_threads', default=False)
+_thread_executor: ContextVar[Executor | None] = ContextVar('_thread_executor', default=None)
 
 
 @contextmanager
@@ -75,11 +86,43 @@ def disable_threads() -> Iterator[None]:
         _disable_threads.reset(token)
 
 
+@contextmanager
+def using_thread_executor(executor: Executor) -> Iterator[None]:
+    """Context manager to use a custom executor for running sync functions in threads.
+
+    Inside this context, sync functions will be executed using the provided executor
+    via [`asyncio.get_running_loop().run_in_executor()`][asyncio.loop.run_in_executor]
+    instead of the default [`anyio.to_thread.run_sync`][anyio.to_thread.run_sync].
+
+    This is useful in long-running servers (e.g. FastAPI) where thread accumulation
+    from ephemeral anyio worker threads can be a problem, and you want to use a bounded
+    `ThreadPoolExecutor` instead.
+
+    Args:
+        executor: The executor to use for running sync functions.
+
+    Yields:
+        None
+    """
+    token = _thread_executor.set(executor)
+    try:
+        yield
+    finally:
+        _thread_executor.reset(token)
+
+
 async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs) -> _R:
     if _disable_threads.get():
         return func(*args, **kwargs)
 
     wrapped_func = partial(func, *args, **kwargs)
+
+    executor = _thread_executor.get()
+    if executor is not None:
+        loop = asyncio.get_running_loop()
+        ctx = copy_context()
+        return await loop.run_in_executor(executor, ctx.run, wrapped_func)
+
     return await run_sync(wrapped_func)
 
 
@@ -145,6 +188,32 @@ class Some(Generic[T]):
 
 Option: TypeAlias = Some[T] | None
 """Analogous to Rust's `Option` type, usage: `Option[Thing]` is equivalent to `Some[Thing] | None`."""
+
+
+async def gather(*coros: Awaitable[T]) -> list[T]:
+    """Run awaitables concurrently via an `anyio` task group and return results in input order.
+
+    Unlike `asyncio.gather`, a failure in one coroutine cancels the rest instead of leaving them
+    as orphan background tasks. If exactly one task fails, its exception is re-raised directly to
+    match `asyncio.gather`'s shape; multi-failure cases propagate as an `ExceptionGroup`.
+    """
+    results: list[T] = [None] * len(coros)  # type: ignore[list-item]
+
+    async def _run(index: int, coro: Awaitable[T]) -> None:
+        results[index] = await coro
+
+    try:
+        async with anyio.create_task_group() as tg:
+            for i, coro in enumerate(coros):
+                tg.start_soon(_run, i, coro)
+    except BaseExceptionGroup as eg:
+        if len(eg.exceptions) == 1:
+            exc = eg.exceptions[0]
+            exc.__suppress_context__ = True
+            raise exc
+        raise
+
+    return results
 
 
 class Unset:
@@ -305,6 +374,15 @@ def guard_tool_call_id(
     return t.tool_call_id or generate_tool_call_id()
 
 
+TOOL_NAME_SANITIZER = re.compile(r'[^a-zA-Z0-9_-]')
+"""Regex matching characters not allowed in tool names by most providers."""
+
+
+def sanitize_tool_name(name: str) -> str:
+    """Replace characters outside `[a-zA-Z0-9_-]` with `_`."""
+    return TOOL_NAME_SANITIZER.sub('_', name)
+
+
 def generate_tool_call_id() -> str:
     """Generate a tool call id.
 
@@ -425,6 +503,71 @@ def is_async_callable(obj: Any) -> Any:
     return inspect.iscoroutinefunction(obj) or (callable(obj) and inspect.iscoroutinefunction(obj.__call__))
 
 
+def takes_run_context(callable_obj: Callable[..., Any]) -> bool:
+    """Check if a callable takes a `RunContext` as its first argument.
+
+    Args:
+        callable_obj: The callable to check.
+
+    Returns:
+        `True` if the callable takes a `RunContext` as first argument, `False` otherwise.
+    """
+    from ._run_context import RunContext
+
+    first_param_type = get_first_param_type(callable_obj)
+    if first_param_type is None:
+        return False
+    return first_param_type is RunContext or get_origin(first_param_type) is RunContext
+
+
+def get_first_param_type(callable_obj: Callable[..., Any]) -> Any | None:
+    """Get the type annotation of the first parameter of a callable.
+
+    Handles regular functions, methods, and callable classes with __call__.
+    Uses Pydantic internals to properly resolve type hints including forward references.
+
+    Args:
+        callable_obj: The callable to inspect.
+
+    Returns:
+        The type annotation of the first parameter, or None if it cannot be determined.
+    """
+    try:
+        sig = inspect.signature(callable_obj)
+    except ValueError:
+        return None
+
+    try:
+        first_param_name = next(iter(sig.parameters.keys()))
+    except StopIteration:
+        return None
+
+    # See https://github.com/pydantic/pydantic/pull/11451 for a similar implementation in Pydantic
+    callable_for_hints = callable_obj
+    if not isinstance(callable_obj, _decorators._function_like):  # pyright: ignore[reportPrivateUsage]
+        call_func = getattr(type(callable_obj), '__call__', None)
+        if call_func is not None:
+            callable_for_hints = call_func
+        else:
+            return None  # pragma: no cover
+
+    try:
+        type_hints = _typing_extra.get_function_type_hints(_decorators.unwrap_wrapped_function(callable_for_hints))
+    except (NameError, TypeError, AttributeError):
+        return None
+
+    return type_hints.get(first_param_name)
+
+
+def get_function_type_hints(func: Any) -> dict[str, Any]:
+    """Resolve type hints for a function, including forward references.
+
+    Wraps `pydantic._internal._typing_extra.get_function_type_hints` so callers
+    don't need to import Pydantic internals directly.
+    """
+    return _typing_extra.get_function_type_hints(func)
+
+
 def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, str]) -> None:
     """Update $refs in a schema to use the new names from name_mapping."""
     if '$ref' in s:
@@ -449,12 +592,37 @@ def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, s
         for item in prefix_items:
             _update_mapped_json_schema_refs(item, name_mapping)
 
-    # Handle unions
-    for union_type in ['anyOf', 'oneOf']:
-        if union_type in s:
-            union_items: list[dict[str, Any]] = s[union_type]
-            for item in union_items:
+    # Handle additionalProperties
+    if 'additionalProperties' in s and isinstance(s['additionalProperties'], dict):
+        additional_props: dict[str, Any] = s['additionalProperties']  # pyright: ignore[reportUnknownVariableType]
+        _update_mapped_json_schema_refs(additional_props, name_mapping)
+
+    # Handle unions and composition keywords
+    for keyword in ['anyOf', 'oneOf', 'allOf']:
+        if keyword in s:
+            keyword_items: list[dict[str, Any]] = s[keyword]
+            for item in keyword_items:
                 _update_mapped_json_schema_refs(item, name_mapping)
+
+    # Handle negation
+    if 'not' in s and isinstance(s['not'], dict):
+        not_schema: dict[str, Any] = s['not']  # pyright: ignore[reportUnknownVariableType]
+        _update_mapped_json_schema_refs(not_schema, name_mapping)
+
+
+def _unique_def_name(name: str, schema: dict[str, Any], all_defs: dict[str, dict[str, Any]]) -> str:
+    """Generate a unique definition name by appending the schema title and/or a numeric suffix."""
+    new_name = name
+    if title := schema.get('title'):
+        new_name = f'{title}_{name}'
+
+    i = 1
+    original_new_name = new_name
+    new_name = f'{new_name}_{i}'
+    while new_name in all_defs:
+        i += 1
+        new_name = f'{original_new_name}_{i}'
+    return new_name
 
 
 def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
@@ -480,19 +648,36 @@ def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str
                 all_defs[name] = def_schema
                 schema_name_mapping[name] = name
             elif def_schema != all_defs[name]:
-                new_name = name
-                if title := schema.get('title'):
-                    new_name = f'{title}_{name}'
+                # Different def with same name — assign a unique name
+                schema_name_mapping[name] = _unique_def_name(name, schema, all_defs)
+                all_defs[schema_name_mapping[name]] = def_schema
+            # else: structurally equal — handled below
 
-                i = 1
-                original_new_name = new_name
-                new_name = f'{new_name}_{i}'
-                while new_name in all_defs:
-                    i += 1
-                    new_name = f'{original_new_name}_{i}'
+        # Defs that are structurally equal (same dict) may still be semantically
+        # different if they contain $refs that point to defs that were renamed in
+        # this schema. E.g. both schemas have Wrapper={$ref Inner}, but their
+        # Inner defs differ, so Schema B's Inner was renamed to Inner_1. The shared
+        # Wrapper is not actually equal — Schema B needs its own copy with updated refs.
+        # Loop until stable, since creating a copy can trigger further copies
+        # in defs that reference it (transitive chains).
+        changed = True
+        while changed:
+            changed = False
+            for name, def_schema in defs.items():
+                if name not in schema_name_mapping:
+                    updated = copy.deepcopy(def_schema)
+                    _update_mapped_json_schema_refs(updated, schema_name_mapping)
+                    if updated != def_schema:
+                        schema_name_mapping[name] = _unique_def_name(name, schema, all_defs)
+                        all_defs[schema_name_mapping[name]] = updated
+                        changed = True
+                    else:
+                        schema_name_mapping[name] = name
 
-                all_defs[new_name] = def_schema
-                schema_name_mapping[name] = new_name
+        # Update refs inside definitions so internal cross-references
+        # (e.g. Outer referencing Inner which was renamed to Inner_1) are corrected.
+        for new_name in schema_name_mapping.values():
+            _update_mapped_json_schema_refs(all_defs[new_name], schema_name_mapping)
 
         _update_mapped_json_schema_refs(schema, schema_name_mapping)
         rewritten_schemas.append(schema)
@@ -556,3 +741,23 @@ def get_event_loop():
         event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(event_loop)
     return event_loop
+
+
+def is_str_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
+    """Check if obj is a dict, narrowing the type to `dict[str, Any]`."""
+    return isinstance(obj, dict)
+
+
+def is_text_like_media_type(media_type: str) -> bool:
+    """Check if a media type represents text-like content.
+
+    Returns True for `text/*`, JSON, XML, YAML, and their structured syntax suffixes.
+    """
+    return (
+        media_type.startswith('text/')
+        or media_type == 'application/json'
+        or media_type.endswith('+json')
+        or media_type == 'application/xml'
+        or media_type.endswith('+xml')
+        or media_type in ('application/x-yaml', 'application/yaml')
+    )

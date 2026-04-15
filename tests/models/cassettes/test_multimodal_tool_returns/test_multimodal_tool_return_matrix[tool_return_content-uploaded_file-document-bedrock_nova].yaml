@@ -1,0 +1,106 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Use the get_file tool now to retrieve a document file, then
+      describe what you received."}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name":
+      "get_file", "inputSchema": {"json": {"additionalProperties": false, "properties": {}, "type": "object"}}}}], "toolChoice":
+      {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        NTlhMzRjNDctNWYzOS00MmFhLTk2MjMtZWJmNGE0MDc5MDFm
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '368'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-2-lite-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '305'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 440
+      output:
+        message:
+          content:
+          - toolUse:
+              input: {}
+              name: get_file
+              toolUseId: tooluse_AD44rvXIGeJwa27IyOEKCO
+          role: assistant
+      stopReason: tool_use
+      usage:
+        inputTokens: 901
+        outputTokens: 14
+        serverToolUsage: {}
+        totalTokens: 915
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Use the get_file tool now to retrieve a document file, then
+      describe what you received."}]}, {"role": "assistant", "content": [{"toolUse": {"toolUseId": "tooluse_AD44rvXIGeJwa27IyOEKCO",
+      "name": "get_file", "input": {}}}]}, {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_AD44rvXIGeJwa27IyOEKCO",
+      "content": [{"text": "File attached"}], "status": "success"}}, {"text": "See attached document(s)."}, {"document": {"name":
+      "Document 1", "format": "pdf", "source": {"s3Location": {"uri": "s3://pydantic-ai-test-files/test-files/dummy.pdf"}}}}]}],
+      "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_file", "inputSchema": {"json":
+      {"additionalProperties": false, "properties": {}, "type": "object"}}}}], "toolChoice": {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        MmRkMjM1MGUtMzVjNi00NmMwLWEzNjEtYjI3MzJjNDc1YTYw
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '837'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-2-lite-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1143'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 3630
+      output:
+        message:
+          content:
+          - text: |-
+              I've retrieved the file you referenced. Based on what I can see, this appears to be a **dummy PDF file** - essentially a blank or placeholder PDF document. The content shows only the text "Dummy PDF file" centered on a white background, with no additional content, images, or structure.
+
+              This type of file is typically used as a placeholder when actual document content isn't available yet, or for testing purposes. It doesn't contain any meaningful information or data that can be analyzed.
+
+              If you were expecting to see specific content in this document, it might be that:
+              - The file was intentionally left blank as a placeholder
+              - There might be an issue with the file attachment or retrieval
+              - The file may have been corrupted or incomplete
+
+              Would you like me to attempt retrieving the file again, or perhaps you could share additional context about what content you expected to see in this document?
+          role: assistant
+      stopReason: end_turn
+      usage:
+        inputTokens: 3529
+        outputTokens: 177
+        serverToolUsage: {}
+        totalTokens: 3706
+    status:
+      code: 200
+      message: OK
+version: 1

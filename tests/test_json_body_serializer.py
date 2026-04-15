@@ -3,7 +3,8 @@ from typing import Any
 import pytest
 import yaml
 
-from .json_body_serializer import deserialize, serialize
+from ._inline_snapshot import snapshot
+from .json_body_serializer import deserialize, scrub_xml_credentials, serialize
 
 
 @pytest.fixture
@@ -175,3 +176,59 @@ def test_round_trip_data_integrity(cassette_dict_base: dict[str, Any]):
     # No 'parsed_body' in the final dictionary
     assert 'parsed_body' not in req
     assert 'parsed_body' not in resp
+
+
+def test_scrub_xml_credentials_redacts_sts_tokens():
+    """Test that scrub_xml_credentials redacts AWS STS credentials from XML bodies."""
+    xml_body = (
+        '<AssumeRoleWithWebIdentityResponse>'
+        '<Credentials>'
+        '<AccessKeyId>ASIA1234</AccessKeyId>'
+        '<SecretAccessKey>secret123</SecretAccessKey>'
+        '<SessionToken>token456</SessionToken>'
+        '<Expiration>2026-01-01T00:00:00Z</Expiration>'
+        '</Credentials>'
+        '</AssumeRoleWithWebIdentityResponse>'
+    )
+    data: dict[str, Any] = {'body': {'string': xml_body}}
+    headers: dict[str, list[str]] = {'content-type': ['text/xml'], 'content-length': ['999']}
+
+    scrub_xml_credentials(data, headers, ['text/xml'])
+
+    body = data['body']['string']
+    assert body == snapshot(
+        '<AssumeRoleWithWebIdentityResponse><Credentials><AccessKeyId>SCRUBBED</AccessKeyId><SecretAccessKey>SCRUBBED</SecretAccessKey><SessionToken>SCRUBBED</SessionToken><Expiration>2099-01-01T00:00:00Z</Expiration></Credentials></AssumeRoleWithWebIdentityResponse>'
+    )
+    assert headers['content-length'] == [str(len(body.encode('utf-8')))]
+
+
+def test_scrub_xml_credentials_string_body_no_content_length():
+    """Test scrub_xml_credentials with a plain string body and no content-length header."""
+    xml_body = '<Credentials><AccessKeyId>ASIA1234</AccessKeyId></Credentials>'
+    data: dict[str, Any] = {'body': xml_body}
+    headers: dict[str, list[str]] = {'content-type': ['text/xml']}
+
+    scrub_xml_credentials(data, headers, ['text/xml'])
+
+    assert data['body'] == snapshot({'string': '<Credentials><AccessKeyId>SCRUBBED</AccessKeyId></Credentials>'})
+    assert 'content-length' not in headers
+
+
+def test_scrub_xml_credentials_skips_non_xml():
+    """Test that scrub_xml_credentials is a no-op for non-XML content types."""
+    data: dict[str, Any] = {'body': {'string': '<Credentials>secret</Credentials>'}}
+    headers: dict[str, list[str]] = {'content-type': ['application/json']}
+
+    scrub_xml_credentials(data, headers, ['application/json'])
+
+    assert data['body']['string'] == '<Credentials>secret</Credentials>'
+
+
+def test_scrub_xml_credentials_skips_non_credentials_xml():
+    """Test that scrub_xml_credentials is a no-op for XML without <Credentials>."""
+    data: dict[str, Any] = {'body': {'string': '<Response>ok</Response>'}}
+    headers: dict[str, list[str]] = {'content-type': ['text/xml']}
+
+    scrub_xml_credentials(data, headers, ['text/xml'])
+
+    assert data['body']['string'] == '<Response>ok</Response>'

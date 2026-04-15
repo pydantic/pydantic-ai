@@ -10,6 +10,7 @@ from uuid import uuid4
 from pydantic_core import to_json
 
 from ...messages import (
+    BaseToolReturnPart,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     FilePart,
@@ -28,6 +29,7 @@ from ...output import OutputDataT
 from ...run import AgentRunResultEvent
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import UIEventStream
+from .._event_stream import describe_file
 from ._utils import dump_provider_metadata, iter_metadata_chunks, tool_return_output
 from .request_types import RequestData
 from .response_types import (
@@ -75,6 +77,13 @@ def _json_dumps(obj: Any) -> str:
     return to_json(obj).decode('utf-8')
 
 
+def _tool_return_with_files(part: BaseToolReturnPart) -> Any:
+    """Wrap tool_return_output with file descriptions for multimodal tool returns."""
+    if file_descriptions := [describe_file(f) for f in part.files]:
+        return [part.model_response_object(), *file_descriptions]
+    return tool_return_output(part)
+
+
 @dataclass
 class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]):
     """UI event stream transformer for the Vercel AI protocol."""
@@ -82,6 +91,8 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     _: KW_ONLY
     sdk_version: Literal[5, 6] = 5
     """Vercel AI SDK version to target. Setting to 6 enables tool approval streaming."""
+    server_message_id: str | None = None
+    """Optional server-generated message ID to include in the `StartChunk`."""
 
     _step_started: bool = False
     _finish_reason: FinishReason = None
@@ -94,7 +105,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         return f'data: {event.encode(self.sdk_version)}\n\n'
 
     async def before_stream(self) -> AsyncIterator[BaseChunk]:
-        yield StartChunk()
+        yield StartChunk(message_id=self.server_message_id)
 
     async def before_response(self) -> AsyncIterator[BaseChunk]:
         if self._step_started:
@@ -254,7 +265,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         else:
             yield ToolOutputAvailableChunk(
                 tool_call_id=part.tool_call_id,
-                output=tool_return_output(part),
+                output=_tool_return_with_files(part),
                 provider_executed=True,
             )
 
@@ -273,7 +284,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         elif isinstance(part, ToolReturnPart) and part.outcome == 'failed':
             yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=part.model_response_str())
         else:
-            yield ToolOutputAvailableChunk(tool_call_id=tool_call_id, output=tool_return_output(part))
+            yield ToolOutputAvailableChunk(tool_call_id=tool_call_id, output=_tool_return_with_files(part))
 
         # ToolOutputAvailableChunk/ToolOutputErrorChunk.output may hold user parts
         # (e.g. text, images) that Vercel AI does not currently have chunk types for.
