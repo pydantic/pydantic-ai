@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
-import logfire
 import pytest
 
-from pydantic_ai.agent import Agent
-from pydantic_ai.managed.logfire import Managed
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+# Skip the whole module when logfire (with managed variables) isn't installed —
+# `pydantic-ai-slim` and `pydantic-evals` test jobs run without the `logfire` extra.
+pytest.importorskip('logfire.variables')
+
+import logfire  # noqa: E402
+
+from pydantic_ai.agent import Agent  # noqa: E402
+from pydantic_ai.managed.logfire import Managed  # noqa: E402
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart  # noqa: E402
+from pydantic_ai.models.function import AgentInfo, FunctionModel  # noqa: E402
 
 pytestmark = [pytest.mark.anyio]
 
