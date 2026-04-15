@@ -80,21 +80,15 @@ class Managed(AbstractCapability[AgentDepsT]):
     Its current value is merged on top of the agent's static model settings on each run.
     """
 
-    _resolved_instructions: ResolvedVariable[str] | None = field(
-        default=None, init=False, repr=False, compare=False
-    )
+    _resolved_instructions: ResolvedVariable[str] | None = field(default=None, init=False, repr=False, compare=False)
     _resolved_model_settings: ResolvedVariable[dict[str, Any]] | None = field(
         default=None, init=False, repr=False, compare=False
     )
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> Managed[AgentDepsT]:
         resolved = replace(self)
-        resolved._resolved_instructions = (
-            self.instructions.get() if self.instructions is not None else None
-        )
-        resolved._resolved_model_settings = (
-            self.model_settings.get() if self.model_settings is not None else None
-        )
+        resolved._resolved_instructions = self.instructions.get() if self.instructions is not None else None
+        resolved._resolved_model_settings = self.model_settings.get() if self.model_settings is not None else None
         return resolved
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
