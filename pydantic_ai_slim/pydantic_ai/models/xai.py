@@ -2,7 +2,7 @@
 
 import json
 from collections import defaultdict
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -830,7 +830,10 @@ class XaiModel(Model[AsyncClient]):
         # xAI returns x_search results as top-level `response.citations` (URL strings) rather than
         # on the ROLE_TOOL message's `content`. Surface them on the corresponding return part so
         # users who set `include_output=True` can actually see the citations.
-        _attach_x_search_citations(parts, list(response.citations))
+        _attach_x_search_citations(
+            (p for p in parts if isinstance(p, BuiltinToolReturnPart) and p.tool_name == XSearchTool.kind),
+            response.citations,
+        )
 
         # Convert usage with detailed token information
         usage = _extract_usage(response, self._model_name, self._provider.name, self._provider.base_url)
@@ -1102,19 +1105,8 @@ class XaiStreamedResponse(StreamedResponse):
             # re-emitting via `handle_part`: the parts manager holds the same object reference we
             # tracked in `x_search_return_parts`, so the mutation is reflected in the final
             # `ModelResponse` without emitting a duplicate `PartStartEvent` at the same index.
-            # See `_attach_x_search_citations` for the equivalent non-streaming path.
-            self._backfill_x_search_citations(last_response, x_search_return_parts)
-
-    @staticmethod
-    def _backfill_x_search_citations(
-        response: chat_types.Response | None,
-        x_search_return_parts: dict[str, BuiltinToolReturnPart],
-    ) -> None:
-        if response is None or not x_search_return_parts or not response.citations:
-            return
-        citations = list(response.citations)
-        for return_part in x_search_return_parts.values():
-            return_part.content = {'citations': citations}
+            if last_response is not None:
+                _attach_x_search_citations(x_search_return_parts.values(), last_response.citations)
 
     @property
     def model_name(self) -> str:
@@ -1329,19 +1321,22 @@ def _extract_usage(
     return extracted
 
 
-def _attach_x_search_citations(parts: list[ModelResponsePart], citations: list[str]) -> None:
+def _attach_x_search_citations(
+    x_search_return_parts: Iterable[BuiltinToolReturnPart],
+    citations: Sequence[str],
+) -> None:
     """Populate x_search return parts' content with the top-level response citations.
 
     xAI's API returns X search results as a flat list of URL strings on `response.citations`,
-    not on the ROLE_TOOL message's `content`. This maps those citations onto the
-    corresponding `BuiltinToolReturnPart` so they are visible to users who enabled
-    `XSearch.include_output` / `XaiModelSettings.xai_include_x_search_output`.
+    never on the ROLE_TOOL message's `content`, so this unconditionally overwrites each part's
+    `content`. Used by both the non-streaming and streaming paths after filtering upstream so
+    callers only pass `BuiltinToolReturnPart`s belonging to `XSearchTool`.
     """
     if not citations:
         return
-    for part in parts:
-        if isinstance(part, BuiltinToolReturnPart) and part.tool_name == XSearchTool.kind and part.content is None:
-            part.content = {'citations': citations}
+    citations_list = list(citations)
+    for part in x_search_return_parts:
+        part.content = {'citations': citations_list}
 
 
 def _get_tool_result_content(content: str) -> dict[str, Any] | str | None:
