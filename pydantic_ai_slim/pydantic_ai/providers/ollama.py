@@ -54,9 +54,9 @@ class OllamaProvider(Provider[AsyncOpenAI]):
             'gpt-oss': harmony_model_profile,
         }
 
+        model_name = model_name.lower()
         profile = None
         for prefix, profile_func in prefix_to_profile.items():
-            model_name = model_name.lower()
             if model_name.startswith(prefix):
                 profile = profile_func(model_name)
 
