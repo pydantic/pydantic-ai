@@ -25,7 +25,7 @@ Managed variables ship in the Logfire SDK; install Pydantic AI with the `logfire
 pip install "pydantic-ai-slim[logfire]"
 ```
 
-This pulls in `logfire>=4.24.0`, which is the first version that includes managed variables. See the [installation guide](install.md) for the full list of extras.
+Managed variables require `logfire>=4.24.0`. If you're upgrading an existing install that uses the `logfire` extra, run `pip install -U "logfire>=4.24.0"`. See the [installation guide](install.md) for the full list of extras.
 
 ### Example
 
