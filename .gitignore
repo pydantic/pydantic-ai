@@ -34,6 +34,7 @@ node_modules/
 !.claude/hooks/contributor-context.md
 !.claude/hooks/inject-contributor-context.sh
 !.claude/hooks/reject-no-verify.sh
+!.claude/hooks/setup-required.md
 .github/.review-context/
 /.cursor/
 /.devcontainer/
