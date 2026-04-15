@@ -3000,7 +3000,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             list(annotations), warnings=False
                         )
                     if chunk.logprobs:
-                        provider_details = {'logprobs': _map_logprobs(chunk.logprobs)}
+                        provider_details['logprobs'] = _map_logprobs(chunk.logprobs)
                     if provider_details:
                         for event in self._parts_manager.handle_text_delta(
                             vendor_part_id=chunk.item_id,
