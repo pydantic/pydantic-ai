@@ -4,14 +4,15 @@ import inspect
 import json
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass, field
+from copy import copy
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
 from pydantic import Json, TypeAdapter, ValidationError
 from pydantic_core import SchemaValidator, to_json
 from typing_extensions import Self, TypedDict, TypeVar
 
-from pydantic_ai._instrumentation import InstrumentationNames
+from pydantic_ai._instrumentation import InstrumentationNames, get_agent_run_baggage_attributes
 from pydantic_ai._utils import get_function_type_hints
 
 from . import _function_schema, _utils, messages as _messages
@@ -102,6 +103,7 @@ async def execute_traced_output_function(
     tool_name = run_context.tool_name or getattr(function_schema.function, '__name__', 'output_function')
     attributes = {
         'gen_ai.tool.name': tool_name,
+        **get_agent_run_baggage_attributes(),
         'logfire.msg': f'running output function: {tool_name}',
     }
     if run_context.tool_call_id:
@@ -857,14 +859,21 @@ class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
 
 @dataclass(init=False)
 class OutputToolset(AbstractToolset[AgentDepsT]):
-    """A toolset that contains contains output tools for agent output types."""
+    """A toolset that contains output tools for agent output types."""
 
     _tool_defs: list[ToolDefinition]
     """The tool definitions for the output tools in this toolset."""
     processors: dict[str, ObjectOutputProcessor[Any]]
     """The processors for the output tools in this toolset."""
-    max_retries: int
+    max_retries: int | None
+    """Default max retries for output tools, set by the Agent. Per-tool overrides from `ToolOutput.max_retries` take priority."""
+    _max_retries_overrides: dict[str, int]
+    """Per-tool max_retries overrides from `ToolOutput(max_retries=N)`."""
     output_validators: list[OutputValidator[AgentDepsT, Any]]
+    _output_retry_count: int
+    """Current global output retry count, snapshotted from `ctx.retry` in `for_run_step`."""
+    _output_max_retries: int
+    """Global output max retries, snapshotted from `ctx.max_retries` in `for_run_step`."""
 
     @classmethod
     def build(
@@ -884,6 +893,9 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         default_description = description
         default_strict = strict
 
+        max_retries_overrides: dict[str, int] = {}
+        tool_output_max_retries: int | None = None
+
         multiple = len(outputs) > 1
         for output in outputs:
             name = None
@@ -894,6 +906,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 name = output.name
                 description = output.description
                 strict = output.strict
+                tool_output_max_retries = output.max_retries
 
                 output = output.output  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
 
@@ -933,20 +946,27 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             )
             processors[name] = processor
             tool_defs.append(tool_def)
+            if tool_output_max_retries is not None:
+                max_retries_overrides[name] = tool_output_max_retries
+            tool_output_max_retries = None
 
-        return cls(processors=processors, tool_defs=tool_defs)
+        return cls(processors=processors, tool_defs=tool_defs, max_retries_overrides=max_retries_overrides)
 
     def __init__(
         self,
         tool_defs: list[ToolDefinition],
         processors: dict[str, ObjectOutputProcessor[Any]],
-        max_retries: int = 1,
+        max_retries: int | None = None,
+        max_retries_overrides: dict[str, int] | None = None,
         output_validators: list[OutputValidator[AgentDepsT, Any]] | None = None,
     ):
         self.processors = processors
         self._tool_defs = tool_defs
         self.max_retries = max_retries
+        self._max_retries_overrides = max_retries_overrides or {}
         self.output_validators = output_validators or []
+        self._output_retry_count = 0
+        self._output_max_retries = 0
 
     @property
     def id(self) -> str | None:
@@ -956,12 +976,22 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
     def label(self) -> str:
         return "the agent's output tools"
 
+    async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        # copy() instead of replace() because @dataclass(init=False) with a custom __init__
+        # whose param names differ from field names (e.g. field `_tool_defs` vs param `tool_defs`)
+        # makes replace() pass unrecognized kwargs to __init__.
+        new = copy(self)
+        new._output_retry_count = ctx.retry
+        new._output_max_retries = ctx.max_retries
+        return new
+
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        max_retries = self.max_retries if self.max_retries is not None else 1
         return {
             tool_def.name: ToolsetTool(
                 toolset=self,
                 tool_def=tool_def,
-                max_retries=self.max_retries,
+                max_retries=self._max_retries_overrides.get(tool_def.name, max_retries),
                 args_validator=self.processors[tool_def.name].validator,
             )
             for tool_def in self._tool_defs
@@ -971,8 +1001,10 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         output = await self.processors[name].call(tool_args, ctx, wrap_validation_errors=False)
-        for validator in self.output_validators:
-            output = await validator.validate(output, ctx, wrap_validation_errors=False)
+        if self.output_validators:
+            validator_ctx = replace(ctx, retry=self._output_retry_count, max_retries=self._output_max_retries)
+            for validator in self.output_validators:
+                output = await validator.validate(output, validator_ctx, wrap_validation_errors=False)
         return output
 
 

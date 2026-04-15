@@ -1,8 +1,11 @@
 name: PR Bots
 
 on:
+  # zizmor: ignore[dangerous-triggers] -- pull_request_target is needed for fork PRs; inputs are validated before use
   pull_request_target:
     types: [opened, synchronize, labeled]
+
+permissions: {}
 
 concurrency:
   group: pr-bots-${{ github.event.pull_request.number }}
@@ -121,12 +124,18 @@ jobs:
 
       - name: Checkout repository
         if: steps.check-label.outputs.has_label == 'false'
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Install bubblewrap
+        if: steps.check-label.outputs.has_label == 'false'
+        run: sudo apt-get install -y bubblewrap
 
       - name: Classify PR with Claude Code
         if: steps.check-label.outputs.has_label == 'false'
         id: classify
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@2fb9ee77a029749082ac35126a09ecd05fe34cf0 # v1
         env:
           ANTHROPIC_BASE_URL: ${{ secrets.CLAUDE_CODE_BASE_URL }}
         with:
@@ -180,7 +189,7 @@ jobs:
     steps:
       - name: Validate and apply category label
         run: |
-          CATEGORY="${{ needs.category-classify.outputs.category }}"
+          CATEGORY="${NEEDS_CATEGORY_CLASSIFY_OUTPUTS_CATEGORY}"
           ALLOWED="bug feature docs chore dependency"
 
           if ! echo "$ALLOWED" | grep -Fqw "$CATEGORY"; then
@@ -193,6 +202,7 @@ jobs:
           echo "Applied label: $CATEGORY"
         env:
           GH_TOKEN: ${{ github.token }}
+          NEEDS_CATEGORY_CLASSIFY_OUTPUTS_CATEGORY: ${{ needs.category-classify.outputs.category }}
 
   review:
     name: Review
@@ -208,11 +218,12 @@ jobs:
       pull-requests: write
       actions: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Check for modified config files
         if: github.event.pull_request.head.repo.fork
@@ -259,7 +270,10 @@ jobs:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
 
-      - uses: anthropics/claude-code-action@v1
+      - name: Install bubblewrap
+        run: sudo apt-get install -y bubblewrap
+
+      - uses: anthropics/claude-code-action@2fb9ee77a029749082ac35126a09ecd05fe34cf0 # v1
         env:
           ANTHROPIC_BASE_URL: ${{ secrets.CLAUDE_CODE_BASE_URL }}
         with:

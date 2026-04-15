@@ -65,6 +65,10 @@ nav:
       - Embeddings: embeddings.md
       - Testing: testing.md
 
+  - Pydantic AI Harness:
+      - Overview: harness/overview.md
+      - Code Mode: harness/code-mode.md
+
   - Pydantic Evals:
       - Overview: evals.md
       - Getting Started:
@@ -77,6 +81,7 @@ nav:
           - Custom Evaluators: evals/evaluators/custom.md
           - Report Evaluators: evals/evaluators/report-evaluators.md
           - Span-Based: evals/evaluators/span-based.md
+      - Online Evaluation: evals/online-evaluation.md
       - How-To Guides:
           - Logfire Integration: evals/how-to/logfire-integration.md
           - Dataset Management: evals/how-to/dataset-management.md
@@ -105,6 +110,7 @@ nav:
           - Temporal: durable_execution/temporal.md
           - DBOS: durable_execution/dbos.md
           - Prefect: durable_execution/prefect.md
+          - Restate: durable_execution/restate.md
       - UI Event Streams:
           - Overview: ui/overview.md
           - AG-UI: ui/ag-ui.md
@@ -151,6 +157,7 @@ nav:
           - api/exceptions.md
           - api/ext.md
           - api/format_prompt.md
+          - api/function_signature.md
           - api/mcp.md
           - api/messages.md
           - api/models/anthropic.md
@@ -189,6 +196,7 @@ nav:
           - api/pydantic_evals/dataset.md
           - api/pydantic_evals/evaluators.md
           - api/pydantic_evals/lifecycle.md
+          - api/pydantic_evals/online.md
           - api/pydantic_evals/reporting.md
           - api/pydantic_evals/otel.md
           - api/pydantic_evals/generation.md

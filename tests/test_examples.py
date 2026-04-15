@@ -54,6 +54,7 @@ with try_import() as imports_successful:
     # We check whether pydantic_ai_examples is importable as a proxy for whether all extras are installed, as some docs examples require them
     import pydantic_ai_examples  # pyright: ignore[reportUnusedImport] # noqa: F401
 
+    from pydantic_evals.online import OnlineEvalConfig
     from pydantic_evals.reporting import EvaluationReport
 
 
@@ -127,7 +128,8 @@ def _check_python_version(min_version: str | None, max_version: str | None) -> N
 
 @pytest.mark.xdist_group(name='doc_tests')
 @pytest.mark.filterwarnings(  # TODO (v2): Remove this once we drop the deprecated events
-    'ignore:`BuiltinToolCallEvent` is deprecated', 'ignore:`BuiltinToolResultEvent` is deprecated'
+    'ignore:`BuiltinToolCallEvent` is deprecated',
+    'ignore:`BuiltinToolResultEvent` is deprecated',
 )
 @pytest.mark.parametrize('example', find_filter_examples())
 def test_docs_examples(
@@ -162,6 +164,9 @@ def test_docs_examples(
             super().print(*args, **kwargs)
 
     mocker.patch('pydantic_evals.dataset.EvaluationReport', side_effect=CustomEvaluationReport)
+
+    # Reset global DEFAULT_CONFIG so configure() calls in doc examples don't leak between tests
+    mocker.patch('pydantic_evals.online.DEFAULT_CONFIG', OnlineEvalConfig())
 
     mocker.patch('pydantic_ai.mcp.MCPServerSSE', return_value=MockMCPServer())
     mocker.patch('pydantic_ai.mcp.MCPServerStreamableHTTP', return_value=MockMCPServer())
@@ -333,8 +338,7 @@ class MockMCPServer(AbstractToolset[Any]):
     def id(self) -> str | None:
         return None  # pragma: no cover
 
-    @property
-    def instructions(self) -> str | None:
+    async def get_instructions(self, ctx: RunContext[Any]) -> str | None:
         return None
 
     async def __aenter__(self) -> MockMCPServer:
@@ -622,6 +626,8 @@ async def model_logic(  # noqa: C901
     elif isinstance(m, ToolReturnPart) and m.tool_name in ('_add', 'add'):
         return ModelResponse(parts=[TextPart(f'The answer is {m.content}')])
     elif isinstance(m, UserPromptPart):
+        if isinstance(m.content, list) and m.content[0] == 'Summarize this document':
+            return ModelResponse(parts=[TextPart('This document outlines the PDF specification version 1.4.')])
         assert isinstance(m.content, str)
         if m.content == 'What is 2 + 3?' and any(t.name in ('_add', 'add') for t in info.function_tools):
             add_name = next(t.name for t in info.function_tools if t.name in ('_add', 'add'))
@@ -1087,6 +1093,7 @@ def mock_infer_embedding_model(model: EmbeddingModel | str) -> EmbeddingModel:
         'voyage-3.5': 1024,
         'all-MiniLM-L6-v2': 384,
         'gemini-embedding-001': 3072,
+        'gemini-embedding-2-preview': 3072,
     }
     dimensions = dimensions_map.get(model_name, 8)
     return TestEmbeddingModel(model_name, provider_name=provider_name, dimensions=dimensions)

@@ -56,7 +56,7 @@ class CaseLifecycle(Generic[InputsT, OutputT, MetadataT]):
                 ctx.metrics['custom_metric'] = 42
                 return ctx
 
-        dataset = Dataset(cases=[Case(name='test', inputs='hello')])
+        dataset = Dataset(name='lifecycle_demo', cases=[Case(name='test', inputs='hello')])
         report = dataset.evaluate_sync(lambda inputs: inputs.upper(), lifecycle=EnrichMetrics)
         print(report.cases[0].metrics['custom_metric'])
         #> 42

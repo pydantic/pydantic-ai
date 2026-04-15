@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, TypeAlias
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias
 
 from pydantic import ValidationError
 
@@ -53,6 +53,65 @@ WrapToolExecuteHandler: TypeAlias = 'Callable[[dict[str, Any]], Awaitable[Any]]'
 """Handler type for [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute]."""
 
 
+CapabilityPosition = Literal['outermost', 'innermost']
+"""Position tier for a capability in the middleware chain.
+
+- `'outermost'`: in the outermost tier, before all non-outermost capabilities.
+  Multiple capabilities can declare `'outermost'`; original list order breaks ties
+  within the tier, and `wraps`/`wrapped_by` edges refine order further.
+- `'innermost'`: in the innermost tier, after all non-innermost capabilities.
+  Same tie-breaking rules apply.
+"""
+
+CapabilityRef: TypeAlias = 'type[AbstractCapability[Any]] | AbstractCapability[Any]'
+"""Reference to a capability — either a type (matches all instances of that type) or a specific instance (matches by identity)."""
+
+
+@dataclass
+class CapabilityOrdering:
+    """Ordering constraints for a capability within a combined capability chain.
+
+    Capabilities follow middleware semantics: the first capability in the list is the
+    **outermost** layer, wrapping all others. Declare ordering constraints via
+    [`get_ordering`][pydantic_ai.capabilities.AbstractCapability.get_ordering]
+    to control a capability's position in the chain regardless of how the user lists them.
+
+    When a [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] is
+    constructed, it topologically sorts its children to satisfy these constraints,
+    preserving user-provided order as a tiebreaker.
+    """
+
+    position: CapabilityPosition | None = None
+    """Fixed position in the chain, or `None` for user-provided order."""
+
+    wraps: Sequence[CapabilityRef] = ()
+    """This capability wraps around (is outside of) these capabilities in the middleware chain.
+
+    Each entry can be a capability **type** (matches all instances of that type via `issubclass`)
+    or a specific capability **instance** (matches by identity via `is`).
+
+    Note: instance refs use identity (`is`) matching, so if a capability's
+    [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] returns a
+    new instance, refs to the original will no longer match. Use type refs
+    when the target capability uses per-run state isolation.
+    """
+
+    wrapped_by: Sequence[CapabilityRef] = ()
+    """This capability is wrapped by (is inside of) these capabilities in the middleware chain.
+
+    Each entry can be a capability **type** (matches all instances of that type via `issubclass`)
+    or a specific capability **instance** (matches by identity via `is`).
+
+    Note: instance refs use identity (`is`) matching, so if a capability's
+    [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] returns a
+    new instance, refs to the original will no longer match. Use type refs
+    when the target capability uses per-run state isolation.
+    """
+
+    requires: Sequence[type[AbstractCapability[Any]]] = ()
+    """These types must be present in the chain (no ordering implied)."""
+
+
 @dataclass
 class AbstractCapability(ABC, Generic[AgentDepsT]):
     """Abstract base class for agent capabilities.
@@ -77,10 +136,26 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     sensible defaults and typically don't need to be overridden.
     """
 
+    def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
+        """Run a visitor function on all leaf capabilities in this tree.
+
+        For a single capability, calls the visitor on itself.
+        Overridden by [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability]
+        to recursively visit all child capabilities, and by
+        [`WrapperCapability`][pydantic_ai.capabilities.WrapperCapability]
+        to delegate to the wrapped capability.
+        """
+        visitor(self)
+
     @property
     def has_wrap_node_run(self) -> bool:
         """Whether this capability (or any sub-capability) overrides wrap_node_run."""
         return type(self).wrap_node_run is not AbstractCapability.wrap_node_run
+
+    @property
+    def has_wrap_run_event_stream(self) -> bool:
+        """Whether this capability (or any sub-capability) overrides wrap_run_event_stream."""
+        return type(self).wrap_run_event_stream is not AbstractCapability.wrap_run_event_stream
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
@@ -97,6 +172,18 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         Override when `__init__` takes non-serializable types.
         """
         return cls(*args, **kwargs)
+
+    def get_ordering(self) -> CapabilityOrdering | None:
+        """Return ordering constraints for this capability, or `None` for default behavior.
+
+        Override to declare a fixed position (`'outermost'` / `'innermost'`),
+        relative ordering (`wraps` / `wrapped_by` other capability types or instances),
+        or dependency requirements (`requires`).
+
+        [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] uses
+        these to topologically sort its children at construction time.
+        """
+        return None
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Return the capability instance to use for this agent run.
@@ -148,8 +235,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Unlike the other `get_*` methods which are called once at agent construction,
         this is called each run (after [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]).
-        When multiple capabilities provide wrappers, each receives the already-wrapped
-        toolset from earlier capabilities (first capability wraps innermost).
+        When multiple capabilities provide wrappers, they follow middleware semantics:
+        the first capability in the list wraps outermost (matching `wrap_*` hooks).
 
         Use this to apply cross-cutting toolset wrappers like
         [`PreparedToolset`][pydantic_ai.toolsets.PreparedToolset],
@@ -316,7 +403,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         *,
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
-        """Wraps the event stream for a streamed node. Can observe or transform events."""
+        """Wraps the event stream for a streamed node. Can observe or transform events.
+
+        Note: when this method is overridden (or [`Hooks.on.event`][pydantic_ai.capabilities.hooks.Hooks.on]
+        / [`Hooks.on.run_event_stream`][pydantic_ai.capabilities.hooks.Hooks.on] are registered),
+        [`agent.run()`][pydantic_ai.Agent.run] automatically enables streaming mode so this hook
+        fires even without an explicit `event_stream_handler`.
+        """
         async for event in stream:
             yield event
 
@@ -337,7 +430,12 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         request_context: ModelRequestContext,
         response: ModelResponse,
     ) -> ModelResponse:
-        """Called after each model response. Can modify the response before further processing."""
+        """Called after each model response. Can modify the response before further processing.
+
+        Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject the response and
+        ask the model to try again. The original response is still appended to message history
+        so the model can see what it said. Retries count against `max_result_retries`.
+        """
         return response
 
     async def wrap_model_request(
@@ -347,7 +445,12 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         request_context: ModelRequestContext,
         handler: WrapModelRequestHandler,
     ) -> ModelResponse:
-        """Wraps the model request. handler() calls the model."""
+        """Wraps the model request. handler() calls the model.
+
+        Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to skip `on_model_request_error`
+        and directly retry the model request with a retry prompt. If the handler was called,
+        the model response is preserved in history for context (same as `after_model_request`).
+        """
         return await handler(request_context)
 
     async def on_model_request_error(
@@ -365,8 +468,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         **Raise** the original `error` (or a different exception) to propagate it.
         **Return** a [`ModelResponse`][pydantic_ai.messages.ModelResponse] to suppress
         the error and use the response as if the model call succeeded.
+        **Raise** [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to retry the model request
+        with a retry prompt instead of recovering or propagating.
 
-        Not called for [`SkipModelRequest`][pydantic_ai.exceptions.SkipModelRequest].
+        Not called for [`SkipModelRequest`][pydantic_ai.exceptions.SkipModelRequest]
+        or [`ModelRetry`][pydantic_ai.exceptions.ModelRetry].
         """
         raise error
 
@@ -380,7 +486,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         tool_def: ToolDefinition,
         args: RawToolArgs,
     ) -> RawToolArgs:
-        """Modify raw args before validation."""
+        """Modify raw args before validation.
+
+        Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to skip validation and
+        ask the model to redo the tool call.
+        """
         return args
 
     async def after_tool_validate(
@@ -391,7 +501,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         tool_def: ToolDefinition,
         args: ValidatedToolArgs,
     ) -> ValidatedToolArgs:
-        """Modify validated args. Called only on successful validation."""
+        """Modify validated args. Called only on successful validation.
+
+        Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject the validated args
+        and ask the model to redo the tool call.
+        """
         return args
 
     async def wrap_tool_validate(
@@ -439,7 +553,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         tool_def: ToolDefinition,
         args: ValidatedToolArgs,
     ) -> ValidatedToolArgs:
-        """Modify validated args before execution."""
+        """Modify validated args before execution.
+
+        Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to skip execution and
+        ask the model to redo the tool call.
+        """
         return args
 
     async def after_tool_execute(
@@ -451,7 +569,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         args: ValidatedToolArgs,
         result: Any,
     ) -> Any:
-        """Modify result after execution."""
+        """Modify result after execution.
+
+        Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject the tool result
+        and ask the model to redo the tool call.
+        """
         return result
 
     async def wrap_tool_execute(
@@ -482,6 +604,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         **Raise** the original `error` (or a different exception) to propagate it.
         **Return** any value to suppress the error and use it as the tool result.
+        **Raise** [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to
+        redo the tool call instead of recovering or propagating.
 
         Not called for control flow exceptions
         ([`SkipToolExecution`][pydantic_ai.exceptions.SkipToolExecution],

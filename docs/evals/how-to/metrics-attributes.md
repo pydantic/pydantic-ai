@@ -118,7 +118,7 @@ def task(inputs: str) -> str:
     return f'Result: {inputs}'
 
 
-dataset = Dataset(cases=[Case(inputs='test')], evaluators=[])
+dataset = Dataset(name='report_viewing', cases=[Case(inputs='test')], evaluators=[])
 report = dataset.evaluate_sync(task)
 
 for case in report.cases:
@@ -140,7 +140,7 @@ def task(inputs: str) -> str:
     return f'Result: {inputs}'
 
 
-dataset = Dataset(cases=[Case(inputs='test')], evaluators=[])
+dataset = Dataset(name='report_printing', cases=[Case(inputs='test')], evaluators=[])
 report = dataset.evaluate_sync(task)
 
 # Metrics and attributes are available but not shown by default
@@ -426,6 +426,7 @@ In addition to case-level metadata, you can also pass experiment-level metadata 
 from pydantic_evals import Case, Dataset
 
 dataset = Dataset(
+    name='experiment_metadata',
     cases=[
         Case(
             inputs='test',
@@ -477,7 +478,7 @@ Experiment metadata appears at the top of printed reports:
 ```python
 from pydantic_evals import Case, Dataset
 
-dataset = Dataset(cases=[Case(inputs='hello', expected_output='HELLO')])
+dataset = Dataset(name='metadata_report', cases=[Case(inputs='hello', expected_output='HELLO')])
 
 
 async def task(text: str) -> str:
@@ -536,7 +537,7 @@ async def task(inputs: str) -> str:
 
 
 async def main():
-    dataset = Dataset(cases=[Case(inputs='What is the capital of France?')])
+    dataset = Dataset(name='shared_constants', cases=[Case(inputs='What is the capital of France?')])
 
     # Metadata references same constants
     await dataset.evaluate(
@@ -596,7 +597,7 @@ async def task(inputs: str) -> str:
 
 # Evaluate with metadata derived from the same config
 async def main():
-    dataset = Dataset(cases=[Case(inputs='What is the capital of France?')])
+    dataset = Dataset(name='config_evaluation', cases=[Case(inputs='What is the capital of France?')])
 
     report = await dataset.evaluate(
         task,
@@ -636,7 +637,7 @@ async def task(inputs: str) -> str:
 
 
 async def main():
-    dataset = Dataset(cases=[Case(inputs='test')])
+    dataset = Dataset(name='anti_pattern', cases=[Case(inputs='test')])
 
     # ❌ BAD: Metadata manually typed - easy to get out of sync
     await dataset.evaluate(
@@ -677,7 +678,7 @@ case = Case(
     metadata={'difficulty': 'hard', 'category': 'math'},  # Per-case metadata
 )
 
-dataset = Dataset(cases=[case])
+dataset = Dataset(name='metrics_demo', cases=[case])
 
 
 # Metrics & Attributes: Recorded during execution
