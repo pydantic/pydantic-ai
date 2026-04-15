@@ -596,6 +596,8 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'What was the mass of the largest meteorite found this year?': (
         'The largest meteorite recovered this year weighed approximately 7.6 kg, found in the Sahara Desert in January.'
     ),
+    'What are people saying about AI on X today?': "There's a lot of excitement about new AI models being released...",
+    'What have AI companies been posting about?': 'OpenAI announced their latest model updates, while Anthropic shared research on AI safety...',
 }
 
 tool_responses: dict[tuple[str, str], str] = {
