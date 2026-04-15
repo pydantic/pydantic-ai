@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import count
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 from urllib.parse import parse_qs, urlparse
 
 import anyio.to_thread
@@ -114,8 +114,6 @@ def _map_api_errors(model_name: str) -> Iterator[None]:
 _SUPPORTED_IMAGE_FORMATS = ('jpeg', 'png', 'gif', 'webp')
 _SUPPORTED_VIDEO_FORMATS = ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp')
 _SUPPORTED_DOCUMENT_FORMATS = ('pdf', 'txt', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'html', 'md')
-
-BedrockPromptCacheSetting: TypeAlias = bool | Literal['5m', '1h']
 
 
 def _make_image_block(format: str, source: DocumentSourceTypeDef) -> ContentBlockUnionTypeDef:
@@ -1130,7 +1128,7 @@ class BedrockConverseModel(Model[BaseClient]):
         }
 
     @staticmethod
-    def _get_cache_point(cache_setting: BedrockPromptCacheSetting) -> ContentBlockUnionTypeDef:
+    def _get_cache_point(cache_setting: bool | Literal['5m', '1h']) -> ContentBlockUnionTypeDef:
         ttl: Literal['5m', '1h'] = cache_setting if isinstance(cache_setting, str) else '5m'
         cache_point: CachePointBlockTypeDef = {'type': 'default', 'ttl': ttl}
         return cast('ContentBlockUnionTypeDef', {'cachePoint': cache_point})
