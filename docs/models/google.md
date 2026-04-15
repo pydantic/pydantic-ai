@@ -157,7 +157,7 @@ agent = Agent(model)
 
 On **Vertex AI**, optional HTTP headers control how each request uses [Provisioned Throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput/use-provisioned-throughput) (PT), [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo), and [Priority PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/priority-paygo) pricing. Set the [`google_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_service_tier] field on [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings] to one of the [`GoogleServiceTier`][pydantic_ai.models.google.GoogleServiceTier] values.
 
-**Flex PayGo example**
+**Example**
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -174,24 +174,9 @@ result = agent.run_sync(
 )
 ```
 
-After a Flex request, you can inspect [`ModelResponse`][pydantic_ai.messages.ModelResponse] `provider_details.get('traffic_type')` (e.g. `ON_DEMAND_FLEX` when Flex was used) if the API returns it.
+Swap `'pt_then_flex'` for any [`GoogleServiceTier`][pydantic_ai.models.google.GoogleServiceTier] value — e.g. `'pt_then_priority'` for [Priority PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/priority-paygo) spillover, or `'flex_only'` / `'priority_only'` to bypass PT entirely.
 
-**Priority PayGo example**
-
-```python {test="skip"}
-from pydantic_ai import Agent
-from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
-from pydantic_ai.providers.google import GoogleProvider
-
-provider = GoogleProvider(location='global')
-model = GoogleModel('gemini-3-flash-preview', provider=provider)
-agent = Agent(model)
-
-result = agent.run_sync(
-    'Hello!',
-    model_settings=GoogleModelSettings(google_service_tier='pt_then_priority'),
-)
-```
+After the request, inspect [`ModelResponse`][pydantic_ai.messages.ModelResponse] `provider_details.get('traffic_type')` to see which tier served it (e.g. `ON_DEMAND_FLEX`, `ON_DEMAND_PRIORITY`) when the API returns it.
 
 #### Model Garden
 
