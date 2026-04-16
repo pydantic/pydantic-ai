@@ -507,8 +507,42 @@ async def test_tool_search_toolset_prefers_specific_term_matches():
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'github profile'}, ctx, search_tool)
     assert result == snapshot(
         ToolReturn(
-            return_value=[{'name': 'github_get_me', 'description': 'Get the authenticated GitHub profile.'}],
-            metadata={'discovered_tools': ['github_get_me']},
+            return_value=[
+                {'name': 'github_get_me', 'description': 'Get the authenticated GitHub profile.'},
+                {'name': 'github_create_gist', 'description': 'Create a new GitHub gist.'},
+            ],
+            metadata={'discovered_tools': ['github_get_me', 'github_create_gist']},
+        )
+    )
+
+
+async def test_tool_search_toolset_keeps_lower_scoring_matches_after_top_hits():
+    toolset: FunctionToolset[None] = FunctionToolset()
+
+    @toolset.tool_plain(defer_loading=True)
+    def stock_price() -> str:  # pragma: no cover
+        """Get the current stock price."""
+        return 'stock'
+
+    @toolset.tool_plain(defer_loading=True)
+    def crypto_price() -> str:  # pragma: no cover
+        """Get the current cryptocurrency price."""
+        return 'crypto'
+
+    searchable = ToolSearchToolset(wrapped=toolset)
+    ctx = _build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+    search_tool = tools[_SEARCH_TOOLS_NAME]
+
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'stock price'}, ctx, search_tool)
+    assert result == snapshot(
+        ToolReturn(
+            return_value=[
+                {'name': 'stock_price', 'description': 'Get the current stock price.'},
+                {'name': 'crypto_price', 'description': 'Get the current cryptocurrency price.'},
+            ],
+            metadata={'discovered_tools': ['stock_price', 'crypto_price']},
         )
     )
 

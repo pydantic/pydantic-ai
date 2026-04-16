@@ -156,13 +156,13 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         return search_terms
 
     async def _search_tools(self, tool_args: dict[str, Any], search_tool: _SearchTool[AgentDepsT]) -> ToolReturn:
-        """Search for tools with the strongest token overlap with the query.
+        """Search for tools ordered by token overlap with the query.
 
         Tokenizes both the query and each tool's name/description on alphanumeric runs,
-        scores each tool by how many query tokens it contains, and returns only the
-        tools with the highest non-zero score. This prefers more specific matches such
-        as `github_get_me` for "github profile" without matching substrings inside
-        words like `comment` for the query `me`.
+        scores each tool by how many query tokens it contains, and returns all positive
+        matches ordered from highest to lowest score. This prefers more specific
+        matches such as `github_get_me` for "github profile" without matching
+        substrings inside words like `comment` for the query `me`.
         """
         keywords = tool_args['keywords']
         if not keywords:
@@ -172,25 +172,22 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         if not terms:
             raise ModelRetry('Please provide search keywords.')
 
-        best_score = 0
-        matches: list[dict[str, str | None]] = []
+        scored_matches: list[tuple[int, dict[str, str | None]]] = []
         for entry in search_tool.search_index:
             score = len(terms & entry.search_terms)
             if score == 0:
                 continue
-            if score > best_score:
-                best_score = score
-                matches = [{'name': entry.name, 'description': entry.description}]
-            elif score == best_score and len(matches) < _MAX_SEARCH_RESULTS:
-                matches.append({'name': entry.name, 'description': entry.description})
+            scored_matches.append((score, {'name': entry.name, 'description': entry.description}))
 
-        tool_names = [match['name'] for match in matches]
-
-        if not matches:
+        if not scored_matches:
             return ToolReturn(
                 return_value='No matching tools found. The tools you need may not be available.',
-                metadata={_DISCOVERED_TOOLS_METADATA_KEY: tool_names},
+                metadata={_DISCOVERED_TOOLS_METADATA_KEY: []},
             )
+
+        scored_matches.sort(key=lambda item: item[0], reverse=True)
+        matches = [match for _, match in scored_matches[:_MAX_SEARCH_RESULTS]]
+        tool_names = [match['name'] for match in matches]
 
         return ToolReturn(
             return_value=matches,
