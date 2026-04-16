@@ -1028,6 +1028,19 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
                         raise exceptions.ContentFilterError(message, body=body)
 
+                    # If the output type allows None, an empty response is a valid result.
+                    if is_empty and output_schema.allows_none:
+                        run_context = _build_output_run_context(ctx)
+                        try:
+                            result_data = await _run_output_validators(ctx, cast(NodeRunEndT, None), run_context)
+                            self._next_node = self._handle_final_result(ctx, result.FinalResult(result_data), [])
+                        except ToolRetryError as e:
+                            ctx.state.increment_retries(ctx.deps.max_result_retries, error=e)
+                            self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
+                                _messages.ModelRequest(parts=[e.tool_retry])
+                            )
+                        return
+
                     # Try to recover text from a previous model response.
                     # This handles the case where the model returned text alongside tool calls
                     # (so the text was discarded in favor of executing the tools) and subsequently
