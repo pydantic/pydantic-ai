@@ -569,6 +569,20 @@ async def test_tool_search_toolset_search_empty_query():
         await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': ''}, ctx, search_tool)
 
 
+@pytest.mark.parametrize('keywords', ['   ', '---', '!!!', '...'])
+async def test_tool_search_toolset_search_non_tokenizable_query(keywords: str):
+    """Queries that tokenize to an empty set must retry, not match every tool."""
+    toolset = _create_function_toolset()
+    searchable = ToolSearchToolset(wrapped=toolset)
+    ctx = _build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+    search_tool = tools[_SEARCH_TOOLS_NAME]
+
+    with pytest.raises(ModelRetry, match='Please provide search keywords.'):
+        await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': keywords}, ctx, search_tool)
+
+
 async def test_tool_search_toolset_max_results():
     """Test that results are capped at `_MAX_SEARCH_RESULTS` (10)."""
     toolset: FunctionToolset[None] = FunctionToolset()

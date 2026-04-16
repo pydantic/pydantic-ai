@@ -156,26 +156,28 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         return search_terms
 
     async def _search_tools(self, tool_args: dict[str, Any], search_tool: _SearchTool[AgentDepsT]) -> ToolReturn:
-        """Search for tools matching the keywords.
+        """Search for tools whose names or descriptions contain every keyword as a token.
 
-        Splits the keywords into individual terms and matches any term against
-        tool names and descriptions. This handles multi-keyword queries
-        like "exchange rate" matching a tool named "get_exchange_rate".
+        Tokenizes both the query and each tool's name/description on alphanumeric runs,
+        then returns tools whose token set is a superset of the query's token set. A
+        query like "exchange rate" matches `get_exchange_rate` because both tokens are
+        present, while "me" does not match `add_comment` because `me` is not a token of
+        `comment`.
         """
         keywords = tool_args['keywords']
         if not keywords:
             raise ModelRetry('Please provide search keywords.')
 
         terms = self._search_terms(keywords, None)
+        if not terms:
+            raise ModelRetry('Please provide search keywords.')
 
-        scored_matches: list[tuple[int, dict[str, str | None]]] = []
+        matches: list[dict[str, str | None]] = []
         for entry in search_tool.search_index:
-            score = len(terms & entry.search_terms)
-            if score == len(terms):
-                scored_matches.append((score, {'name': entry.name, 'description': entry.description}))
-
-        scored_matches.sort(key=lambda item: item[0], reverse=True)
-        matches = [match for _, match in scored_matches[:_MAX_SEARCH_RESULTS]]
+            if terms <= entry.search_terms:
+                matches.append({'name': entry.name, 'description': entry.description})
+                if len(matches) == _MAX_SEARCH_RESULTS:
+                    break
 
         tool_names = [match['name'] for match in matches]
 
