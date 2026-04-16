@@ -668,6 +668,29 @@ async def test_tool_search_toolset_discovered_tools_available():
     assert 'stock_price' not in tool_names
 
 
+async def test_tool_search_toolset_omits_search_tool_once_all_deferred_tools_are_discovered():
+    toolset = _create_function_toolset()
+    searchable = ToolSearchToolset(wrapped=toolset)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name=_SEARCH_TOOLS_NAME,
+                    content={'message': 'Found all deferred tools.', 'tools': []},
+                    metadata={_DISCOVERED_TOOLS_METADATA_KEY: ['calculate_mortgage', 'stock_price', 'crypto_price']},
+                )
+            ]
+        )
+    ]
+    ctx = _build_run_context(None, messages=messages)
+
+    tools = await searchable.get_tools(ctx)
+    tool_names = list(tools.keys())
+
+    assert tool_names == snapshot(['get_weather', 'get_time', 'calculate_mortgage', 'stock_price', 'crypto_price'])
+
+
 async def test_tool_search_toolset_reserved_name_collision():
     """Test that `UserError` is raised if a tool is named 'search_tools' and deferred tools exist."""
     toolset: FunctionToolset[None] = FunctionToolset()
