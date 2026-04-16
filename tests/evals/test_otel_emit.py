@@ -11,7 +11,7 @@ from ..conftest import try_import
 with try_import() as imports_successful:
     from pydantic_evals._otel_emit import emit_otel_events
     from pydantic_evals.evaluators.evaluator import EvaluationResult, EvaluatorFailure, EvaluatorSpec
-    from pydantic_evals.online import EvaluationTarget, SpanReference
+    from pydantic_evals.online import SpanReference
 
 with try_import() as logfire_import_successful:
     from logfire.testing import CaptureLogfire
@@ -27,14 +27,22 @@ if TYPE_CHECKING or imports_successful():
     def _spec(name: str = 'Correctness') -> EvaluatorSpec:
         return EvaluatorSpec(name=name, arguments=None)
 
-    def _result(name: str, value: Any, reason: str | None = None) -> EvaluationResult:
-        return EvaluationResult(name=name, value=value, reason=reason, source=_spec(name))
+    def _result(
+        name: str,
+        value: Any,
+        reason: str | None = None,
+        evaluator_version: str | None = None,
+    ) -> EvaluationResult:
+        return EvaluationResult(
+            name=name,
+            value=value,
+            reason=reason,
+            source=_spec(name),
+            evaluator_version=evaluator_version,
+        )
 
-    def _agent_target(name: str = 'my_agent') -> EvaluationTarget:
-        return EvaluationTarget(name=name, type='agent')
-
-    def _function_target(name: str = 'f') -> EvaluationTarget:
-        return EvaluationTarget(name=name, type='function')
+    def _target(name: str = 'my_agent') -> str:
+        return name
 
 
 def test_emits_event_with_parent_span(capfire: CaptureLogfire):
@@ -44,8 +52,7 @@ def test_emits_event_with_parent_span(capfire: CaptureLogfire):
         results=[_result('Correctness', True, reason='looks right')],
         failures=[],
         span_reference=span_ref,
-        target=_agent_target(),
-        evaluator_version=None,
+        target=_target(),
     )
 
     finished = capfire.log_exporter.get_finished_logs()
@@ -58,9 +65,8 @@ def test_emits_event_with_parent_span(capfire: CaptureLogfire):
     assert attrs['gen_ai.evaluation.score.value'] == 1.0
     assert attrs['gen_ai.evaluation.score.label'] == 'pass'
     assert attrs['gen_ai.evaluation.explanation'] == 'looks right'
-    assert attrs['logfire.evaluation.target'] == 'my_agent'
-    assert attrs['logfire.evaluation.target_type'] == 'agent'
-    assert 'logfire.evaluation.evaluator_source' in attrs
+    assert attrs['gen_ai.evaluation.target'] == 'my_agent'
+    assert 'gen_ai.evaluation.evaluator_source' in attrs
 
     # Parented to referenced span.
     assert record.trace_id == 1
@@ -72,8 +78,7 @@ def test_bool_false_emits_fail_label(capfire: CaptureLogfire):
         results=[_result('X', False)],
         failures=[],
         span_reference=None,
-        target=_function_target(),
-        evaluator_version=None,
+        target=_target('f'),
     )
 
     attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
@@ -86,8 +91,7 @@ def test_numeric_score_only(capfire: CaptureLogfire):
         results=[_result('X', 0.73)],
         failures=[],
         span_reference=None,
-        target=_function_target(),
-        evaluator_version=None,
+        target=_target('f'),
     )
 
     attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
@@ -100,8 +104,7 @@ def test_string_label_only(capfire: CaptureLogfire):
         results=[_result('X', 'excellent')],
         failures=[],
         span_reference=None,
-        target=_function_target(),
-        evaluator_version=None,
+        target=_target('f'),
     )
 
     attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
@@ -120,8 +123,7 @@ def test_failure_emits_error_type_and_no_score(capfire: CaptureLogfire):
         results=[],
         failures=[failure],
         span_reference=None,
-        target=_function_target(),
-        evaluator_version=None,
+        target=_target('f'),
     )
 
     attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
@@ -133,16 +135,15 @@ def test_failure_emits_error_type_and_no_score(capfire: CaptureLogfire):
 
 def test_evaluator_version_and_extra_attributes(capfire: CaptureLogfire):
     emit_otel_events(
-        results=[_result('X', True)],
+        results=[_result('X', True, evaluator_version='v2')],
         failures=[],
         span_reference=None,
-        target=_function_target(),
-        evaluator_version='v2',
+        target=_target('f'),
         extra_attributes={'team': 'platform'},
     )
 
     attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
-    assert attrs['logfire.evaluation.evaluator_version'] == 'v2'
+    assert attrs['gen_ai.evaluation.evaluator_version'] == 'v2'
     assert attrs['team'] == 'platform'
 
 
@@ -151,12 +152,30 @@ def test_no_version_attribute_when_none(capfire: CaptureLogfire):
         results=[_result('X', True)],
         failures=[],
         span_reference=None,
-        target=_function_target(),
-        evaluator_version=None,
+        target=_target('f'),
     )
 
     attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
-    assert 'logfire.evaluation.evaluator_version' not in attrs
+    assert 'gen_ai.evaluation.evaluator_version' not in attrs
+
+
+def test_failure_carries_evaluator_version(capfire: CaptureLogfire):
+    failure = EvaluatorFailure(
+        name='X',
+        error_message='boom',
+        error_stacktrace='tb',
+        source=_spec('X'),
+        evaluator_version='v3',
+    )
+    emit_otel_events(
+        results=[],
+        failures=[failure],
+        span_reference=None,
+        target=_target('f'),
+    )
+
+    attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
+    assert attrs['gen_ai.evaluation.evaluator_version'] == 'v3'
 
 
 def test_empty_results_and_failures_emits_nothing(capfire: CaptureLogfire):
@@ -164,8 +183,7 @@ def test_empty_results_and_failures_emits_nothing(capfire: CaptureLogfire):
         results=[],
         failures=[],
         span_reference=None,
-        target=_function_target(),
-        evaluator_version=None,
+        target=_target('f'),
     )
 
     assert list(capfire.log_exporter.get_finished_logs()) == []

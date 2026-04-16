@@ -74,7 +74,6 @@ if TYPE_CHECKING or imports_successful():
             context: EvaluatorContext[Any, Any, Any],
             span_reference: SpanReference | None,
             target: Any,
-            evaluator_version: str | None,
         ) -> None:
             self.span_refs.append(span_reference)
 
@@ -110,8 +109,9 @@ async def test_evaluator_context_fields():
 
     agent = Agent(
         TestModel(),
+        name='my-agent',
         capabilities=[
-            OnlineEvaluation(evaluators=[AlwaysTrue()], config=config, name='my-agent'),
+            OnlineEvaluation(evaluators=[AlwaysTrue()], config=config),
         ],
     )
 
@@ -120,7 +120,8 @@ async def test_evaluator_context_fields():
 
     assert len(collector.calls) == 1
     _, _, ctx = collector.calls[0]
-    assert ctx.name == 'my-agent'
+    # Context name defaults to the agent run id (a ULID-ish string).
+    assert isinstance(ctx.name, str) and ctx.name
     assert ctx.inputs == 'what is 2+2?'
     assert ctx.output == result.output
     assert ctx.expected_output is None

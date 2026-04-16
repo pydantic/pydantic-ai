@@ -46,8 +46,7 @@ class EvaluationSink(Protocol):
         failures: Sequence[EvaluatorFailure],
         context: EvaluatorContext,
         span_reference: Any | None,
-        target: Any,
-        evaluator_version: str | None,
+        target: str,
     ) -> None: ...
 
 
@@ -86,10 +85,9 @@ class _CallbackSink:
         failures: Sequence[EvaluatorFailure],
         context: EvaluatorContext,
         span_reference: Any | None,
-        target: Any,
-        evaluator_version: str | None,
+        target: str,
     ) -> None:
-        _ = span_reference, target, evaluator_version  # custom sink only
+        _ = span_reference, target  # custom sink only
         result = self.callback(results, failures, context)
         if inspect.isawaitable(result):
             await result
@@ -247,7 +245,7 @@ def _normalize_sinks(
     sink: EvaluationSink | Sequence[EvaluationSink | SinkCallback] | SinkCallback,
 ) -> list[EvaluationSink]:
     if isinstance(sink, EvaluationSink):
-        return [sink]
+        return [_ensure_target_compat(sink)]
     if callable(sink):
         return [_CallbackSink(sink)]
     return [_normalize_single_sink(single_sink) for single_sink in sink]
@@ -255,8 +253,75 @@ def _normalize_sinks(
 
 def _normalize_single_sink(sink: EvaluationSink | SinkCallback) -> EvaluationSink:
     if isinstance(sink, EvaluationSink):
-        return sink
+        return _ensure_target_compat(sink)
     return _CallbackSink(sink)
+
+
+# ---------------------------------------------------------------------------
+# Back-compat shim for EvaluationSink.submit added `target: str` kwarg.
+#
+# TODO(v2): delete this whole section. In v2, `EvaluationSink.submit` will
+# require `target: str` unconditionally — drop `_submit_accepts_target`,
+# `_ensure_target_compat`, `_LegacyTargetShim`, and `_warned_legacy_sink_ids`,
+# and inline the return values in `_normalize_sinks` / `_normalize_single_sink`.
+# ---------------------------------------------------------------------------
+_warned_legacy_sink_ids: set[int] = set()
+
+
+def _submit_accepts_target(sink: EvaluationSink) -> bool:
+    """Check whether a sink's `submit` accepts the `target` kwarg (directly or via **kwargs)."""
+    try:
+        params = inspect.signature(sink.submit).parameters
+    except (TypeError, ValueError):  # pragma: no cover — some C-implemented callables
+        return True  # can't introspect — assume modern signature, don't warn
+    if 'target' in params:
+        return True
+    return any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+
+class _LegacyTargetShim:
+    """Wraps a pre-`target` sink, dropping the kwarg before delegating."""
+
+    def __init__(self, inner: EvaluationSink) -> None:
+        self._inner = inner
+
+    async def submit(
+        self,
+        *,
+        results: Sequence[EvaluationResult],
+        failures: Sequence[EvaluatorFailure],
+        context: EvaluatorContext,
+        span_reference: Any | None,
+        target: str,
+    ) -> None:
+        _ = target  # dropped for legacy sinks
+        # Pyright knows `EvaluationSink.submit` now requires `target`; the whole point
+        # of this shim is to call sinks whose real signatures predate that kwarg.
+        await self._inner.submit(  # pyright: ignore[reportCallIssue]
+            results=results,
+            failures=failures,
+            context=context,
+            span_reference=span_reference,
+        )
+
+
+def _ensure_target_compat(sink: EvaluationSink) -> EvaluationSink:
+    """If `sink.submit` predates the `target` kwarg, wrap it and warn once per class."""
+    if _submit_accepts_target(sink):
+        return sink
+    sink_cls = type(sink)
+    cls_id = id(sink_cls)
+    if cls_id not in _warned_legacy_sink_ids:
+        _warned_legacy_sink_ids.add(cls_id)
+        warnings.warn(
+            f'{sink_cls.__module__}.{sink_cls.__qualname__}.submit() is missing the '
+            "'target: str' keyword argument added to EvaluationSink.submit. Update the "
+            'signature to accept `target` (or `**kwargs`); this compatibility shim will '
+            'be removed in pydantic-evals v2.',
+            DeprecationWarning,
+            stacklevel=4,
+        )
+    return _LegacyTargetShim(sink)
 
 
 async def _call_on_error(
@@ -282,8 +347,7 @@ async def _submit_to_sink(
     failures: Sequence[EvaluatorFailure],
     context: EvaluatorContext,
     span_reference: Any | None,
-    target: Any,
-    evaluator_version: str | None,
+    target: str,
     on_error: OnErrorCallback | None,
     evaluator: Evaluator,
 ) -> None:
@@ -294,7 +358,6 @@ async def _submit_to_sink(
             context=context,
             span_reference=span_reference,
             target=target,
-            evaluator_version=evaluator_version,
         )
     except Exception as exc:
         await _call_on_error(on_error, exc, context, evaluator, 'sink')
@@ -304,7 +367,7 @@ async def _dispatch_single_evaluator(
     online_eval: OnlineEvaluatorLike,
     context: EvaluatorContext,
     span_reference: Any | None,
-    target: Any,
+    target: str,
     sinks: list[EvaluationSink],
     emit_events: bool,
     otel_extra_attributes: dict[str, Any] | None,
@@ -333,13 +396,6 @@ async def _dispatch_single_evaluator(
             results = raw_result
             failures = []
 
-        # Read evaluator version from the class attribute on the Evaluator subclass.
-        # Not formally declared on the base to avoid dataclass-field/ClassVar conflicts
-        # — matches the `evaluation_name` pattern. See Evaluator docstring.
-        evaluator_version = getattr(evaluator, 'evaluator_version', None)
-        if not isinstance(evaluator_version, str):
-            evaluator_version = None
-
         # Default OTel event emission. Unconditional unless the config opts out.
         # If no OTel SDK is configured in the process, `get_logger()` returns a
         # no-op logger and this is effectively free.
@@ -350,7 +406,6 @@ async def _dispatch_single_evaluator(
                     failures=failures,
                     span_reference=span_reference,
                     target=target,
-                    evaluator_version=evaluator_version,
                     extra_attributes=otel_extra_attributes,
                 )
             except Exception as exc:  # pragma: no cover - defensive
@@ -366,7 +421,6 @@ async def _dispatch_single_evaluator(
                     context,
                     span_reference,
                     target,
-                    evaluator_version,
                     on_error,
                     evaluator,
                 )
@@ -378,7 +432,7 @@ async def dispatch_evaluators(
     online_evaluators: Sequence[OnlineEvaluatorLike],
     context: EvaluatorContext,
     span_reference: Any | None,
-    target: Any,
+    target: str,
     config: OnlineEvalConfigLike,
 ) -> None:
     async with anyio.create_task_group() as task_group:

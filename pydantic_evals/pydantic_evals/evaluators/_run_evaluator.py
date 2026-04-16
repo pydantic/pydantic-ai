@@ -59,6 +59,12 @@ async def run_evaluator(
 
         evaluate = tenacity_retry(**retry)(evaluate)
 
+    # Read evaluator version from the class attribute on the Evaluator subclass.
+    # Not formally declared on the base to avoid dataclass-field/ClassVar conflicts
+    # — matches the `evaluation_name` pattern. See Evaluator docstring.
+    raw_version = getattr(evaluator, 'evaluator_version', None)
+    evaluator_version: str | None = raw_version if isinstance(raw_version, str) else None
+
     try:
         with logfire_span(
             'evaluator: {evaluator_name}',
@@ -76,6 +82,7 @@ async def run_evaluator(
             error_message=f'{type(e).__name__}: {e}',
             error_stacktrace=traceback.format_exc(),
             source=evaluator.as_spec(),
+            evaluator_version=evaluator_version,
         )
 
     results = _convert_to_mapping(results, scalar_name=evaluator.get_default_evaluation_name())
@@ -85,7 +92,13 @@ async def run_evaluator(
         if not isinstance(result, EvaluationReason):
             result = EvaluationReason(value=result)
         details.append(
-            EvaluationResult(name=name, value=result.value, reason=result.reason, source=evaluator.as_spec())
+            EvaluationResult(
+                name=name,
+                value=result.value,
+                reason=result.reason,
+                source=evaluator.as_spec(),
+                evaluator_version=evaluator_version,
+            )
         )
 
     return details

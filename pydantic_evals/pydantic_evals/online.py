@@ -51,7 +51,6 @@ __all__ = (
     'CallbackSink',
     'DEFAULT_CONFIG',
     'EvaluationSink',
-    'EvaluationTarget',
     'EvaluatorContextSource',
     'OnErrorCallback',
     'OnErrorLocation',
@@ -63,41 +62,12 @@ __all__ = (
     'SamplingMode',
     'SinkCallback',
     'SpanReference',
-    'TargetType',
     'configure',
     'disable_evaluation',
     'evaluate',
     'run_evaluators',
     'wait_for_evaluations',
 )
-
-
-TargetType = Literal['function', 'agent']
-"""What kind of thing is being evaluated. Drives UI routing in downstream sinks."""
-
-
-@dataclass(kw_only=True, frozen=True)
-class EvaluationTarget:
-    """Identifies the thing being evaluated for a single evaluator dispatch.
-
-    Supplied per-call by the `@evaluate` decorator (from its `target` /
-    `target_type` kwargs). Written to every emitted `gen_ai.evaluation.result`
-    OTel event as `logfire.evaluation.target` / `logfire.evaluation.target_type`,
-    and delivered to user-registered sinks via
-    `EvaluationSink.submit(..., target=...)`.
-
-    Evaluator version is *not* part of the target — it travels separately on
-    the dispatch alongside `target` because it is a property of the evaluator
-    (each evaluator can be versioned independently), not of the function being
-    evaluated.
-    """
-
-    name: str
-    """Name of the agent or function being evaluated. Primary grouping key for
-    UIs and queries."""
-
-    type: TargetType = 'function'
-    """Whether `name` identifies an agent or a function."""
 
 
 OnErrorLocation = Literal['sink', 'on_max_concurrency']
@@ -226,15 +196,15 @@ class EvaluationSink(Protocol):
         failures: Sequence[EvaluatorFailure],
         context: EvaluatorContext,
         span_reference: SpanReference | None,
-        target: EvaluationTarget,
-        evaluator_version: str | None,
+        target: str,
     ) -> None:
         """Submit evaluation results to the sink.
 
         Each `submit()` call corresponds to a single evaluator — `results` and
-        `failures` are always from the same `Evaluator` instance. That's why
-        `evaluator_version` is a flat kwarg rather than attached to each
-        result.
+        `failures` are always from the same `Evaluator` instance. The evaluator
+        version (if any) is recorded on each `EvaluationResult` /
+        `EvaluatorFailure` directly, sourced from the `evaluator_version` class
+        attribute on the `Evaluator` subclass.
 
         Args:
             results: Evaluation results from the evaluator run.
@@ -243,10 +213,6 @@ class EvaluationSink(Protocol):
             span_reference: Reference to the OTel span for the function call, if available.
             target: Identifies the function/agent being evaluated, supplied by the
                 `@evaluate` decorator (defaults resolved at decoration time).
-            evaluator_version: Optional version tag for the evaluator that produced
-                these results (e.g. `'v2'`). Sourced from the `evaluator_version`
-                class attribute on the `Evaluator` subclass. Lets trend lines filter
-                out results from retired evaluator versions without deleting rows.
         """
         ...
 
@@ -254,9 +220,9 @@ class EvaluationSink(Protocol):
 class CallbackSink:
     """An `EvaluationSink` that delegates to a user-provided callable.
 
-    The callback receives the results, failures, and context. The `span_reference`,
-    `target`, and `evaluator_version` are not passed to the callback — use a custom
-    `EvaluationSink` implementation if you need them.
+    The callback receives the results, failures, and context. The `span_reference`
+    and `target` are not passed to the callback — use a custom `EvaluationSink`
+    implementation if you need them.
     """
 
     def __init__(self, callback: SinkCallback) -> None:
@@ -269,10 +235,9 @@ class CallbackSink:
         failures: Sequence[EvaluatorFailure],
         context: EvaluatorContext,
         span_reference: SpanReference | None,
-        target: EvaluationTarget,
-        evaluator_version: str | None,
+        target: str,
     ) -> None:
-        _ = span_reference, target, evaluator_version  # custom sink only
+        _ = span_reference, target  # custom sink only
         result = self.callback(results, failures, context)
         if inspect.isawaitable(result):
             await result
@@ -506,7 +471,6 @@ class OnlineEvalConfig:
         self,
         *evaluators: Evaluator | OnlineEvaluator,
         target: str | None = None,
-        target_type: TargetType = 'function',
     ) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]:
         """Decorator to attach online evaluators to a function.
 
@@ -516,7 +480,9 @@ class OnlineEvalConfig:
         changes to the config after decoration take effect.
 
         To version an evaluator, set `evaluator_version` on the `Evaluator` subclass
-        itself — the framework will propagate it to sinks automatically:
+        itself — the framework reads it at dispatch time and records it on every
+        [`EvaluationResult`][pydantic_evals.evaluators.EvaluationResult] and
+        [`EvaluatorFailure`][pydantic_evals.evaluators.EvaluatorFailure] the evaluator emits:
 
         ```python
         from dataclasses import dataclass
@@ -540,11 +506,9 @@ class OnlineEvalConfig:
 
         Args:
             *evaluators: Evaluators to attach. Can be `Evaluator` or `OnlineEvaluator` instances.
-            target: Name of the thing being evaluated. Propagated to sinks via
-                [`EvaluationTarget`][pydantic_evals.online.EvaluationTarget]. Defaults
-                to the decorated function's `__name__` when omitted.
-            target_type: `'function'` (default) or `'agent'`. Drives UI routing in
-                downstream sinks.
+            target: Name of the thing being evaluated. Written to sinks and emitted
+                OTel events as `gen_ai.evaluation.target`. Defaults to the decorated
+                function's `__name__` when omitted.
 
         Returns:
             A decorator that wraps the function with online evaluation.
@@ -552,10 +516,7 @@ class OnlineEvalConfig:
         online_evals = [e if isinstance(e, OnlineEvaluator) else OnlineEvaluator(evaluator=e) for e in evaluators]
 
         def decorator(func: Callable[_P, _R]) -> Callable[_P, _R]:
-            resolved_target = EvaluationTarget(
-                name=target if target is not None else func.__name__,
-                type=target_type,
-            )
+            resolved_target = target if target is not None else func.__name__
             if inspect.iscoroutinefunction(func):
                 # ParamSpec can't distinguish async from sync return types — _wrap_async returns
                 # Callable[_P, Awaitable[_R]] but the decorator signature expects Callable[_P, _R]
@@ -570,7 +531,7 @@ def _wrap_async(
     func: Callable[_P, Awaitable[_R]],
     online_evals: list[OnlineEvaluator],
     config: OnlineEvalConfig,
-    target: EvaluationTarget,
+    target: str,
 ) -> Callable[_P, Awaitable[_R]]:
     """Wrap an async function with online evaluation."""
     sig = inspect.signature(func)
@@ -644,7 +605,7 @@ def _wrap_sync(
     func: Callable[_P, _R],
     online_evals: list[OnlineEvaluator],
     config: OnlineEvalConfig,
-    target: EvaluationTarget,
+    target: str,
 ) -> Callable[_P, _R]:
     """Wrap a sync function with online evaluation."""
     sig = inspect.signature(func)
@@ -764,7 +725,6 @@ Module-level functions like `evaluate()` and `configure()` delegate to this inst
 def evaluate(
     *evaluators: Evaluator | OnlineEvaluator,
     target: str | None = None,
-    target_type: TargetType = 'function',
 ) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]:
     """Decorator to attach online evaluators to a function using the global default config.
 
@@ -772,11 +732,9 @@ def evaluate(
 
     Args:
         *evaluators: Evaluators to attach. Can be `Evaluator` or `OnlineEvaluator` instances.
-        target: Name of the thing being evaluated. Propagated to sinks via
-            [`EvaluationTarget`][pydantic_evals.online.EvaluationTarget]. Defaults
-            to the decorated function's `__name__` when omitted.
-        target_type: `'function'` (default) or `'agent'`. Drives UI routing in
-            downstream sinks.
+        target: Name of the thing being evaluated. Written to sinks and emitted
+            OTel events as `gen_ai.evaluation.target`. Defaults to the decorated
+            function's `__name__` when omitted.
 
     Returns:
         A decorator that wraps the function with online evaluation.
@@ -800,7 +758,7 @@ def evaluate(
         return x
     ```
     """
-    return DEFAULT_CONFIG.evaluate(*evaluators, target=target, target_type=target_type)
+    return DEFAULT_CONFIG.evaluate(*evaluators, target=target)
 
 
 def configure(

@@ -260,6 +260,7 @@ async def test_evaluate_async(
                     'reason': None,
                     'source': {'name': 'SimpleEvaluator', 'arguments': None},
                     'value': True,
+                    'evaluator_version': None,
                 }
             },
             'attributes': {},
@@ -277,6 +278,7 @@ async def test_evaluate_async(
                     'reason': None,
                     'source': {'name': 'SimpleEvaluator', 'arguments': None},
                     'value': 1.0,
+                    'evaluator_version': None,
                 }
             },
             'span_id': _any_span_id,
@@ -314,6 +316,7 @@ async def test_evaluate_sync(
                     'reason': None,
                     'source': {'name': 'SimpleEvaluator', 'arguments': None},
                     'value': True,
+                    'evaluator_version': None,
                 }
             },
             'attributes': {},
@@ -331,6 +334,7 @@ async def test_evaluate_sync(
                     'reason': None,
                     'source': {'name': 'SimpleEvaluator', 'arguments': None},
                     'value': 1.0,
+                    'evaluator_version': None,
                 }
             },
             'span_id': _any_span_id,
@@ -396,6 +400,7 @@ async def test_evaluate_with_retried_task_and_evaluator(
                     'reason': None,
                     'source': {'name': 'RetryEvaluator', 'arguments': None},
                     'value': True,
+                    'evaluator_version': None,
                 }
             },
             'attributes': {},
@@ -413,6 +418,7 @@ async def test_evaluate_with_retried_task_and_evaluator(
                     'reason': None,
                     'source': {'name': 'RetryEvaluator', 'arguments': None},
                     'value': 1.0,
+                    'evaluator_version': None,
                 }
             },
             'span_id': _any_span_id,
@@ -450,6 +456,7 @@ async def test_evaluate_with_concurrency(
                     'reason': None,
                     'source': {'name': 'SimpleEvaluator', 'arguments': None},
                     'value': True,
+                    'evaluator_version': None,
                 }
             },
             'attributes': {},
@@ -467,6 +474,7 @@ async def test_evaluate_with_concurrency(
                     'reason': None,
                     'source': {'name': 'SimpleEvaluator', 'arguments': None},
                     'value': 1.0,
+                    'evaluator_version': None,
                 }
             },
             'span_id': _any_span_id,
@@ -1658,6 +1666,7 @@ async def test_evaluate_async_logfire(
                             'value': True,
                             'reason': None,
                             'source': {'name': 'SimpleEvaluator', 'arguments': None},
+                            'evaluator_version': None,
                         }
                     },
                     'scores': {
@@ -1666,6 +1675,7 @@ async def test_evaluate_async_logfire(
                             'value': 1.0,
                             'reason': None,
                             'source': {'name': 'SimpleEvaluator', 'arguments': None},
+                            'evaluator_version': None,
                         }
                     },
                     'labels': {},
@@ -1727,6 +1737,7 @@ async def test_evaluate_async_logfire(
                             'value': True,
                             'reason': None,
                             'source': {'name': 'SimpleEvaluator', 'arguments': None},
+                            'evaluator_version': None,
                         }
                     },
                     'scores': {
@@ -1735,6 +1746,7 @@ async def test_evaluate_async_logfire(
                             'value': 1.0,
                             'reason': None,
                             'source': {'name': 'SimpleEvaluator', 'arguments': None},
+                            'evaluator_version': None,
                         }
                     },
                     'labels': {},

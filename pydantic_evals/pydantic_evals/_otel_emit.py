@@ -16,9 +16,8 @@ supplied, so they appear nested under the original function call in the trace.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from opentelemetry import context as otel_context, trace
 from opentelemetry._logs import LogRecord, get_logger
@@ -26,9 +25,7 @@ from opentelemetry.context import Context
 from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
 
 from .evaluators.evaluator import EvaluationResult, EvaluatorFailure
-
-if TYPE_CHECKING:
-    from .online import EvaluationTarget
+from .evaluators.spec import EvaluatorSpec
 
 __all__ = ('emit_otel_events',)
 
@@ -41,13 +38,13 @@ _ATTR_SCORE_LABEL = 'gen_ai.evaluation.score.label'
 _ATTR_EXPLANATION = 'gen_ai.evaluation.explanation'
 _ATTR_ERROR_TYPE = 'error.type'
 
-# Logfire extensions — not official semconv yet. Namespace is subject to change:
-# if OTel adopts these upstream (or we negotiate a `gen_ai.*` namespace for them),
-# update these constants and downstream queries/materialized views together.
-_ATTR_TARGET = 'logfire.evaluation.target'
-_ATTR_TARGET_TYPE = 'logfire.evaluation.target_type'
-_ATTR_EVALUATOR_SOURCE = 'logfire.evaluation.evaluator_source'
-_ATTR_EVALUATOR_VERSION = 'logfire.evaluation.evaluator_version'
+# Extensions beyond the current OTel semconv, placed in the `gen_ai.*` namespace
+# on the assumption that this is where analogous attributes will land upstream.
+# If upstream adopts different names, update these constants together with
+# downstream queries/materialized views.
+_ATTR_TARGET = 'gen_ai.evaluation.target'
+_ATTR_EVALUATOR_SOURCE = 'gen_ai.evaluation.evaluator_source'
+_ATTR_EVALUATOR_VERSION = 'gen_ai.evaluation.evaluator_version'
 
 _EVENT_NAME = 'gen_ai.evaluation.result'
 _OTEL_SCOPE = 'pydantic-evals'
@@ -70,8 +67,7 @@ def emit_otel_events(
     results: Sequence[EvaluationResult],
     failures: Sequence[EvaluatorFailure],
     span_reference: Any | None,
-    target: EvaluationTarget,
-    evaluator_version: str | None,
+    target: str,
     extra_attributes: Mapping[str, Any] | None = None,
 ) -> None:
     """Emit one `gen_ai.evaluation.result` OTel event per result/failure.
@@ -82,13 +78,14 @@ def emit_otel_events(
     nested under the original function call in the trace.
 
     Args:
-        results: Evaluation results from a single evaluator run.
-        failures: Failures from a single evaluator run.
+        results: Evaluation results from a single evaluator run. Each result's
+            `evaluator_version` is written to `gen_ai.evaluation.evaluator_version`.
+        failures: Failures from a single evaluator run. Each failure's
+            `evaluator_version` is written to `gen_ai.evaluation.evaluator_version`.
         span_reference: Optional reference to the span being evaluated.
             When supplied, emitted events are parented to that span.
-        target: Identifies the function/agent being evaluated. Written to
-            `logfire.evaluation.target` / `logfire.evaluation.target_type`.
-        evaluator_version: Optional evaluator version tag.
+        target: Name of the function/agent being evaluated. Written to
+            `gen_ai.evaluation.target`.
         extra_attributes: Optional extra attributes to include on every emitted
             event. Escape hatch for custom metadata without subclassing.
     """
@@ -98,17 +95,17 @@ def emit_otel_events(
     parent_ctx = _build_parent_context(span_reference)
     if parent_ctx is None:
         for result in results:
-            _emit_result(result, target, evaluator_version, extra_attributes)
+            _emit_result(result, target, extra_attributes)
         for failure in failures:
-            _emit_failure(failure, target, evaluator_version, extra_attributes)
+            _emit_failure(failure, target, extra_attributes)
         return
 
     token = otel_context.attach(parent_ctx)
     try:
         for result in results:
-            _emit_result(result, target, evaluator_version, extra_attributes)
+            _emit_result(result, target, extra_attributes)
         for failure in failures:
-            _emit_failure(failure, target, evaluator_version, extra_attributes)
+            _emit_failure(failure, target, extra_attributes)
     finally:
         otel_context.detach(token)
 
@@ -118,11 +115,10 @@ def emit_otel_events(
 
 def _emit_result(
     result: EvaluationResult,
-    target: EvaluationTarget,
-    evaluator_version: str | None,
+    target: str,
     extra_attributes: Mapping[str, Any] | None,
 ) -> None:
-    attrs = _base_attrs(target, evaluator_version, extra_attributes)
+    attrs = _base_attrs(target, result.evaluator_version, extra_attributes)
     attrs[_ATTR_EVAL_NAME] = result.name
     _set_score_attrs(attrs, result.value)
     if result.reason is not None:
@@ -133,11 +129,10 @@ def _emit_result(
 
 def _emit_failure(
     failure: EvaluatorFailure,
-    target: EvaluationTarget,
-    evaluator_version: str | None,
+    target: str,
     extra_attributes: Mapping[str, Any] | None,
 ) -> None:
-    attrs = _base_attrs(target, evaluator_version, extra_attributes)
+    attrs = _base_attrs(target, failure.evaluator_version, extra_attributes)
     attrs[_ATTR_EVAL_NAME] = failure.name
     attrs[_ATTR_ERROR_TYPE] = 'pydantic_evals.EvaluatorFailure'
     if failure.error_message:
@@ -147,13 +142,12 @@ def _emit_failure(
 
 
 def _base_attrs(
-    target: EvaluationTarget,
+    target: str,
     evaluator_version: str | None,
     extra_attributes: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     attrs: dict[str, Any] = {
-        _ATTR_TARGET: target.name,
-        _ATTR_TARGET_TYPE: target.type,
+        _ATTR_TARGET: target,
     }
     if evaluator_version is not None:
         attrs[_ATTR_EVALUATOR_VERSION] = evaluator_version
@@ -200,24 +194,12 @@ def _set_score_attrs(attrs: dict[str, Any], value: Any) -> None:
         attrs[_ATTR_SCORE_LABEL] = value
 
 
-def _serialize_evaluator_source(source: Any) -> str:
+def _serialize_evaluator_source(source: EvaluatorSpec) -> str:
     """JSON-serialize an EvaluatorSpec to a string attribute.
 
-    We store as a string (rather than individual attributes) because the
-    spec can contain nested kwargs of arbitrary shape. The materialized view
-    can JSON-parse this column in DataFusion when needed.
+    We store as a string (rather than individual attributes) because OTel log
+    attributes are scalar/sequence typed and the spec's `arguments` field can
+    be an arbitrary dict of kwargs. The materialized view can JSON-parse this
+    column in DataFusion when needed.
     """
-    if hasattr(source, 'model_dump'):
-        try:
-            return json.dumps(source.model_dump(), default=str)
-        except (TypeError, ValueError):  # pragma: no cover
-            pass
-    if hasattr(source, '__dict__'):
-        try:
-            return json.dumps(
-                {k: v for k, v in source.__dict__.items() if not k.startswith('_')},
-                default=str,
-            )
-        except (TypeError, ValueError):  # pragma: no cover
-            pass
-    return json.dumps({'repr': repr(source)})
+    return source.model_dump_json()

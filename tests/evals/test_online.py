@@ -3,9 +3,10 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -18,7 +19,6 @@ with try_import() as imports_successful:
     from pydantic_evals.online import (
         DEFAULT_CONFIG,
         CallbackSink,
-        EvaluationTarget,
         OnErrorLocation,
         OnlineEvalConfig,
         OnlineEvaluator,
@@ -162,8 +162,7 @@ async def test_callback_sink_sync():
         failures=[],
         context=ctx,
         span_reference=None,
-        target=EvaluationTarget(name='t'),
-        evaluator_version=None,
+        target='t',
     )
 
     assert len(collected) == 1
@@ -185,8 +184,7 @@ async def test_callback_sink_async():
         failures=[],
         context=ctx,
         span_reference=None,
-        target=EvaluationTarget(name='t'),
-        evaluator_version=None,
+        target='t',
     )
     assert len(collector.calls) == 1
 
@@ -204,11 +202,87 @@ async def test_callback_sink_ignores_span_reference():
         failures=[],
         context=ctx,
         span_reference=span_ref,
-        target=EvaluationTarget(name='t'),
-        evaluator_version=None,
+        target='t',
     )
     assert len(collector.calls) == 1
     assert collector.result_count == 0
+
+
+@pytest.mark.anyio
+async def test_legacy_sink_without_target_kwarg_is_wrapped_with_deprecation_warning():
+    """Sinks whose `submit()` predates the `target` kwarg still work via a back-compat shim.
+
+    TODO(v2): delete this test alongside the shim in pydantic_evals/_online.py.
+    """
+    calls: list[dict[str, Any]] = []
+
+    class LegacySink:
+        async def submit(
+            self,
+            *,
+            results: Sequence[EvaluationResult],
+            failures: Sequence[EvaluatorFailure],
+            context: EvaluatorContext[Any, Any, Any],
+            span_reference: SpanReference | None,
+        ) -> None:
+            calls.append(
+                {
+                    'results': list(results),
+                    'failures': list(failures),
+                    'context': context,
+                    'span_reference': span_reference,
+                }
+            )
+
+    @dataclass
+    class LegacyEvaluator(Evaluator):
+        def evaluate(self, ctx: EvaluatorContext) -> bool:
+            return True
+
+    # Cast: the point of this test is that LegacySink intentionally doesn't
+    # satisfy the current EvaluationSink protocol (missing `target` kwarg).
+    config = OnlineEvalConfig(default_sink=cast(Any, LegacySink()), emit_otel_events=False)
+
+    @config.evaluate(LegacyEvaluator())
+    async def run(x: int) -> int:
+        return x
+
+    with pytest.warns(DeprecationWarning, match=r"missing the 'target: str' keyword argument"):
+        await run(1)
+        await wait_for_evaluations()
+
+    assert len(calls) == 1
+    # The legacy sink receives the original four kwargs — `target` is dropped by the shim.
+    assert set(calls[0]) == {'results', 'failures', 'context', 'span_reference'}
+
+
+@pytest.mark.anyio
+async def test_sink_with_var_keyword_is_treated_as_modern():
+    """A sink whose `submit` uses **kwargs is assumed to accept `target` — no shim, no warning."""
+    calls: list[dict[str, Any]] = []
+
+    class KwargsSink:
+        async def submit(self, **kwargs: Any) -> None:
+            calls.append(kwargs)
+
+    @dataclass
+    class E(Evaluator):
+        def evaluate(self, ctx: EvaluatorContext) -> bool:
+            return True
+
+    config = OnlineEvalConfig(default_sink=KwargsSink(), emit_otel_events=False)
+
+    @config.evaluate(E(), target='my_target')
+    async def run(x: int) -> int:
+        return x
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', DeprecationWarning)
+        await run(1)
+        await wait_for_evaluations()
+
+    assert len(calls) == 1
+    assert calls[0]['target'] == 'my_target'
 
 
 @pytest.mark.anyio
@@ -815,7 +889,6 @@ async def test_custom_sink_protocol():
             context: EvaluatorContext[Any, Any, Any],
             span_reference: SpanReference | None,
             target: Any,
-            evaluator_version: str | None,
         ) -> None:
             self.submissions.append((list(results), span_reference))
 
@@ -1050,7 +1123,6 @@ async def test_span_reference_with_configured_logfire(capfire: CaptureLogfire):
             context: EvaluatorContext[Any, Any, Any],
             span_reference: SpanReference | None,
             target: Any,
-            evaluator_version: str | None,
         ) -> None:
             span_refs.append(span_reference)
 

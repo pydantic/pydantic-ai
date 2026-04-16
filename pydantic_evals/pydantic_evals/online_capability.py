@@ -20,7 +20,6 @@ from .evaluators.context import EvaluatorContext
 from .evaluators.evaluator import Evaluator
 from .online import (
     DEFAULT_CONFIG,
-    EvaluationTarget,
     OnlineEvalConfig,
     OnlineEvaluator,
     SamplingContext,
@@ -69,27 +68,24 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
         result is available and the surrounding context manager exits.
 
     Example:
-    ```python {lint="skip"}
+    ```python
     from dataclasses import dataclass
 
     from pydantic_ai import Agent
     from pydantic_evals.evaluators import Evaluator, EvaluatorContext
-    from pydantic_evals.online import OnlineEvalConfig
     from pydantic_evals.online_capability import OnlineEvaluation
+
 
     @dataclass
     class OutputNotEmpty(Evaluator):
         def evaluate(self, ctx: EvaluatorContext) -> bool:
             return bool(ctx.output)
 
+
     agent = Agent(
         'openai:gpt-5.2',
-        capabilities=[
-            OnlineEvaluation(
-                evaluators=[OutputNotEmpty()],
-                config=OnlineEvalConfig(default_sink=lambda results, failures, context: None),
-            ),
-        ],
+        name='assistant',
+        capabilities=[OnlineEvaluation(evaluators=[OutputNotEmpty()])],
     )
     ```
     """
@@ -99,9 +95,6 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
 
     config: OnlineEvalConfig | None = None
     """Optional config override. Defaults to the global `DEFAULT_CONFIG`."""
-
-    name: str | None = None
-    """Optional name for the EvaluatorContext. Defaults to the agent run's `run_id`."""
 
     _online_evaluators: list[OnlineEvaluator] = field(init=False, repr=False)
     _resolved_config: OnlineEvalConfig = field(init=False, repr=False)
@@ -180,7 +173,7 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
             metadata = {**(config.metadata or {}), **(ctx.metadata or {})}
 
         context = EvaluatorContext(
-            name=self.name or ctx.run_id or 'agent',
+            name=ctx.run_id,
             inputs=inputs,
             output=result.output,
             expected_output=None,
@@ -193,7 +186,10 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
 
         span_reference = _parse_traceparent(result._traceparent(required=False))  # pyright: ignore[reportPrivateUsage]
 
-        target = EvaluationTarget(name=self.name or 'agent', type='agent')
+        # Use the agent's declared name when available so evaluation events can be
+        # filtered per-agent. Fall back to the generic 'agent' label when unset.
+        agent_name = ctx.agent.name if ctx.agent is not None else None
+        target = agent_name or 'agent'
         _online_internal.dispatch_async(
             _online_internal.dispatch_evaluators(sampled, context, span_reference, target, config)
         )

@@ -67,12 +67,17 @@ class EvaluationResult(Generic[EvaluationScalarT]):
         value: The scalar result of the evaluation.
         reason: An optional explanation of the evaluation result.
         source: The spec of the evaluator that produced this result.
+        evaluator_version: Optional version tag for the evaluator that produced this result
+            (e.g. `'v2'`). Sourced automatically from the `evaluator_version` class attribute
+            on the `Evaluator` subclass. Lets online-evaluation dashboards filter out results
+            from retired versions without deleting historical rows.
     """
 
     name: str
     value: EvaluationScalarT
     reason: str | None
     source: EvaluatorSpec
+    evaluator_version: str | None = None
 
     def downcast(self, *value_types: type[T]) -> EvaluationResult[T] | None:
         """Attempt to downcast this result to a more specific type.
@@ -102,6 +107,9 @@ class EvaluatorFailure:
     error_message: str
     error_stacktrace: str
     source: EvaluatorSpec
+    evaluator_version: str | None = None
+    """Optional version tag for the evaluator that raised (e.g. `'v2'`). Sourced automatically
+    from the `evaluator_version` class attribute on the `Evaluator` subclass."""
 
 
 # Evaluators are contravariant in all of its parameters.
