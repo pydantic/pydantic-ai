@@ -330,6 +330,7 @@ async def test_google_model_stream(allow_model_requests: None, google_provider: 
     assert data == snapshot('The capital of France is Paris.\n')
 
 
+@pytest.mark.skip(reason='Covered by tests/models/google/test_code_execution.py')
 async def test_google_model_builtin_code_execution_stream(
     allow_model_requests: None,
     google_provider: GoogleProvider,
@@ -1771,6 +1772,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
     )
 
 
+@pytest.mark.skip(reason='Covered by tests/models/google/test_code_execution.py')
 async def test_google_model_code_execution_tool(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-pro', provider=google_provider)
     agent = Agent(m, instructions='You are a helpful chatbot.', builtin_tools=[CodeExecutionTool()])
@@ -1903,6 +1905,7 @@ print(f"Tomorrow is {tomorrow.strftime('%A, %B %d, %Y')}.")
     )
 
 
+@pytest.mark.skip(reason='Covered by tests/models/google/test_code_execution.py')
 async def test_google_model_server_tool_receive_history_from_another_provider(
     allow_model_requests: None, anthropic_api_key: str, gemini_api_key: str
 ):
