@@ -10220,6 +10220,42 @@ async def test_openai_responses_compact_messages(allow_model_requests: None, ope
     assert 'encrypted_content' in compaction.provider_details
 
 
+async def test_openai_responses_compact_stateful_mode_stream(allow_model_requests: None, openai_api_key: str):
+    """Streaming variant: `ResponseCompactionItem` is handled in `_get_event_iterator`."""
+    from pydantic_ai.models.openai import OpenAICompaction
+
+    model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        model=model,
+        capabilities=[OpenAICompaction(token_threshold=1000)],
+    )
+
+    message_history: list[Any] = []
+    last_output = ''
+    for question in [
+        'Tell me a 300-word story about a fox exploring a forest. Be very descriptive.',
+        'Now a 300-word story about a rabbit in a meadow. Be very descriptive.',
+        'Now a 300-word story about a bear in a cave. Be very descriptive.',
+        'What is 2+2?',
+    ]:
+        async with agent.run_stream(question, message_history=message_history) as result:
+            last_output = await result.get_output()
+        message_history = result.all_messages()
+
+    assert '4' in last_output
+
+    compaction_parts = [
+        part
+        for msg in message_history
+        if isinstance(msg, ModelResponse)
+        for part in msg.parts
+        if isinstance(part, CompactionPart)
+    ]
+    assert compaction_parts, 'expected at least one server-side compaction in streaming mode'
+    assert compaction_parts[0].provider_name == 'openai'
+    assert 'encrypted_content' in (compaction_parts[0].provider_details or {})
+
+
 async def test_openai_responses_compact_messages_direct(allow_model_requests: None, openai_api_key: str):
     """Test OpenAI compact_messages method directly with ModelRequestContext."""
     from pydantic_ai.models import ModelRequestContext
