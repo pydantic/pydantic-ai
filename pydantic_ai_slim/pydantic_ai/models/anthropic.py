@@ -1469,8 +1469,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # Fall back to unified thinking effort level when anthropic_effort is not set
         # Only map effort level strings; bare True just enables thinking without a specific effort
         profile = AnthropicModelProfile.from_profile(self.profile)
-        if effort == 'xhigh' and not profile.anthropic_supports_xhigh_effort:
-            raise UserError(f"Model {self.model_name!r} does not support `anthropic_effort='xhigh'`.")
         if effort is None and profile.anthropic_supports_effort and isinstance(model_request_parameters.thinking, str):
             # Map unified levels to Anthropic effort; Anthropic accepts low/medium/high/max
             effort_map: dict[ThinkingEffort, str] = {

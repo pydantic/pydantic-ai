@@ -3604,6 +3604,23 @@ async def test_anthropic_unified_thinking_opus_47_xhigh(allow_model_requests: No
     assert kwargs['output_config'] == {'effort': 'xhigh'}
 
 
+async def test_anthropic_explicit_effort_xhigh_passthrough(allow_model_requests: None):
+    responses = [
+        completion_message(
+            [BetaTextBlock(text='4', type='text')],
+            usage=BetaUsage(input_tokens=10, output_tokens=1),
+        ),
+    ]
+    mock_client = MockAnthropic.create_mock(responses)
+    m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, model_settings=AnthropicModelSettings(anthropic_effort='xhigh'))
+
+    await agent.run('What is 2+2?')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['output_config'] == {'effort': 'xhigh'}
+
+
 async def test_anthropic_opus_47_drops_sampling_settings(allow_model_requests: None):
     from anthropic._types import omit as OMIT
 
