@@ -771,12 +771,14 @@ def configure(
     on_max_concurrency: OnMaxConcurrencyCallback | None | Unset = UNSET,
     on_sampling_error: OnSamplingErrorCallback | None | Unset = UNSET,
     on_error: OnErrorCallback | None | Unset = UNSET,
+    emit_otel_events: bool | Unset = UNSET,
+    otel_extra_attributes: dict[str, Any] | None | Unset = UNSET,
 ) -> None:
     """Configure the global default `OnlineEvalConfig`.
 
     Only provided values are updated; unset arguments are ignored.
     Pass `None` explicitly to clear `default_sink`, `metadata`, `on_max_concurrency`,
-    `on_sampling_error`, or `on_error`.
+    `on_sampling_error`, `on_error`, or `otel_extra_attributes`.
 
     Args:
         default_sink: Default sink(s) for evaluators. Pass `None` to clear.
@@ -787,6 +789,9 @@ def configure(
         on_max_concurrency: Default handler for dropped evaluations. Pass `None` to clear.
         on_sampling_error: Default handler for sample_rate exceptions. Pass `None` to clear.
         on_error: Default handler for pipeline exceptions. Pass `None` to clear.
+        emit_otel_events: Whether to emit `gen_ai.evaluation.result` OTel events.
+        otel_extra_attributes: Extra attributes included on every emitted OTel event.
+            Pass `None` to clear.
     """
     if not isinstance(default_sink, Unset):
         DEFAULT_CONFIG.default_sink = default_sink
@@ -804,6 +809,10 @@ def configure(
         DEFAULT_CONFIG.on_sampling_error = on_sampling_error
     if not isinstance(on_error, Unset):
         DEFAULT_CONFIG.on_error = on_error
+    if not isinstance(emit_otel_events, Unset):
+        DEFAULT_CONFIG.emit_otel_events = emit_otel_events
+    if not isinstance(otel_extra_attributes, Unset):
+        DEFAULT_CONFIG.otel_extra_attributes = otel_extra_attributes
 
 
 async def wait_for_evaluations(*, timeout: float = 30.0) -> None:

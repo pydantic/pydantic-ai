@@ -26,7 +26,12 @@ with try_import() as imports_successful:
     )
     from pydantic_evals.online_capability import OnlineEvaluation
 
+with try_import() as logfire_import_successful:
+    from logfire.testing import CaptureLogfire
+
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')
+
+needs_logfire = pytest.mark.skipif(not logfire_import_successful(), reason='logfire not installed')
 
 
 if TYPE_CHECKING or imports_successful():
@@ -130,8 +135,9 @@ async def test_evaluator_context_fields():
     assert ctx.metadata['env'] == 'test'
 
 
+@needs_logfire
 @pytest.mark.anyio
-async def test_usage_metrics(capfire: Any):
+async def test_usage_metrics(capfire: CaptureLogfire):
     """Span tree metrics are extracted into EvaluatorContext when instrumented."""
     collector = Collector()
     config = OnlineEvalConfig(default_sink=collector)
@@ -428,8 +434,9 @@ async def test_iter_dispatches_after_context_exit():
     assert ctx.output == 'success (no tool calls)'
 
 
+@needs_logfire
 @pytest.mark.anyio
-async def test_span_reference_with_logfire(capfire: Any):
+async def test_span_reference_with_logfire(capfire: CaptureLogfire):
     """OnlineEvaluation produces a valid SpanReference when logfire is configured."""
     collector = SpanCollector()
     config = OnlineEvalConfig(default_sink=collector)
