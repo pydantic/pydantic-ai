@@ -1735,9 +1735,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             part_provider_details['annotations'] = responses_output_text_annotations_ta.dump_python(
                                 list(content.annotations), warnings=False
                             )
+                        # Some OpenAI-compatible gateways (e.g. Bifrost) return text=null;
+                        # coalesce to '' so the part (and its ID) is preserved for round-tripping.
                         items.append(
                             TextPart(
-                                content.text,
+                                content.text or '',
                                 id=item.id,
                                 provider_name=self.system,
                                 provider_details=part_provider_details,
@@ -2983,13 +2985,15 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         _annotations_by_item.setdefault(chunk.item_id, []).append(chunk.annotation)
 
                 elif isinstance(chunk, responses.ResponseTextDeltaEvent):
-                    for event in self._parts_manager.handle_text_delta(
-                        vendor_part_id=chunk.item_id,
-                        content=chunk.delta,
-                        id=chunk.item_id,
-                        provider_name=self.provider_name,
-                    ):
-                        yield event
+                    # Guard against delta=null from OpenAI-compatible gateways (e.g. Bifrost).
+                    if chunk.delta is not None:  # pyright: ignore[reportUnnecessaryComparison]
+                        for event in self._parts_manager.handle_text_delta(
+                            vendor_part_id=chunk.item_id,
+                            content=chunk.delta,
+                            id=chunk.item_id,
+                            provider_name=self.provider_name,
+                        ):
+                            yield event
 
                 elif isinstance(chunk, responses.ResponseTextDoneEvent):
                     # Add annotations to provider_details if available

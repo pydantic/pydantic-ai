@@ -58,6 +58,7 @@ from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, respons
 
 with try_import() as imports_successful:
     from openai import AsyncOpenAI
+    from openai.types import responses as resp
     from openai.types.responses import ResponseFunctionWebSearch
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
     from openai.types.responses.response_output_refusal import ResponseOutputRefusal
@@ -10095,8 +10096,6 @@ async def test_openai_responses_refusal_non_streaming(allow_model_requests: None
 
 async def test_openai_responses_refusal_streaming(allow_model_requests: None):
     """Test that ResponseRefusalDeltaEvent/DoneEvent in streaming triggers ContentFilterError."""
-    from openai.types import responses as resp
-
     base_response = resp.Response(
         id='resp_001',
         model='gpt-4o',
@@ -10168,6 +10167,181 @@ async def test_openai_responses_refusal_streaming(allow_model_requests: None):
     assert response_msg['parts'] == []
     assert response_msg['finish_reason'] == 'content_filter'
     assert response_msg['provider_details']['refusal'] == "I can't help with that."
+
+
+async def test_openai_responses_null_text(allow_model_requests: None):
+    """Test that ResponseOutputText with text=null (from gateways like Bifrost) is handled gracefully."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_001',
+                content=cast(
+                    list[Content],
+                    [
+                        ResponseOutputText.model_construct(text=None, type='output_text', annotations=[]),
+                        ResponseOutputText(text='Hello', type='output_text', annotations=[]),
+                    ],
+                ),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    result = await agent.run('Hello')
+    assert result.output == snapshot('Hello')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content='', id='msg_001', provider_name='openai'),
+                    TextPart(content='Hello', id='msg_001', provider_name='openai'),
+                ],
+                usage=RequestUsage(),
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
+                provider_response_id='123',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_null_text_stream(allow_model_requests: None):
+    """Test that ResponseTextDeltaEvent with delta=null (from gateways like Bifrost) is handled gracefully."""
+    base_response = resp.Response(
+        id='resp_001',
+        model='gpt-4o',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseInProgressEvent(response=base_response, type='response.in_progress', sequence_number=1),
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage(
+                id='msg_001',
+                content=[],
+                role='assistant',
+                status='in_progress',
+                type='message',
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=2,
+        ),
+        resp.ResponseContentPartAddedEvent(
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            part=resp.ResponseOutputText(text='', type='output_text', annotations=[]),
+            type='response.content_part.added',
+            sequence_number=3,
+        ),
+        resp.ResponseTextDeltaEvent.model_construct(
+            content_index=0,
+            delta=None,
+            item_id='msg_001',
+            output_index=0,
+            type='response.output_text.delta',
+            sequence_number=4,
+            logprobs=[],
+        ),
+        resp.ResponseTextDeltaEvent(
+            content_index=0,
+            delta='Hello!',
+            item_id='msg_001',
+            output_index=0,
+            type='response.output_text.delta',
+            sequence_number=5,
+            logprobs=[],
+        ),
+        resp.ResponseTextDoneEvent(
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            text='Hello!',
+            type='response.output_text.done',
+            sequence_number=6,
+            logprobs=[],
+        ),
+        resp.ResponseOutputItemDoneEvent(
+            item=ResponseOutputMessage(
+                id='msg_001',
+                content=cast(list[Content], [ResponseOutputText(text='Hello!', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+            output_index=0,
+            type='response.output_item.done',
+            sequence_number=7,
+        ),
+        resp.ResponseCompletedEvent(
+            response=base_response.model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=8,
+        ),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    async with agent.run_stream('Hello') as result:
+        output = await result.get_output()
+    assert output == snapshot('Hello!')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Hello!', id='msg_001', provider_name='openai')],
+                usage=RequestUsage(),
+                model_name='gpt-4o',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'finish_reason': 'completed',
+                },
+                provider_response_id='resp_001',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_openai_responses_text_content_input(allow_model_requests: None, openai_api_key: str):
