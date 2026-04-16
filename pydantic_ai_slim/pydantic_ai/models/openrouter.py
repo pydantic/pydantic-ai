@@ -438,10 +438,9 @@ class _OpenRouterChoice(chat_completion.Choice):
 class _OpenRouterCostDetails:
     """OpenRouter specific cost details."""
 
+    upstream_inference_prompt_cost: float | None = None
+    upstream_inference_completions_cost: float | None = None
     upstream_inference_cost: float | None = None
-
-    # TODO rework fields, tests/models/cassettes/test_openrouter/test_openrouter_google_nested_schema.yaml
-    # shows an `upstream_inference_completions_cost` field as well
 
 
 class _OpenRouterPromptTokenDetails(completion_usage.PromptTokensDetails):
@@ -525,6 +524,8 @@ def _map_openrouter_provider_details(
             provider_details['cost'] = cost
 
         if cost_details := usage.cost_details:
+            provider_details['upstream_inference_prompt_cost'] = cost_details.upstream_inference_prompt_cost
+            provider_details['upstream_inference_completions_cost'] = cost_details.upstream_inference_completions_cost
             provider_details['upstream_inference_cost'] = cost_details.upstream_inference_cost
 
         if (is_byok := usage.is_byok) is not None:

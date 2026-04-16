@@ -495,7 +495,7 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
 
     assert isinstance(last_message, ModelResponse)
     assert last_message.provider_details is not None
-    for key in ['cost', 'upstream_inference_cost', 'is_byok']:
+    for key in ['cost', 'upstream_inference_cost', 'upstream_inference_prompt_cost', 'upstream_inference_completions_cost', 'is_byok']:
         assert key in last_message.provider_details
 
 
