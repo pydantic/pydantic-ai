@@ -65,7 +65,15 @@ from ..parts_from_messages import part_types_from_messages
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from anthropic import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncAnthropic, omit as OMIT
+    from anthropic import (
+        NOT_GIVEN,
+        APIConnectionError,
+        APIStatusError,
+        AsyncAnthropic,
+        AsyncAnthropicBedrock,
+        AsyncAnthropicVertex,
+        omit as OMIT,
+    )
     from anthropic.lib.tools import BetaAbstractMemoryTool
     from anthropic.resources.beta import AsyncBeta
     from anthropic.types.beta import (
@@ -497,17 +505,17 @@ def test_build_cache_control_includes_ttl():
     ],
 )
 @pytest.mark.parametrize(
-    'client_cls_name,base_url',
+    'client_cls,base_url',
     [
-        pytest.param('AsyncAnthropicBedrock', 'https://bedrock.amazonaws.com', id='bedrock'),
-        pytest.param('AsyncAnthropicVertex', 'https://us-central1-aiplatform.googleapis.com', id='vertex'),
+        pytest.param(AsyncAnthropicBedrock, 'https://bedrock.amazonaws.com', id='bedrock'),
+        pytest.param(AsyncAnthropicVertex, 'https://us-central1-aiplatform.googleapis.com', id='vertex'),
     ],
 )
 async def test_anthropic_cache_fallback_on_unsupported_clients(
     allow_model_requests: None,
     cache_value: bool | Literal['1h'],
     expected_ttl: str,
-    client_cls_name: str,
+    client_cls: type[AsyncAnthropicBedrock] | type[AsyncAnthropicVertex],
     base_url: str,
 ):
     """Test that anthropic_cache falls back to per-block caching on Bedrock and Vertex.
@@ -517,13 +525,10 @@ async def test_anthropic_cache_fallback_on_unsupported_clients(
     """
     from unittest.mock import AsyncMock, MagicMock
 
-    import anthropic
-
-    client_cls = getattr(anthropic, client_cls_name)
     c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
 
     mock_client = MagicMock()
-    mock_client.__class__ = client_cls
+    mock_client.__class__ = client_cls  # pyright: ignore[reportAttributeAccessIssue]
     mock_client.base_url = base_url
     mock_client.beta.messages.create = AsyncMock(return_value=c)
 
@@ -534,7 +539,7 @@ async def test_anthropic_cache_fallback_on_unsupported_clients(
     assert result.output == 'Response'
 
     call_kwargs = mock_client.beta.messages.create.call_args.kwargs
-    assert call_kwargs['cache_control'] is anthropic.omit
+    assert call_kwargs['cache_control'] is OMIT
     last_user_msg = call_kwargs['messages'][-1]
     content = last_user_msg['content']
     assert content[-1]['cache_control'] == {'type': 'ephemeral', 'ttl': expected_ttl}

@@ -506,6 +506,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 warnings.warn(
                     f'Sampling parameters {dropped} are not supported by Claude Opus 4.7. These settings will be ignored.',
                     UserWarning,
+                    stacklevel=2,
                 )
 
         for setting in _ANTHROPIC_SAMPLING_PARAMS:
@@ -1276,6 +1277,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             warnings.warn(
                 '`anthropic_cache_messages` is deprecated, use `anthropic_cache` instead',
                 DeprecationWarning,
+                stacklevel=2,
             )
             auto_cache = cache_messages
 
