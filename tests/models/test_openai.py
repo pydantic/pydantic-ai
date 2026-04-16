@@ -29,9 +29,12 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     ModelRetry,
+    PartDeltaEvent,
+    PartEndEvent,
     RetryPromptPart,
     TextContent,
     TextPart,
+    TextPartDelta,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
@@ -2966,6 +2969,44 @@ async def test_openai_instructions_with_responses_logprobs(allow_model_requests:
         },
         {'token': '.', 'logprob': -0.0, 'bytes': [46], 'top_logprobs': []},
     ]
+
+
+async def test_openai_instructions_with_responses_logprobs_streaming(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel(
+        'gpt-4o-mini',
+        provider=OpenAIProvider(api_key=openai_api_key),
+    )
+    agent = Agent(m, instructions='You are a helpful assistant.')
+    events = [
+        event
+        async for event in agent.run_stream_events(
+            'What is the capital of Minas Gerais?',
+            model_settings=OpenAIResponsesModelSettings(openai_logprobs=True),
+        )
+    ]
+    logprob_events = [
+        event
+        for event in events
+        if isinstance(event, PartDeltaEvent)
+        and isinstance(event.delta, TextPartDelta)
+        and event.delta.provider_details
+        and 'logprobs' in event.delta.provider_details
+    ]
+    assert len(logprob_events) > 0
+    first_logprob = cast(Any, logprob_events[0].delta).provider_details['logprobs']
+    assert isinstance(first_logprob, list)
+    assert all(isinstance(lp, dict) and 'token' in lp and 'logprob' in lp for lp in cast(list[Any], first_logprob))
+
+    part_end_events = [
+        event
+        for event in events
+        if isinstance(event, PartEndEvent)
+        and isinstance(event.part, TextPart)
+        and event.part.provider_details
+        and 'logprobs' in event.part.provider_details
+    ]
+    assert len(part_end_events) == 1
+    assert cast(Any, part_end_events[0].part).provider_details['logprobs'] == first_logprob
 
 
 async def test_openai_web_search_tool_model_not_supported(allow_model_requests: None, openai_api_key: str):

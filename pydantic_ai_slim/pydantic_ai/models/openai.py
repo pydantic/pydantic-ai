@@ -415,7 +415,13 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     """Whether or not to store the output of this request in OpenAI's systems.
 
     If `False`, OpenAI will not store the request for its own internal review or training.
-    See [OpenAI API reference](https://platform.openai.com/docs/api-reference/chat/create#chat-create-store)."""
+    See [OpenAI API reference](https://platform.openai.com/docs/api-reference/chat/create#chat-create-store).
+
+    When used with `OpenAIResponsesModel`, stored responses appear in OpenAI's dashboard and
+    can be referenced via [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id].
+    Pair this with `openai_previous_response_id='auto'` to avoid storing duplicate copies of
+    the conversation history across retries and subsequent requests within the same run.
+    """
 
     openai_user: str
     """A unique identifier representing the end-user, which can help OpenAI monitor and detect abuse.
@@ -518,12 +524,23 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """
 
     openai_previous_response_id: Literal['auto'] | str
-    """The ID of a previous response from the model to use as the starting point for a continued conversation.
+    """Reference a prior OpenAI response to continue a conversation server-side, omitting already-stored messages from the input.
 
-    When set to `'auto'`, the request automatically uses the most recent
-    `provider_response_id` from the message history and omits earlier messages.
+    - `'auto'`: chain to the most recent `provider_response_id` in the message history.
+      If the history contains no such response, no `previous_response_id` is sent.
+    - A concrete response ID string: use it as the seed for the first request in the run
+      (e.g. to continue from a prior turn). On subsequent in-run requests (retries,
+      tool-call continuations), the most recent `provider_response_id` from the message
+      history takes precedence so the chain extends correctly without re-sending messages
+      that are already server-side.
 
-    This enables the model to use server-side conversation state and faithfully reference previous reasoning.
+    In both cases, messages that precede the chosen response in the history are omitted
+    from the input, since OpenAI reconstructs them from server-side state.
+
+    Requires the referenced response to have been stored (see
+    [`openai_store`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store],
+    which defaults to `True` on OpenAI's side). Not compatible with Zero Data Retention.
+
     See the [OpenAI Responses API documentation](https://platform.openai.com/docs/guides/reasoning#keeping-reasoning-items-in-context)
     for more information.
     """
@@ -1617,11 +1634,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         instructions_override: str | None = None,
     ) -> responses.CompactedResponse | ModelResponse:
         """Call the OpenAI Responses compaction endpoint."""
-        previous_response_id = model_settings.get('openai_previous_response_id')
-        if previous_response_id == 'auto':
-            previous_response_id, messages = self._get_previous_response_id_and_new_messages(
-                messages, allow_no_new_messages=True
-            )
+        previous_response_id, messages = self._resolve_previous_response_id(
+            model_settings.get('openai_previous_response_id'), messages, allow_no_new_messages=True
+        )
 
         instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
         if instructions_override is not None:
@@ -1743,9 +1758,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             part_provider_details['annotations'] = responses_output_text_annotations_ta.dump_python(
                                 list(content.annotations), warnings=False
                             )
+                        # Some OpenAI-compatible gateways (e.g. Bifrost) return text=null;
+                        # coalesce to '' so the part (and its ID) is preserved for round-tripping.
                         items.append(
                             TextPart(
-                                content.text,
+                                content.text or '',
                                 id=item.id,
                                 provider_name=self.system,
                                 provider_details=part_provider_details,
@@ -1891,9 +1908,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         else:
             tool_choice = 'auto'
 
-        previous_response_id = model_settings.get('openai_previous_response_id')
-        if previous_response_id == 'auto':
-            previous_response_id, messages = self._get_previous_response_id_and_new_messages(messages)
+        previous_response_id, messages = self._resolve_previous_response_id(
+            model_settings.get('openai_previous_response_id'), messages
+        )
 
         instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
         reasoning = self._translate_thinking(model_settings, model_request_parameters)
@@ -2112,14 +2129,48 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             ),
         }
 
+    def _resolve_previous_response_id(
+        self,
+        setting: str | None,
+        messages: list[ModelMessage],
+        *,
+        allow_no_new_messages: bool = False,
+    ) -> tuple[str | None, list[ModelMessage]]:
+        # Resolve the effective `previous_response_id` and trim already-stored messages.
+        #
+        # A concrete ID in `setting` acts as a seed for the first request in a run (to
+        # continue from a prior turn's stored response). On subsequent in-run requests
+        # (retries, tool-call continuations), the most recent `provider_response_id`
+        # from the message history takes precedence, so we chain to the latest stored
+        # response instead of re-sending messages that are already server-side.
+        #
+        # A compaction response in the tail is a hard chain boundary even with a
+        # concrete seed: crossing it would re-inject the context that compaction was
+        # meant to replace.
+        if setting is None:
+            return None, messages
+        auto_id, trimmed = self._get_previous_response_id_and_new_messages(
+            messages, allow_no_new_messages=allow_no_new_messages
+        )
+        if auto_id is not None:
+            return auto_id, trimmed
+        if setting == 'auto' or self._is_at_compaction_boundary(messages):
+            return None, messages
+        return setting, messages
+
+    def _is_at_compaction_boundary(self, messages: list[ModelMessage]) -> bool:
+        for m in reversed(messages):
+            if isinstance(m, ModelResponse) and m.provider_name == self.system:
+                return bool(m.provider_details and m.provider_details.get('compaction'))
+        return False
+
     def _get_previous_response_id_and_new_messages(
         self, messages: list[ModelMessage], *, allow_no_new_messages: bool = False
     ) -> tuple[str | None, list[ModelMessage]]:
-        # When `openai_previous_response_id` is set to 'auto', the most recent
-        # `provider_response_id` from the message history is selected and all
-        # earlier messages are omitted. This allows the OpenAI SDK to reuse
-        # server-side history for efficiency. The returned tuple contains the
-        # `previous_response_id` (if found) and the trimmed list of messages.
+        # Find the most recent `provider_response_id` from messages produced by this
+        # provider, and return it along with the messages that came after it (which
+        # still need to be sent as new input). When nothing suitable is found, returns
+        # `(None, messages)` with the full list unchanged.
         previous_response_id = None
         trimmed_messages: list[ModelMessage] = []
         for m in reversed(messages):
@@ -3008,13 +3059,15 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         _annotations_by_item.setdefault(chunk.item_id, []).append(chunk.annotation)
 
                 elif isinstance(chunk, responses.ResponseTextDeltaEvent):
-                    for event in self._parts_manager.handle_text_delta(
-                        vendor_part_id=chunk.item_id,
-                        content=chunk.delta,
-                        id=chunk.item_id,
-                        provider_name=self.provider_name,
-                    ):
-                        yield event
+                    # Guard against delta=null from OpenAI-compatible gateways (e.g. Bifrost).
+                    if chunk.delta is not None:  # pyright: ignore[reportUnnecessaryComparison]
+                        for event in self._parts_manager.handle_text_delta(
+                            vendor_part_id=chunk.item_id,
+                            content=chunk.delta,
+                            id=chunk.item_id,
+                            provider_name=self.provider_name,
+                        ):
+                            yield event
 
                 elif isinstance(chunk, responses.ResponseTextDoneEvent):
                     # Add annotations to provider_details if available
@@ -3024,7 +3077,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         provider_details['annotations'] = responses_output_text_annotations_ta.dump_python(
                             list(annotations), warnings=False
                         )
-
+                    if chunk.logprobs:
+                        provider_details['logprobs'] = _map_logprobs(chunk.logprobs)
                     if provider_details:
                         for event in self._parts_manager.handle_text_delta(
                             vendor_part_id=chunk.item_id,
@@ -3404,15 +3458,23 @@ def _make_raw_content_updater(delta: str, index: int) -> Callable[[dict[str, Any
 # Convert logprobs to a serializable format
 def _map_logprobs(
     logprobs: list[chat_completion_token_logprob.ChatCompletionTokenLogprob]
-    | list[responses.response_output_text.Logprob],
+    | list[responses.response_output_text.Logprob]
+    | list[responses.response_text_done_event.Logprob],
 ) -> list[dict[str, Any]]:
     return [
         {
             'token': lp.token,
-            'bytes': lp.bytes,
+            'bytes': lp.bytes if not isinstance(lp, responses.response_text_done_event.Logprob) else None,
             'logprob': lp.logprob,
             'top_logprobs': [
-                {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
+                {
+                    'token': tlp.token,
+                    'bytes': tlp.bytes
+                    if not isinstance(tlp, responses.response_text_done_event.LogprobTopLogprob)
+                    else None,
+                    'logprob': tlp.logprob,
+                }
+                for tlp in (lp.top_logprobs or [])
             ],
         }
         for lp in logprobs

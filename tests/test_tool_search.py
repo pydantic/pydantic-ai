@@ -487,6 +487,96 @@ async def test_tool_search_toolset_search_matches_description():
     assert rv[0]['name'] == 'crypto_price'
 
 
+async def test_tool_search_toolset_prefers_specific_term_matches():
+    toolset: FunctionToolset[None] = FunctionToolset()
+
+    @toolset.tool_plain(defer_loading=True)
+    def github_get_me() -> str:  # pragma: no cover
+        """Get the authenticated GitHub profile."""
+        return 'me'
+
+    @toolset.tool_plain(defer_loading=True)
+    def github_create_gist() -> str:  # pragma: no cover
+        """Create a new GitHub gist."""
+        return 'gist'
+
+    searchable = ToolSearchToolset(wrapped=toolset)
+    ctx = _build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+    search_tool = tools[_SEARCH_TOOLS_NAME]
+
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'github profile'}, ctx, search_tool)
+    assert result == snapshot(
+        ToolReturn(
+            return_value=[
+                {'name': 'github_get_me', 'description': 'Get the authenticated GitHub profile.'},
+                {'name': 'github_create_gist', 'description': 'Create a new GitHub gist.'},
+            ],
+            metadata={'discovered_tools': ['github_get_me', 'github_create_gist']},
+        )
+    )
+
+
+async def test_tool_search_toolset_keeps_lower_scoring_matches_after_top_hits():
+    toolset: FunctionToolset[None] = FunctionToolset()
+
+    @toolset.tool_plain(defer_loading=True)
+    def stock_price() -> str:  # pragma: no cover
+        """Get the current stock price."""
+        return 'stock'
+
+    @toolset.tool_plain(defer_loading=True)
+    def crypto_price() -> str:  # pragma: no cover
+        """Get the current cryptocurrency price."""
+        return 'crypto'
+
+    searchable = ToolSearchToolset(wrapped=toolset)
+    ctx = _build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+    search_tool = tools[_SEARCH_TOOLS_NAME]
+
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'stock price'}, ctx, search_tool)
+    assert result == snapshot(
+        ToolReturn(
+            return_value=[
+                {'name': 'stock_price', 'description': 'Get the current stock price.'},
+                {'name': 'crypto_price', 'description': 'Get the current cryptocurrency price.'},
+            ],
+            metadata={'discovered_tools': ['stock_price', 'crypto_price']},
+        )
+    )
+
+
+async def test_tool_search_toolset_does_not_match_substrings_inside_words():
+    toolset: FunctionToolset[None] = FunctionToolset()
+
+    @toolset.tool_plain(defer_loading=True)
+    def github_get_me() -> str:  # pragma: no cover
+        """Get my GitHub profile."""
+        return 'me'
+
+    @toolset.tool_plain(defer_loading=True)
+    def github_add_comment_to_pending_review() -> str:  # pragma: no cover
+        """Add a pending review comment on GitHub."""
+        return 'comment'
+
+    searchable = ToolSearchToolset(wrapped=toolset)
+    ctx = _build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+    search_tool = tools[_SEARCH_TOOLS_NAME]
+
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'get me'}, ctx, search_tool)
+    assert result == snapshot(
+        ToolReturn(
+            return_value=[{'name': 'github_get_me', 'description': 'Get my GitHub profile.'}],
+            metadata={'discovered_tools': ['github_get_me']},
+        )
+    )
+
+
 async def test_tool_search_toolset_search_returns_no_matches():
     """Test that search returns empty list when no matches."""
     toolset = _create_function_toolset()
@@ -513,6 +603,20 @@ async def test_tool_search_toolset_search_empty_query():
 
     with pytest.raises(ModelRetry, match='Please provide search keywords.'):
         await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': ''}, ctx, search_tool)
+
+
+@pytest.mark.parametrize('keywords', ['   ', '---', '!!!', '...'])
+async def test_tool_search_toolset_search_non_tokenizable_query(keywords: str):
+    """Queries that tokenize to an empty set must retry, not match every tool."""
+    toolset = _create_function_toolset()
+    searchable = ToolSearchToolset(wrapped=toolset)
+    ctx = _build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+    search_tool = tools[_SEARCH_TOOLS_NAME]
+
+    with pytest.raises(ModelRetry, match='Please provide search keywords.'):
+        await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': keywords}, ctx, search_tool)
 
 
 async def test_tool_search_toolset_max_results():
@@ -564,6 +668,29 @@ async def test_tool_search_toolset_discovered_tools_available():
 
     assert 'calculate_mortgage' in tool_names
     assert 'stock_price' not in tool_names
+
+
+async def test_tool_search_toolset_omits_search_tool_once_all_deferred_tools_are_discovered():
+    toolset = _create_function_toolset()
+    searchable = ToolSearchToolset(wrapped=toolset)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name=_SEARCH_TOOLS_NAME,
+                    content={'message': 'Found all deferred tools.', 'tools': []},
+                    metadata={_DISCOVERED_TOOLS_METADATA_KEY: ['calculate_mortgage', 'stock_price', 'crypto_price']},
+                )
+            ]
+        )
+    ]
+    ctx = _build_run_context(None, messages=messages)
+
+    tools = await searchable.get_tools(ctx)
+    tool_names = list(tools.keys())
+
+    assert tool_names == snapshot(['get_weather', 'get_time', 'calculate_mortgage', 'stock_price', 'crypto_price'])
 
 
 async def test_tool_search_toolset_reserved_name_collision():
