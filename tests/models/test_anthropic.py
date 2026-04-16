@@ -125,6 +125,9 @@ with try_import() as imports_successful:
     MockAnthropicMessage = BetaMessage | Exception
     MockRawMessageStreamEvent = BetaRawMessageStreamEvent | Exception
 
+if not imports_successful():  # pragma: lax no cover
+    AsyncAnthropicBedrock = AsyncAnthropicVertex = None
+
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
     pytest.mark.anyio,
@@ -515,7 +518,7 @@ async def test_anthropic_cache_fallback_on_unsupported_clients(
     allow_model_requests: None,
     cache_value: bool | Literal['1h'],
     expected_ttl: str,
-    client_cls: type[AsyncAnthropicBedrock] | type[AsyncAnthropicVertex],
+    client_cls: type[Any],
     base_url: str,
 ):
     """Test that anthropic_cache falls back to per-block caching on Bedrock and Vertex.
@@ -528,7 +531,7 @@ async def test_anthropic_cache_fallback_on_unsupported_clients(
     c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
 
     mock_client = MagicMock()
-    mock_client.__class__ = client_cls  # pyright: ignore[reportAttributeAccessIssue]
+    mock_client.__class__ = client_cls
     mock_client.base_url = base_url
     mock_client.beta.messages.create = AsyncMock(return_value=c)
 
