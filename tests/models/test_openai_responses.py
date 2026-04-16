@@ -10671,7 +10671,12 @@ async def test_openai_responses_compact_messages(allow_model_requests: None, ope
 
 
 async def test_openai_responses_compact_stateful_mode_stream(allow_model_requests: None, openai_api_key: str):
-    """Streaming variant: `ResponseCompactionItem` is handled in `_get_event_iterator`."""
+    """Streaming variant: `ResponseCompactionItem` is handled in `_get_event_iterator`.
+
+    Validates that a `PartStartEvent` is emitted for the `CompactionPart` during streaming
+    (on both the "added" and "done" events) so UIs can render compaction progress.
+    """
+    from pydantic_ai import AgentRunResultEvent
     from pydantic_ai.models.openai import OpenAICompaction
 
     model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
@@ -10681,6 +10686,7 @@ async def test_openai_responses_compact_stateful_mode_stream(allow_model_request
     )
 
     message_history: list[Any] = []
+    all_events: list[Any] = []
     last_output = ''
     for question in [
         'Tell me a 300-word story about a fox exploring a forest. Be very descriptive.',
@@ -10688,12 +10694,22 @@ async def test_openai_responses_compact_stateful_mode_stream(allow_model_request
         'Now a 300-word story about a bear in a cave. Be very descriptive.',
         'What is 2+2?',
     ]:
-        async with agent.run_stream(question, message_history=message_history) as result:
-            last_output = await result.get_output()
-        message_history = result.all_messages()
+        events = [event async for event in agent.run_stream_events(question, message_history=message_history)]
+        all_events.extend(events)
+        final = next(e for e in reversed(events) if isinstance(e, AgentRunResultEvent))
+        last_output = final.result.output
+        message_history = final.result.all_messages()
 
     assert '4' in last_output
 
+    # Verify PartStartEvent was emitted for CompactionPart during streaming
+    compaction_start_events = [
+        e for e in all_events if isinstance(e, PartStartEvent) and isinstance(e.part, CompactionPart)
+    ]
+    assert compaction_start_events, 'expected PartStartEvent for CompactionPart during streaming'
+    assert compaction_start_events[0].part.provider_name == 'openai'
+
+    # Verify final messages contain the CompactionPart with encrypted_content
     compaction_parts = [
         part
         for msg in message_history
