@@ -37,6 +37,16 @@ def _has_vcr_marker(decorator_list: list[ast.expr]) -> bool:
     return False
 
 
+def _has_cassette_marker(decorator_list: list[ast.expr]) -> bool:
+    """Check if a decorator list contains pytest.mark.ws_cassette (with or without parens)."""
+    for dec in decorator_list:
+        if isinstance(dec, ast.Attribute) and dec.attr == 'ws_cassette':
+            return True
+        if isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute) and dec.func.attr == 'ws_cassette':
+            return True
+    return False
+
+
 def _has_module_vcr_marker(tree: ast.Module) -> bool:
     """Check if the module has pytestmark = [..., pytest.mark.vcr, ...]."""
     for node in ast.iter_child_nodes(tree):
@@ -50,7 +60,7 @@ def _has_module_vcr_marker(tree: ast.Module) -> bool:
 
 
 def _collect_vcr_tests_from_file(path: Path) -> set[str]:
-    """Parse a Python test file and return cassette names for VCR-marked tests."""
+    """Parse a Python test file and return cassette names for VCR or ws_cassette-marked tests."""
     try:
         tree = ast.parse(path.read_text())
     except SyntaxError:
@@ -63,8 +73,7 @@ def _collect_vcr_tests_from_file(path: Path) -> set[str]:
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             if not node.name.startswith('test_'):
                 continue
-            if module_has_vcr or _has_vcr_marker(node.decorator_list):
-                # Parametrized tests get []  suffixes but cassettes use the base name
+            if module_has_vcr or _has_vcr_marker(node.decorator_list) or _has_cassette_marker(node.decorator_list):
                 cassette_names.add(_sanitize_cassette_name(node.name))
 
         elif isinstance(node, ast.ClassDef):
@@ -74,7 +83,7 @@ def _collect_vcr_tests_from_file(path: Path) -> set[str]:
                     continue
                 if not method.name.startswith('test_'):
                     continue
-                if module_has_vcr or class_has_vcr or _has_vcr_marker(method.decorator_list):
+                if module_has_vcr or class_has_vcr or _has_vcr_marker(method.decorator_list) or _has_cassette_marker(method.decorator_list):
                     cassette_names.add(_sanitize_cassette_name(f'{node.name}.{method.name}'))
 
     return cassette_names
