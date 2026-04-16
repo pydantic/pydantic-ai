@@ -691,7 +691,9 @@ class CachePoint:
 
     Supported by:
 
-    * Anthropic. See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information."""
+    * Anthropic — see https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information.
+    * Amazon Bedrock (Converse API) — see https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html for more information.
+    """
 
 
 UploadedFileProviderName: TypeAlias = Literal['anthropic', 'openai', 'google-gla', 'google-vertex', 'bedrock', 'xai']

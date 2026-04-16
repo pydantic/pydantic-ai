@@ -65,7 +65,7 @@ __all__ = (
 T = TypeVar('T')
 S = TypeVar('S')
 NoneType = type(None)
-EndStrategy = Literal['early', 'exhaustive']
+EndStrategy = Literal['early', 'graceful', 'exhaustive']
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
 
@@ -1038,6 +1038,19 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
                         raise exceptions.ContentFilterError(message, body=body)
 
+                    # If the output type allows None, an empty response is a valid result.
+                    if is_empty and output_schema.allows_none:
+                        run_context = _build_output_run_context(ctx)
+                        try:
+                            result_data = await _run_output_validators(ctx, cast(NodeRunEndT, None), run_context)
+                            self._next_node = self._handle_final_result(ctx, result.FinalResult(result_data), [])
+                        except ToolRetryError as e:
+                            ctx.state.increment_retries(ctx.deps.max_result_retries, error=e)
+                            self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
+                                _messages.ModelRequest(parts=[e.tool_retry])
+                            )
+                        return
+
                     # Try to recover text from a previous model response.
                     # This handles the case where the model returned text alongside tool calls
                     # (so the text was discarded in favor of executing the tools) and subsequently
@@ -1369,14 +1382,13 @@ async def process_tool_calls(  # noqa: C901
                 tool_call_id=call.tool_call_id,
             )
             output_parts.append(part)
-        # Early strategy is chosen and final result is already set
-        elif ctx.deps.end_strategy == 'early' and final_result:
+        # A final result is already set and this strategy skips remaining output tools
+        elif ctx.deps.end_strategy in ('early', 'graceful') and final_result:
             for event in _emit_skipped_output_tool(
                 call, 'Output tool not used - a final result was already processed.', output_parts, args_valid=None
             ):
                 yield event
-        # Early strategy is chosen and final result is not yet set
-        # Or exhaustive strategy is chosen
+        # No final result yet, or exhaustive strategy processes all output tools
         else:
             # Validate and execute the output tool call — unlike deferred tools,
             # output tools track retries and can be skipped if a final_result exists.
@@ -1445,7 +1457,7 @@ async def process_tool_calls(  # noqa: C901
             )
             output_parts.append(part)
 
-            # In both `early` and `exhaustive` modes, use the first output tool's result as the final result
+            # Use the first valid output tool's result as the final result
             if not final_result:
                 final_result = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
 

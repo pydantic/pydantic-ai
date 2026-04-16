@@ -22,6 +22,7 @@ from .builtin_tools import (
     WebFetchTool,
     WebSearchTool,
     WebSearchUserLocation,
+    XSearchTool,
 )
 from .concurrency import (
     AbstractConcurrencyLimiter,
@@ -291,6 +292,7 @@ __all__ = (
     'WebFetchTool',
     'WebSearchTool',
     'WebSearchUserLocation',
+    'XSearchTool',
     # output
     'ToolOutput',
     'NativeOutput',

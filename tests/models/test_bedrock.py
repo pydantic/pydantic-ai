@@ -2354,7 +2354,7 @@ async def test_bedrock_cache_messages_no_duplicate_with_explicit_cache_point(
     assert bedrock_messages[0]['content'] == snapshot(
         [
             {'text': 'Process this document:'},
-            {'cachePoint': {'type': 'default'}},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
             {
                 'document': {
                     'name': 'Document 1',
@@ -2391,7 +2391,7 @@ async def test_bedrock_cache_messages_no_duplicate_when_text_ends_with_cache_poi
     assert bedrock_messages[0]['content'] == snapshot(
         [
             {'text': 'Some text content'},
-            {'cachePoint': {'type': 'default'}},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
         ]
     )
 
@@ -2416,7 +2416,7 @@ async def test_bedrock_cache_point_before_binary_content(allow_model_requests: N
     assert bedrock_messages[0]['content'] == snapshot(
         [
             {'text': 'Process the attached text file. Return the answer only.'},
-            {'cachePoint': {'type': 'default'}},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
             {
                 'document': {
                     'name': 'Document 1',
@@ -2452,7 +2452,7 @@ async def test_bedrock_cache_point_with_multiple_trailing_documents(
     assert bedrock_messages[0]['content'] == snapshot(
         [
             {'text': 'Process these documents.'},
-            {'cachePoint': {'type': 'default'}},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
             {
                 'document': {
                     'name': 'Document 1',
@@ -2511,7 +2511,7 @@ async def test_bedrock_cache_point_with_mixed_content_and_trailing_documents(
                     'source': {'bytes': b'\x89PNG\r\n\x1a\n'},
                 }
             },
-            {'cachePoint': {'type': 'default'}},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
             {
                 'document': {
                     'name': 'Document 2',
@@ -2605,7 +2605,7 @@ async def test_bedrock_cache_point_multiple_markers_with_documents_no_back_to_ba
     assert bedrock_messages[0]['content'] == snapshot(
         [
             {'text': 'Analyze these:'},
-            {'cachePoint': {'type': 'default'}},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
             {'document': {'name': 'Document 1', 'format': 'txt', 'source': {'bytes': b'Doc 1'}}},
             {'document': {'name': 'Document 2', 'format': 'txt', 'source': {'bytes': b'Doc 2'}}},
         ]
@@ -2623,9 +2623,9 @@ async def test_bedrock_cache_point_multiple_markers(allow_model_requests: None, 
     assert bedrock_messages[0]['content'] == snapshot(
         [
             {'text': 'First chunk'},
-            {'cachePoint': {'type': 'default'}},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
             {'text': 'Second chunk'},
-            {'cachePoint': {'type': 'default'}},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
             {'text': 'Question'},
         ]
     )
@@ -2803,6 +2803,82 @@ async def test_bedrock_cache_messages(allow_model_requests: None, bedrock_provid
                 'content': [
                     {'text': 'User message to cache.'},
                     {'cachePoint': {'type': 'default'}},
+                ],
+            }
+        ]
+    )
+
+
+async def test_bedrock_cache_instructions_and_messages_with_explicit_ttl(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='System instructions to cache.'), UserPromptPart(content='Hi!')])
+    ]
+    system_prompt, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        BedrockModelSettings(bedrock_cache_instructions='1h', bedrock_cache_messages='1h'),
+    )
+    assert system_prompt == snapshot(
+        [
+            {'text': 'System instructions to cache.'},
+            {'cachePoint': {'type': 'default', 'ttl': '1h'}},
+        ]
+    )
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Hi!'},
+                    {'cachePoint': {'type': 'default', 'ttl': '1h'}},
+                ],
+            }
+        ]
+    )
+
+
+async def test_bedrock_cache_tool_definitions_with_explicit_ttl(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    model = BedrockConverseModel('anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='tool_one'),
+            ToolDefinition(name='tool_two'),
+        ]
+    )
+    params = model.customize_request_parameters(params)
+    tool_config = model._map_tool_config(  # pyright: ignore[reportPrivateUsage]
+        params,
+        BedrockModelSettings(bedrock_cache_tool_definitions='1h'),
+    )
+    assert tool_config and len(tool_config['tools']) == 3
+    assert tool_config['tools'][-1] == {'cachePoint': {'type': 'default', 'ttl': '1h'}}
+
+
+async def test_bedrock_manual_cache_point_with_explicit_ttl(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['Context to cache', CachePoint(ttl='1h'), 'Question'])])
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        BedrockModelSettings(),
+    )
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Context to cache'},
+                    {'cachePoint': {'type': 'default', 'ttl': '1h'}},
+                    {'text': 'Question'},
                 ],
             }
         ]

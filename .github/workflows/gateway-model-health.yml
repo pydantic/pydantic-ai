@@ -39,3 +39,28 @@ jobs:
 
       - name: Run gateway model catalog checks
         run: uv run pytest tests/providers/test_gateway_catalog.py -q --run-gateway-live
+
+      - name: Notify Slack on failure
+        if: failure() && !cancelled()
+        uses: slackapi/slack-github-action@af78098f536edbc4de71162a307590698245be95 # v3.0.1
+        with:
+          errors: true
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            text: ":x: Gateway model health failed in ${{ github.repository }} on ${{ github.ref_name }}."
+            blocks:
+              - type: section
+                text:
+                  type: mrkdwn
+                  text: ":x: *Gateway model health failed*"
+              - type: section
+                fields:
+                  - type: mrkdwn
+                    text: "*Repository*\n<${{ github.server_url }}/${{ github.repository }}|${{ github.repository }}>"
+                  - type: mrkdwn
+                    text: "*Trigger*\n${{ github.event_name }}"
+                  - type: mrkdwn
+                    text: "*Ref*\n`${{ github.ref_name }}`"
+                  - type: mrkdwn
+                    text: "*Run*\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View workflow run>"
