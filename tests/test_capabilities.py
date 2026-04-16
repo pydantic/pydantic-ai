@@ -8652,6 +8652,12 @@ class TestCompaction:
             )
             == {}
         )
+        # When user has other model settings but no `openai_context_management`,
+        # the capability's compaction entry is injected normally.
+        assert _resolve(
+            OpenAICompaction(token_threshold=50_000),
+            model_settings={'temperature': 0.5},
+        ) == {'openai_context_management': [{'type': 'compaction', 'compact_threshold': 50_000}]}
         # Stateless mode does not inject model settings
         assert OpenAICompaction(message_count_threshold=5).get_model_settings() is None
 

@@ -1778,6 +1778,19 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 if file_part:  # pragma: no branch
                     items.append(file_part)
                 items.append(return_part)
+            elif isinstance(item, ResponseCompactionItem):
+                # Stateful compaction: the server-side `context_management` configuration
+                # triggered a compaction and emitted this item alongside the regular output.
+                # We round-trip it via `CompactionPart` so subsequent requests can send the
+                # encrypted content back via the `input` array (see `_map_messages`).
+                items.append(
+                    CompactionPart(
+                        content=None,
+                        id=item.id,
+                        provider_name=self.system,
+                        provider_details=item.model_dump(),
+                    )
+                )
             elif isinstance(item, responses.ResponseComputerToolCall):  # pragma: no cover
                 # Pydantic AI doesn't yet support the ComputerUse built-in tool
                 pass
@@ -1802,19 +1815,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             elif isinstance(item, responses.response_output_item.McpApprovalRequest):  # pragma: no cover
                 # Pydantic AI doesn't yet support McpApprovalRequest (explicit tool usage approval)
                 pass
-            elif isinstance(item, ResponseCompactionItem):
-                # Stateful compaction: the server-side `context_management` configuration
-                # triggered a compaction and emitted this item alongside the regular output.
-                # We round-trip it via `CompactionPart` so subsequent requests can send the
-                # encrypted content back via the `input` array (see `_map_messages`).
-                items.append(
-                    CompactionPart(
-                        content=None,
-                        id=item.id,
-                        provider_name=self.system,
-                        provider_details=item.model_dump(),
-                    )
-                )
 
         finish_reason: FinishReason | None = None
         provider_details: dict[str, Any] = {}
