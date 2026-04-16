@@ -28,8 +28,6 @@ from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
-from pydantic_ai.models.google import GoogleModel
-from pydantic_ai.providers.google import GoogleProvider
 from pydantic_ai.usage import RequestUsage
 
 from ...conftest import IsDatetime, IsNow, IsStr
@@ -449,7 +447,9 @@ async def test_receive_history_from_another_provider(
     allow_model_requests: None, anthropic_api_key: str, gemini_api_key: str
 ):
     from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.providers.google import GoogleProvider
 
     anthropic_model = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
     google_model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key=gemini_api_key))
