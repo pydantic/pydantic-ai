@@ -3604,21 +3604,23 @@ async def test_anthropic_unified_thinking_opus_47_xhigh(allow_model_requests: No
     assert kwargs['output_config'] == {'effort': 'xhigh'}
 
 
-async def test_anthropic_explicit_effort_xhigh_passthrough(allow_model_requests: None):
-    responses = [
-        completion_message(
-            [BetaTextBlock(text='4', type='text')],
-            usage=BetaUsage(input_tokens=10, output_tokens=1),
-        ),
-    ]
-    mock_client = MockAnthropic.create_mock(responses)
-    m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+@pytest.mark.vcr()
+async def test_anthropic_explicit_effort_xhigh_unsupported_model_errors(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Any
+):
+    """Explicit `anthropic_effort='xhigh'` is passed through so unsupported models fail at the API."""
+    m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m, model_settings=AnthropicModelSettings(anthropic_effort='xhigh'))
 
-    await agent.run('What is 2+2?')
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('What is 2+2?')
 
-    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert kwargs['output_config'] == {'effort': 'xhigh'}
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.model_name == 'claude-opus-4-6'
+    assert len(vcr.requests) == 1
+    request_body = json.loads(vcr.requests[0].body)
+    assert request_body['model'] == 'claude-opus-4-6'
+    assert request_body['output_config'] == {'effort': 'xhigh'}
 
 
 async def test_anthropic_opus_47_drops_sampling_settings(allow_model_requests: None):
