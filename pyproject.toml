@@ -300,6 +300,7 @@ omit = [
     "tests/test_prefect.py",
     "tests/models/xai_proto_cassettes.py", # dev-only helpers for recording/replaying xAI gRPC protobuf cassettes
     "tests/_inline_snapshot.py",  # test utility wrapper; branches depend on CLI flags
+    "tests/models/google/test_code_execution.py",  # placeholder file kept skipped until Google code execution cassettes are added
     "tests/providers/test_gateway_catalog.py",  # live gateway catalog smoke test; execution depends on opt-in flag and credentials
 ]
 branch = true

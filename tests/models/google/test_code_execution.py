@@ -49,7 +49,7 @@ pytestmark = [
 ]
 
 
-async def test_code_execution_stream(
+async def test_code_execution_stream(  # pragma: no cover
     allow_model_requests: None,
     google_model: GoogleModelFactory,
 ):
@@ -304,7 +304,7 @@ print(result)\
     )
 
 
-async def test_code_execution(allow_model_requests: None, google_model: GoogleModelFactory):
+async def test_code_execution(allow_model_requests: None, google_model: GoogleModelFactory):  # pragma: no cover
     m = google_model('gemini-3-flash-preview')
     agent = Agent(m, instructions='You are a helpful chatbot.', builtin_tools=[CodeExecutionTool()])
 
@@ -443,7 +443,7 @@ print(f"Tomorrow is {tomorrow.strftime('%A, %B %d, %Y')}.")
     )
 
 
-async def test_receive_history_from_another_provider(
+async def test_receive_history_from_another_provider(  # pragma: no cover
     allow_model_requests: None, anthropic_api_key: str, gemini_api_key: str
 ):
     from pydantic_ai.models.anthropic import AnthropicModel

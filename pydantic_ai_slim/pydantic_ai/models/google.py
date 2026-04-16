@@ -1190,7 +1190,7 @@ class GeminiStreamedResponse(StreamedResponse):
                         part_obj = self._handle_executable_code_streaming(part.executable_code)
                         part_obj.provider_details = provider_details
                         yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=part_obj)
-                    elif part.code_execution_result is not None:
+                    elif part.code_execution_result is not None:  # pragma: no cover
                         part = self._map_code_execution_result(part.code_execution_result)
                         part.provider_details = provider_details
                         yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=part)
@@ -1238,7 +1238,9 @@ class GeminiStreamedResponse(StreamedResponse):
             return part
         return None  # pragma: no cover
 
-    def _map_code_execution_result(self, code_execution_result: CodeExecutionResult) -> BuiltinToolReturnPart:
+    def _map_code_execution_result(
+        self, code_execution_result: CodeExecutionResult
+    ) -> BuiltinToolReturnPart:  # pragma: no cover
         """Map code execution result to a BuiltinToolReturnPart using instance state."""
         assert self._code_execution_tool_call_id is not None
         return _map_code_execution_result(code_execution_result, self.provider_name, self._code_execution_tool_call_id)
@@ -1263,8 +1265,10 @@ class GeminiStreamedResponse(StreamedResponse):
                 args={'query': file_search_query},
             )
 
-        self._code_execution_tool_call_id = _utils.generate_tool_call_id()
-        return _map_executable_code(executable_code, self.provider_name, self._code_execution_tool_call_id)
+        self._code_execution_tool_call_id = _utils.generate_tool_call_id()  # pragma: no cover
+        return _map_executable_code(
+            executable_code, self.provider_name, self._code_execution_tool_call_id
+        )  # pragma: no cover
 
     def _extract_file_search_query(self, code: str) -> str | None:
         """Extract the query from file_search.query() executable code.
