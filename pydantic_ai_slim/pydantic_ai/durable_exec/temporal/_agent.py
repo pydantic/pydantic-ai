@@ -772,11 +772,27 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             print(events)
             '''
             [
+                ModelResponseStartEvent(
+                    response=ModelResponse(
+                        parts=[],
+                        usage=RequestUsage(input_tokens=50),
+                        model_name='gpt-5.2',
+                        timestamp=datetime.datetime(...),
+                    )
+                ),
                 PartStartEvent(index=0, part=TextPart(content='The capital of ')),
                 FinalResultEvent(tool_name=None, tool_call_id=None),
                 PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='France is Paris. ')),
                 PartEndEvent(
                     index=0, part=TextPart(content='The capital of France is Paris. ')
+                ),
+                ModelResponseEndEvent(
+                    response=ModelResponse(
+                        parts=[TextPart(content='The capital of France is Paris. ')],
+                        usage=RequestUsage(input_tokens=50, output_tokens=7),
+                        model_name='gpt-5.2',
+                        timestamp=datetime.datetime(...),
+                    )
                 ),
                 AgentRunResultEvent(
                     result=AgentRunResult(output='The capital of France is Paris. ')
