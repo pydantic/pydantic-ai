@@ -156,13 +156,13 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         return search_terms
 
     async def _search_tools(self, tool_args: dict[str, Any], search_tool: _SearchTool[AgentDepsT]) -> ToolReturn:
-        """Search for tools whose names or descriptions contain every keyword as a token.
+        """Search for tools with the strongest token overlap with the query.
 
         Tokenizes both the query and each tool's name/description on alphanumeric runs,
-        then returns tools whose token set is a superset of the query's token set. A
-        query like "exchange rate" matches `get_exchange_rate` because both tokens are
-        present, while "me" does not match `add_comment` because `me` is not a token of
-        `comment`.
+        scores each tool by how many query tokens it contains, and returns only the
+        tools with the highest non-zero score. This prefers more specific matches such
+        as `github_get_me` for "github profile" without matching substrings inside
+        words like `comment` for the query `me`.
         """
         keywords = tool_args['keywords']
         if not keywords:
@@ -172,12 +172,17 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         if not terms:
             raise ModelRetry('Please provide search keywords.')
 
+        best_score = 0
         matches: list[dict[str, str | None]] = []
         for entry in search_tool.search_index:
-            if terms <= entry.search_terms:
+            score = len(terms & entry.search_terms)
+            if score == 0:
+                continue
+            if score > best_score:
+                best_score = score
+                matches = [{'name': entry.name, 'description': entry.description}]
+            elif score == best_score and len(matches) < _MAX_SEARCH_RESULTS:
                 matches.append({'name': entry.name, 'description': entry.description})
-                if len(matches) == _MAX_SEARCH_RESULTS:
-                    break
 
         tool_names = [match['name'] for match in matches]
 
