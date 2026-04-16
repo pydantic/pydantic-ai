@@ -87,7 +87,7 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '984'
+      - '1596'
       content-type:
       - application/json; charset=UTF-8
       transfer-encoding:
@@ -98,28 +98,29 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -1.6516049702962239
+      - avgLogprobs: -1.0684893290201822
         content:
           parts:
-          - text: I have already provided the answer to the previous question. Do you have any other questions or would you
-              like me to do something else?
-            thoughtSignature: CtMBAY89a19OkRHJv7gYwNeTDjuO8ouvx1UZX0vLr4dTACQLfYc6c7eB8HIiVj9kBv8TDU8Wna+B7enzuAJriyqDCSiUZDCRx0yxltbdzhDlRZIeqAjvyKfJXFkpq52i8q8BhPtNf4F9VsXd7Ao6Cj5Eas8YuaaD7mbZMEJe1ks2HQhOYSfL6y/FQMu5nrQAtaomcJj/nFhHRLMdl9XJldPJJ6vITdI5CfGe/cw1y+IOiJo44cvSo1G0NjxGn0YjSmzM3N0Z7ZbiRK3NhlLftZzvi2ms5g==
+          - text: The answer is 42. This is a well-known cultural reference to the science fiction book "The Hitchhiker's
+              Guide to the Galaxy" by Douglas Adams, where 42 is revealed to be the "Answer to the Ultimate Question of Life,
+              the Universe, and Everything."
+            thoughtSignature: CskEAY89a1+7L4zo4TA80eu6mSQE3+BnR+Fr9hIA0LHzwLthFNRB9tVQZgTfhKjfQW3N8OXvwaykb2XFeZP8TpbDtVSYAxkbnqV2p0jSJGU9R/3dIRyyT4rwIodw7Chg0t/R+Dx6Xc/TzvFJRqXHWAqP1RUboy9EjrugcIJFAXooBXzwA4UsAUwY0VE4LzNBfLa4Qz9KwsL8vXJdEdAorEXyA+cHO6sBL2RdqCZVMTJVO9f4QcWwTmgF93TAsncYt25FIzmCRiYgRy0J5Y+kU+3r4uhSznQt7IACGCxTGtFKp63Jj6lhYILgci1q69ba8t5mbNWTgpQjOhy1RZ4n57RuWgLOWy/MRPfRcQIm6IGTZ3Nctdu73fdlvICg8Qoc/jvihpEFjM5VYHCIp6dqG7SuSTHcXda2aN/m1ME2E5jcnM+NSlKdjsHJ0Ieeyro7vvUuiqcO9VFQ1VHyrCoLRARc5N9L6pCi3XXNuFRs4IfEMFXVl/9i9koCXqfVLnLyaJ79n1kHpZFBAZNdPdlfk0aNaeycAUWZRcNZV4ETw6mF8koNGkxKNMITOs7b1OiIEEoIxx+SYcfasp+5iwhrvzcAStNJKWrUjdDsaqMB7i43JKRq1RDx0gLABPinr7Aiz04rYMNndi3XyYo258g9gse+8s2h5EKNHeHVDTj7dJP8W15D+l3+3XqMTdYJ6ZQiM++NVOaQdXbGNnT3YVacMlW+1e1EGIEPu7NJAs2mIPHdMTAtXzkhKAQE1bOiXWgLZcVBzSS6DjOn9nD5
           role: model
         finishReason: STOP
-      createTime: '2026-04-16T09:12:22.771657Z'
+      createTime: '2026-04-16T09:46:48.008553Z'
       modelVersion: gemini-2.5-flash
-      responseId: 9qfgacmML5Kapt8Py6va-QE
+      responseId: CLDgaelClKqm3w-SxOP5AQ
       usageMetadata:
-        candidatesTokenCount: 27
+        candidatesTokenCount: 60
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 27
+          tokenCount: 60
         promptTokenCount: 19
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 19
-        thoughtsTokenCount: 35
-        totalTokenCount: 81
+        thoughtsTokenCount: 121
+        totalTokenCount: 200
         trafficType: ON_DEMAND
     status:
       code: 200

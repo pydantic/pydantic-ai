@@ -6522,22 +6522,22 @@ async def test_google_vertex_service_tier_flex_stream(
                     ModelRequest(
                         parts=[UserPromptPart(content='continue', timestamp=IsDatetime())],
                         timestamp=IsDatetime(),
-                        run_id='019d9590-1614-7606-ba9f-bdb24e373424',
+                        run_id=IsStr(),
                     ),
                     ModelResponse(
                         parts=[
                             TextPart(
-                                content='I have already provided the answer to the previous question. Do you have any other questions or would you like me to do something else?',
+                                content='The answer is 42. This is a well-known cultural reference to the science fiction book "The Hitchhiker\'s Guide to the Galaxy" by Douglas Adams, where 42 is revealed to be the "Answer to the Ultimate Question of Life, the Universe, and Everything."',
                                 provider_name='google-vertex',
                                 provider_details={
-                                    'thought_signature': 'CtMBAY89a19OkRHJv7gYwNeTDjuO8ouvx1UZX0vLr4dTACQLfYc6c7eB8HIiVj9kBv8TDU8Wna+B7enzuAJriyqDCSiUZDCRx0yxltbdzhDlRZIeqAjvyKfJXFkpq52i8q8BhPtNf4F9VsXd7Ao6Cj5Eas8YuaaD7mbZMEJe1ks2HQhOYSfL6y/FQMu5nrQAtaomcJj/nFhHRLMdl9XJldPJJ6vITdI5CfGe/cw1y+IOiJo44cvSo1G0NjxGn0YjSmzM3N0Z7ZbiRK3NhlLftZzvi2ms5g=='
+                                    'thought_signature': 'CskEAY89a1+7L4zo4TA80eu6mSQE3+BnR+Fr9hIA0LHzwLthFNRB9tVQZgTfhKjfQW3N8OXvwaykb2XFeZP8TpbDtVSYAxkbnqV2p0jSJGU9R/3dIRyyT4rwIodw7Chg0t/R+Dx6Xc/TzvFJRqXHWAqP1RUboy9EjrugcIJFAXooBXzwA4UsAUwY0VE4LzNBfLa4Qz9KwsL8vXJdEdAorEXyA+cHO6sBL2RdqCZVMTJVO9f4QcWwTmgF93TAsncYt25FIzmCRiYgRy0J5Y+kU+3r4uhSznQt7IACGCxTGtFKp63Jj6lhYILgci1q69ba8t5mbNWTgpQjOhy1RZ4n57RuWgLOWy/MRPfRcQIm6IGTZ3Nctdu73fdlvICg8Qoc/jvihpEFjM5VYHCIp6dqG7SuSTHcXda2aN/m1ME2E5jcnM+NSlKdjsHJ0Ieeyro7vvUuiqcO9VFQ1VHyrCoLRARc5N9L6pCi3XXNuFRs4IfEMFXVl/9i9koCXqfVLnLyaJ79n1kHpZFBAZNdPdlfk0aNaeycAUWZRcNZV4ETw6mF8koNGkxKNMITOs7b1OiIEEoIxx+SYcfasp+5iwhrvzcAStNJKWrUjdDsaqMB7i43JKRq1RDx0gLABPinr7Aiz04rYMNndi3XyYo258g9gse+8s2h5EKNHeHVDTj7dJP8W15D+l3+3XqMTdYJ6ZQiM++NVOaQdXbGNnT3YVacMlW+1e1EGIEPu7NJAs2mIPHdMTAtXzkhKAQE1bOiXWgLZcVBzSS6DjOn9nD5'
                                 },
                             )
                         ],
                         usage=RequestUsage(
                             input_tokens=19,
-                            output_tokens=62,
-                            details={'thoughts_tokens': 35, 'text_prompt_tokens': 19, 'text_candidates_tokens': 27},
+                            output_tokens=181,
+                            details={'thoughts_tokens': 121, 'text_prompt_tokens': 19, 'text_candidates_tokens': 60},
                         ),
                         model_name='gemini-2.5-flash',
                         timestamp=IsDatetime(),
@@ -6548,9 +6548,9 @@ async def test_google_vertex_service_tier_flex_stream(
                             'timestamp': IsDatetime(),
                             'traffic_type': 'ON_DEMAND',
                         },
-                        provider_response_id='9qfgacmML5Kapt8Py6va-QE',
+                        provider_response_id=IsStr(),
                         finish_reason='stop',
-                        run_id='019d9590-1614-7606-ba9f-bdb24e373424',
+                        run_id=IsStr(),
                     ),
                 ]
             ),
@@ -6580,14 +6580,22 @@ async def test_google_vertex_service_tier_flex_stream(
                     ModelRequest(
                         parts=[UserPromptPart(content='continue', timestamp=IsDatetime())],
                         timestamp=IsDatetime(),
-                        run_id='019d9590-20a3-7211-8f1d-25bffa1232d1',
+                        run_id=IsStr(),
                     ),
                     ModelResponse(
-                        parts=[TextPart(content='The answer is 42.')],
+                        parts=[
+                            TextPart(
+                                content='The answer is 42.',
+                                provider_name='google-vertex',
+                                provider_details={
+                                    'thought_signature': 'CowCAY89a1/Lr5I5rCxmFmTg4LmefcprwRklaynIndojFJB478RWEusES3xjW1+RfxErWpbvj1XboDKAbM6wz23uOv6A+2Gf1HwoE3M4FHEkCBJcVSI1so8I87gwjDt5oEIIEU7MoiJZREF8H7QAgEegqQ/zz2LYXlvG3OJZKLObVr1uubBFK6qlOisY5UpYpMXR0femPKprNDSLXBiPozZmnoKyMJc97Df+OubYriq/FI1d4ErtK7mhpxb3viMBSHhlBQfFjdVZuTZsu2G/VkmfK7IrS+ovnQqiScCQnxcjIVP966oZ5qjTkpH9vhgfU5z71QtvBHWGBcLhcXFOf7/DxJnsxttP/yzpiyK9uQ=='
+                                },
+                            )
+                        ],
                         usage=RequestUsage(
                             input_tokens=19,
-                            output_tokens=7,
-                            details={'text_prompt_tokens': 19, 'text_candidates_tokens': 7},
+                            output_tokens=59,
+                            details={'thoughts_tokens': 52, 'text_prompt_tokens': 19, 'text_candidates_tokens': 7},
                         ),
                         model_name='gemini-2.5-flash',
                         timestamp=IsDatetime(),
@@ -6598,9 +6606,9 @@ async def test_google_vertex_service_tier_flex_stream(
                             'timestamp': IsDatetime(),
                             'traffic_type': 'ON_DEMAND',
                         },
-                        provider_response_id='-6fgaYuRDbDJk7QPtZWXgAk',
+                        provider_response_id=IsStr(),
                         finish_reason='stop',
-                        run_id='019d9590-20a3-7211-8f1d-25bffa1232d1',
+                        run_id=IsStr(),
                     ),
                 ]
             ),
@@ -6627,19 +6635,31 @@ async def test_google_vertex_service_tier_flex_stream(
                     ModelRequest(
                         parts=[UserPromptPart(content='continue', timestamp=IsDatetime())],
                         timestamp=IsDatetime(),
-                        run_id='019d9590-303e-7739-8d03-4a415a56fd25',
+                        run_id=IsStr(),
                     ),
                     ModelResponse(
-                        parts=[TextPart(content='The answer is 42.')],
-                        usage=RequestUsage(input_tokens=57, output_tokens=7, details={'text_prompt_tokens': 57}),
+                        parts=[
+                            TextPart(
+                                content='The answer is 42. Is there anything else I can help you with?',
+                                provider_name='google-gla',
+                                provider_details={
+                                    'thought_signature': 'CvkDAb4+9vuOmgFi2ku1+K+LS5Un64JwpOX8LNlN+/ahZJECrCxFF5v3uUbSvSlPNbYYZMKJTv91n+s4F2qhOpMkbpzO6uuKqY0oSMnxEAphAr4pr/+d0k0pjSF9lHKY8yIWK9qXHjzQPC/8zp6G85Tm+IeI/wjS7k09tgvwTByiVQOK6uaYomJ3uVbQti9cy2DILYx82mr+BvSSwio+SOCIzx1wKKqywA+7Ml6r1qwwcsu7qI0GzT85uXz18s6st6++OBC0frDRdwEKKgXUy54VvF1F8RyUoOrY/1sJ6KUcLJgwFFu7F/fX15g/tPuweUhrmSxfD1fGds5pwtpPRkTVcClueuyh4a9PxYRVrMwHxpauRH8WODSWEMaZnSvprKcxwSIzFMaW5kIoQRN7jtbLAeos/HN17mfhSGe4obVvTMuYCg0dXowanxlZU9ZmcO9EdEHL/lqqr4ihsb8ILoFe2Gtp+JHSKI2KFxXlKN1Zm2gDFxm+8tpCTCradUwgTzMpOyeOmnutAiK6H9Beemh7DZeZ1HK2FrPdrPHvx59EQXwFuB8CZBGbRG2gRdPa89fGu9TeQIMGKRW2GUgAucpGycQpyQa9GonYLbPu49QSninufzfHADs4lJSETIFqgamLYX/8Gtoa1OWWzVOK5fitF+X7sFUg2Zy2Mg=='
+                                },
+                            )
+                        ],
+                        usage=RequestUsage(
+                            input_tokens=57,
+                            output_tokens=124,
+                            details={'thoughts_tokens': 107, 'text_prompt_tokens': 57},
+                        ),
                         model_name='gemini-2.5-flash',
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
                         provider_url='https://generativelanguage.googleapis.com/',
                         provider_details={'finish_reason': 'STOP'},
-                        provider_response_id='_KfgaYvTJauL4-EP74jngA8',
+                        provider_response_id=IsStr(),
                         finish_reason='stop',
-                        run_id='019d9590-303e-7739-8d03-4a415a56fd25',
+                        run_id=IsStr(),
                     ),
                 ]
             ),
@@ -6669,31 +6689,31 @@ async def test_google_vertex_service_tier_flex_stream(
                     ModelRequest(
                         parts=[UserPromptPart(content='continue', timestamp=IsDatetime())],
                         timestamp=IsDatetime(),
-                        run_id='019d9590-377e-762d-a73b-6ff99c25c092',
+                        run_id=IsStr(),
                     ),
                     ModelResponse(
                         parts=[
                             TextPart(
-                                content="I'm sorry, I cannot provide more context without additional information. The `get_answer` function simply returns a value and does not provide further details.",
+                                content='The answer is 42, which is a famous reference from the science fiction book "The Hitchhiker\'s Guide to the Galaxy" by Douglas Adams. In the story, it\'s revealed to be the "Answer to the Ultimate Question of Life, the Universe, and Everything."',
                                 provider_name='google-gla',
                                 provider_details={
-                                    'thought_signature': 'Cr0FAb4+9vvZySfAkIcf4jO0cn0wPFK/g5bxHDi7aJwVUHZNZy9Cfx6JvEskh/XvLStcjq3Tx90nWYqXu12YcRPDnjXg0CS7OtoKVkbuW0SkXTC5IVC/43bfGK44kf/1AVlU4/R7cOg9tmSL1wWhqj6ioXu7ouwFxXII1MmDLHwow55+3oC9QK584BqqWwO8sKu5YXUO8PlP8A4ojZcdXwjsFU9TQMcHDZAo0GZdPEfA2bKXke2I5A7Mfc2scxNYYuseKdhDKSGOoItagaETxNAteTwge+PbXbSxE7L6JQ8KPvipEgBWEmab6HBjp87p6l9+xkmjEUoM8AVeVaaxLvaX+eoyBLDiiDj4BhcDYVZUA5FAfgpTCjSOAeU21ZPqcRfLWl3rmi9ygprxZ07cZWERP6C0hfMLpzUZ/Y9jbD9lM351yPQs7x9dQYgI19Xiht3Xh7h8TR9CQpcZ86IJa9UiqebexFwJeT8ud2YnAFLI0T7+zHqZDPlv4kZSuo7XAQkc8K72ICFXS/6p9L2LdcG1YniqgFgkt0XjJhZJXBnD/CQb5Cvq5mxyE/YO33vITo5EAlpJMDu9ZE5Q5HG/o0Jn8dOF9c58Trcurbv7tbONljYYMyZj6Lj3Z5h1FRVUB1ZFFx9r3Y/nO5izZnkkjB9QoHQlMpT9OJjMtdTuDGvmhRbwrCnAMZ+SSzYrdLr6wVu/78wd0K7rTtVJBfacch5NiLJ8kpDPu+wrGjWpENJix8sm4UNf1GHNkIOgRVM5u8cN1P4CT//qW7mWy7T4bAxRWfFCcsR19wMGgpqTpoeE2SDNZLvE2KH5quS678acoFlUt/EyhgRibM2vsGob+G6L8WGyH/+YGQFeD0cd+oWOCZtTY76QFMUh/TGYfb5hRx0T7Uq/m/K6ioQ5Aee0jwEbtwYPpdB8s//x9INdhJo='
+                                    'thought_signature': 'CsEFAb4+9vt7aZFWTlmvCAfESyfRFURwUzjGnZa+Lv/wF/qV0h3Hrj/JU46os4h/rurj8mAwsUbFr05tgLd2z6jwGOZpgj5DE0zsw5FH+lH72uhBUVPmkEvs4w7dQooEIxVmSpY7OwB0ZWdnt6Zs9QaAyWWV5dWpcxcWEJndey8XBapjhXKHa3VgKY7EcvZiIk4qWV4FDwIV4zLhV75O4x8ywGTlmu523bgquxONS07LjbxgDVeBfTNgAAiKLpciDqZjfUj1h6N7rCYvjW+7k8wF95pjLTDbyUlhrwU1iyb8enaP6uoBSfqqpd2Z6pqA6nml39X5Qc4tBYzpFuzYwbreyTu/Q3S5k8zIoAgS9P3eYebNNbsyjwAHo2PS26oZytPQQLO1yruL10TemKtPKS3Pz1k/bfIp6YS0fz7Zy7PZ9bZ13pt9ChPRk44uMfgk5FrsDgP5ysk2Y/y4KT0hBOI3Rq15/Yv8g4lBbfEPQ1PcDVM5P0Hz8KdDI03HyCF3w/4BY59AGEwjDuK4+KOstilpDrpTNbJzMNhNOye5Iw6wDcIJEhbD/QNt4bsAr7nlnydnyJKePYBq041MQv3FXHEQ8mcdI5ZbKhgNu87WtKaNnCWWmpdtOEwhVa3gEYsTaReLPSVjAodv0qFicThxiGpqReNYBDA8FRlgU1t+F3YuRHC4IAEZJ7uhYqXpw9SBBehTbSn4LJDWCRIIarnZn54c9nnNAzLWvW6/iXmZNnuyRtrEtSDF5l+QpR9ZZkKCDONrqJiaTiNBWBKI4xzGGNeBl6hOWfcSzkiYaUe6l13y1kbPm2+BVAYHY3q3++S7c4XAbcO/sAKjFFnKbGPyum0kmlh28xAcNly2pJKQESyBfDt4K2GoUjBoUz+sp0XghKAoKd4HCouUlEScu307qtswQELgCXe8Kvl0UnM/ZzdejFoR'
                                 },
                             )
                         ],
                         usage=RequestUsage(
                             input_tokens=57,
-                            output_tokens=173,
-                            details={'thoughts_tokens': 141, 'text_prompt_tokens': 57},
+                            output_tokens=222,
+                            details={'thoughts_tokens': 163, 'text_prompt_tokens': 57},
                         ),
                         model_name='gemini-2.5-flash',
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
                         provider_url='https://generativelanguage.googleapis.com/',
                         provider_details={'finish_reason': 'STOP'},
-                        provider_response_id='_qfgaevzGcz2juMP8pCmoAE',
+                        provider_response_id=IsStr(),
                         finish_reason='stop',
-                        run_id='019d9590-377e-762d-a73b-6ff99c25c092',
+                        run_id=IsStr(),
                     ),
                 ]
             ),
@@ -6723,24 +6743,24 @@ async def test_google_vertex_service_tier_flex_stream(
                     ModelRequest(
                         parts=[UserPromptPart(content='continue', timestamp=IsDatetime())],
                         timestamp=IsDatetime(),
-                        run_id='019d9590-428d-708c-97ae-781f620b7e24',
+                        run_id=IsStr(),
                     ),
                     ModelResponse(
                         parts=[
                             ToolCallPart(
                                 tool_name='get_answer',
                                 args={},
-                                tool_call_id='pyd_ai_d4fed8d1a3654214ab256ac55f3ee421',
+                                tool_call_id=IsStr(),
                                 provider_name='google-vertex',
                                 provider_details={
-                                    'thought_signature': 'Cr4EAY89a19gr1/7J407ikUV06BJAb9LAlnSTP0ILW1eJucjE2fp+96GdVsYKFVYXn2NAosKh5b5uHqC9b1CXQEKeX5//tBcNaMfkkn8udSRXPiT6Y0WNSOMYDbphaq1BiziDFWAWnKhpEd5eNzwf0nxeRpyfxNbR2fX6U3rzJPe1PlgZkiCrEL3cR0uDIGt5DeCr4sl6qmrCLHzCsgQQN9hRKbbjMv8K5PtbC2RTwuWjDuRWJpgEmGbPwAwWNjWu627D+Zg3XhZFQuq9geWsL5Abix+QumKlnEQEFxB8491IogDmheoGK88oyVUcP/VtwSyQhELAhahLbqbB1tXDDrdNNs+3Zv1A0r6OfndkeCgOwqrw/o5Ia2dZdumq1k7YPai7bpLpbFQTXNCNu3m1WgGe3ga2k0e0WLXYwmj1noD2W7YjhCiZU7xHJ6qRRc+RrQGG041cN/TVxAtxDjd5qSfgnTi1xnhETzHXnomqiH3OIHE9Y8Uf/wgZlyOKHFoUdLfYMns3IJXDRGfYmy3U//mz7A9aaeObAgGkoie1MI2TBYg+fVW/hS/7Q524EgLMlRmkr04OPW6+EryjLl7eaHk4OTXs7hbdJzo8F7bp+ihGl/4ageDVxNXet0l0cNdlCr4HF3k4WapwQxsOfq8bKJSODabTpyfZnmsgdXuvApOQT6YpQugwbKAXfal9vx+v5Juw8E5oQXTAwdjkcYqYMCRlwUf4cal1GnLcHcPBdOIl3K4wanywQ7U307nzCCt7Q=='
+                                    'thought_signature': 'CqwDAY89a1+yt3o1y5kH9VInfx8VjfPXKNm28GkV+msgWyl5NpdEh+qXBsmhDeiZHnnWQY7yGTVFJKeuwiBHXnjZDp3hL3O13ZAjey4oxDNulkFtP9aRyMatESHMbonCKujVR8fp3TPPEt+X2pvbiB/xbcoTpgq3yLkZzTEmJOMfES9hWYVaCJsk5CtwQcmzShz1NPbYjG3Q7ZrwjRaYAtAVzE1wXV/lZxY2KblgkqYO8+UMM3JDJ7+LrTlrIbPJ49/nYhJLh1l2gRaFu3XQqVqZhkhJxN6zMv+Sx2QeskLQv0Hypbwe1kSt1/9sQyJzOKQOdlLKEZlnvnyG56GTVfN/uSnzBgVcvitIAP9IaLPz2iHki8LDpZ44VFVIXeEbgYTsbOPFgUNE37ayfr4trKZKwremtBOiIKxIdPss2M67WDw4twGqHqgIVL1O5wrqGcM8JOX39QYbMZYk64u84/3dgWXxIvBTHiedmlBFhsc5pe8JEHK+mcrFHLrrqJuers99NukiqIg1UPh/vSHxXo0uoTNLqStyJag5xvE8iv1QfGYv59c/Askn9+gMCL0='
                                 },
                             )
                         ],
                         usage=RequestUsage(
                             input_tokens=27,
-                            output_tokens=129,
-                            details={'thoughts_tokens': 126, 'text_prompt_tokens': 27, 'text_candidates_tokens': 3},
+                            output_tokens=87,
+                            details={'thoughts_tokens': 84, 'text_prompt_tokens': 27, 'text_candidates_tokens': 3},
                         ),
                         model_name='gemini-2.5-flash',
                         timestamp=IsDatetime(),
@@ -6751,28 +6771,28 @@ async def test_google_vertex_service_tier_flex_stream(
                             'timestamp': IsDatetime(),
                             'traffic_type': 'ON_DEMAND',
                         },
-                        provider_response_id='AajgaaKAIoeipt8PiKfB8Qg',
+                        provider_response_id=IsStr(),
                         finish_reason='stop',
-                        run_id='019d9590-428d-708c-97ae-781f620b7e24',
+                        run_id=IsStr(),
                     ),
                     ModelRequest(
                         parts=[
                             ToolReturnPart(
                                 tool_name='get_answer',
                                 content=42,
-                                tool_call_id='pyd_ai_d4fed8d1a3654214ab256ac55f3ee421',
+                                tool_call_id=IsStr(),
                                 timestamp=IsDatetime(),
                             )
                         ],
                         timestamp=IsDatetime(),
-                        run_id='019d9590-428d-708c-97ae-781f620b7e24',
+                        run_id=IsStr(),
                     ),
                     ModelResponse(
                         parts=[TextPart(content='The answer is 42.')],
                         usage=RequestUsage(
-                            input_tokens=163,
+                            input_tokens=121,
                             output_tokens=7,
-                            details={'text_prompt_tokens': 163, 'text_candidates_tokens': 7},
+                            details={'text_prompt_tokens': 121, 'text_candidates_tokens': 7},
                         ),
                         model_name='gemini-2.5-flash',
                         timestamp=IsDatetime(),
@@ -6783,9 +6803,9 @@ async def test_google_vertex_service_tier_flex_stream(
                             'timestamp': IsDatetime(),
                             'traffic_type': 'ON_DEMAND',
                         },
-                        provider_response_id='BKjgaac2w57V7w-b39mYBw',
+                        provider_response_id=IsStr(),
                         finish_reason='stop',
-                        run_id='019d9590-428d-708c-97ae-781f620b7e24',
+                        run_id=IsStr(),
                     ),
                 ]
             ),
@@ -6815,24 +6835,24 @@ async def test_google_vertex_service_tier_flex_stream(
                     ModelRequest(
                         parts=[UserPromptPart(content='continue', timestamp=IsDatetime())],
                         timestamp=IsDatetime(),
-                        run_id='019d9590-52b3-729f-b99a-5511c5407424',
+                        run_id=IsStr(),
                     ),
                     ModelResponse(
                         parts=[
                             ToolCallPart(
                                 tool_name='get_answer',
                                 args={},
-                                tool_call_id='pyd_ai_3ef79674777e429e82cafada2abae513',
+                                tool_call_id=IsStr(),
                                 provider_name='google-vertex',
                                 provider_details={
-                                    'thought_signature': 'CsQFAY89a19IkQbH8ZUxbUMUafR1k2w98ec287jpp/7vMsHllFQ3QFeDF/vMCcwgTW0BP5f3p8ED2GO+LwY737PylEKgy+QJUeJI9gArMikBpFKgpp7JdBzhUA802uIEpnvwqgLMJXOZLCOaqvuhpDzw3y5tNOsBwXn2K7YNBWgYZrNq3ZO2JMvUeUGIRTxpUiHJZSsn7v0il5mELo1HImloUi/SZQSCIy7K11HeV4/63P/D7/xpnHWJl2xC6Iu09zaXfZ/PFKP1xzAzVKZpKi/aE+OU9DhseU1z1hlr3isu+1UzyL8yPgZvF+mOqlIYJcDqbaYeVmF8bDANLj+tBHAJkELGG5zfq81fk0HZevXPkacUxl+ofQ1c+sDRoQ5f/8gKnoBWEQVCGJGSW8wbc7JhqIrDzz6Y8FmKDNEhuFXcLBJVXNZsp3/bziIyuBA6sLEOjkV1zPzKt/D0rBzKEYMhIowjXSdVaQgIPLiWwL2ExCe3AFCjvMwGkF2bBtpIrkK8VlHIHk2qV1d9uiqp5P4eOxEhht8HdxDYiwlVF65hBUsJHofXSjvsvcYK3qCIn0a/ZTHyG2fMPLtLwPVOX2tADxtGHfrqsbWuPrsj118oaWVMxVC9fHpgH8gZpy5ba6aWsKrny8vT2U/jA4+ZqCWaH6EPCoXAb8OaR//KkT8Vd8t95LRpv7VzYbdA8T1rTLUDxt+9ofpPn3d75EfNUpsrsx7/rz5b+ePJotrMthfOCQeJHhKOy11/U5km/o2rVnZCE180X5V1foJdjaqiZRj+vbd7Ww6WB60CdlK6LqVcEahFcxRE5narb81PGNWtt2As4C0+dNjWVOE9uq/S3H91dffpB0lbxbmMBB6b+vE3//kfc0wYZa4xbx9UJ458p838oJNwdxlxrjvxA0bFERnCD7gxwcodC7N4TYaQu+Q7loq2lvv5'
+                                    'thought_signature': 'CrUDAY89a1996PFKucG2cSum1Sl/zccJq2JFeyWIs1Zfg2bk/OsxVVGvYXYWgvL0kZEZWF0BY/N1LuE/OuUCgSBUAGiattmkNsDA+74CuwMIw32HhU5frqpxkJeZbmdZeubcs5yr05H8fR6Cov+rMT4vKDdS9eQTe8etaeXQ8Xov2Rw6ObmMNUTFnNNyVI6fIqilmtWc9P6qPnrHbis18Ve7nWW+CJWZwnuA2ew2AYMXRxwjdLDrZrJfZuyaHyIrHKHSpIQDcrFGcRhKz2LFDwjEmHZwHPRRTmkwwQpn8A4+oDkygn0nLMp1P+vzLYwGLGc9fEn0y56sg2ILDpV55MwWF14ptn1QoENz5mJQsunXTUjqhbphc1H2CH5aEnWJwsjVf38NKUqGbXNOFHSNk1nzqHtMKPhTvzoegPnb9mFWBxNVrTecZ+t7HswCAGUPUYKIoEBGgUgRyPGd1D1Vv1fN8uusBCUT1qvwMMcSk4ezmNtkpUC2qm+oueuztcMGyCBzxoDJhMUJ2S8bpE0QLV6aDRHyoDdZeti1GUCS0mQZJMWo8UfevCc6moLrqrqPVSciuH6/55I='
                                 },
                             )
                         ],
                         usage=RequestUsage(
                             input_tokens=27,
-                            output_tokens=155,
-                            details={'thoughts_tokens': 152, 'text_prompt_tokens': 27, 'text_candidates_tokens': 3},
+                            output_tokens=95,
+                            details={'thoughts_tokens': 92, 'text_prompt_tokens': 27, 'text_candidates_tokens': 3},
                         ),
                         model_name='gemini-2.5-flash',
                         timestamp=IsDatetime(),
@@ -6843,28 +6863,28 @@ async def test_google_vertex_service_tier_flex_stream(
                             'timestamp': IsDatetime(),
                             'traffic_type': 'ON_DEMAND',
                         },
-                        provider_response_id='BajgaZOANLDJk7QPtZWXgAk',
+                        provider_response_id=IsStr(),
                         finish_reason='stop',
-                        run_id='019d9590-52b3-729f-b99a-5511c5407424',
+                        run_id=IsStr(),
                     ),
                     ModelRequest(
                         parts=[
                             ToolReturnPart(
                                 tool_name='get_answer',
                                 content=42,
-                                tool_call_id='pyd_ai_3ef79674777e429e82cafada2abae513',
+                                tool_call_id=IsStr(),
                                 timestamp=IsDatetime(),
                             )
                         ],
                         timestamp=IsDatetime(),
-                        run_id='019d9590-52b3-729f-b99a-5511c5407424',
+                        run_id=IsStr(),
                     ),
                     ModelResponse(
                         parts=[TextPart(content='The answer is 42.')],
                         usage=RequestUsage(
-                            input_tokens=189,
+                            input_tokens=129,
                             output_tokens=7,
-                            details={'text_prompt_tokens': 189, 'text_candidates_tokens': 7},
+                            details={'text_prompt_tokens': 129, 'text_candidates_tokens': 7},
                         ),
                         model_name='gemini-2.5-flash',
                         timestamp=IsDatetime(),
@@ -6875,9 +6895,9 @@ async def test_google_vertex_service_tier_flex_stream(
                             'timestamp': IsDatetime(),
                             'traffic_type': 'ON_DEMAND',
                         },
-                        provider_response_id='CKjgafbdAsuB4vEPs8DHkAE',
+                        provider_response_id=IsStr(),
                         finish_reason='stop',
-                        run_id='019d9590-52b3-729f-b99a-5511c5407424',
+                        run_id=IsStr(),
                     ),
                 ]
             ),
@@ -6907,43 +6927,45 @@ async def test_google_vertex_service_tier_flex_stream(
                     ModelRequest(
                         parts=[UserPromptPart(content='continue', timestamp=IsDatetime())],
                         timestamp=IsDatetime(),
-                        run_id='019d9590-626a-76fc-b1ff-acba43fec656',
+                        run_id=IsStr(),
                     ),
                     ModelResponse(
                         parts=[
                             ToolCallPart(
                                 tool_name='get_answer',
                                 args={},
-                                tool_call_id='pyd_ai_16f9e242c0e34de9a2f2b09a03a79287',
+                                tool_call_id=IsStr(),
                                 provider_name='google-gla',
                                 provider_details={
-                                    'thought_signature': 'CtECAb4+9vvonGXxxt75b+aPrQX3KTQvQiCxQgpil/HbdeF26CsfxjKT3LAc4VDTOOO+w+wIDX24RNYzBD4+GKrxdksvfOLQvba4+ulk1gltSSmR+zICGELOyLlSTOICsLCht5TM5evKl43eGnsoTHyx4hHSryTCq9cNffZ3aUokGMZ0/wa74DB+2/O2ujvyx/mlku4UXu8qFhwQoBUhpcR2bp2SogCumq/4xPldoXOHoC0MD1miUOXcw7AiaLA1K2WOy/HzBknx+XADW/1eAMYxLzX0UdXFsKMlOzq5Bx8MqdA+DRoc4Dbrb5BEo8hrn8esJq0AuspxjOCXPGqrNrhcWrUEEoTuoms+Isvt8O/9sSOirBk8c6Y43ymNaqBiLHFdaCTrgFjbQ6X1Yk422NIB01GYOdM8HPptRecZJO7eULUDtyVjivpsvPbXi9GXMkGmrQ=='
+                                    'thought_signature': 'CtsFAb4+9vt/OTeNb8uiaC8ILe89OM+EUyXYCYBTUdWUYex80zTeDc8de5YC0Ytc2RxMpQjRYsVYoNnyxs+s/S+UaicmanE7a/khorhCVtFvOXdOVHtcOjAcumy9X2S0GWi8TWE9lLyDk6KeHvjMPsj8g+yCREbNVwGqBIpbKi0E0faxE2AuZtKIFJskV/96a0b593J3DmZnobFgn3v+gfzjj0wPj3nyhf9J3s1o+e9bxiS66p+YB3TnBkv0eFBkmatjoIJfkqjS31UpUOgOmo0thB8pX9I21O8ZqDP6MApvofA4tVcMls49g726lAJpQv3mwrBD0v2/7LlCTbzUA825MRlf9Vm7V5oNii2j140C3A3cMQMjMcbKwBPlnvCwajCjsPlmLwdie7kG0vK+gzmieFmORtX2VW5oIbZSvrFNuZKPfrLaieNWTI356HBKqQ7WfY+wRs9w+YwMhq64JsvAqgc1QMpxnSUut8lbtZ0hvBRChCOwIsHrZDS6Mhz+HV6qGJdk0D4EXFEd3U7dJAYlSgkbcGcdRm61qUBChs3+cxy5spV6HwqZ3CgTKxpN9LecN1Lpld+RrK63Txa6sZMCv5iCooQCK8KqCqj45hCcfy8SvrPxIkh/1RyIYLUvNhB4GkXGiTjkDSI3iDK35HzzpbmlZwXet7frk0sAelnfsTno43D5DKKOpKv+8Zty61GGEAwbWcoGoUAGv2x2xym5Sc2tOZG+4LhpQ1B6ZoQrsL5mefPo4CPSGAAq4enelzrOhbdnvcGbHv1cMpw7f4689rm4BBZIlerQOahXkz//3lq8c8V53LAXZdcVGM8HXic/4DcGYiC07PQ15A5Q493KE4kk90Pmmo50FIdRbVzQR6+1Gu2aC3sONBGVYirJKLf4ujQPciQSCo5vp/5owgMUgH/t5uwkCaYlow3+RkYurN7CzerpMnLfXjdnzC95khwnzb5uWWEPFFlcfew='
                                 },
                             )
                         ],
                         usage=RequestUsage(
-                            input_tokens=66, output_tokens=92, details={'thoughts_tokens': 82, 'text_prompt_tokens': 66}
+                            input_tokens=66,
+                            output_tokens=168,
+                            details={'thoughts_tokens': 158, 'text_prompt_tokens': 66},
                         ),
                         model_name='gemini-2.5-flash',
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
                         provider_url='https://generativelanguage.googleapis.com/',
                         provider_details={'finish_reason': 'STOP'},
-                        provider_response_id='CajgaciuB9Wq4-EP96DRmQ4',
+                        provider_response_id=IsStr(),
                         finish_reason='stop',
-                        run_id='019d9590-626a-76fc-b1ff-acba43fec656',
+                        run_id=IsStr(),
                     ),
                     ModelRequest(
                         parts=[
                             ToolReturnPart(
                                 tool_name='get_answer',
                                 content=42,
-                                tool_call_id='pyd_ai_16f9e242c0e34de9a2f2b09a03a79287',
+                                tool_call_id=IsStr(),
                                 timestamp=IsDatetime(),
                             )
                         ],
                         timestamp=IsDatetime(),
-                        run_id='019d9590-626a-76fc-b1ff-acba43fec656',
+                        run_id=IsStr(),
                     ),
                     ModelResponse(
                         parts=[TextPart(content='The answer is 42.')],
@@ -6953,9 +6975,9 @@ async def test_google_vertex_service_tier_flex_stream(
                         provider_name='google-gla',
                         provider_url='https://generativelanguage.googleapis.com/',
                         provider_details={'finish_reason': 'STOP'},
-                        provider_response_id='C6jgab7lB5i84-EPxZiziQE',
+                        provider_response_id=IsStr(),
                         finish_reason='stop',
-                        run_id='019d9590-626a-76fc-b1ff-acba43fec656',
+                        run_id=IsStr(),
                     ),
                 ]
             ),
@@ -6985,31 +7007,51 @@ async def test_google_vertex_service_tier_flex_stream(
                     ModelRequest(
                         parts=[UserPromptPart(content='continue', timestamp=IsDatetime())],
                         timestamp=IsDatetime(),
-                        run_id='019d9590-6e10-748e-977f-dd5ad8ab3ff9',
+                        run_id=IsStr(),
                     ),
                     ModelResponse(
                         parts=[
-                            TextPart(
-                                content="I'm sorry, I was unable to get the answer. The previous attempt resulted in an error. Please let me know if there's anything else I can help with or if you'd like to try something different.",
-                                provider_name='google-gla',
-                                provider_details={
-                                    'thought_signature': 'CukDAb4+9vtdOmXU4b3aEpWfKMzuXPfTqGTS7xpnHig6EJ2dEk2yZQMdvpFIu4ynvaNcUjbH2ef6KdAjLXWvynO8+4zPKfyTsX0FD9kEVt+lFS01Fko1nmUBXoZ17OODLXe7yTFSLlpG4PoM7qLITnfnRIlnBg2C1c+eYGtGOTQkdJVP9Tb3qdk5Jx6ihB8IiluJemILR7poUQueXdyfNt0akPnXU5vKGic9nqDmbvtUBUuI/nZNPD0QPf+rlYsRvKCiLa6YGyafUvPE3/8LZqGYBuqOAAbtoaKbPxtjBtYM4zTeKRBfnTdgKmfOGLVOh7O58Sw3QD1/n+BvPt/kdynTSp6MILA9/pw2UzZ6HJMYN2mYjfbUww8THxewjpnVmZXnsjlvmVxkTGcDIJdEpnzJYKEnbRb6vh2bYjF3iGVBEAyLR/n8E6ic8wRQei18wtkePv8uzLZtIg52X0GzlScjIT4NRt2TGK4ul4I9Zd2cOlhqHPR/jWoPg/ZPEX7yKKGe8CDUJNhfWBCR0ZGFOL1p3ctrREvUBOjS07Vb4W18kMmOTPMheKVLSbcueOwkIPtBLD/t7tUqS8ZGPKb4vnAlGskACUgjKdLvAP2jJUFnL3KgtO4h+vRZf1smmWl73jSFc2z7grYIphTw'
-                                },
+                            ToolCallPart(
+                                tool_name='get_answer', args={}, tool_call_id=IsStr()
                             )
                         ],
                         usage=RequestUsage(
                             input_tokens=66,
-                            output_tokens=145,
-                            details={'thoughts_tokens': 99, 'text_prompt_tokens': 66},
+                            output_tokens=10,
+                            details={'text_prompt_tokens': 66},
                         ),
                         model_name='gemini-2.5-flash',
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
                         provider_url='https://generativelanguage.googleapis.com/',
                         provider_details={'finish_reason': 'STOP'},
-                        provider_response_id='DKjgaZOKBtPUjuMPpLLZ6Q4',
+                        provider_response_id=IsStr(),
                         finish_reason='stop',
-                        run_id='019d9590-6e10-748e-977f-dd5ad8ab3ff9',
+                        run_id=IsStr(),
+                    ),
+                    ModelRequest(
+                        parts=[
+                            ToolReturnPart(
+                                tool_name='get_answer',
+                                content=42,
+                                tool_call_id=IsStr(),
+                                timestamp=IsDatetime(),
+                            )
+                        ],
+                        timestamp=IsDatetime(),
+                        run_id=IsStr(),
+                    ),
+                    ModelResponse(
+                        parts=[TextPart(content='The answer is 42.')],
+                        usage=RequestUsage(input_tokens=94, output_tokens=7, details={'text_prompt_tokens': 94}),
+                        model_name='gemini-2.5-flash',
+                        timestamp=IsDatetime(),
+                        provider_name='google-gla',
+                        provider_url='https://generativelanguage.googleapis.com/',
+                        provider_details={'finish_reason': 'STOP'},
+                        provider_response_id=IsStr(),
+                        finish_reason='stop',
+                        run_id=IsStr(),
                     ),
                 ]
             ),

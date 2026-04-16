@@ -90,7 +90,7 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1372'
+      - '1175'
       content-type:
       - application/json; charset=UTF-8
       transfer-encoding:
@@ -101,18 +101,18 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -24.95263163248698
+      - avgLogprobs: -15.50399907430013
         content:
           parts:
           - functionCall:
               args: {}
               name: get_answer
-            thoughtSignature: Cr4EAY89a19gr1/7J407ikUV06BJAb9LAlnSTP0ILW1eJucjE2fp+96GdVsYKFVYXn2NAosKh5b5uHqC9b1CXQEKeX5//tBcNaMfkkn8udSRXPiT6Y0WNSOMYDbphaq1BiziDFWAWnKhpEd5eNzwf0nxeRpyfxNbR2fX6U3rzJPe1PlgZkiCrEL3cR0uDIGt5DeCr4sl6qmrCLHzCsgQQN9hRKbbjMv8K5PtbC2RTwuWjDuRWJpgEmGbPwAwWNjWu627D+Zg3XhZFQuq9geWsL5Abix+QumKlnEQEFxB8491IogDmheoGK88oyVUcP/VtwSyQhELAhahLbqbB1tXDDrdNNs+3Zv1A0r6OfndkeCgOwqrw/o5Ia2dZdumq1k7YPai7bpLpbFQTXNCNu3m1WgGe3ga2k0e0WLXYwmj1noD2W7YjhCiZU7xHJ6qRRc+RrQGG041cN/TVxAtxDjd5qSfgnTi1xnhETzHXnomqiH3OIHE9Y8Uf/wgZlyOKHFoUdLfYMns3IJXDRGfYmy3U//mz7A9aaeObAgGkoie1MI2TBYg+fVW/hS/7Q524EgLMlRmkr04OPW6+EryjLl7eaHk4OTXs7hbdJzo8F7bp+ihGl/4ageDVxNXet0l0cNdlCr4HF3k4WapwQxsOfq8bKJSODabTpyfZnmsgdXuvApOQT6YpQugwbKAXfal9vx+v5Juw8E5oQXTAwdjkcYqYMCRlwUf4cal1GnLcHcPBdOIl3K4wanywQ7U307nzCCt7Q==
+            thoughtSignature: CqwDAY89a1+yt3o1y5kH9VInfx8VjfPXKNm28GkV+msgWyl5NpdEh+qXBsmhDeiZHnnWQY7yGTVFJKeuwiBHXnjZDp3hL3O13ZAjey4oxDNulkFtP9aRyMatESHMbonCKujVR8fp3TPPEt+X2pvbiB/xbcoTpgq3yLkZzTEmJOMfES9hWYVaCJsk5CtwQcmzShz1NPbYjG3Q7ZrwjRaYAtAVzE1wXV/lZxY2KblgkqYO8+UMM3JDJ7+LrTlrIbPJ49/nYhJLh1l2gRaFu3XQqVqZhkhJxN6zMv+Sx2QeskLQv0Hypbwe1kSt1/9sQyJzOKQOdlLKEZlnvnyG56GTVfN/uSnzBgVcvitIAP9IaLPz2iHki8LDpZ44VFVIXeEbgYTsbOPFgUNE37ayfr4trKZKwremtBOiIKxIdPss2M67WDw4twGqHqgIVL1O5wrqGcM8JOX39QYbMZYk64u84/3dgWXxIvBTHiedmlBFhsc5pe8JEHK+mcrFHLrrqJuers99NukiqIg1UPh/vSHxXo0uoTNLqStyJag5xvE8iv1QfGYv59c/Askn9+gMCL0=
           role: model
         finishReason: STOP
-      createTime: '2026-04-16T09:12:33.557090Z'
+      createTime: '2026-04-16T09:46:59.163254Z'
       modelVersion: gemini-2.5-flash
-      responseId: AajgaaKAIoeipt8PiKfB8Qg
+      responseId: E7Dgabb7Cf2r4vEPnsSZ4QI
       usageMetadata:
         candidatesTokenCount: 3
         candidatesTokensDetails:
@@ -122,8 +122,8 @@ interactions:
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 27
-        thoughtsTokenCount: 126
-        totalTokenCount: 156
+        thoughtsTokenCount: 84
+        totalTokenCount: 114
         trafficType: ON_DEMAND
     status:
       code: 200
@@ -137,7 +137,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1642'
+      - '1446'
       content-type:
       - application/json
       host:
@@ -170,7 +170,7 @@ interactions:
         - functionCall:
             args: {}
             name: get_answer
-          thoughtSignature: Cr4EAY89a19gr1_7J407ikUV06BJAb9LAlnSTP0ILW1eJucjE2fp-96GdVsYKFVYXn2NAosKh5b5uHqC9b1CXQEKeX5__tBcNaMfkkn8udSRXPiT6Y0WNSOMYDbphaq1BiziDFWAWnKhpEd5eNzwf0nxeRpyfxNbR2fX6U3rzJPe1PlgZkiCrEL3cR0uDIGt5DeCr4sl6qmrCLHzCsgQQN9hRKbbjMv8K5PtbC2RTwuWjDuRWJpgEmGbPwAwWNjWu627D-Zg3XhZFQuq9geWsL5Abix-QumKlnEQEFxB8491IogDmheoGK88oyVUcP_VtwSyQhELAhahLbqbB1tXDDrdNNs-3Zv1A0r6OfndkeCgOwqrw_o5Ia2dZdumq1k7YPai7bpLpbFQTXNCNu3m1WgGe3ga2k0e0WLXYwmj1noD2W7YjhCiZU7xHJ6qRRc-RrQGG041cN_TVxAtxDjd5qSfgnTi1xnhETzHXnomqiH3OIHE9Y8Uf_wgZlyOKHFoUdLfYMns3IJXDRGfYmy3U__mz7A9aaeObAgGkoie1MI2TBYg-fVW_hS_7Q524EgLMlRmkr04OPW6-EryjLl7eaHk4OTXs7hbdJzo8F7bp-ihGl_4ageDVxNXet0l0cNdlCr4HF3k4WapwQxsOfq8bKJSODabTpyfZnmsgdXuvApOQT6YpQugwbKAXfal9vx-v5Juw8E5oQXTAwdjkcYqYMCRlwUf4cal1GnLcHcPBdOIl3K4wanywQ7U307nzCCt7Q==
+          thoughtSignature: CqwDAY89a1-yt3o1y5kH9VInfx8VjfPXKNm28GkV-msgWyl5NpdEh-qXBsmhDeiZHnnWQY7yGTVFJKeuwiBHXnjZDp3hL3O13ZAjey4oxDNulkFtP9aRyMatESHMbonCKujVR8fp3TPPEt-X2pvbiB_xbcoTpgq3yLkZzTEmJOMfES9hWYVaCJsk5CtwQcmzShz1NPbYjG3Q7ZrwjRaYAtAVzE1wXV_lZxY2KblgkqYO8-UMM3JDJ7-LrTlrIbPJ49_nYhJLh1l2gRaFu3XQqVqZhkhJxN6zMv-Sx2QeskLQv0Hypbwe1kSt1_9sQyJzOKQOdlLKEZlnvnyG56GTVfN_uSnzBgVcvitIAP9IaLPz2iHki8LDpZ44VFVIXeEbgYTsbOPFgUNE37ayfr4trKZKwremtBOiIKxIdPss2M67WDw4twGqHqgIVL1O5wrqGcM8JOX39QYbMZYk64u84_3dgWXxIvBTHiedmlBFhsc5pe8JEHK-mcrFHLrrqJuers99NukiqIg1UPh_vSHxXo0uoTNLqStyJag5xvE8iv1QfGYv59c_Askn9-gMCL0=
         role: model
       - parts:
         - functionResponse:
@@ -195,7 +195,7 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '531'
+      - '532'
       content-type:
       - application/json; charset=UTF-8
       transfer-encoding:
@@ -206,25 +206,25 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.0013778757836137498
+      - avgLogprobs: -0.0016332753002643585
         content:
           parts:
           - text: The answer is 42.
           role: model
         finishReason: STOP
-      createTime: '2026-04-16T09:12:36.006951Z'
+      createTime: '2026-04-16T09:47:00.986101Z'
       modelVersion: gemini-2.5-flash
-      responseId: BKjgaac2w57V7w-b39mYBw
+      responseId: FLDgafWXPOON4vEP_rflqQM
       usageMetadata:
         candidatesTokenCount: 7
         candidatesTokensDetails:
         - modality: TEXT
           tokenCount: 7
-        promptTokenCount: 163
+        promptTokenCount: 121
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 163
-        totalTokenCount: 170
+          tokenCount: 121
+        totalTokenCount: 128
         trafficType: ON_DEMAND
     status:
       code: 200

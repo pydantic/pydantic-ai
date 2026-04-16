@@ -87,7 +87,7 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '527'
+      - '940'
       content-type:
       - application/json; charset=UTF-8
       transfer-encoding:
@@ -98,15 +98,16 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.02002028056553432
+      - avgLogprobs: -5.4840578351702005
         content:
           parts:
           - text: The answer is 42.
+            thoughtSignature: CowCAY89a1/Lr5I5rCxmFmTg4LmefcprwRklaynIndojFJB478RWEusES3xjW1+RfxErWpbvj1XboDKAbM6wz23uOv6A+2Gf1HwoE3M4FHEkCBJcVSI1so8I87gwjDt5oEIIEU7MoiJZREF8H7QAgEegqQ/zz2LYXlvG3OJZKLObVr1uubBFK6qlOisY5UpYpMXR0femPKprNDSLXBiPozZmnoKyMJc97Df+OubYriq/FI1d4ErtK7mhpxb3viMBSHhlBQfFjdVZuTZsu2G/VkmfK7IrS+ovnQqiScCQnxcjIVP966oZ5qjTkpH9vhgfU5z71QtvBHWGBcLhcXFOf7/DxJnsxttP/yzpiyK9uQ==
           role: model
         finishReason: STOP
-      createTime: '2026-04-16T09:12:27.215179Z'
+      createTime: '2026-04-16T09:46:51.324615Z'
       modelVersion: gemini-2.5-flash
-      responseId: -6fgaYuRDbDJk7QPtZWXgAk
+      responseId: C7DgaYfoE6qrk7QP_PfrkAQ
       usageMetadata:
         candidatesTokenCount: 7
         candidatesTokensDetails:
@@ -116,7 +117,8 @@ interactions:
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 19
-        totalTokenCount: 26
+        thoughtsTokenCount: 52
+        totalTokenCount: 78
         trafficType: ON_DEMAND
     status:
       code: 200

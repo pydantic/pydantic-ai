@@ -56,11 +56,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1242'
+      - '439'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1925
+      - gfet4t7; dur=2112
       transfer-encoding:
       - chunked
       vary:
@@ -71,22 +71,122 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: I'm sorry, I was unable to get the answer. The previous attempt resulted in an error. Please let me know
-              if there's anything else I can help with or if you'd like to try something different.
-            thoughtSignature: CukDAb4+9vtdOmXU4b3aEpWfKMzuXPfTqGTS7xpnHig6EJ2dEk2yZQMdvpFIu4ynvaNcUjbH2ef6KdAjLXWvynO8+4zPKfyTsX0FD9kEVt+lFS01Fko1nmUBXoZ17OODLXe7yTFSLlpG4PoM7qLITnfnRIlnBg2C1c+eYGtGOTQkdJVP9Tb3qdk5Jx6ihB8IiluJemILR7poUQueXdyfNt0akPnXU5vKGic9nqDmbvtUBUuI/nZNPD0QPf+rlYsRvKCiLa6YGyafUvPE3/8LZqGYBuqOAAbtoaKbPxtjBtYM4zTeKRBfnTdgKmfOGLVOh7O58Sw3QD1/n+BvPt/kdynTSp6MILA9/pw2UzZ6HJMYN2mYjfbUww8THxewjpnVmZXnsjlvmVxkTGcDIJdEpnzJYKEnbRb6vh2bYjF3iGVBEAyLR/n8E6ic8wRQei18wtkePv8uzLZtIg52X0GzlScjIT4NRt2TGK4ul4I9Zd2cOlhqHPR/jWoPg/ZPEX7yKKGe8CDUJNhfWBCR0ZGFOL1p3ctrREvUBOjS07Vb4W18kMmOTPMheKVLSbcueOwkIPtBLD/t7tUqS8ZGPKb4vnAlGskACUgjKdLvAP2jJUFnL3KgtO4h+vRZf1smmWl73jSFc2z7grYIphTw
+          - functionCall:
+              args: {}
+              name: get_answer
           role: model
+        finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: DKjgaZOKBtPUjuMPpLLZ6Q4
+      responseId: HrDgaZapGa3TqfkP_YG0sQE
       usageMetadata:
-        candidatesTokenCount: 46
+        candidatesTokenCount: 10
         promptTokenCount: 66
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 66
-        thoughtsTokenCount: 99
-        totalTokenCount: 211
+        totalTokenCount: 76
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '966'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the answer?
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            id: call_openai_xyz
+            name: get_answer
+          thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
+        role: model
+      - parts:
+        - functionResponse:
+            id: call_openai_xyz
+            name: get_answer
+            response:
+              error: |-
+                Try again.
+
+                Fix the errors and try again.
+        role: user
+      - parts:
+        - text: continue
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            name: get_answer
+          thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
+        role: model
+      - parts:
+        - functionResponse:
+            name: get_answer
+            response:
+              return_value: 42
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_answer
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '362'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=630
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: The answer is 42.
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: ILDgaeuzL4bZjuMPp4fQoQ4
+      usageMetadata:
+        candidatesTokenCount: 7
+        promptTokenCount: 94
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 94
+        totalTokenCount: 101
     status:
       code: 200
       message: OK

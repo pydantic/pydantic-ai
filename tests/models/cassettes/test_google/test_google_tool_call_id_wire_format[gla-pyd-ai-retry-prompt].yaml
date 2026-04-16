@@ -54,11 +54,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '946'
+      - '1471'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1596
+      - gfet4t7; dur=1581
       transfer-encoding:
       - chunked
       vary:
@@ -72,21 +72,21 @@ interactions:
           - functionCall:
               args: {}
               name: get_answer
-            thoughtSignature: CtECAb4+9vvonGXxxt75b+aPrQX3KTQvQiCxQgpil/HbdeF26CsfxjKT3LAc4VDTOOO+w+wIDX24RNYzBD4+GKrxdksvfOLQvba4+ulk1gltSSmR+zICGELOyLlSTOICsLCht5TM5evKl43eGnsoTHyx4hHSryTCq9cNffZ3aUokGMZ0/wa74DB+2/O2ujvyx/mlku4UXu8qFhwQoBUhpcR2bp2SogCumq/4xPldoXOHoC0MD1miUOXcw7AiaLA1K2WOy/HzBknx+XADW/1eAMYxLzX0UdXFsKMlOzq5Bx8MqdA+DRoc4Dbrb5BEo8hrn8esJq0AuspxjOCXPGqrNrhcWrUEEoTuoms+Isvt8O/9sSOirBk8c6Y43ymNaqBiLHFdaCTrgFjbQ6X1Yk422NIB01GYOdM8HPptRecZJO7eULUDtyVjivpsvPbXi9GXMkGmrQ==
+            thoughtSignature: CtsFAb4+9vt/OTeNb8uiaC8ILe89OM+EUyXYCYBTUdWUYex80zTeDc8de5YC0Ytc2RxMpQjRYsVYoNnyxs+s/S+UaicmanE7a/khorhCVtFvOXdOVHtcOjAcumy9X2S0GWi8TWE9lLyDk6KeHvjMPsj8g+yCREbNVwGqBIpbKi0E0faxE2AuZtKIFJskV/96a0b593J3DmZnobFgn3v+gfzjj0wPj3nyhf9J3s1o+e9bxiS66p+YB3TnBkv0eFBkmatjoIJfkqjS31UpUOgOmo0thB8pX9I21O8ZqDP6MApvofA4tVcMls49g726lAJpQv3mwrBD0v2/7LlCTbzUA825MRlf9Vm7V5oNii2j140C3A3cMQMjMcbKwBPlnvCwajCjsPlmLwdie7kG0vK+gzmieFmORtX2VW5oIbZSvrFNuZKPfrLaieNWTI356HBKqQ7WfY+wRs9w+YwMhq64JsvAqgc1QMpxnSUut8lbtZ0hvBRChCOwIsHrZDS6Mhz+HV6qGJdk0D4EXFEd3U7dJAYlSgkbcGcdRm61qUBChs3+cxy5spV6HwqZ3CgTKxpN9LecN1Lpld+RrK63Txa6sZMCv5iCooQCK8KqCqj45hCcfy8SvrPxIkh/1RyIYLUvNhB4GkXGiTjkDSI3iDK35HzzpbmlZwXet7frk0sAelnfsTno43D5DKKOpKv+8Zty61GGEAwbWcoGoUAGv2x2xym5Sc2tOZG+4LhpQ1B6ZoQrsL5mefPo4CPSGAAq4enelzrOhbdnvcGbHv1cMpw7f4689rm4BBZIlerQOahXkz//3lq8c8V53LAXZdcVGM8HXic/4DcGYiC07PQ15A5Q493KE4kk90Pmmo50FIdRbVzQR6+1Gu2aC3sONBGVYirJKLf4ujQPciQSCo5vp/5owgMUgH/t5uwkCaYlow3+RkYurN7CzerpMnLfXjdnzC95khwnzb5uWWEPFFlcfew=
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: CajgaciuB9Wq4-EP96DRmQ4
+      responseId: GrDgaa-zIKSkjuMP0ZCF0Q8
       usageMetadata:
         candidatesTokenCount: 10
         promptTokenCount: 66
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 66
-        thoughtsTokenCount: 82
-        totalTokenCount: 158
+        thoughtsTokenCount: 158
+        totalTokenCount: 234
     status:
       code: 200
       message: OK
@@ -99,7 +99,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1328'
+      - '1852'
       content-type:
       - application/json
       host:
@@ -132,7 +132,7 @@ interactions:
         - functionCall:
             args: {}
             name: get_answer
-          thoughtSignature: CtECAb4-9vvonGXxxt75b-aPrQX3KTQvQiCxQgpil_HbdeF26CsfxjKT3LAc4VDTOOO-w-wIDX24RNYzBD4-GKrxdksvfOLQvba4-ulk1gltSSmR-zICGELOyLlSTOICsLCht5TM5evKl43eGnsoTHyx4hHSryTCq9cNffZ3aUokGMZ0_wa74DB-2_O2ujvyx_mlku4UXu8qFhwQoBUhpcR2bp2SogCumq_4xPldoXOHoC0MD1miUOXcw7AiaLA1K2WOy_HzBknx-XADW_1eAMYxLzX0UdXFsKMlOzq5Bx8MqdA-DRoc4Dbrb5BEo8hrn8esJq0AuspxjOCXPGqrNrhcWrUEEoTuoms-Isvt8O_9sSOirBk8c6Y43ymNaqBiLHFdaCTrgFjbQ6X1Yk422NIB01GYOdM8HPptRecZJO7eULUDtyVjivpsvPbXi9GXMkGmrQ==
+          thoughtSignature: CtsFAb4-9vt_OTeNb8uiaC8ILe89OM-EUyXYCYBTUdWUYex80zTeDc8de5YC0Ytc2RxMpQjRYsVYoNnyxs-s_S-UaicmanE7a_khorhCVtFvOXdOVHtcOjAcumy9X2S0GWi8TWE9lLyDk6KeHvjMPsj8g-yCREbNVwGqBIpbKi0E0faxE2AuZtKIFJskV_96a0b593J3DmZnobFgn3v-gfzjj0wPj3nyhf9J3s1o-e9bxiS66p-YB3TnBkv0eFBkmatjoIJfkqjS31UpUOgOmo0thB8pX9I21O8ZqDP6MApvofA4tVcMls49g726lAJpQv3mwrBD0v2_7LlCTbzUA825MRlf9Vm7V5oNii2j140C3A3cMQMjMcbKwBPlnvCwajCjsPlmLwdie7kG0vK-gzmieFmORtX2VW5oIbZSvrFNuZKPfrLaieNWTI356HBKqQ7WfY-wRs9w-YwMhq64JsvAqgc1QMpxnSUut8lbtZ0hvBRChCOwIsHrZDS6Mhz-HV6qGJdk0D4EXFEd3U7dJAYlSgkbcGcdRm61qUBChs3-cxy5spV6HwqZ3CgTKxpN9LecN1Lpld-RrK63Txa6sZMCv5iCooQCK8KqCqj45hCcfy8SvrPxIkh_1RyIYLUvNhB4GkXGiTjkDSI3iDK35HzzpbmlZwXet7frk0sAelnfsTno43D5DKKOpKv-8Zty61GGEAwbWcoGoUAGv2x2xym5Sc2tOZG-4LhpQ1B6ZoQrsL5mefPo4CPSGAAq4enelzrOhbdnvcGbHv1cMpw7f4689rm4BBZIlerQOahXkz__3lq8c8V53LAXZdcVGM8HXic_4DcGYiC07PQ15A5Q493KE4kk90Pmmo50FIdRbVzQR6-1Gu2aC3sONBGVYirJKLf4ujQPciQSCo5vp_5owgMUgH_t5uwkCaYlow3-RkYurN7CzerpMnLfXjdnzC95khwnzb5uWWEPFFlcfew=
         role: model
       - parts:
         - functionResponse:
@@ -161,7 +161,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=719
+      - gfet4t7; dur=1221
       transfer-encoding:
       - chunked
       vary:
@@ -177,7 +177,7 @@ interactions:
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: C6jgab7lB5i84-EPxZiziQE
+      responseId: HLDgacCkE8z2juMP8pCmoAE
       usageMetadata:
         candidatesTokenCount: 7
         promptTokenCount: 94
