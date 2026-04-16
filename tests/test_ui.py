@@ -10,6 +10,7 @@ import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
+from pydantic_ai._agent_graph import UserPromptNode
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.messages import (
@@ -22,15 +23,18 @@ from pydantic_ai.messages import (
     FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
+    ModelResponse,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    SystemPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
+    UserPromptPart,
 )
 from pydantic_ai.models.function import (
     AgentInfo,
@@ -48,6 +52,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ExternalToolset
 
 from ._inline_snapshot import snapshot
+from .conftest import IsDatetime
 
 pytest.importorskip('starlette')
 
@@ -773,8 +778,33 @@ def test_manage_system_prompt_visible_in_base_adapter_signatures():
 
 def test_dummy_adapter_dump_messages():
     """Test that DummyUIAdapter.dump_messages returns messages as-is."""
-    from pydantic_ai.messages import UserPromptPart
-
     messages = [ModelRequest(parts=[UserPromptPart(content='Hello')])]
     result = DummyUIAdapter.dump_messages(messages)
     assert result == messages
+
+
+async def test_reinject_system_prompts_with_user_prompt_and_history():
+    """`reinject_system_prompts()` injects the agent's system prompt even when a new `user_prompt` is sent on top of existing history.
+
+    The UI adapter itself always calls the agent with `user_prompt=None` (everything comes in via `message_history`),
+    but the context manager's contract — "injected on every request" — must hold for any caller, so the setting is
+    never silently ignored by the path that builds a new `ModelRequest` from a fresh `user_prompt`.
+    """
+    agent = Agent(model=TestModel(), system_prompt='You are a helpful assistant')
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='First message')]),
+        ModelResponse(parts=[TextPart(content='First response')]),
+    ]
+
+    with UserPromptNode.reinject_system_prompts():
+        result = await agent.run('Second message', message_history=history)
+
+    new_request = result.all_messages()[2]
+    assert isinstance(new_request, ModelRequest)
+    assert new_request.parts == snapshot(
+        [
+            SystemPromptPart(content='You are a helpful assistant', timestamp=IsDatetime()),
+            UserPromptPart(content='Second message', timestamp=IsDatetime()),
+        ]
+    )

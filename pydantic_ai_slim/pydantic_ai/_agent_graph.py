@@ -291,19 +291,18 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
         if next_message:
             await self._reevaluate_dynamic_prompts([next_message], run_context)
-            if UserPromptNode._reinject_system_prompts_var.get():
-                sys_parts = await self._sys_parts(run_context)
-                if sys_parts:
-                    next_message.parts = [*sys_parts, *next_message.parts]
+            inject_sys_parts = UserPromptNode._reinject_system_prompts_var.get()
         else:
             parts: list[_messages.ModelRequestPart] = []
-            if not messages:
-                parts.extend(await self._sys_parts(run_context))
-
             if self.user_prompt is not None:
                 parts.append(_messages.UserPromptPart(self.user_prompt))
-
             next_message = _messages.ModelRequest(parts=parts)
+            inject_sys_parts = not messages or UserPromptNode._reinject_system_prompts_var.get()
+
+        if inject_sys_parts:
+            sys_parts = await self._sys_parts(run_context)
+            if sys_parts:
+                next_message.parts = [*sys_parts, *next_message.parts]
 
         return ModelRequestNode[DepsT, NodeRunEndT](
             request=next_message, is_resuming_without_prompt=is_resuming_without_prompt
