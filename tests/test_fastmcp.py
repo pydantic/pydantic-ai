@@ -314,6 +314,7 @@ class TestFastMCPToolsetToolDiscovery:
             assert test_tool.max_retries is None
             assert test_tool.tool_def.parameters_json_schema == snapshot(
                 {
+                    'additionalProperties': False,
                     'properties': {'param1': {'type': 'string'}, 'param2': {'default': 0, 'type': 'integer'}},
                     'required': ['param1'],
                     'type': 'object',
