@@ -3680,6 +3680,26 @@ async def test_anthropic_opus_47_drops_sampling_settings(allow_model_requests: N
     assert kwargs['extra_body'] == {'metadata': {'keep': True}}
 
 
+async def test_anthropic_opus_47_keeps_non_sampling_extra_body(allow_model_requests: None):
+    settings = AnthropicModelSettings(temperature=0.2, extra_body={'metadata': {'keep': True}})
+    responses = [
+        completion_message(
+            [BetaTextBlock(text='4', type='text')],
+            usage=BetaUsage(input_tokens=10, output_tokens=1),
+        )
+    ]
+    mock_client = MockAnthropic.create_mock(responses)
+    m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, model_settings=settings)
+
+    with pytest.warns(UserWarning, match='Sampling parameters'):
+        await agent.run('What is 2+2?')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['temperature'] is OMIT
+    assert kwargs['extra_body'] == {'metadata': {'keep': True}}
+
+
 async def test_anthropic_opus_46_adaptive_thinking_rejects_tool_output(allow_model_requests: None):
     """Verified in https://logfire-us.pydantic.dev/public-trace/ca9932da-b5ff-46f0-b277-9aeecc5f41e7?spanId=15a32e26f5020e62"""
     responses = [
