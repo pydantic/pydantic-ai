@@ -10315,7 +10315,36 @@ async def test_openai_responses_null_text_stream(allow_model_requests: None):
 
     async with agent.run_stream('Hello') as result:
         output = await result.get_output()
-    assert output == 'Hello!'
+    assert output == snapshot('Hello!')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Hello!', id='msg_001', provider_name='openai')],
+                usage=RequestUsage(),
+                model_name='gpt-4o',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'finish_reason': 'completed',
+                },
+                provider_response_id='resp_001',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_openai_responses_text_content_input(allow_model_requests: None, openai_api_key: str):
