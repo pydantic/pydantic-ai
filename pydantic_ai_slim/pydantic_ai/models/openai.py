@@ -564,7 +564,7 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     for details.
 
     The [`OpenAICompaction`][pydantic_ai.models.openai.OpenAICompaction] capability
-    sets this automatically in its default (inline) mode.
+    sets this automatically in its default (stateful) mode.
     """
 
 
@@ -1802,6 +1802,19 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             elif isinstance(item, responses.response_output_item.McpApprovalRequest):  # pragma: no cover
                 # Pydantic AI doesn't yet support McpApprovalRequest (explicit tool usage approval)
                 pass
+            elif isinstance(item, ResponseCompactionItem):
+                # Stateful compaction: the server-side `context_management` configuration
+                # triggered a compaction and emitted this item alongside the regular output.
+                # We round-trip it via `CompactionPart` so subsequent requests can send the
+                # encrypted content back via the `input` array (see `_map_messages`).
+                items.append(
+                    CompactionPart(
+                        content=None,
+                        id=item.id,
+                        provider_name=self.system,
+                        provider_details=item.model_dump(),
+                    )
+                )
 
         finish_reason: FinishReason | None = None
         provider_details: dict[str, Any] = {}
@@ -2877,6 +2890,16 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     elif isinstance(chunk.item, responses.response_output_item.McpListTools):
                         call_part, _ = _map_mcp_list_tools(chunk.item, self.provider_name)
                         yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
+                    elif isinstance(chunk.item, ResponseCompactionItem):
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=chunk.item.id,
+                            part=CompactionPart(
+                                content=None,
+                                id=chunk.item.id,
+                                provider_name=self.provider_name,
+                                provider_details=chunk.item.model_dump(),
+                            ),
+                        )
                     else:
                         warnings.warn(  # pragma: no cover
                             f'Handling of this item type is not yet implemented. Please report on our GitHub: {chunk}',
@@ -3178,7 +3201,7 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
     runs within manageable context limits. Two modes are supported, selected
     by the `stateless` flag:
 
-    - **Inline mode** (default, `stateless=False`): configures
+    - **Stateful mode** (default, `stateless=False`): configures
       [OpenAI's server-side auto-compaction](https://developers.openai.com/api/docs/guides/compaction)
       via the `context_management` field on the regular `/responses` request.
       The server triggers compaction when input tokens cross a threshold,
@@ -3189,36 +3212,36 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
       Configurable with `token_threshold` (`compact_threshold` on the API).
       If omitted, OpenAI picks a server-side default.
 
-    - **Dedicated mode** (`stateless=True`): calls the stateless
+    - **Stateless mode** (`stateless=True`): calls the stateless
       `/responses/compact` endpoint from a `before_model_request` hook when
-      your trigger condition is met. Fully stateless and ZDR-friendly — use
-      this when you can't have conversation data persisted server-side, or
-      when you need explicit out-of-band control over when compaction runs.
+      your trigger condition is met. ZDR-friendly — use this when you can't
+      have conversation data persisted server-side, or when you need explicit
+      out-of-band control over when compaction runs.
 
       Requires either `message_count_threshold` or a custom `trigger` callable.
 
     If `stateless` is not set, it is inferred from which parameters you
-    provide: passing any dedicated-mode-only parameter (`message_count_threshold`
-    or `trigger`) implies `stateless=True`; otherwise inline mode is used.
+    provide: passing any stateless-only parameter (`message_count_threshold`
+    or `trigger`) implies `stateless=True`; otherwise stateful mode is used.
 
     Example usage::
 
         from pydantic_ai import Agent
         from pydantic_ai.models.openai import OpenAICompaction
 
-        # Inline mode with OpenAI's server-side default threshold:
+        # Stateful mode with OpenAI's server-side default threshold:
         agent = Agent(
             'openai-responses:gpt-5.2',
             capabilities=[OpenAICompaction()],
         )
 
-        # Inline mode with a custom token threshold:
+        # Stateful mode with a custom token threshold:
         agent = Agent(
             'openai-responses:gpt-5.2',
             capabilities=[OpenAICompaction(token_threshold=100_000)],
         )
 
-        # Dedicated mode for ZDR environments or explicit control:
+        # Stateless mode for ZDR environments or explicit control:
         agent = Agent(
             'openai-responses:gpt-5.2',
             capabilities=[OpenAICompaction(message_count_threshold=20)],
@@ -3239,16 +3262,16 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
         Args:
             stateless: Select the compaction mode explicitly. If `None` (the
                 default), the mode is inferred from the other parameters:
-                passing any dedicated-mode-only parameter (`message_count_threshold`
-                or `trigger`) implies `stateless=True`; otherwise inline mode
-                is used.
-            token_threshold: Inline-mode only. Input token threshold at which
+                passing any stateless-only parameter (`message_count_threshold`
+                or `trigger`) implies `stateless=True`; otherwise stateful
+                mode is used.
+            token_threshold: Stateful-mode only. Input token threshold at which
                 OpenAI's server-side compaction is triggered. Corresponds to
                 `compact_threshold` in the `context_management` API field. If
                 `None`, OpenAI picks a server-side default.
-            message_count_threshold: Dedicated-mode only. Compact when the
+            message_count_threshold: Stateless-mode only. Compact when the
                 message count exceeds this threshold.
-            trigger: Dedicated-mode only. Custom callable that decides whether
+            trigger: Stateless-mode only. Custom callable that decides whether
                 to compact based on the current messages. Takes precedence
                 over `message_count_threshold`.
             instructions: Deprecated. OpenAI's `/compact` endpoint treats
@@ -3269,28 +3292,28 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
                 stacklevel=2,
             )
 
-        has_dedicated_only = message_count_threshold is not None or trigger is not None
-        has_inline_only = token_threshold is not None
+        has_stateless_only = message_count_threshold is not None or trigger is not None
+        has_stateful_only = token_threshold is not None
 
         if stateless is None:
-            stateless = has_dedicated_only
+            stateless = has_stateless_only
 
         if stateless:
-            if has_inline_only:
+            if has_stateful_only:
                 raise UserError(
-                    '`token_threshold` is only valid for inline compaction (`stateless=False`). '
-                    'For dedicated `/compact` endpoint compaction, use `message_count_threshold` or `trigger`.'
+                    '`token_threshold` is only valid for stateful compaction (`stateless=False`). '
+                    'For stateless `/compact` endpoint compaction, use `message_count_threshold` or `trigger`.'
                 )
-            if not has_dedicated_only:
+            if not has_stateless_only:
                 raise UserError(
                     '`stateless=True` requires `message_count_threshold` or `trigger` '
-                    'to determine when to invoke the dedicated `/compact` endpoint.'
+                    'to determine when to invoke the `/compact` endpoint.'
                 )
         else:
-            if has_dedicated_only:
+            if has_stateless_only:
                 raise UserError(
-                    '`message_count_threshold` and `trigger` are only valid for dedicated-endpoint compaction '
-                    '(`stateless=True`). For inline server-side compaction, use `token_threshold` '
+                    '`message_count_threshold` and `trigger` are only valid for stateless compaction '
+                    '(`stateless=True`). For stateful server-side compaction, use `token_threshold` '
                     '(or omit it to use the OpenAI-managed default).'
                 )
 
@@ -3308,14 +3331,14 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
             edit['compact_threshold'] = self.token_threshold
 
         def resolve(ctx: RunContext[AgentDepsT]) -> ModelSettings:
-            # Append to any existing `openai_context_management` a user may have set
-            # directly on model settings, preserving their entries.
-            existing: list[ContextManagement] = []
+            # If the user already set `openai_context_management` on their model settings,
+            # defer to it entirely — we don't want to end up with two conflicting `compaction`
+            # entries, since OpenAI's context_management list only meaningfully supports one.
             if ctx.model_settings:
-                raw = cast(dict[str, Any], ctx.model_settings).get('openai_context_management')
-                if isinstance(raw, list):  # pragma: no branch
-                    existing = list(cast(list[ContextManagement], raw))
-            return cast(ModelSettings, {'openai_context_management': [*existing, edit]})
+                existing = cast(dict[str, Any], ctx.model_settings).get('openai_context_management')
+                if existing:
+                    return cast(ModelSettings, {})
+            return cast(ModelSettings, {'openai_context_management': [edit]})
 
         return resolve
 

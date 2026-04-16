@@ -8605,7 +8605,7 @@ class TestCompaction:
         )
 
     def test_openai_compaction_should_compact_no_config(self):
-        """Bare `OpenAICompaction()` is inline mode and never triggers the before_model_request hook."""
+        """Bare `OpenAICompaction()` is stateful mode and never triggers the before_model_request hook."""
         pytest.importorskip('openai')
         from pydantic_ai.models.openai import OpenAICompaction
 
@@ -8623,8 +8623,8 @@ class TestCompaction:
         assert OpenAICompaction(message_count_threshold=5).stateless is True
         assert OpenAICompaction(trigger=lambda _msgs: True).stateless is True
 
-    def test_openai_compaction_inline_model_settings(self):
-        """Inline mode returns `openai_context_management` via get_model_settings, merging with existing entries."""
+    def test_openai_compaction_stateful_model_settings(self):
+        """Stateful mode returns `openai_context_management` via get_model_settings."""
         pytest.importorskip('openai')
         from types import SimpleNamespace
         from typing import cast
@@ -8641,31 +8641,32 @@ class TestCompaction:
         assert _resolve(OpenAICompaction(token_threshold=50_000)) == {
             'openai_context_management': [{'type': 'compaction', 'compact_threshold': 50_000}]
         }
-        # User-provided entries are preserved and appended to.
-        assert _resolve(
-            OpenAICompaction(token_threshold=50_000),
-            model_settings={'openai_context_management': [{'type': 'compaction', 'compact_threshold': 200_000}]},
-        ) == {
-            'openai_context_management': [
-                {'type': 'compaction', 'compact_threshold': 200_000},
-                {'type': 'compaction', 'compact_threshold': 50_000},
-            ]
-        }
-        # Dedicated mode does not inject model settings
+        # If the user already configured `openai_context_management` directly, we defer
+        # to them entirely and don't append our own entry. OpenAI's context_management
+        # list only meaningfully supports one `compaction` entry, so mixing the capability
+        # with manual config would produce ambiguous/conflicting state.
+        assert (
+            _resolve(
+                OpenAICompaction(token_threshold=50_000),
+                model_settings={'openai_context_management': [{'type': 'compaction', 'compact_threshold': 200_000}]},
+            )
+            == {}
+        )
+        # Stateless mode does not inject model settings
         assert OpenAICompaction(message_count_threshold=5).get_model_settings() is None
 
     def test_openai_compaction_rejects_mixed_fields(self):
-        """Mixing inline-only and dedicated-only fields raises UserError."""
+        """Mixing stateful-only and stateless-only fields raises UserError."""
         pytest.importorskip('openai')
         from pydantic_ai.models.openai import OpenAICompaction
 
-        with pytest.raises(UserError, match='`token_threshold` is only valid for inline compaction'):
+        with pytest.raises(UserError, match='`token_threshold` is only valid for stateful compaction'):
             OpenAICompaction(stateless=True, token_threshold=1000, message_count_threshold=5)
 
-        with pytest.raises(UserError, match='only valid for dedicated-endpoint compaction'):
+        with pytest.raises(UserError, match='only valid for stateless compaction'):
             OpenAICompaction(stateless=False, message_count_threshold=5)
 
-        with pytest.raises(UserError, match='only valid for dedicated-endpoint compaction'):
+        with pytest.raises(UserError, match='only valid for stateless compaction'):
             OpenAICompaction(stateless=False, trigger=lambda _msgs: True)
 
     def test_openai_compaction_stateless_requires_trigger(self):

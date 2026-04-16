@@ -222,7 +222,7 @@ agent = Agent(
 )
 ```
 
-By default, `OpenAICompaction` runs in **inline mode**: it configures OpenAI's server-side auto-compaction via the `context_management` field on the regular `/responses` request, and OpenAI triggers compaction whenever the input token count crosses a threshold it manages for you. This mode is compatible with [`openai_previous_response_id='auto'`](#automatically-referencing-earlier-responses) and server-side conversation state.
+By default, `OpenAICompaction` runs in **stateful mode**: it configures OpenAI's server-side auto-compaction via the `context_management` field on the regular `/responses` request, and OpenAI triggers compaction whenever the input token count crosses a threshold it manages for you. This mode is compatible with [`openai_previous_response_id='auto'`](#automatically-referencing-earlier-responses) and server-side conversation state.
 
 To override the threshold, pass [`token_threshold`][pydantic_ai.models.openai.OpenAICompaction]:
 
@@ -236,9 +236,9 @@ agent = Agent(
 )
 ```
 
-As an alternative to inline mode, `OpenAICompaction` supports a **dedicated mode** that calls the stateless `/responses/compact` endpoint via a `before_model_request` hook. Use this in [ZDR](https://openai.com/enterprise-privacy/) environments where OpenAI cannot persist conversation data server-side, or when you need explicit out-of-band control over when compaction runs. Dedicated mode requires you to specify either a [`message_count_threshold`][pydantic_ai.models.openai.OpenAICompaction] or a custom `trigger` callable:
+As an alternative, `OpenAICompaction` supports a **stateless mode** (`stateless=True`) that calls the stateless `/responses/compact` endpoint via a `before_model_request` hook. Use this in [ZDR](https://openai.com/enterprise-privacy/) environments where OpenAI cannot persist conversation data server-side, or when you need explicit out-of-band control over when compaction runs. Stateless mode requires you to specify either a [`message_count_threshold`][pydantic_ai.models.openai.OpenAICompaction] or a custom `trigger` callable:
 
-```python {title="openai_compaction_dedicated.py" test="skip"}
+```python {title="openai_compaction_stateless.py" test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAICompaction
 
@@ -248,7 +248,10 @@ agent = Agent(
 )
 ```
 
-The mode is inferred from which parameters you pass: supplying `message_count_threshold` or `trigger` implies dedicated mode, otherwise inline mode is used. You can also pass `stateless=True` or `stateless=False` explicitly. Mixing parameters from different modes raises [`UserError`][pydantic_ai.exceptions.UserError].
+The mode is inferred from which parameters you pass: supplying `message_count_threshold` or `trigger` implies stateless mode, otherwise stateful mode is used. You can also pass `stateless=True` or `stateless=False` explicitly. Mixing parameters from different modes raises [`UserError`][pydantic_ai.exceptions.UserError].
+
+!!! tip
+    Stateful compaction pairs especially well with [`openai_previous_response_id='auto'`](#automatically-referencing-earlier-responses). Both rely on OpenAI's server-side conversation state, so OpenAI can use a previously compacted context as the starting point for the next turn without you having to resend it.
 
 For lower-level use cases, you can call [`compact_messages`][pydantic_ai.models.openai.OpenAIResponsesModel.compact_messages] directly on the model.
 

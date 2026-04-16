@@ -14,6 +14,7 @@ from pydantic_ai import (
     BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CompactionPart,
     DocumentUrl,
     FilePart,
     FinalResultEvent,
@@ -10183,7 +10184,6 @@ async def test_openai_responses_text_content_input(allow_model_requests: None, o
 
 async def test_openai_responses_compact_messages(allow_model_requests: None, openai_api_key: str):
     """Test OpenAI compaction: multi-turn conversation compacted via OpenAICompaction capability."""
-    from pydantic_ai.messages import CompactionPart
     from pydantic_ai.models.openai import OpenAICompaction
 
     model = OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
@@ -10222,7 +10222,6 @@ async def test_openai_responses_compact_messages(allow_model_requests: None, ope
 
 async def test_openai_responses_compact_messages_direct(allow_model_requests: None, openai_api_key: str):
     """Test OpenAI compact_messages method directly with ModelRequestContext."""
-    from pydantic_ai.messages import CompactionPart
     from pydantic_ai.models import ModelRequestContext
 
     model = OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
@@ -10258,7 +10257,6 @@ async def test_openai_responses_compact_messages_direct(allow_model_requests: No
 
 async def test_openai_responses_compact_with_auto_previous_response_id(allow_model_requests: None, openai_api_key: str):
     """Test compact_messages with openai_previous_response_id='auto'."""
-    from pydantic_ai.messages import CompactionPart
     from pydantic_ai.models import ModelRequestContext
 
     model = OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
@@ -10285,7 +10283,6 @@ async def test_openai_responses_compact_with_auto_previous_response_id(allow_mod
 
 async def test_openai_responses_compact_with_instructions(allow_model_requests: None, openai_api_key: str):
     """Test compact_messages with custom instructions override."""
-    from pydantic_ai.messages import CompactionPart
     from pydantic_ai.models import ModelRequestContext
 
     model = OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
@@ -10320,7 +10317,6 @@ async def test_openai_responses_compact_with_auto_previous_response_id_chain(
     compaction, the next request must pass the compaction item via the input array
     instead of chaining the compaction response id.
     """
-    from pydantic_ai.messages import CompactionPart
     from pydantic_ai.models.openai import OpenAICompaction
 
     model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
@@ -10355,28 +10351,71 @@ async def test_openai_responses_compact_with_auto_previous_response_id_chain(
             assert msg.provider_response_id is not None
 
 
-async def test_openai_responses_compact_inline_mode(allow_model_requests: None, openai_api_key: str):
-    """Inline-mode `OpenAICompaction` injects `context_management` on the regular /responses call.
+async def test_openai_responses_compact_stateful_mode(allow_model_requests: None, openai_api_key: str):
+    """Stateful `OpenAICompaction` rides along on the regular /responses call.
 
-    No `before_model_request` hook fires and no `/compact` endpoint call is made — the
-    server handles compaction internally when the token threshold is crossed.
+    Sets `context_management: [{'type': 'compaction', ...}]` on the request. When
+    OpenAI triggers compaction server-side, the returned `ResponseCompactionItem`
+    is mapped to a `CompactionPart` on the `ModelResponse` so it can be
+    round-tripped via the `input` array on subsequent requests (or chained via
+    `previous_response_id`).
     """
     from pydantic_ai.models.openai import OpenAICompaction
 
     model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(
         model=model,
-        capabilities=[OpenAICompaction(token_threshold=50_000)],
+        # 1000 is the lowest threshold OpenAI accepts; a handful of ~300-word turns crosses it.
+        capabilities=[OpenAICompaction(token_threshold=1000)],
     )
 
-    result = await agent.run('What is 2+2?')
-    assert '4' in result.output
-    # Inline mode never produces a CompactionPart locally — compaction happens server-side.
-    from pydantic_ai.messages import CompactionPart
+    message_history: list[Any] = []
+    last_output = ''
+    for question in [
+        'Tell me a 300-word story about a fox exploring a forest. Be very descriptive.',
+        'Now a 300-word story about a rabbit in a meadow. Be very descriptive.',
+        'Now a 300-word story about a bear in a cave. Be very descriptive.',
+        'What is 2+2?',
+    ]:
+        result = await agent.run(question, message_history=message_history)
+        message_history = result.all_messages()
+        last_output = result.output
 
-    assert not any(
-        isinstance(part, CompactionPart)
-        for msg in result.all_messages()
+    assert '4' in last_output
+
+    # Trace: which message kinds, which part kinds per response, and where the
+    # server-side compaction was emitted. Snapshotting the full all_messages()
+    # would be hundreds of lines of story prose; this condensed trace catches
+    # the regressions that matter (compaction emitted, parts round-tripped into
+    # subsequent requests, no orphan parts).
+    trace = [
+        (
+            type(msg).__name__,
+            [type(p).__name__ for p in msg.parts],
+        )
+        for msg in message_history
+    ]
+    assert trace == snapshot(
+        [
+            ('ModelRequest', ['UserPromptPart']),
+            ('ModelResponse', ['TextPart']),
+            ('ModelRequest', ['UserPromptPart']),
+            ('ModelResponse', ['TextPart']),
+            ('ModelRequest', ['UserPromptPart']),
+            ('ModelResponse', ['TextPart', 'CompactionPart']),
+            ('ModelRequest', ['UserPromptPart']),
+            ('ModelResponse', ['TextPart']),
+        ]
+    )
+
+    compaction_parts = [
+        part
+        for msg in message_history
         if isinstance(msg, ModelResponse)
         for part in msg.parts
-    )
+        if isinstance(part, CompactionPart)
+    ]
+    compaction = compaction_parts[0]
+    assert compaction.provider_name == 'openai'
+    assert compaction.provider_details is not None
+    assert 'encrypted_content' in compaction.provider_details
