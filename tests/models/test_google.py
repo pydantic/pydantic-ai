@@ -7010,11 +7010,7 @@ async def test_google_vertex_service_tier_flex_stream(
                         run_id=IsStr(),
                     ),
                     ModelResponse(
-                        parts=[
-                            ToolCallPart(
-                                tool_name='get_answer', args={}, tool_call_id=IsStr()
-                            )
-                        ],
+                        parts=[ToolCallPart(tool_name='get_answer', args={}, tool_call_id=IsStr())],
                         usage=RequestUsage(
                             input_tokens=66,
                             output_tokens=10,
