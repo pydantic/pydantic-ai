@@ -8,7 +8,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Literal, cast, overload
 
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
@@ -169,7 +169,15 @@ except ImportError as _import_error:
 
 _NON_AUTOMATIC_CACHING_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
 
-_ANTHROPIC_SAMPLING_PARAMS = ('temperature', 'top_p')
+_ANTHROPIC_SAMPLING_PARAMS = ('temperature', 'top_p', 'top_k')
+_STR_OBJECT_DICT = TypeAdapter(dict[str, object])
+
+
+def _as_str_object_dict(value: object) -> dict[str, object] | None:
+    try:
+        return _STR_OBJECT_DICT.validate_python(value)
+    except ValidationError:
+        return None
 
 
 @contextmanager
@@ -185,25 +193,12 @@ def _map_api_errors(model_name: str) -> Iterator[None]:
 
 
 LatestAnthropicModelNames = ModelParam
-"""Latest Anthropic models."""
+"""Anthropic model names from the installed SDK."""
 
-LegacyAnthropicModelNames = Literal[
-    'claude-3-5-haiku-20241022',
-    'claude-3-5-haiku-latest',
-    'claude-3-7-sonnet-20250219',
-    'claude-3-7-sonnet-latest',
-    'claude-3-opus-20240229',
-    'claude-3-opus-latest',
-    'claude-4-opus-20250514',
-    'claude-4-sonnet-20250514',
-]
-"""Anthropic model names we continue to support beyond the SDK's latest literal set."""
-
-AnthropicModelName = str | LatestAnthropicModelNames | LegacyAnthropicModelNames
+AnthropicModelName = LatestAnthropicModelNames
 """Possible Anthropic model names.
 
-Since Anthropic supports a variety of date-stamped models, we explicitly list the latest models but
-allow any name in the type hints.
+The installed Anthropic SDK exposes the current literal set and still allows arbitrary string model names.
 See [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/models) for a full list.
 """
 
@@ -501,7 +496,20 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if not profile.anthropic_disallows_sampling_settings:
             return
 
-        if dropped := [setting for setting in _ANTHROPIC_SAMPLING_PARAMS if setting in model_settings]:
+        dropped_from_settings = [setting for setting in _ANTHROPIC_SAMPLING_PARAMS if setting in model_settings]
+        dropped_from_extra_body: list[str] = []
+        if (extra_body := _as_str_object_dict(model_settings.get('extra_body'))) is not None:
+            dropped_from_extra_body = [setting for setting in _ANTHROPIC_SAMPLING_PARAMS if setting in extra_body]
+            if dropped_from_extra_body:
+                model_settings['extra_body'] = {
+                    key: value for key, value in extra_body.items() if key not in _ANTHROPIC_SAMPLING_PARAMS
+                }
+
+        if dropped := [
+            setting
+            for setting in _ANTHROPIC_SAMPLING_PARAMS
+            if setting in dropped_from_settings or setting in dropped_from_extra_body
+        ]:
             if warn:
                 warnings.warn(
                     f'Sampling parameters {dropped} are not supported by Claude Opus 4.7. These settings will be ignored.',

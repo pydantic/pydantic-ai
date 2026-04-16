@@ -3645,7 +3645,11 @@ async def test_anthropic_explicit_effort_xhigh_unsupported_model_errors(
 
 @pytest.mark.parametrize('settings_source', ['agent', 'model'])
 async def test_anthropic_opus_47_drops_sampling_settings(allow_model_requests: None, settings_source: str):
-    settings = AnthropicModelSettings(temperature=0.2, top_p=0.3)
+    settings = AnthropicModelSettings(
+        temperature=0.2,
+        top_p=0.3,
+        extra_body={'top_k': 5, 'metadata': {'keep': True}},
+    )
     responses = [
         completion_message(
             [BetaTextBlock(text='4', type='text')],
@@ -3669,9 +3673,11 @@ async def test_anthropic_opus_47_drops_sampling_settings(allow_model_requests: N
 
     assert settings.get('temperature') == 0.2
     assert settings.get('top_p') == 0.3
+    assert settings.get('extra_body') == {'top_k': 5, 'metadata': {'keep': True}}
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert kwargs['temperature'] is OMIT
     assert kwargs['top_p'] is OMIT
+    assert kwargs['extra_body'] == {'metadata': {'keep': True}}
 
 
 async def test_anthropic_opus_46_adaptive_thinking_rejects_tool_output(allow_model_requests: None):
