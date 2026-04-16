@@ -9328,6 +9328,34 @@ async def test_agent_allows_none_output_after_tool():
     )
 
 
+async def test_agent_allows_none_output_after_tool_recovers_prior_text():
+    """Optional text output should still recover prior assistant text after an empty follow-up response."""
+    call_count = 0
+
+    async def model_with_text_then_empty(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(
+                parts=[
+                    TextPart(content='RECOVER-ME'),
+                    ToolCallPart(tool_name='noop', args={'data': 'x'}, tool_call_id='123'),
+                ]
+            )
+        return ModelResponse(parts=[])
+
+    model = FunctionModel(function=model_with_text_then_empty)
+    agent = Agent(model, output_type=str | None)
+
+    @agent.tool_plain
+    def noop(data: str) -> str:
+        return 'done'
+
+    result = await agent.run('hello')
+    assert call_count == 2
+    assert result.output == 'RECOVER-ME'
+
+
 async def test_agent_allows_none_output_validator_called():
     """Test that output validators are called when returning None on empty response."""
 
