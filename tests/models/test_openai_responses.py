@@ -2674,7 +2674,7 @@ async def test_openai_responses_thinking_part_from_other_model(
     allow_model_requests: None, anthropic_api_key: str, openai_api_key: str
 ):
     m = AnthropicModel(
-        'claude-sonnet-4-0',
+        'claude-sonnet-4-6',
         provider=AnthropicProvider(api_key=anthropic_api_key),
         settings=AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024}),
     )
@@ -2712,7 +2712,7 @@ async def test_openai_responses_thinking_part_from_other_model(
                         'output_tokens': 291,
                     },
                 ),
-                model_name='claude-sonnet-4-20250514',
+                model_name='claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',

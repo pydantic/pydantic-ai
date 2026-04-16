@@ -187,7 +187,19 @@ def _map_api_errors(model_name: str) -> Iterator[None]:
 LatestAnthropicModelNames = ModelParam
 """Latest Anthropic models."""
 
-AnthropicModelName = str | LatestAnthropicModelNames
+LegacyAnthropicModelNames = Literal[
+    'claude-3-5-haiku-20241022',
+    'claude-3-5-haiku-latest',
+    'claude-3-7-sonnet-20250219',
+    'claude-3-7-sonnet-latest',
+    'claude-3-opus-20240229',
+    'claude-3-opus-latest',
+    'claude-4-opus-20250514',
+    'claude-4-sonnet-20250514',
+]
+"""Anthropic model names we continue to support beyond the SDK's latest literal set."""
+
+AnthropicModelName = str | LatestAnthropicModelNames | LegacyAnthropicModelNames
 """Possible Anthropic model names.
 
 Since Anthropic supports a variety of date-stamped models, we explicitly list the latest models but
@@ -462,7 +474,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             model_request_parameters = replace(
                 model_request_parameters, output_object=replace(model_request_parameters.output_object, strict=True)
             )
-        return super().prepare_request(settings, model_request_parameters)
+
+        prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
+        if prepared_settings is not None:
+            filtered_settings: ModelSettings = {**prepared_settings}
+            self._drop_unsupported_sampling_settings(filtered_settings, profile, warn=False)
+            prepared_settings = filtered_settings or None
+        return prepared_settings, model_request_parameters
 
     @staticmethod
     def _validate_thinking_settings(model_settings: ModelSettings, profile: AnthropicModelProfile) -> None:
@@ -477,15 +495,18 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
 
     @staticmethod
-    def _drop_unsupported_sampling_settings(model_settings: ModelSettings, profile: AnthropicModelProfile) -> None:
+    def _drop_unsupported_sampling_settings(
+        model_settings: ModelSettings, profile: AnthropicModelProfile, *, warn: bool = True
+    ) -> None:
         if not profile.anthropic_disallows_sampling_settings:
             return
 
         if dropped := [setting for setting in _ANTHROPIC_SAMPLING_PARAMS if setting in model_settings]:
-            warnings.warn(
-                f'Sampling parameters {dropped} are not supported by Claude Opus 4.7. These settings will be ignored.',
-                UserWarning,
-            )
+            if warn:
+                warnings.warn(
+                    f'Sampling parameters {dropped} are not supported by Claude Opus 4.7. These settings will be ignored.',
+                    UserWarning,
+                )
 
         for setting in _ANTHROPIC_SAMPLING_PARAMS:
             model_settings.pop(setting, None)
