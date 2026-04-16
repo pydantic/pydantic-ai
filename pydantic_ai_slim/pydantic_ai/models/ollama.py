@@ -4,6 +4,7 @@ from __future__ import annotations as _annotations
 
 from dataclasses import dataclass, replace
 from typing import Literal
+from urllib.parse import urlparse
 
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
@@ -38,7 +39,8 @@ def _routes_to_ollama_cloud(provider: Provider[AsyncOpenAI], model_name: str) ->
     [pydantic-ai#4917](https://github.com/pydantic/pydantic-ai/issues/4917) and
     [ollama/ollama#12362](https://github.com/ollama/ollama/issues/12362).
     """
-    return 'ollama.com' in provider.base_url or model_name.endswith('-cloud')
+    hostname = urlparse(provider.base_url).hostname or ''
+    return hostname == 'ollama.com' or hostname.endswith('.ollama.com') or model_name.endswith('-cloud')
 
 
 @dataclass(init=False)
