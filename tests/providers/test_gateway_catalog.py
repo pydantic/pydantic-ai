@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import os
-import warnings
 from typing import get_args
 
 import pytest
@@ -25,7 +24,7 @@ with try_import() as imports_successful:
 if not imports_successful():
     pytest.skip('gateway model checks require provider packages to be installed', allow_module_level=True)
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.filterwarnings('ignore::DeprecationWarning')]
 
 
 @pytest.fixture(scope='module')
@@ -52,15 +51,17 @@ def _gateway_supported_providers() -> set[str]:
     return {f'gateway/{provider}' for provider in get_args(GatewayModelProvider)}
 
 
-async def _run_gateway_smoke_test(model_name: str) -> str:
+async def _run_gateway_smoke_test(model_name: str) -> None:
     agent = Agent(model_name, model_settings={'max_tokens': 256}, retries=3)
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore', DeprecationWarning)
-        result = await agent.run('Reply with exactly OK.')
-    output = result.output
-    assert isinstance(output, str)
-    assert output.strip()
-    return output
+    result = await agent.run('Reply with exactly OK.')
+    assert result.output.strip()
+
+    async with agent.run_stream('Reply with exactly OK.') as streamed_result:
+        chunks = [chunk async for chunk in streamed_result.stream_text(debounce_by=None)]
+        streamed_output = await streamed_result.get_output()
+    assert chunks
+    assert streamed_output.strip()
+    assert chunks[-1].strip() == streamed_output.strip()
 
 
 def test_gateway_known_model_names_only_use_supported_providers() -> None:
