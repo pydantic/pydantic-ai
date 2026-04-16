@@ -2999,7 +2999,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         provider_details['annotations'] = responses_output_text_annotations_ta.dump_python(
                             list(annotations), warnings=False
                         )
-
+                    if chunk.logprobs:
+                        provider_details['logprobs'] = _map_logprobs(chunk.logprobs)
                     if provider_details:
                         for event in self._parts_manager.handle_text_delta(
                             vendor_part_id=chunk.item_id,
@@ -3264,15 +3265,23 @@ def _make_raw_content_updater(delta: str, index: int) -> Callable[[dict[str, Any
 # Convert logprobs to a serializable format
 def _map_logprobs(
     logprobs: list[chat_completion_token_logprob.ChatCompletionTokenLogprob]
-    | list[responses.response_output_text.Logprob],
+    | list[responses.response_output_text.Logprob]
+    | list[responses.response_text_done_event.Logprob],
 ) -> list[dict[str, Any]]:
     return [
         {
             'token': lp.token,
-            'bytes': lp.bytes,
+            'bytes': lp.bytes if not isinstance(lp, responses.response_text_done_event.Logprob) else None,
             'logprob': lp.logprob,
             'top_logprobs': [
-                {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
+                {
+                    'token': tlp.token,
+                    'bytes': tlp.bytes
+                    if not isinstance(tlp, responses.response_text_done_event.LogprobTopLogprob)
+                    else None,
+                    'logprob': tlp.logprob,
+                }
+                for tlp in (lp.top_logprobs or [])
             ],
         }
         for lp in logprobs
