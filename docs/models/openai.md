@@ -424,7 +424,7 @@ print(result.usage())
 
 ### Azure AI Foundry
 
-To use [Azure AI Foundry](https://ai.azure.com/) as your provider, you can set the `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and `OPENAI_API_VERSION` environment variables and use [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] by name:
+To use [Azure AI Foundry](https://ai.azure.com/) as your provider, set `AZURE_OPENAI_ENDPOINT` to a URL whose path ends in `/v1` (for example `https://<resource>.openai.azure.com/openai/v1/` or `https://<resource>.services.ai.azure.com/openai/v1/`), set `AZURE_OPENAI_API_KEY`, and use [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] by name:
 
 ```python
 from pydantic_ai import Agent
@@ -443,8 +443,32 @@ from pydantic_ai.providers.azure import AzureProvider
 model = OpenAIChatModel(
     'gpt-5.2',
     provider=AzureProvider(
-        azure_endpoint='your-azure-endpoint',
-        api_version='your-api-version',
+        azure_endpoint='https://your-resource.openai.azure.com/openai/v1/',
+        api_key='your-api-key',
+    ),
+)
+agent = Agent(model)
+...
+```
+
+This targets the [Azure OpenAI v1 API](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/api-version-lifecycle), which Microsoft recommends for all new projects. It also pairs naturally with the Responses API — see [Using Azure with the Responses API](#using-azure-with-the-responses-api) below.
+
+[`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] also recognises [Azure AI Foundry serverless model deployments](https://learn.microsoft.com/en-us/azure/ai-foundry/foundry-models/concepts/endpoints) at `https://<model>.<region>.models.ai.azure.com` and connects to them the same way.
+
+#### Connecting to an existing `api-version`-based deployment
+
+If your resource still uses the dated `api-version` API, pass `api_version` (or set the `OPENAI_API_VERSION` environment variable) and point `azure_endpoint` at the resource root instead:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.azure import AzureProvider
+
+model = OpenAIChatModel(
+    'gpt-5.2',
+    provider=AzureProvider(
+        azure_endpoint='https://your-resource.openai.azure.com/',
+        api_version='2024-12-01-preview',
         api_key='your-api-key',
     ),
 )
@@ -467,8 +491,8 @@ Azure AI Foundry also supports the OpenAI Responses API through [`OpenAIResponse
     model = OpenAIResponsesModel(
         'gpt-5.2',
         provider=AzureProvider(
-            azure_endpoint='your-azure-endpoint',
-            api_version='your-api-version',
+            azure_endpoint='https://your-resource.openai.azure.com/openai/v1/',
+            api_key='your-api-key',
         ),
     )
     agent = Agent(model)

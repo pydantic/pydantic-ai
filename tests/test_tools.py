@@ -168,18 +168,6 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'function_signature': {
-                'kind': 'function',
-                'name': 'google_style_docstring',
-                'description': None,
-                'params': {
-                    'foo': {'kind': 'param', 'name': 'foo', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None},
-                    'bar': {'kind': 'param', 'name': 'bar', 'type': {'name': 'str', 'kind': 'simple'}, 'default': None},
-                },
-                'return_type': {'name': 'str', 'kind': 'simple'},
-                'referenced_types': [],
-                'is_async': False,
-            },
         }
     )
 
@@ -219,17 +207,6 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'function_signature': {
-                'kind': 'function',
-                'name': 'sphinx_style_docstring',
-                'description': None,
-                'params': {
-                    'foo': {'kind': 'param', 'name': 'foo', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None}
-                },
-                'return_type': {'name': 'str', 'kind': 'simple'},
-                'referenced_types': [],
-                'is_async': False,
-            },
         }
     )
 
@@ -277,18 +254,6 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'function_signature': {
-                'kind': 'function',
-                'name': 'numpy_style_docstring',
-                'description': None,
-                'params': {
-                    'foo': {'kind': 'param', 'name': 'foo', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None},
-                    'bar': {'kind': 'param', 'name': 'bar', 'type': {'name': 'str', 'kind': 'simple'}, 'default': None},
-                },
-                'return_type': {'name': 'str', 'kind': 'simple'},
-                'referenced_types': [],
-                'is_async': False,
-            },
         }
     )
 
@@ -336,17 +301,6 @@ def test_google_style_with_returns():
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'function_signature': {
-                'kind': 'function',
-                'name': 'my_tool',
-                'description': None,
-                'params': {
-                    'x': {'kind': 'param', 'name': 'x', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None}
-                },
-                'return_type': {'name': 'str', 'kind': 'simple'},
-                'referenced_types': [],
-                'is_async': False,
-            },
         }
     )
 
@@ -392,17 +346,6 @@ def test_sphinx_style_with_returns():
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'function_signature': {
-                'kind': 'function',
-                'name': 'my_tool',
-                'description': None,
-                'params': {
-                    'x': {'kind': 'param', 'name': 'x', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None}
-                },
-                'return_type': {'name': 'str', 'kind': 'simple'},
-                'referenced_types': [],
-                'is_async': False,
-            },
         }
     )
 
@@ -454,17 +397,6 @@ def test_numpy_style_with_returns():
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'function_signature': {
-                'kind': 'function',
-                'name': 'my_tool',
-                'description': None,
-                'params': {
-                    'x': {'kind': 'param', 'name': 'x', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None}
-                },
-                'return_type': {'name': 'str', 'kind': 'simple'},
-                'referenced_types': [],
-                'is_async': False,
-            },
         }
     )
 
@@ -504,15 +436,6 @@ def test_only_returns_type():
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'function_signature': {
-                'kind': 'function',
-                'name': 'only_returns_type',
-                'description': None,
-                'params': {},
-                'return_type': {'name': 'str', 'kind': 'simple'},
-                'referenced_types': [],
-                'is_async': False,
-            },
         }
     )
 
@@ -543,15 +466,6 @@ def test_docstring_unknown():
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'function_signature': {
-                'kind': 'function',
-                'name': 'unknown_docstring',
-                'description': None,
-                'params': {},
-                'return_type': {'name': 'str', 'kind': 'simple'},
-                'referenced_types': [],
-                'is_async': False,
-            },
         }
     )
 
@@ -600,18 +514,6 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'function_signature': {
-                'kind': 'function',
-                'name': 'google_style_docstring_no_body',
-                'description': None,
-                'params': {
-                    'foo': {'kind': 'param', 'name': 'foo', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None},
-                    'bar': {'kind': 'param', 'name': 'bar', 'type': {'name': 'str', 'kind': 'simple'}, 'default': None},
-                },
-                'return_type': {'name': 'str', 'kind': 'simple'},
-                'referenced_types': [],
-                'is_async': False,
-            },
         }
     )
 
@@ -653,18 +555,6 @@ def test_takes_just_model():
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'function_signature': {
-                'kind': 'function',
-                'name': 'takes_just_model',
-                'description': None,
-                'params': {
-                    'x': {'kind': 'param', 'name': 'x', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None},
-                    'y': {'kind': 'param', 'name': 'y', 'type': {'name': 'str', 'kind': 'simple'}, 'default': None},
-                },
-                'return_type': {'name': 'str', 'kind': 'simple'},
-                'referenced_types': [],
-                'is_async': False,
-            },
         }
     )
 
@@ -715,65 +605,6 @@ def test_takes_model_and_int():
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'function_signature': {
-                'kind': 'function',
-                'name': 'takes_just_model',
-                'description': None,
-                'params': {
-                    'model': {
-                        'kind': 'param',
-                        'name': 'model',
-                        'type': {
-                            'kind': 'type',
-                            'name': 'Foo',
-                            'description': None,
-                            'fields': {
-                                'x': {
-                                    'kind': 'field',
-                                    'name': 'x',
-                                    'type': {'name': 'int', 'kind': 'simple'},
-                                    'required': True,
-                                    'description': None,
-                                },
-                                'y': {
-                                    'kind': 'field',
-                                    'name': 'y',
-                                    'type': {'name': 'str', 'kind': 'simple'},
-                                    'required': True,
-                                    'description': None,
-                                },
-                            },
-                        },
-                        'default': None,
-                    },
-                    'z': {'kind': 'param', 'name': 'z', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None},
-                },
-                'return_type': {'name': 'str', 'kind': 'simple'},
-                'referenced_types': [
-                    {
-                        'kind': 'type',
-                        'name': 'Foo',
-                        'description': None,
-                        'fields': {
-                            'x': {
-                                'kind': 'field',
-                                'name': 'x',
-                                'type': {'name': 'int', 'kind': 'simple'},
-                                'required': True,
-                                'description': None,
-                            },
-                            'y': {
-                                'kind': 'field',
-                                'name': 'y',
-                                'type': {'name': 'str', 'kind': 'simple'},
-                                'required': True,
-                                'description': None,
-                            },
-                        },
-                    }
-                ],
-                'is_async': False,
-            },
         }
     )
 
@@ -1164,15 +995,6 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'function_signature': {
-                'kind': 'function',
-                'name': 'tool_without_return_annotation_in_docstring',
-                'description': None,
-                'params': {},
-                'return_type': {'name': 'str', 'kind': 'simple'},
-                'referenced_types': [],
-                'is_async': False,
-            },
         }
     )
 
@@ -1250,18 +1072,6 @@ def test_json_schema_required_parameters():
                 'prefer_builtin': None,
                 'return_schema': None,
                 'include_return_schema': None,
-                'function_signature': {
-                    'kind': 'function',
-                    'name': 'my_tool',
-                    'description': None,
-                    'params': {
-                        'a': {'kind': 'param', 'name': 'a', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None},
-                        'b': {'kind': 'param', 'name': 'b', 'type': {'name': 'int', 'kind': 'simple'}, 'default': '1'},
-                    },
-                    'return_type': {'name': 'int', 'kind': 'simple'},
-                    'referenced_types': [],
-                    'is_async': False,
-                },
             },
             {
                 'description': None,
@@ -1282,18 +1092,6 @@ def test_json_schema_required_parameters():
                 'prefer_builtin': None,
                 'return_schema': None,
                 'include_return_schema': None,
-                'function_signature': {
-                    'kind': 'function',
-                    'name': 'my_tool_plain',
-                    'description': None,
-                    'params': {
-                        'a': {'kind': 'param', 'name': 'a', 'type': {'name': 'int', 'kind': 'simple'}, 'default': '1'},
-                        'b': {'kind': 'param', 'name': 'b', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None},
-                    },
-                    'return_type': {'name': 'int', 'kind': 'simple'},
-                    'referenced_types': [],
-                    'is_async': False,
-                },
             },
         ]
     )
@@ -1387,22 +1185,6 @@ def test_schema_generator():
                 'prefer_builtin': None,
                 'return_schema': None,
                 'include_return_schema': None,
-                'function_signature': {
-                    'kind': 'function',
-                    'name': 'my_tool_1',
-                    'description': None,
-                    'params': {
-                        'x': {
-                            'kind': 'param',
-                            'name': 'x',
-                            'type': {'name': 'str', 'kind': 'simple'},
-                            'default': 'None',
-                        }
-                    },
-                    'return_type': {'name': 'Any', 'kind': 'simple'},
-                    'referenced_types': [],
-                    'is_async': False,
-                },
             },
             {
                 'description': None,
@@ -1422,22 +1204,6 @@ def test_schema_generator():
                 'prefer_builtin': None,
                 'return_schema': None,
                 'include_return_schema': None,
-                'function_signature': {
-                    'kind': 'function',
-                    'name': 'my_tool_2',
-                    'description': None,
-                    'params': {
-                        'x': {
-                            'kind': 'param',
-                            'name': 'x',
-                            'type': {'name': 'str', 'kind': 'simple'},
-                            'default': 'None',
-                        }
-                    },
-                    'return_type': {'name': 'Any', 'kind': 'simple'},
-                    'referenced_types': [],
-                    'is_async': False,
-                },
             },
         ]
     )
@@ -1480,18 +1246,6 @@ def test_tool_parameters_with_attribute_docstrings():
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'function_signature': {
-                'kind': 'function',
-                'name': 'get_score',
-                'description': None,
-                'params': {
-                    'a': {'kind': 'param', 'name': 'a', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None},
-                    'b': {'kind': 'param', 'name': 'b', 'type': {'name': 'int', 'kind': 'simple'}, 'default': None},
-                },
-                'return_type': {'name': 'int', 'kind': 'simple'},
-                'referenced_types': [],
-                'is_async': False,
-            },
         }
     )
 

@@ -6,16 +6,25 @@ import threading
 from collections.abc import AsyncIterable, AsyncIterator, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import anyio
 import pytest
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
 from pydantic_ai.agent import Agent
 from pydantic_ai.agent.spec import AgentSpec
-from pydantic_ai.builtin_tools import CodeExecutionTool, ImageGenerationTool, MCPServerTool, WebFetchTool, WebSearchTool
+from pydantic_ai.builtin_tools import (
+    CodeExecutionTool,
+    ImageGenerationTool,
+    MCPServerTool,
+    WebFetchTool,
+    WebSearchTool,
+    XSearchTool,
+)
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
@@ -69,7 +78,10 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInstance, IsStr
+from .conftest import IsDatetime, IsInstance, IsStr, try_import
+
+with try_import() as xai_imports:
+    from pydantic_ai.models.xai import XSearch
 
 pytestmark = [
     pytest.mark.anyio,
@@ -1084,6 +1096,48 @@ Supported by:
                     'title': 'WebSearchUserLocation',
                     'type': 'object',
                 },
+                'XSearchTool': {
+                    'properties': {
+                        'kind': {'default': 'x_search', 'title': 'Kind', 'type': 'string'},
+                        'allowed_x_handles': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Allowed X Handles',
+                        },
+                        'excluded_x_handles': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Excluded X Handles',
+                        },
+                        'from_date': {
+                            'anyOf': [{'format': 'date-time', 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'From Date',
+                        },
+                        'to_date': {
+                            'anyOf': [{'format': 'date-time', 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'To Date',
+                        },
+                        'enable_image_understanding': {
+                            'default': False,
+                            'title': 'Enable Image Understanding',
+                            'type': 'boolean',
+                        },
+                        'enable_video_understanding': {
+                            'default': False,
+                            'title': 'Enable Video Understanding',
+                            'type': 'boolean',
+                        },
+                        'include_output': {
+                            'default': False,
+                            'title': 'Include Output',
+                            'type': 'boolean',
+                        },
+                    },
+                    'title': 'XSearchTool',
+                    'type': 'object',
+                },
                 'short_spec_BuiltinTool': {
                     'additionalProperties': False,
                     'properties': {
@@ -1092,6 +1146,7 @@ Supported by:
                                 {
                                     'oneOf': [
                                         {'$ref': '#/$defs/WebSearchTool'},
+                                        {'$ref': '#/$defs/XSearchTool'},
                                         {'$ref': '#/$defs/CodeExecutionTool'},
                                         {'$ref': '#/$defs/WebFetchTool'},
                                         {'$ref': '#/$defs/UrlContextTool'},
@@ -1411,7 +1466,7 @@ Supported by:
                 },
                 'end_strategy': {
                     'default': 'early',
-                    'enum': ['early', 'exhaustive'],
+                    'enum': ['early', 'graceful', 'exhaustive'],
                     'title': 'End Strategy',
                     'type': 'string',
                 },
@@ -1980,6 +2035,33 @@ async def test_combined_capability_for_run_returns_new_when_child_changes():
     new_per_run = result.capabilities[1]
     assert isinstance(new_per_run, PerRunCap)
     assert new_per_run.run_id == 1
+
+
+async def test_combined_capability_for_run_cancels_siblings_on_failure():
+    """When one child's for_run fails, siblings are cancelled instead of leaking as orphan tasks."""
+    sibling_completed = False
+
+    @dataclass
+    class FailingCap(AbstractCapability[None]):
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            raise RuntimeError('boom')
+
+    @dataclass
+    class SlowCap(AbstractCapability[None]):
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            nonlocal sibling_completed
+            await anyio.sleep(0.1)
+            sibling_completed = True  # pragma: no cover
+            return self  # pragma: no cover
+
+    combined = CombinedCapability([FailingCap(), SlowCap()])
+    ctx = _build_run_context()
+
+    with pytest.raises(RuntimeError, match='boom'):
+        await combined.for_run(ctx)
+
+    await anyio.sleep(0.2)
+    assert sibling_completed is False
 
 
 def test_apply_single_capability():
@@ -3841,6 +3923,55 @@ class TestWebSearchCapability:
         assert isinstance(cap.local, Tool)
 
 
+@pytest.mark.skipif(not xai_imports(), reason='xai_sdk not installed')
+class TestXSearchCapability:
+    def test_xsearch_default(self):
+        """XSearch() with defaults → builtin XSearchTool, no local."""
+        cap = XSearch()
+        assert cap.get_builtin_tools() == snapshot([XSearchTool()])
+        assert cap.get_toolset() is None
+
+    def test_xsearch_with_all_constraints(self):
+        """XSearch with all constraint fields → XSearchTool configured."""
+        cap = XSearch(
+            allowed_x_handles=['handle1'],
+            from_date=datetime(2024, 1, 1),
+            to_date=datetime(2024, 12, 31),
+            enable_image_understanding=True,
+            enable_video_understanding=True,
+            include_output=True,
+        )
+        assert cap.get_builtin_tools() == snapshot(
+            [
+                XSearchTool(
+                    allowed_x_handles=['handle1'],
+                    from_date=datetime(2024, 1, 1),
+                    to_date=datetime(2024, 12, 31),
+                    enable_image_understanding=True,
+                    enable_video_understanding=True,
+                    include_output=True,
+                )
+            ]
+        )
+
+    def test_xsearch_requires_builtin_with_handles(self):
+        """XSearch with handle constraints requires builtin."""
+        assert XSearch(allowed_x_handles=['h']).get_builtin_tools() == snapshot([XSearchTool(allowed_x_handles=['h'])])
+        assert XSearch(excluded_x_handles=['h']).get_builtin_tools() == snapshot(
+            [XSearchTool(excluded_x_handles=['h'])]
+        )
+
+    def test_xsearch_builtin_false_local_false_raises(self):
+        """XSearch(builtin=False, local=False) → UserError."""
+        with pytest.raises(UserError, match='both builtin and local cannot be False'):
+            XSearch(builtin=False, local=False)
+
+    def test_xsearch_builtin_false_with_constraints_raises(self):
+        """XSearch(builtin=False, allowed_x_handles=...) → UserError."""
+        with pytest.raises(UserError, match='constraint fields require the builtin tool'):
+            XSearch(builtin=False, allowed_x_handles=['handle1'])
+
+
 class TestWebFetchCapability:
     def test_webfetch_default(self):
         """WebFetch() provides builtin and default local fallback."""
@@ -5364,6 +5495,13 @@ def test_web_fetch_unique_id():
     """WebFetch returns the correct builtin unique_id."""
     cap = WebFetch()
     assert cap._builtin_unique_id() == 'web_fetch'  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.skipif(not xai_imports(), reason='xai_sdk not installed')
+def test_xsearch_unique_id():
+    """XSearch returns the correct builtin unique_id."""
+    cap = XSearch()
+    assert cap._builtin_unique_id() == 'x_search'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_web_search_with_constraints():
