@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.metadata
+import inspect
 import json
 import uuid
 from collections.abc import AsyncIterator, MutableMapping
@@ -162,6 +163,13 @@ def simple_result() -> Any:
             },
         ]
     )
+
+
+def test_manage_system_prompt_visible_in_ag_ui_from_request_signature() -> None:
+    from_request_parameters = inspect.signature(AGUIAdapter.from_request).parameters
+
+    assert 'manage_system_prompt' in from_request_parameters
+    assert from_request_parameters['manage_system_prompt'].default == 'server'
 
 
 async def run_and_collect_events(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import uuid
 from collections.abc import AsyncIterator, MutableMapping
@@ -3185,6 +3186,16 @@ async def test_adapter_dispatch_request():
             '[DONE]',
         ]
     )
+
+
+def test_manage_system_prompt_visible_in_vercel_adapter_signatures():
+    from_request_parameters = inspect.signature(VercelAIAdapter.from_request).parameters
+    dispatch_request_parameters = inspect.signature(VercelAIAdapter.dispatch_request).parameters
+
+    assert 'manage_system_prompt' in from_request_parameters
+    assert from_request_parameters['manage_system_prompt'].default == 'server'
+    assert 'manage_system_prompt' in dispatch_request_parameters
+    assert dispatch_request_parameters['manage_system_prompt'].default == 'server'
 
 
 @pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')

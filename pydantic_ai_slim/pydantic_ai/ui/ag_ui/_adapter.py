@@ -12,6 +12,7 @@ from functools import cached_property
 from typing import (
     TYPE_CHECKING,
     Any,
+    Literal,
     cast,
 )
 
@@ -254,11 +255,17 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         agent: AbstractAgent[AgentDepsT, OutputDataT],
         ag_ui_version: str = DEFAULT_AG_UI_VERSION,
         preserve_file_data: bool = False,
+        manage_system_prompt: Literal['server', 'client'] = 'server',
         **kwargs: Any,
     ) -> AGUIAdapter[AgentDepsT, OutputDataT]:
         """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with AG-UI-specific parameters."""
         return await super().from_request(
-            request, agent=agent, ag_ui_version=ag_ui_version, preserve_file_data=preserve_file_data, **kwargs
+            request,
+            agent=agent,
+            ag_ui_version=ag_ui_version,
+            preserve_file_data=preserve_file_data,
+            manage_system_prompt=manage_system_prompt,
+            **kwargs,
         )
 
     @cached_property

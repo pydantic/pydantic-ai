@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from collections.abc import AsyncIterator, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from functools import cached_property
@@ -758,6 +759,16 @@ async def test_adapter_dispatch_request():
         ]
     )
     assert captured_metadata == [{'ui': 'dispatch'}]
+
+
+def test_manage_system_prompt_visible_in_base_adapter_signatures():
+    from_request_parameters = inspect.signature(DummyUIAdapter.from_request).parameters
+    dispatch_request_parameters = inspect.signature(DummyUIAdapter.dispatch_request).parameters
+
+    assert 'manage_system_prompt' in from_request_parameters
+    assert from_request_parameters['manage_system_prompt'].default == 'server'
+    assert 'manage_system_prompt' in dispatch_request_parameters
+    assert dispatch_request_parameters['manage_system_prompt'].default == 'server'
 
 
 def test_dummy_adapter_dump_messages():

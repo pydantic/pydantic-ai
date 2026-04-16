@@ -147,7 +147,12 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
     @classmethod
     async def from_request(
-        cls, request: Request, *, agent: AbstractAgent[AgentDepsT, OutputDataT], **kwargs: Any
+        cls,
+        request: Request,
+        *,
+        agent: AbstractAgent[AgentDepsT, OutputDataT],
+        manage_system_prompt: Literal['server', 'client'] = 'server',
+        **kwargs: Any,
     ) -> Self:
         """Create an adapter from a request.
 
@@ -158,6 +163,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             agent=agent,
             run_input=cls.build_run_input(await request.body()),
             accept=request.headers.get('accept'),
+            manage_system_prompt=manage_system_prompt,
             **kwargs,
         )
 
@@ -417,6 +423,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         toolsets: Sequence[AbstractToolset[DispatchDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
+        manage_system_prompt: Literal['server', 'client'] = 'server',
         **kwargs: Any,
     ) -> Response:
         """Handle a protocol-specific HTTP request by running the agent and returning a streaming response of protocol-specific events.
@@ -444,6 +451,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             builtin_tools: Optional additional builtin tools to use for this run.
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
+            manage_system_prompt: Who owns the system prompt. See
+                [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt].
             **kwargs: Additional keyword arguments forwarded to [`from_request`][pydantic_ai.ui.UIAdapter.from_request].
 
         Returns:
@@ -461,7 +470,12 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             # The DepsT and OutputDataT come from `agent`, not from `cls`; the cast is necessary to explain this to pyright
             adapter = cast(
                 UIAdapter[RunInputT, MessageT, EventT, DispatchDepsT, DispatchOutputDataT],
-                await cls.from_request(request, agent=cast(AbstractAgent[AgentDepsT, OutputDataT], agent), **kwargs),
+                await cls.from_request(
+                    request,
+                    agent=cast(AbstractAgent[AgentDepsT, OutputDataT], agent),
+                    manage_system_prompt=manage_system_prompt,
+                    **kwargs,
+                ),
             )
         except ValidationError as e:  # pragma: no cover
             return Response(
