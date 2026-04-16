@@ -2498,6 +2498,46 @@ def test_streamed_run_result_sync_exposes_metadata() -> None:
     assert sync_result.metadata == {'sync': 'metadata'}
 
 
+async def test_agent_stream_iter_events_reuses_initialized_iterator() -> None:
+    response_message = ModelResponse(parts=[TextPart('reuse')], model_name='test')
+    stream_response = ModelTestStreamedResponse(
+        model_request_parameters=models.ModelRequestParameters(),
+        _model_name='test',
+        _structured_response=response_message,
+        _messages=[],
+        _provider_name='test',
+    )
+    run_ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    output_schema = TextOutputSchema[str](
+        text_processor=TextOutputProcessor(),
+        allows_deferred_tools=False,
+        allows_image=False,
+    )
+    stream = AgentStream(
+        _raw_stream_response=stream_response,
+        _output_schema=output_schema,
+        _model_request_parameters=models.ModelRequestParameters(),
+        _output_validators=[],
+        _run_ctx=run_ctx,
+        _usage_limits=None,
+        _tool_manager=ToolManager(toolset=MagicMock()),
+    )
+
+    first_iterator = stream.iter_events()
+    second_iterator = stream.iter_events()
+
+    assert first_iterator is second_iterator
+    assert [type(event) async for event in first_iterator] == [
+        ModelResponseStartEvent,
+        PartStartEvent,
+        FinalResultEvent,
+        PartDeltaEvent,
+        PartDeltaEvent,
+        PartEndEvent,
+        ModelResponseEndEvent,
+    ]
+
+
 async def test_iter_stream_responses():
     m = TestModel(custom_output_text='The cat sat on the mat.')
 
