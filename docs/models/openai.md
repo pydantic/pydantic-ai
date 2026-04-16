@@ -207,30 +207,52 @@ print(result.output)
 
 #### Message Compaction
 
-The Responses API supports [compacting message history](https://platform.openai.com/docs/guides/conversation-state#compaction-advanced) to reduce token usage in long conversations. Compaction produces an encrypted summary that replaces older messages while preserving context.
+The Responses API supports [compacting message history](https://developers.openai.com/api/docs/guides/compaction) to reduce token usage in long conversations. Compaction produces an encrypted summary that replaces older messages while preserving context.
 
-The easiest way to enable compaction is with the [`OpenAICompaction`][pydantic_ai.models.openai.OpenAICompaction] capability, which automatically calls the compact endpoint when the message count exceeds a threshold:
+The easiest way to enable compaction is with the [`OpenAICompaction`][pydantic_ai.models.openai.OpenAICompaction] capability:
 
 ```python {title="openai_compaction.py" test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAICompaction
 
 agent = Agent(
-    'openai-responses:gpt-4o',
-    capabilities=[OpenAICompaction(message_count_threshold=10)],
+    'openai-responses:gpt-5.2',
+    capabilities=[OpenAICompaction()],
 )
-
-message_history = []
-for question in ['What is 2+2?', 'And 3+3?', 'And 4+4?']:
-    result = agent.run_sync(question, message_history=message_history)
-    message_history = result.all_messages()
-    # After 10 messages, history is automatically compacted before each request
 ```
 
-For advanced use cases, you can call [`compact_messages`][pydantic_ai.models.openai.OpenAIResponsesModel.compact_messages] directly on the model.
+By default, `OpenAICompaction` runs in **stateful mode**: it configures OpenAI's server-side auto-compaction via the `context_management` field on the regular `/responses` request, and OpenAI triggers compaction whenever the input token count crosses a threshold it manages for you. This mode is compatible with [`openai_previous_response_id='auto'`](#automatically-referencing-earlier-responses) and server-side conversation state.
+
+To override the threshold, pass [`token_threshold`][pydantic_ai.models.openai.OpenAICompaction]:
+
+```python {title="openai_compaction_token_threshold.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAICompaction
+
+agent = Agent(
+    'openai-responses:gpt-5.2',
+    capabilities=[OpenAICompaction(token_threshold=100_000)],
+)
+```
+
+As an alternative, `OpenAICompaction` supports a **stateless mode** (`stateless=True`) that calls the stateless `/responses/compact` endpoint via a `before_model_request` hook. Use this in [ZDR](https://openai.com/enterprise-privacy/) environments where OpenAI must not retain conversation data, when using [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store], or when you need explicit out-of-band control over when compaction runs. Stateless mode requires you to specify either a [`message_count_threshold`][pydantic_ai.models.openai.OpenAICompaction] or a custom `trigger` callable:
+
+```python {title="openai_compaction_stateless.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAICompaction
+
+agent = Agent(
+    'openai-responses:gpt-5.2',
+    capabilities=[OpenAICompaction(message_count_threshold=20)],
+)
+```
+
+The mode is inferred from which parameters you pass: supplying `message_count_threshold` or `trigger` implies stateless mode, otherwise stateful mode is used. You can also pass `stateless=True` or `stateless=False` explicitly. Mixing parameters from different modes raises [`UserError`][pydantic_ai.exceptions.UserError].
 
 !!! tip
-    For best results, combine compaction with [`openai_previous_response_id='auto'`](#automatically-referencing-earlier-responses) in your model settings. This lets OpenAI's server-side history work alongside compaction for improved context continuity. Note that this sends conversation data to OpenAI's server-side storage.
+    Stateful compaction pairs especially well with [`openai_previous_response_id='auto'`](#automatically-referencing-earlier-responses). Both rely on OpenAI's server-side conversation state, so OpenAI can use a previously compacted context as the starting point for the next turn without you having to resend it.
+
+For lower-level use cases, you can call [`compact_messages`][pydantic_ai.models.openai.OpenAIResponsesModel.compact_messages] directly on the model.
 
 ## OpenAI-compatible Models
 

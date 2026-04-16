@@ -14,6 +14,7 @@ from pydantic_ai import (
     BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CompactionPart,
     DocumentUrl,
     FilePart,
     FinalResultEvent,
@@ -10633,7 +10634,6 @@ async def test_openai_responses_text_content_input(allow_model_requests: None, o
 
 async def test_openai_responses_compact_messages(allow_model_requests: None, openai_api_key: str):
     """Test OpenAI compaction: multi-turn conversation compacted via OpenAICompaction capability."""
-    from pydantic_ai.messages import CompactionPart
     from pydantic_ai.models.openai import OpenAICompaction
 
     model = OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
@@ -10670,9 +10670,60 @@ async def test_openai_responses_compact_messages(allow_model_requests: None, ope
     assert 'encrypted_content' in compaction.provider_details
 
 
+async def test_openai_responses_compact_stateful_mode_stream(allow_model_requests: None, openai_api_key: str):
+    """Streaming variant: `ResponseCompactionItem` is handled in `_get_event_iterator`.
+
+    Validates that a `PartStartEvent` is emitted for the `CompactionPart` during streaming
+    (on both the "added" and "done" events) so UIs can render compaction progress.
+    """
+    from pydantic_ai import AgentRunResultEvent
+    from pydantic_ai.models.openai import OpenAICompaction
+
+    model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        model=model,
+        capabilities=[OpenAICompaction(token_threshold=1000)],
+    )
+
+    message_history: list[Any] = []
+    all_events: list[Any] = []
+    last_output = ''
+    for question in [
+        'Tell me a 300-word story about a fox exploring a forest. Be very descriptive.',
+        'Now a 300-word story about a rabbit in a meadow. Be very descriptive.',
+        'Now a 300-word story about a bear in a cave. Be very descriptive.',
+        'What is 2+2?',
+    ]:
+        events = [event async for event in agent.run_stream_events(question, message_history=message_history)]
+        all_events.extend(events)
+        final = next(e for e in reversed(events) if isinstance(e, AgentRunResultEvent))
+        last_output = final.result.output
+        message_history = final.result.all_messages()
+
+    assert '4' in last_output
+
+    # Verify PartStartEvent was emitted for CompactionPart during streaming
+    compaction_start_events = [
+        e for e in all_events if isinstance(e, PartStartEvent) and isinstance(e.part, CompactionPart)
+    ]
+    assert compaction_start_events, 'expected PartStartEvent for CompactionPart during streaming'
+    assert compaction_start_events[0].part.provider_name == 'openai'
+
+    # Verify final messages contain the CompactionPart with encrypted_content
+    compaction_parts = [
+        part
+        for msg in message_history
+        if isinstance(msg, ModelResponse)
+        for part in msg.parts
+        if isinstance(part, CompactionPart)
+    ]
+    assert compaction_parts, 'expected at least one server-side compaction in streaming mode'
+    assert compaction_parts[0].provider_name == 'openai'
+    assert 'encrypted_content' in (compaction_parts[0].provider_details or {})
+
+
 async def test_openai_responses_compact_messages_direct(allow_model_requests: None, openai_api_key: str):
     """Test OpenAI compact_messages method directly with ModelRequestContext."""
-    from pydantic_ai.messages import CompactionPart
     from pydantic_ai.models import ModelRequestContext
 
     model = OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
@@ -10708,7 +10759,6 @@ async def test_openai_responses_compact_messages_direct(allow_model_requests: No
 
 async def test_openai_responses_compact_with_auto_previous_response_id(allow_model_requests: None, openai_api_key: str):
     """Test compact_messages with openai_previous_response_id='auto'."""
-    from pydantic_ai.messages import CompactionPart
     from pydantic_ai.models import ModelRequestContext
 
     model = OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
@@ -10735,7 +10785,6 @@ async def test_openai_responses_compact_with_auto_previous_response_id(allow_mod
 
 async def test_openai_responses_compact_with_instructions(allow_model_requests: None, openai_api_key: str):
     """Test compact_messages with custom instructions override."""
-    from pydantic_ai.messages import CompactionPart
     from pydantic_ai.models import ModelRequestContext
 
     model = OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
@@ -10770,7 +10819,6 @@ async def test_openai_responses_compact_with_auto_previous_response_id_chain(
     compaction, the next request must pass the compaction item via the input array
     instead of chaining the compaction response id.
     """
-    from pydantic_ai.messages import CompactionPart
     from pydantic_ai.models.openai import OpenAICompaction
 
     model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
@@ -10803,3 +10851,73 @@ async def test_openai_responses_compact_with_auto_previous_response_id_chain(
         if isinstance(msg, ModelResponse) and any(isinstance(p, CompactionPart) for p in msg.parts):
             assert msg.provider_details == {'compaction': True}
             assert msg.provider_response_id is not None
+
+
+async def test_openai_responses_compact_stateful_mode(allow_model_requests: None, openai_api_key: str):
+    """Stateful `OpenAICompaction` rides along on the regular /responses call.
+
+    Sets `context_management: [{'type': 'compaction', ...}]` on the request. When
+    OpenAI triggers compaction server-side, the returned `ResponseCompactionItem`
+    is mapped to a `CompactionPart` on the `ModelResponse` so it can be
+    round-tripped via the `input` array on subsequent requests (or chained via
+    `previous_response_id`).
+    """
+    from pydantic_ai.models.openai import OpenAICompaction
+
+    model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        model=model,
+        # 1000 is the lowest threshold OpenAI accepts; a handful of ~300-word turns crosses it.
+        capabilities=[OpenAICompaction(token_threshold=1000)],
+    )
+
+    message_history: list[Any] = []
+    last_output = ''
+    for question in [
+        'Tell me a 300-word story about a fox exploring a forest. Be very descriptive.',
+        'Now a 300-word story about a rabbit in a meadow. Be very descriptive.',
+        'Now a 300-word story about a bear in a cave. Be very descriptive.',
+        'What is 2+2?',
+    ]:
+        result = await agent.run(question, message_history=message_history)
+        message_history = result.all_messages()
+        last_output = result.output
+
+    assert '4' in last_output
+
+    # Trace: which message kinds, which part kinds per response, and where the
+    # server-side compaction was emitted. Snapshotting the full all_messages()
+    # would be hundreds of lines of story prose; this condensed trace catches
+    # the regressions that matter (compaction emitted, parts round-tripped into
+    # subsequent requests, no orphan parts).
+    trace = [
+        (
+            type(msg).__name__,
+            [type(p).__name__ for p in msg.parts],
+        )
+        for msg in message_history
+    ]
+    assert trace == snapshot(
+        [
+            ('ModelRequest', ['UserPromptPart']),
+            ('ModelResponse', ['TextPart']),
+            ('ModelRequest', ['UserPromptPart']),
+            ('ModelResponse', ['TextPart']),
+            ('ModelRequest', ['UserPromptPart']),
+            ('ModelResponse', ['TextPart', 'CompactionPart']),
+            ('ModelRequest', ['UserPromptPart']),
+            ('ModelResponse', ['TextPart']),
+        ]
+    )
+
+    compaction_parts = [
+        part
+        for msg in message_history
+        if isinstance(msg, ModelResponse)
+        for part in msg.parts
+        if isinstance(part, CompactionPart)
+    ]
+    compaction = compaction_parts[0]
+    assert compaction.provider_name == 'openai'
+    assert compaction.provider_details is not None
+    assert 'encrypted_content' in compaction.provider_details
