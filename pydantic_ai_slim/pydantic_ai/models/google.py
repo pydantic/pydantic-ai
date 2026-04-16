@@ -4,7 +4,7 @@ import base64
 import re
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, cast, overload
 from uuid import uuid4
@@ -28,6 +28,7 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     CachePoint,
+    CompactionPart,
     FilePart,
     FileUrl,
     FinishReason,
@@ -114,7 +115,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-_FILE_SEARCH_QUERY_PATTERN = re.compile(r'file_search\.query\(query=(["\'])((?:\\.|(?!\1).)*?)\1\)')
+_FILE_SEARCH_QUERY_PATTERN = re.compile(r'file_search\.query\(query=(["\'])((?:\\.|(?!\1)[^\\])*)\1\)')
 
 _TOOL_TYPE_TO_BUILTIN_TOOL_NAME: dict[ToolType, str] = {
     ToolType.GOOGLE_SEARCH_WEB: WebSearchTool.kind,
@@ -279,7 +280,7 @@ def _google_vertex_service_tier_headers(service_tier: GoogleServiceTier) -> dict
 
 
 @dataclass(init=False)
-class GoogleModel(Model):
+class GoogleModel(Model[Client]):
     """A model that uses Gemini via `generativelanguage.googleapis.com` API.
 
     This is implemented from scratch rather than using a dedicated SDK, good API documentation is
@@ -343,14 +344,17 @@ class GoogleModel(Model):
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         google_profile = GoogleModelProfile.from_profile(self.profile)
-        if model_request_parameters.builtin_tools and model_request_parameters.output_tools:
-            if not google_profile.google_supports_tool_combination:
-                if model_request_parameters.output_mode == 'auto':
-                    model_request_parameters = replace(model_request_parameters, output_mode='prompted')
-                else:
-                    raise UserError(
-                        'This model does not support output tools and built-in tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
-                    )
+        if (
+            model_request_parameters.builtin_tools
+            and model_request_parameters.output_tools
+            and not google_profile.google_supports_tool_combination
+        ):
+            model_request_parameters = model_request_parameters.with_default_output_mode('prompted')
+            if model_request_parameters.output_mode not in ('native', 'prompted'):
+                raise UserError(
+                    'This model does not support output tools and built-in tools at the same time. '
+                    'Use `output_type=PromptedOutput(...)` instead.'
+                )
         return super().prepare_request(model_settings, model_request_parameters)
 
     async def request(
@@ -1373,6 +1377,9 @@ def _content_model_response(  # noqa: C901
             content = item.content
             inline_data_dict: BlobDict = {'data': content.data, 'mime_type': content.media_type}
             part['inline_data'] = inline_data_dict
+        elif isinstance(item, CompactionPart):  # pragma: no cover
+            # Compaction parts are not sent back to models that don't support compaction.
+            pass
         else:
             assert_never(item)
 
@@ -1499,6 +1506,8 @@ def _function_declaration_from_tool(tool: ToolDefinition) -> FunctionDeclaration
         description=tool.description or '',
         parameters_json_schema=json_schema,
     )
+    if tool.return_schema:
+        f['response_json_schema'] = tool.return_schema
     return f
 
 
@@ -1549,7 +1558,7 @@ def _map_executable_code(executable_code: ExecutableCode, provider_name: str, to
     return BuiltinToolCallPart(
         provider_name=provider_name,
         tool_name=CodeExecutionTool.kind,
-        args=executable_code.model_dump(mode='json'),
+        args=executable_code.model_dump(mode='json', exclude_none=True),
         tool_call_id=tool_call_id,
     )
 
@@ -1560,7 +1569,7 @@ def _map_code_execution_result(
     return BuiltinToolReturnPart(
         provider_name=provider_name,
         tool_name=CodeExecutionTool.kind,
-        content=code_execution_result.model_dump(mode='json'),
+        content=code_execution_result.model_dump(mode='json', exclude_none=True),
         tool_call_id=tool_call_id,
     )
 
