@@ -1,0 +1,178 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '451'
+      content-type:
+      - application/json
+      host:
+      - ollama.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France?
+        role: user
+      model: gpt-oss:20b
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            type: object
+        type: function
+    uri: https://ollama.com/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '831'
+      content-type:
+      - application/json
+      traceparent:
+      - 00-45b6fb413b37b09131b2dfc5121d1337-f3906214e9114b6f-00
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: Paris.
+          reasoning: 'We need to answer question: "What is the capital of France?" The answer: Paris. The user didn''t request
+            the output to be in a specific format, but the system instructions specify that the tool should be used only if
+            user requests. The user didn''t request a tool. So we can produce a direct answer. The instruction: "When I need
+            to: use tool, say I need it with a brief statement" - that''s for tool usage. We don''t need the tool. Just give
+            the answer. Ensure no extra marks. Just plain text.'
+          role: assistant
+      created: 1776298297
+      id: chatcmpl-395
+      model: gpt-oss:20b
+      object: chat.completion
+      system_fingerprint: fp_ollama
+      usage:
+        completion_tokens: 122
+        prompt_tokens: 134
+        total_tokens: 256
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1266'
+      content-type:
+      - application/json
+      cookie:
+      - aid=f3044f53-9561-498a-90b3-59b52706d8f8
+      host:
+      - ollama.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France?
+        role: user
+      - content: Paris.
+        reasoning: 'We need to answer question: "What is the capital of France?" The answer: Paris. The user didn''t request
+          the output to be in a specific format, but the system instructions specify that the tool should be used only if
+          user requests. The user didn''t request a tool. So we can produce a direct answer. The instruction: "When I need
+          to: use tool, say I need it with a brief statement" - that''s for tool usage. We don''t need the tool. Just give
+          the answer. Ensure no extra marks. Just plain text.'
+        role: assistant
+      - content: |-
+          1 validation error:
+          ```json
+          [
+            {
+              "type": "json_invalid",
+              "loc": [],
+              "msg": "Invalid JSON: expected value at line 1 column 1",
+              "input": "Paris."
+            }
+          ]
+          ```
+
+          Fix the errors and try again.
+        role: user
+      model: gpt-oss:20b
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            type: object
+        type: function
+    uri: https://ollama.com/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1293'
+      content-type:
+      - application/json
+      traceparent:
+      - 00-9140fe7d11bbafaa02bfad44f37d9faf-fa1f5b780f11dc76-00
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          content: ''
+          reasoning: |-
+            The conversation: user asked "What is the capital of France?" assistant responded "Paris." That is fine. But they expect a JSON output? They saw a validation error: "Expected JSON: invalid JSON." The system is set up such that the assistant must respond using the function "final_result" JSON object with keys city and country. The previous response was not JSON; that's why validator error. So we must call function final_result with city = "Paris" and country = "France". We need to produce JSON accordingly. The function signature: final_result({city: string, country: string}). We need to output the JSON. Using the functions interface. Let's produce: { "city": "Paris", "country": "France" } as JSON.
+
+            We need to provide answer in JSON format. Let's do that.
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris","country":"France"}'
+              name: final_result
+            id: call_o2vnpxrw
+            index: 0
+            type: function
+      created: 1776298298
+      id: chatcmpl-273
+      model: gpt-oss:20b
+      object: chat.completion
+      system_fingerprint: fp_ollama
+      usage:
+        completion_tokens: 194
+        prompt_tokens: 206
+        total_tokens: 400
+    status:
+      code: 200
+      message: OK
+version: 1
