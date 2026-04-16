@@ -6,7 +6,7 @@ This document outlines the procedural implementation plan for building a functio
 The implementation centers around adding a wrapper inside `Agent.__call__`. This allows instances of `Agent` to double as decorators (`@agent_instance`).
 
 ## 1. Core API & Execution Flow (`Agent.__call__`)
-The main hook is implemented by modifying `Agent.__call__` so that when `__call__` receives a callable, it delegates to an internal `_wrap_agent_function(target_agent, func)`.
+The decorator is implemented within `Agent.__call__` so that when `__call__` receives a callable, it delegates to an internal `_wrap_agent_function(target_agent, func)`. The exemplar code in the `plans` folder shows a potential implementation, but uses a patch purely for demonstration purposes, the full implementation will need to be integrated into the `Agent` class itself.
 
 Inside the wrapper, execution goes through:
 ### a. Signature Inference
