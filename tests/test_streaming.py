@@ -2508,14 +2508,9 @@ async def test_agent_stream_iter_events_reuses_initialized_iterator() -> None:
         _provider_name='test',
     )
     run_ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
-    output_schema = TextOutputSchema[str](
-        text_processor=TextOutputProcessor(),
-        allows_deferred_tools=False,
-        allows_image=False,
-    )
     stream = AgentStream(
         _raw_stream_response=stream_response,
-        _output_schema=output_schema,
+        _output_schema=MagicMock(),
         _model_request_parameters=models.ModelRequestParameters(),
         _output_validators=[],
         _run_ctx=run_ctx,
