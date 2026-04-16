@@ -22,6 +22,8 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -1950,6 +1952,15 @@ async def test_bedrock_model_stream_empty_text_delta(allow_model_requests: None,
     assert not any(part.content == '' for part in result.response.parts if isinstance(part, TextPart))
     assert events == snapshot(
         [
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    model_name='openai.gpt-oss-120b-1:0',
+                    timestamp=IsDatetime(),
+                    provider_name='bedrock',
+                    provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                )
+            ),
             PartStartEvent(
                 index=0,
                 part=ThinkingPart(
@@ -1967,6 +1978,23 @@ async def test_bedrock_model_stream_empty_text_delta(allow_model_requests: None,
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' you today?')),
             PartEndEvent(index=1, part=TextPart(content='Hello! How can I help you today?')),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[
+                        ThinkingPart(
+                            content='The user just says "Hi". We need to respond appropriately, friendly greeting. No special instructions. Should be short.'
+                        ),
+                        TextPart(content='Hello! How can I help you today?'),
+                    ],
+                    usage=RequestUsage(input_tokens=70, output_tokens=43),
+                    model_name='openai.gpt-oss-120b-1:0',
+                    timestamp=IsDatetime(),
+                    provider_name='bedrock',
+                    provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                    provider_details={'finish_reason': 'end_turn'},
+                    finish_reason='stop',
+                )
+            ),
         ]
     )
 
