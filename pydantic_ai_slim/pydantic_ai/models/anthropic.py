@@ -1647,11 +1647,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                 elif isinstance(event, BetaRawMessageStopEvent):  # pragma: no branch
                     current_block = None
 
-    async def cancel(self) -> None:
-        if self.cancelled:
-            return
-        # Set first so the flag is visible even if close() raises.
-        self._cancelled = True
+    async def _close_stream(self) -> None:
         await self._stream.close()
 
     @property

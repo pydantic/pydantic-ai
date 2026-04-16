@@ -474,16 +474,13 @@ class GeminiStreamedResponse(StreamedResponse):
     _provider_url: str
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
-    async def cancel(self) -> None:
-        if self.cancelled:
-            return
-        # Set first so wrapper iterators see the flag even if aclose() fails.
-        self._cancelled = True
+    async def _close_stream(self) -> None:
         # _stream is httpx's aiter_bytes(), an async generator at runtime.
-        # If cancel() is called while another task is awaiting __anext__ on the
-        # same generator, aclose() raises RuntimeError("asynchronous generator
-        # is already running"). Safe to suppress: _cancelled is already set, and
-        # the generator will be cleaned up when request_stream's ACM exits.
+        # If _close_stream() is called while another task is awaiting __anext__ on
+        # the same generator, aclose() raises RuntimeError("asynchronous generator
+        # is already running"). Safe to suppress: _cancelled is already set by the
+        # base cancel(), and the generator will be cleaned up when request_stream's
+        # ACM exits.
         try:
             await self._stream.aclose()  # type: ignore[union-attr]
         except RuntimeError:

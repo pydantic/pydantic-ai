@@ -351,8 +351,9 @@ class FunctionStreamedResponse(StreamedResponse):
                     else:
                         assert_never(delta)
 
-    async def cancel(self) -> None:
-        self._cancelled = True
+    async def _close_stream(self) -> None:
+        # FunctionModel has no underlying connection to close.
+        pass
 
     @property
     def model_name(self) -> str:

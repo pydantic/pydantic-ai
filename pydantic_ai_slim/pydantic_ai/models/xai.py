@@ -769,11 +769,7 @@ class XaiStreamedResponse(StreamedResponse):
     _timestamp: datetime
     _provider: Provider[AsyncClient]
 
-    async def cancel(self) -> None:
-        if self.cancelled:
-            return
-        # Set first so the flag is visible even if cancel raises.
-        self._cancelled = True
+    async def _close_stream(self) -> None:
         # xAI SDK uses gRPC; the stream's cancel() is synchronous.
         self._stream.cancel()  # type: ignore[union-attr]
 

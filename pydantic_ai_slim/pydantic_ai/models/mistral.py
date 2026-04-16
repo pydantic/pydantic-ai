@@ -667,11 +667,7 @@ class MistralStreamedResponse(StreamedResponse):
 
     _delta_content: str = field(default='', init=False)
 
-    async def cancel(self) -> None:
-        if self.cancelled:
-            return
-        # Set first so the flag is visible even if close() raises.
-        self._cancelled = True
+    async def _close_stream(self) -> None:
         # Close the underlying httpx response directly, avoiding the fragile
         # __aexit__(None, None, None) pattern on EventStreamAsync.
         # TODO: Check if MistralEventStreamAsync exposes a public close() method

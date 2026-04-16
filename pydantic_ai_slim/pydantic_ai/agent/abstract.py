@@ -1094,6 +1094,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 )
 
         task = asyncio.create_task(run_agent())
+        # TODO(v2): asyncio.create_task here is incorrect for anyio contract
+
         # TODO: Replace _task_cancel_sent flag with task.cancelling() when Python 3.10 is dropped (3.11+).
         _task_cancel_sent: bool = False
 

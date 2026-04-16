@@ -1006,17 +1006,13 @@ class GeminiStreamedResponse(StreamedResponse):
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
     _has_content_filter: bool = field(default=False, init=False)
 
-    async def cancel(self) -> None:
-        if self.cancelled:
-            return
-        # Set first so wrapper iterators see the flag even if aclose() fails.
-        self._cancelled = True
+    async def _close_stream(self) -> None:
         # google.genai types _stream as AsyncIterator but it is an AsyncGenerator
-        # at runtime. If cancel() is called while another task is awaiting
+        # at runtime. If _close_stream() is called while another task is awaiting
         # __anext__ on the same generator, aclose() raises RuntimeError
         # ("asynchronous generator is already running"). Safe to suppress:
-        # _cancelled is already set, and the generator will be cleaned up when
-        # request_stream's ACM exits.
+        # _cancelled is already set by the base cancel(), and the generator will
+        # be cleaned up when request_stream's ACM exits.
         try:
             await self._stream.aclose()  # type: ignore[union-attr]
         except RuntimeError:

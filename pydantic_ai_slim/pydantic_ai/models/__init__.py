@@ -982,6 +982,67 @@ class Model(ABC, Generic[InterfaceClient]):
         return None
 
 
+def _collect_stream_cancel_errors() -> tuple[type[BaseException], ...]:
+    """Build the tuple of transport exceptions that ``_stream_cancel_guard`` suppresses.
+
+    ``httpx`` is a required dependency so its stream/transport errors are always
+    included. Provider SDKs are optional, so each import is wrapped in
+    ``try/except ImportError``. When an SDK wraps the underlying ``httpx`` error
+    in its own connection-error type (Anthropic/OpenAI/Groq/Google/xAI/Mistral/
+    Bedrock), that type is added too so the guard still matches it.
+    """
+    errors: tuple[type[BaseException], ...] = (
+        httpx.StreamError,  # StreamClosed, StreamConsumed
+        httpx.TransportError,  # ReadError, RemoteProtocolError, ReadTimeout, ConnectError
+    )
+    try:
+        from anthropic import APIConnectionError as _AnthropicAPIConnectionError
+
+        errors += (_AnthropicAPIConnectionError,)
+    except ImportError:
+        pass
+    try:
+        from openai import APIConnectionError as _OpenAIAPIConnectionError
+
+        errors += (_OpenAIAPIConnectionError,)
+    except ImportError:
+        pass
+    try:
+        from groq import APIConnectionError as _GroqAPIConnectionError
+
+        errors += (_GroqAPIConnectionError,)
+    except ImportError:
+        pass
+    try:
+        from google.genai.errors import APIError as _GoogleAPIError
+
+        errors += (_GoogleAPIError,)
+    except ImportError:
+        pass
+    try:
+        from mistralai.client.errors import SDKError as _MistralSDKError
+
+        errors += (_MistralSDKError,)
+    except ImportError:
+        pass
+    try:
+        import grpc
+
+        errors += (grpc.RpcError,)
+    except ImportError:
+        pass
+    try:
+        from botocore.exceptions import BotoCoreError
+
+        errors += (BotoCoreError,)
+    except ImportError:
+        pass
+    return errors
+
+
+_STREAM_CANCEL_ERRORS: tuple[type[BaseException], ...] = _collect_stream_cancel_errors()
+
+
 @dataclass
 class StreamedResponse(ABC):
     """Streamed response from an LLM when calling a tool."""
@@ -1068,12 +1129,28 @@ class StreamedResponse(ABC):
     async def cancel(self) -> None:
         """Cancel the stream, stopping token generation.
 
-        Providers must override this to close the underlying HTTP/gRPC connection
-        and set ``self._cancelled = True``.
+        Sets ``self._cancelled = True`` before delegating to ``_close_stream()``
+        so the flag is visible to any iterator that observes the transport error
+        raised when the underlying connection is torn down, even if
+        ``_close_stream()`` itself raises.
+        """
+        if self.cancelled:
+            return
+        self._cancelled = True
+        await self._close_stream()
+
+    async def _close_stream(self) -> None:
+        """Close the underlying HTTP/gRPC connection.
+
+        Providers must override this to stop token generation (and billing)
+        on the remote side. A missing override is a real bug — silently
+        setting ``_cancelled`` without closing the connection would let the
+        user believe the stream was cancelled while they continue being
+        charged.
         """
         raise NotImplementedError(
             f'Stream cancellation is not implemented for {type(self).__name__}. '
-            'This provider must override `cancel()` to support streaming cancellation.'
+            'This provider must override `_close_stream()` to support streaming cancellation.'
         )
 
     @contextmanager
@@ -1089,7 +1166,7 @@ class StreamedResponse(ABC):
         """
         try:
             yield
-        except Exception:
+        except _STREAM_CANCEL_ERRORS:
             if not self.cancelled:
                 raise
 

@@ -504,8 +504,10 @@ class _SkipStreamedResponse(models.StreamedResponse):
     def timestamp(self) -> datetime:  # pragma: no cover
         return self._response.timestamp
 
-    async def cancel(self) -> None:  # pragma: no cover
-        self._cancelled = True
+    async def _close_stream(self) -> None:  # pragma: no cover
+        # _SkipStreamedResponse is produced by short-circuit paths that never
+        # open a connection; there is nothing to close.
+        pass
 
     async def _get_event_iterator(self) -> AsyncIterator[_messages.ModelResponseStreamEvent]:
         return
@@ -1904,6 +1906,36 @@ def _is_same_request(message: _messages.ModelMessage, request: _messages.ModelRe
     )
 
 
+def _filter_interrupted_response(
+    message: _messages.ModelResponse, processed_tool_call_ids: set[str]
+) -> _messages.ModelResponse | None:
+    """Drop incomplete tool calls from an interrupted ``ModelResponse``.
+
+    Tool calls whose ``args`` are incomplete (truncated JSON from stream cancellation)
+    and which have no corresponding ``ToolReturnPart``/``RetryPromptPart`` later in
+    history are removed. Stripping one that does have a matching return would orphan
+    it and break the conversation for the provider.
+
+    Returns ``None`` if the response would be empty after filtering — providers like
+    OpenAI/Mistral reject empty assistant messages, so those responses must be dropped
+    entirely.
+    """
+    filtered_parts = [
+        part
+        for part in message.parts
+        if not (
+            isinstance(part, _messages.BaseToolCallPart)
+            and part.args_incomplete
+            and part.tool_call_id not in processed_tool_call_ids
+        )
+    ]
+    if not filtered_parts:
+        return None
+    if len(filtered_parts) != len(message.parts):
+        return replace(message, parts=filtered_parts)
+    return message
+
+
 def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:
     """Clean the message history by merging consecutive messages of the same type and filtering incomplete tool calls.
 
@@ -1912,8 +1944,6 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
     parts after filtering, it is dropped entirely (providers like OpenAI/Mistral reject empty assistant messages).
     """
     # Collect tool_call_ids that already have a ToolReturnPart or RetryPromptPart in history.
-    # We only strip incomplete tool calls that have NO matching return; stripping one that does
-    # would orphan the return part and break the conversation for the provider.
     processed_tool_call_ids: set[str] = set()
     for message in messages:
         if isinstance(message, _messages.ModelRequest):
@@ -1951,22 +1981,11 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
             else:
                 clean_messages.append(message)
         elif isinstance(message, _messages.ModelResponse):  # pragma: no branch
-            # Filter incomplete tool calls from interrupted responses
             if message.interrupted:
-                filtered_parts = [
-                    part
-                    for part in message.parts
-                    if not (
-                        isinstance(part, _messages.BaseToolCallPart)
-                        and part.args_incomplete
-                        and part.tool_call_id not in processed_tool_call_ids
-                    )
-                ]
-                # Drop empty interrupted responses entirely — providers reject empty assistant messages
-                if not filtered_parts:
+                filtered = _filter_interrupted_response(message, processed_tool_call_ids)
+                if filtered is None:
                     continue
-                if len(filtered_parts) != len(message.parts):
-                    message = replace(message, parts=filtered_parts)
+                message = filtered
 
             if (
                 last_message

@@ -586,11 +586,7 @@ class GroqStreamedResponse(StreamedResponse):
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
-    async def cancel(self) -> None:
-        if self.cancelled:
-            return
-        # Set first so the flag is visible even if close() raises.
-        self._cancelled = True
+    async def _close_stream(self) -> None:
         await self._stream.close()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901

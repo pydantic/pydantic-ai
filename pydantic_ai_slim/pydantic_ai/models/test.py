@@ -8,6 +8,7 @@ from dataclasses import InitVar, dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any, Literal
 
+import httpx
 import pydantic_core
 from typing_extensions import assert_never
 
@@ -336,7 +337,7 @@ class TestStreamedResponse(StreamedResponse):
                         # Simulate the transport error that real providers raise
                         # when the HTTP connection is closed mid-stream by cancel().
                         if self._cancelled:
-                            raise RuntimeError('TestModel: simulated transport error after cancel')
+                            raise httpx.StreamClosed()
                         self._usage += _get_string_usage(word)
                         for event in self._parts_manager.handle_text_delta(vendor_part_id=i, content=word):
                             yield event
@@ -374,8 +375,9 @@ class TestStreamedResponse(StreamedResponse):
         """Get the provider base URL."""
         return self._provider_url
 
-    async def cancel(self) -> None:
-        self._cancelled = True
+    async def _close_stream(self) -> None:
+        # TestModel has no underlying connection to close.
+        pass
 
     @property
     def timestamp(self) -> datetime:

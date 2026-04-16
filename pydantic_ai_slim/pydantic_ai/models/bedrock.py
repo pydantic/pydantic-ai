@@ -1184,11 +1184,7 @@ class BedrockStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _provider_response_id: str | None = None
 
-    async def cancel(self) -> None:
-        if self.cancelled:
-            return
-        # Set first so the flag is visible even if close() raises.
-        self._cancelled = True
+    async def _close_stream(self) -> None:
         # Bedrock's EventStream.close() is synchronous.
         self._event_stream.close()
 
