@@ -15,7 +15,32 @@ For testing against curated datasets before deployment, use [offline evaluation]
 
 ## Quick Start
 
-The [`evaluate()`][pydantic_evals.online.evaluate] decorator attaches evaluators to any function. Evaluators run in the background without blocking the caller:
+The [`evaluate()`][pydantic_evals.online.evaluate] decorator attaches evaluators to any function. Evaluators run in the background without blocking the caller, and results are emitted as OpenTelemetry events — no sink registration required:
+
+```python {test="skip" lint="skip"}
+from dataclasses import dataclass
+
+import logfire
+from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+from pydantic_evals.online import evaluate
+
+logfire.configure()  # ships `gen_ai.evaluation.result` events to Logfire
+
+
+@dataclass
+class OutputNotEmpty(Evaluator):
+    def evaluate(self, ctx: EvaluatorContext) -> bool:
+        return bool(ctx.output)
+
+
+@evaluate(OutputNotEmpty())
+async def summarize(text: str) -> str:
+    return f'Summary of: {text}'
+```
+
+Each decorated call emits one `gen_ai.evaluation.result` OTel event per evaluator result, following the [OTel GenAI evaluation semconv](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-events/#event-gen_aievaluationresult). This mirrors how offline evaluation emits OTel spans via `logfire_span`: if any OTel SDK is configured in the process (via `logfire.configure()`, the OTel SDK directly, or a vendor instrumentation), events flow to your backend; if not, emission is a cheap no-op.
+
+To additionally handle results in Python code — for alerting, bespoke aggregation, in-memory test capture, or non-OTel destinations — register a [sink](#sinks). Sinks run *in addition to* OTel event emission:
 
 ```python
 import asyncio
@@ -54,6 +79,55 @@ asyncio.run(main())
 
 This uses the module-level [`configure()`][pydantic_evals.online.configure] and [`evaluate()`][pydantic_evals.online.evaluate] functions, which delegate to a global [`OnlineEvalConfig`][pydantic_evals.online.OnlineEvalConfig]. For multiple configurations or isolated setups, create your own config instances (see [OnlineEvalConfig](#onlineevalconfig) below).
 
+## Target and Target Type
+
+Each decorated function (or agent) emits results tagged with a **target** — a name that groups results in downstream sinks and dashboards. By default the target is the decorated function's `__name__`, but you can override it with `target=...` and set `target_type='function'` (default) or `target_type='agent'` to drive UI routing:
+
+```python
+from dataclasses import dataclass
+
+from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+from pydantic_evals.online import evaluate
+
+
+@dataclass
+class OutputNotEmpty(Evaluator):
+    def evaluate(self, ctx: EvaluatorContext) -> bool:
+        return bool(ctx.output)
+
+
+# Default: target='summarize' (function name), target_type='function'
+@evaluate(OutputNotEmpty())
+async def summarize(text: str) -> str: ...
+
+
+# Override: use a friendly name and tag as an agent
+@evaluate(OutputNotEmpty(), target='customer_support', target_type='agent')
+async def run_agent(prompt: str) -> str: ...
+```
+
+The [`EvaluationTarget`][pydantic_evals.online.EvaluationTarget] is supplied to sinks on every `submit()` call — a single sink instance handles any number of decorated functions or agents.
+
+## Evaluator Versioning
+
+Set `evaluator_version` as a class attribute on an [`Evaluator`][pydantic_evals.evaluators.Evaluator] subclass to tag every result it emits with a version string. This lets trend lines and dashboards filter out results produced by retired evaluator versions without deleting historical rows — useful when you change an LLM judge's prompt or rework a heuristic in a way that invalidates prior scores:
+
+```python
+from dataclasses import dataclass
+
+from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+
+
+@dataclass
+class ToneCheck(Evaluator):
+    evaluator_version = 'v2'  # bumped after prompt rewrite
+
+    def evaluate(self, ctx: EvaluatorContext) -> str:
+        return 'neutral'
+```
+
+The version applies to all results the evaluator produces (so one evaluator class maps to one version, even when the evaluator returns a mapping of named results). Framework code reads the attribute via `getattr` — it's an optional convention on the base class, not a required field.
+
 ## Core Concepts
 
 ### OnlineEvaluator
@@ -88,7 +162,7 @@ When you pass a bare [`Evaluator`][pydantic_evals.evaluators.Evaluator] to the [
 
 ### OnlineEvalConfig
 
-[`OnlineEvalConfig`][pydantic_evals.online.OnlineEvalConfig] holds cross-evaluator defaults (sink, sample rate, metadata). There's a global default instance, plus you can create custom instances for different configurations:
+[`OnlineEvalConfig`][pydantic_evals.online.OnlineEvalConfig] holds cross-evaluator defaults (sample rate, metadata, optional additional sinks, OTel-emission toggle). There's a global default instance, plus you can create custom instances for different configurations:
 
 ```python
 import asyncio
@@ -146,9 +220,9 @@ async def main():
 asyncio.run(main())
 ```
 
-### EvaluationSink
+### Sinks
 
-[`EvaluationSink`][pydantic_evals.online.EvaluationSink] is a protocol for evaluation result destinations. Results flow through pluggable sinks rather than being hardcoded to one destination.
+OTel event emission is the default observability surface for online evaluation (see [Default OTel event emission](#default-otel-event-emission)). Sinks are for *additional* handling in Python code — in-memory test capture, alerting, fan-out to non-OTel destinations, or bespoke aggregation. [`EvaluationSink`][pydantic_evals.online.EvaluationSink] is the protocol; multiple sinks can be registered on a single config.
 
 The built-in [`CallbackSink`][pydantic_evals.online.CallbackSink] wraps any callable (sync or async) that accepts results, failures, and context. You can also pass a bare callable wherever a sink is expected — it's auto-wrapped in a [`CallbackSink`][pydantic_evals.online.CallbackSink].
 
@@ -162,7 +236,7 @@ from pydantic_evals.evaluators import (
     EvaluatorContext,
     EvaluatorFailure,
 )
-from pydantic_evals.online import SpanReference
+from pydantic_evals.online import EvaluationTarget, SpanReference
 
 
 class PrintSink:
@@ -175,28 +249,45 @@ class PrintSink:
         failures: Sequence[EvaluatorFailure],
         context: EvaluatorContext,
         span_reference: SpanReference | None,
+        target: EvaluationTarget,
+        evaluator_version: str | None,
     ) -> None:
+        version = f' ({evaluator_version})' if evaluator_version else ''
         for r in results:
-            print(f'  {r.name}: {r.value}')
+            print(f'  [{target.name}] {r.name}{version}: {r.value}')
         for f in failures:
-            print(f'  FAILED {f.name}: {f.error_message}')
+            print(f'  [{target.name}] FAILED {f.name}{version}: {f.error_message}')
 ```
 
-!!! note "Evaluators require at least one sink"
-    Evaluators are designed to produce evaluation results, not side effects — use sinks for
-    any actions you want to take on results (logging, alerting, storing, etc.).
-    Because of this, **evaluators are skipped entirely when no sinks are configured**
-    (neither a per-evaluator sink nor a default sink). This avoids wasted work when there's
-    nowhere to send results.
+Each `submit()` call corresponds to a single evaluator — `results` and `failures` always come from the same evaluator, which is why `evaluator_version` is a flat kwarg rather than attached to each result. The `target` identifies the function or agent being evaluated; `target` name and type come from the `@evaluate` decorator (or `OnlineEvaluation` capability) — see [Target and Target Type](#target-and-target-type).
 
-    If you need side effects produced _within_ an evaluator itself, configure a no-op sink
-    to ensure the evaluator runs:
+### Default OTel event emission
 
-    ```python
-    from pydantic_evals.online import OnlineEvalConfig
+Every dispatched evaluator emits one `gen_ai.evaluation.result` OTel log event per [`EvaluationResult`][pydantic_evals.evaluators.EvaluationResult] or [`EvaluatorFailure`][pydantic_evals.evaluators.EvaluatorFailure], unconditionally — no sink registration required. Events are parented to the span that produced them (when a `span_reference` is available), so they appear nested under the original function call in the trace. If no OTel SDK is configured in the process, emission is a cheap no-op.
 
-    config = OnlineEvalConfig(default_sink=lambda results, failures, context: None)
-    ```
+The emission follows the [OpenTelemetry GenAI evaluation semconv](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-events/#event-gen_aievaluationresult). Key attributes:
+
+- `gen_ai.evaluation.name`, `gen_ai.evaluation.score.value`, `gen_ai.evaluation.score.label`, `gen_ai.evaluation.explanation` — standard semconv attributes.
+- `error.type` — set to `pydantic_evals.EvaluatorFailure` when an evaluator raised.
+- `logfire.evaluation.target` / `logfire.evaluation.target_type` — target name and kind from the `@evaluate` decorator (see [Target and Target Type](#target-and-target-type)).
+- `logfire.evaluation.evaluator_version` — set when an [evaluator declares a version](#evaluator-versioning).
+- `logfire.evaluation.evaluator_source` — JSON-serialized [`EvaluatorSpec`][pydantic_evals.evaluators.evaluator.EvaluatorSpec] for the evaluator that produced the result.
+
+To disable the default emission (e.g. in a test harness that only wants to assert on a custom sink), set `emit_otel_events=False` on the config:
+
+```python
+from pydantic_evals.online import OnlineEvalConfig
+
+config = OnlineEvalConfig(emit_otel_events=False)
+```
+
+To tag every emitted event with static metadata — deployment environment, team name, etc. — use `otel_extra_attributes`:
+
+```python
+from pydantic_evals.online import OnlineEvalConfig
+
+config = OnlineEvalConfig(otel_extra_attributes={'team': 'platform', 'env': 'staging'})
+```
 
 ## Sampling
 
@@ -857,6 +948,66 @@ Key behaviors:
 - **One sink's error doesn't affect other sinks** — each sink submission is wrapped individually.
 - **If `on_error` itself raises**, the exception is silently suppressed to protect sibling evaluators.
 - **If no `on_error` is set**, exceptions are silently suppressed — this is the safe default.
+
+## Agent Integration
+
+The [`OnlineEvaluation`][pydantic_evals.online_capability.OnlineEvaluation] capability brings online evaluation to Pydantic AI agents. Instead of decorating a function, you add the capability to your agent:
+
+```python
+import asyncio
+from dataclasses import dataclass
+
+from pydantic_ai import Agent
+from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+from pydantic_evals.online import OnlineEvalConfig, wait_for_evaluations
+from pydantic_evals.online_capability import OnlineEvaluation
+
+results_log: list[str] = []
+
+
+@dataclass
+class OutputNotEmpty(Evaluator):
+    def evaluate(self, ctx: EvaluatorContext) -> bool:
+        return bool(ctx.output)
+
+
+agent = Agent(
+    'openai:gpt-5.2',
+    capabilities=[
+        OnlineEvaluation(
+            evaluators=[OutputNotEmpty()],
+            config=OnlineEvalConfig(
+                default_sink=lambda results, failures, context: results_log.extend(
+                    f'{result.name}={result.value}' for result in results
+                )
+            ),
+        ),
+    ],
+)
+
+
+async def main() -> list[str]:
+    results_log.clear()
+    await agent.run('What is the capital of the UK?')
+    await wait_for_evaluations()
+    return results_log
+
+
+print(asyncio.run(main()))
+#> ['OutputNotEmpty=True']
+```
+
+After each completed agent run, the capability:
+
+1. Samples evaluators based on their `sample_rate` configuration
+2. Builds an [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext] from the run result (output, prompt, token usage, duration, span tree)
+3. Dispatches evaluators asynchronously in the background
+4. Returns control to the caller without waiting for evaluators to finish
+
+The capability supports all the same features as the [`@evaluate()`][pydantic_evals.online.evaluate] decorator: sampling, per-evaluator sinks, concurrency control, and error handling. The `config` parameter is optional and defaults to the global [`DEFAULT_CONFIG`][pydantic_evals.online.DEFAULT_CONFIG].
+
+!!! note
+    [`OnlineEvaluation`][pydantic_evals.online_capability.OnlineEvaluation] wraps [`agent.run()`][pydantic_ai.Agent.run], [`agent.run_stream()`][pydantic_ai.Agent.run_stream], and [`agent.iter()`][pydantic_ai.Agent.iter] when the run reaches a final result. For streaming runs, evaluators are dispatched only after the final result is available and the surrounding context manager exits. The same delayed-dispatch behavior applies when driving an [`agent.iter()`][pydantic_ai.Agent.iter] run to completion, which is generally the preferred streaming API.
 
 ## API Reference
 

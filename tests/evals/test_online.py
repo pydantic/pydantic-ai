@@ -18,6 +18,7 @@ with try_import() as imports_successful:
     from pydantic_evals.online import (
         DEFAULT_CONFIG,
         CallbackSink,
+        EvaluationTarget,
         OnErrorLocation,
         OnlineEvalConfig,
         OnlineEvaluator,
@@ -156,7 +157,14 @@ async def test_callback_sink_sync():
     ctx = _make_context(output='hello')
     results = [EvaluationResult(name='test', value=True, reason=None, source=AlwaysTrue().as_spec())]
 
-    await sink.submit(results=results, failures=[], context=ctx, span_reference=None)
+    await sink.submit(
+        results=results,
+        failures=[],
+        context=ctx,
+        span_reference=None,
+        target=EvaluationTarget(name='t'),
+        evaluator_version=None,
+    )
 
     assert len(collected) == 1
     assert collected[0][0] == results
@@ -172,7 +180,14 @@ async def test_callback_sink_async():
     ctx = _make_context(output='hello')
     results = [EvaluationResult(name='test', value=True, reason=None, source=AlwaysTrue().as_spec())]
 
-    await sink.submit(results=results, failures=[], context=ctx, span_reference=None)
+    await sink.submit(
+        results=results,
+        failures=[],
+        context=ctx,
+        span_reference=None,
+        target=EvaluationTarget(name='t'),
+        evaluator_version=None,
+    )
     assert len(collector.calls) == 1
 
 
@@ -184,7 +199,14 @@ async def test_callback_sink_ignores_span_reference():
     ctx = _make_context(output='hello')
     span_ref = SpanReference(trace_id='abc', span_id='def')
 
-    await sink.submit(results=[], failures=[], context=ctx, span_reference=span_ref)
+    await sink.submit(
+        results=[],
+        failures=[],
+        context=ctx,
+        span_reference=span_ref,
+        target=EvaluationTarget(name='t'),
+        evaluator_version=None,
+    )
     assert len(collector.calls) == 1
     assert collector.result_count == 0
 
@@ -510,9 +532,14 @@ async def test_per_evaluator_sink_override():
 
 
 @pytest.mark.anyio
-async def test_no_sink_skips_evaluators():
-    """When no sink is configured, evaluators are skipped entirely."""
-    config = OnlineEvalConfig()  # no sink
+@needs_logfire
+async def test_no_sink_still_emits_otel_events(capfire: CaptureLogfire):
+    """When no sink is configured, evaluators still run and emit OTel events.
+
+    Out-of-the-box OTel event emission matches how offline evals produce spans
+    via `logfire_span` — users don't need to register a sink to see results.
+    """
+    config = OnlineEvalConfig()  # no user sinks
 
     @config.evaluate(AlwaysTrue())
     async def my_func(x: int) -> int:
@@ -521,6 +548,59 @@ async def test_no_sink_skips_evaluators():
     result = await my_func(42)
     assert result == 42
     await wait_for_evaluations()
+
+    finished = capfire.log_exporter.get_finished_logs()
+    assert len(finished) == 1
+    attrs = dict(finished[0].log_record.attributes or {})
+    assert attrs['gen_ai.evaluation.name'] == 'AlwaysTrue'
+    assert attrs['gen_ai.evaluation.score.label'] == 'pass'
+
+
+@pytest.mark.anyio
+@needs_logfire
+async def test_emit_otel_events_false_disables_emission(capfire: CaptureLogfire):
+    """`emit_otel_events=False` suppresses the default OTel emission."""
+    calls: list[int] = []
+
+    def sink_cb(
+        results: Sequence[EvaluationResult],
+        failures: Sequence[EvaluatorFailure],
+        context: EvaluatorContext[Any, Any, Any],
+    ) -> None:
+        calls.append(len(results))
+
+    config = OnlineEvalConfig(default_sink=sink_cb, emit_otel_events=False)
+
+    @config.evaluate(AlwaysTrue())
+    async def my_func(x: int) -> int:
+        return x
+
+    await my_func(42)
+    await wait_for_evaluations()
+
+    # User sink still ran.
+    assert calls == [1]
+    # But no OTel events were emitted.
+    assert list(capfire.log_exporter.get_finished_logs()) == []
+
+
+@pytest.mark.anyio
+@needs_logfire
+async def test_otel_extra_attributes_applied(capfire: CaptureLogfire):
+    """`otel_extra_attributes` are attached to every emitted event."""
+    config = OnlineEvalConfig(otel_extra_attributes={'team': 'platform'})
+
+    @config.evaluate(AlwaysTrue())
+    async def my_func(x: int) -> int:
+        return x
+
+    await my_func(42)
+    await wait_for_evaluations()
+
+    finished = capfire.log_exporter.get_finished_logs()
+    assert len(finished) == 1
+    attrs = dict(finished[0].log_record.attributes or {})
+    assert attrs['team'] == 'platform'
 
 
 @pytest.mark.anyio
@@ -734,6 +814,8 @@ async def test_custom_sink_protocol():
             failures: Sequence[EvaluatorFailure],
             context: EvaluatorContext[Any, Any, Any],
             span_reference: SpanReference | None,
+            target: Any,
+            evaluator_version: str | None,
         ) -> None:
             self.submissions.append((list(results), span_reference))
 
@@ -967,6 +1049,8 @@ async def test_span_reference_with_configured_logfire(capfire: CaptureLogfire):
             failures: Sequence[EvaluatorFailure],
             context: EvaluatorContext[Any, Any, Any],
             span_reference: SpanReference | None,
+            target: Any,
+            evaluator_version: str | None,
         ) -> None:
             span_refs.append(span_reference)
 
@@ -1752,8 +1836,8 @@ async def test_attributes_and_metrics_empty_by_default():
 
 @pytest.mark.anyio
 async def test_online_eval_suppressed_inside_task_run():
-    """Online evaluation is suppressed when already inside a _CURRENT_TASK_RUN (e.g. Dataset.evaluate)."""
-    from pydantic_evals.dataset import _CURRENT_TASK_RUN, _TaskRun  # pyright: ignore[reportPrivateUsage]
+    """Online evaluation is suppressed when already inside `CURRENT_TASK_RUN`."""
+    from pydantic_evals._task_run import CURRENT_TASK_RUN, TaskRun
 
     collector = Collector()
     config = OnlineEvalConfig(default_sink=collector)
@@ -1762,14 +1846,14 @@ async def test_online_eval_suppressed_inside_task_run():
     async def my_func(x: int) -> int:
         return x
 
-    # Simulate being inside Dataset.evaluate by setting _CURRENT_TASK_RUN
-    outer_task_run = _TaskRun()
-    token = _CURRENT_TASK_RUN.set(outer_task_run)
+    # Simulate being inside Dataset.evaluate by setting CURRENT_TASK_RUN.
+    outer_task_run = TaskRun()
+    token = CURRENT_TASK_RUN.set(outer_task_run)
     try:
         result = await my_func(42)
         assert result == 42
     finally:
-        _CURRENT_TASK_RUN.reset(token)
+        CURRENT_TASK_RUN.reset(token)
 
     await wait_for_evaluations()
     # Online evaluation should have been suppressed

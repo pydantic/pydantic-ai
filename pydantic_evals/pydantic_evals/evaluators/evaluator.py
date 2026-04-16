@@ -135,6 +135,31 @@ class Evaluator(BaseEvaluator, Generic[InputsT, OutputT, MetadataT]):
         def evaluate(self, ctx: EvaluatorContext) -> bool:
             return ctx.output == ctx.expected_output
     ```
+
+    Optional class-level attributes (read via `getattr`, not declared on the base to avoid
+    dataclass-field/ClassVar conflicts in subclasses):
+
+    - `evaluation_name`: override the default name used in reports for this evaluator's output
+      (only applies when `evaluate` returns a scalar or `EvaluationReason` — mapping outputs
+      always use their own keys).
+    - `evaluator_version`: an optional version tag (e.g. `'v2'`) describing the evaluator's
+      behavior. Propagated to online-evaluation sinks so dashboards can filter out results
+      produced by retired versions without deleting rows. Applies to every result the
+      evaluator emits. Bump whenever behavior changes in a way that invalidates prior scores.
+
+    Example:
+    ```python
+    from dataclasses import dataclass
+
+    from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+
+
+    @dataclass
+    class LLMJudge(Evaluator):
+        evaluator_version = 'v2'  # bumped after prompt rewrite
+
+        def evaluate(self, ctx: EvaluatorContext) -> bool: ...
+    ```
     """
 
     @classmethod
