@@ -248,7 +248,12 @@ class ToolManager(Generic[AgentDepsT]):
         *,
         allow_partial: bool,
     ) -> dict[str, Any]:
-        """Run validation with before/wrap/after tool_validate hooks."""
+        """Run validation with before/wrap/after tool_validate hooks.
+
+        Note: Hooks are skipped for output tools (kind='output') to maintain
+        consistency with the rest of the architecture where output tools are
+        handled separately from function tools.
+        """
         cap = self.root_capability
 
         async def do_validate(args: str | dict[str, Any]) -> dict[str, Any]:
@@ -256,7 +261,10 @@ class ToolManager(Generic[AgentDepsT]):
             validated = await self._validate_tool_args(call, tool, ctx, allow_partial=allow_partial, args_override=args)
             return validated
 
-        if cap is not None:
+        # Skip hooks for output tools — they are internal tools that should not
+        # trigger user-facing hooks. This is consistent with WrapperToolset and
+        # prepare_tools which also exclude output tools.
+        if cap is not None and tool.tool_def.kind != 'output':
             tool_def = tool.tool_def
 
             # before_tool_validate
@@ -286,7 +294,12 @@ class ToolManager(Generic[AgentDepsT]):
         *,
         usage: RunUsage | None = None,
     ) -> Any:
-        """Run execution with before/wrap/after tool_execute hooks."""
+        """Run execution with before/wrap/after tool_execute hooks.
+
+        Note: Hooks are skipped for output tools (kind='output') to maintain
+        consistency with the rest of the architecture where output tools are
+        handled separately from function tools.
+        """
         assert validated.tool is not None
         assert validated.validated_args is not None
 
@@ -299,7 +312,10 @@ class ToolManager(Generic[AgentDepsT]):
             modified_validated = replace(validated, validated_args=args)
             return await self._raw_execute(modified_validated, usage=usage)
 
-        if cap is not None:
+        # Skip hooks for output tools — they are internal tools that should not
+        # trigger user-facing hooks. This is consistent with WrapperToolset and
+        # prepare_tools which also exclude output tools.
+        if cap is not None and validated.tool.tool_def.kind != 'output':
             tool_def = validated.tool.tool_def
 
             try:
