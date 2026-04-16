@@ -14,7 +14,7 @@ Pydantic AI supports both self-hosted [Ollama](https://ollama.com/) servers (run
 
 For servers running locally, use the `http://localhost:11434/v1` base URL. For Ollama Cloud, use `https://ollama.com/v1` and ensure an API key is set.
 
-[`OllamaModel`][pydantic_ai.models.ollama.OllamaModel] uses Ollama's OpenAI-compatible Chat Completions API (`/v1/chat/completions`), so existing Ollama users can start using Pydantic AI without any migration.
+For backward compatibility, [`OllamaModel`][pydantic_ai.models.ollama.OllamaModel] uses Ollama's OpenAI-compatible Chat Completions API (`/v1/chat/completions`).
 
 ## Environment variable
 
@@ -95,7 +95,3 @@ agent = Agent(model, output_type=NativeOutput(CityLocation))
     When [`OllamaModel`][pydantic_ai.models.ollama.OllamaModel] detects a Cloud path — either a `base_url` on `ollama.com` or a model name ending in `-cloud` — it automatically disables `supports_json_schema_output` on the profile.
 
     If you use [`NativeOutput`][pydantic_ai.output.NativeOutput] with an Ollama Cloud model, you'll get a clear [`UserError`][pydantic_ai.exceptions.UserError] instead of a silent retry loop. Use the default [`ToolOutput`][pydantic_ai.output.ToolOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput] instead — both work on Cloud.
-
-## Tool calling
-
-Tool calling works on both self-hosted and Cloud Ollama via the inherited OpenAI Chat Completions API path. Ollama does not support OpenAI's `strict` mode for tool schemas, so [`openai_supports_strict_tool_definition`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_supports_strict_tool_definition] is set to `False` in the profile.
