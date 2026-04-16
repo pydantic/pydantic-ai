@@ -8,10 +8,12 @@ from typing import Any
 
 from typing_extensions import Self
 
+from .._output import OutputToolset
 from .._run_context import AgentDepsT, RunContext
 from ..exceptions import UserError
 from ..messages import InstructionPart
 from .abstract import AbstractToolset, ToolsetTool
+from .wrapper import WrapperToolset
 
 
 @dataclass(kw_only=True)
@@ -64,7 +66,9 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
             self._exit_stack = None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        toolsets_tools = await asyncio.gather(*(toolset.get_tools(ctx) for toolset in self.toolsets))
+        toolsets_tools = await asyncio.gather(
+            *(toolset.get_tools(self._tool_prep_ctx(ctx, toolset)) for toolset in self.toolsets)
+        )
         all_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
 
         for toolset, tools in zip(self.toolsets, toolsets_tools):
@@ -112,3 +116,15 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
                 else:
                     parts.extend(r)
         return parts or None
+
+    @staticmethod
+    def _tool_prep_ctx(ctx: RunContext[AgentDepsT], toolset: AbstractToolset[AgentDepsT]) -> RunContext[AgentDepsT]:
+        """Use tool retry defaults for regular toolsets, while preserving output retry context for output tools."""
+        unwrapped = toolset
+        while isinstance(unwrapped, WrapperToolset):
+            unwrapped = unwrapped.wrapped
+
+        if isinstance(unwrapped, OutputToolset) or ctx.tool_manager is None:
+            return ctx
+
+        return replace(ctx, max_retries=ctx.tool_manager.default_max_retries)

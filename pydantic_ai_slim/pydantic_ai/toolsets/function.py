@@ -615,20 +615,14 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for original_name, tool in self.tools.items():
             max_retries = tool.max_retries if tool.max_retries is not None else self.max_retries
-            # When tool/toolset don't set max_retries, prepare functions should see the agent's
-            # tool retry count on `ctx.max_retries` — which lives on `ctx.tool_manager.default_max_retries`,
-            # not on `ctx.max_retries` itself (that field carries `max_result_retries`).
-            if max_retries is not None:
-                prepare_max_retries = max_retries
-            elif ctx.tool_manager is not None:
+            prepare_max_retries = max_retries
+            if prepare_max_retries is None and ctx.tool_manager is not None:
                 prepare_max_retries = ctx.tool_manager.default_max_retries
-            else:
-                prepare_max_retries = ctx.max_retries
             run_context = replace(
                 ctx,
                 tool_name=original_name,
                 retry=ctx.retries.get(original_name, 0),
-                max_retries=prepare_max_retries,
+                max_retries=prepare_max_retries if prepare_max_retries is not None else ctx.max_retries,
             )
             tool_def = await tool.prepare_tool_def(run_context)
             if not tool_def:

@@ -848,8 +848,8 @@ async def test_toolset_tool_max_retries_none_uses_tool_retries_not_output_retrie
 
 async def test_prepare_function_sees_tool_retries_not_output_retries():
     """Prepare functions should see the agent's **tool** retry count on `ctx.max_retries`,
-    not the output retry count. Regression for devin r3076977506: `FunctionToolset.get_tools`
-    previously fell back to `ctx.max_retries` (= `max_result_retries`) for the prepare ctx."""
+    not the output retry count. Regression for devin r3076977506: non-output toolsets in a
+    combined toolset previously received the output-tool preparation context."""
     captured: list[int] = []
 
     async def capture_prepare(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
@@ -867,6 +867,31 @@ async def test_prepare_function_sees_tool_retries_not_output_retries():
     await agent.run('call my_tool', model=TestModel())
 
     assert captured[0] == 1
+
+
+async def test_function_toolset_get_tools_uses_tool_manager_default_max_retries():
+    """Direct `FunctionToolset.get_tools()` calls should still prefer the tool manager default
+    when the incoming context carries a different `max_retries` value."""
+    captured: list[int] = []
+
+    async def capture_prepare(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+        captured.append(ctx.max_retries)
+        return tool_def
+
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain(prepare=capture_prepare)
+    def my_tool(x: int) -> int:
+        """A tool."""
+        return x
+
+    ctx = build_run_context(None, max_retries=5)
+    ctx.tool_manager = ToolManager[None](toolset, default_max_retries=1)
+
+    tools = await toolset.get_tools(ctx)
+
+    assert 'my_tool' in tools
+    assert captured == [1]
 
 
 async def test_tool_manager_multiple_failed_tools():
