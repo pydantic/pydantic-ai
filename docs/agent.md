@@ -92,8 +92,8 @@ async def main():
     async with agent.run_stream('What is the capital of the UK?') as response:
         async for text in response.stream_text():
             print(text)
-            #> The capital of 
-            #> The capital of the UK is 
+            #> The capital of
+            #> The capital of the UK is
             #> The capital of the UK is London.
 
     events: list[AgentStreamEvent | AgentRunResultEvent] = []
