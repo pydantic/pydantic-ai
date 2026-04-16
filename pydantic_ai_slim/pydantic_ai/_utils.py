@@ -197,7 +197,8 @@ async def gather(*coros: Awaitable[T]) -> list[T]:
     as orphan background tasks. If exactly one task fails, its exception is re-raised directly to
     match `asyncio.gather`'s shape; multi-failure cases propagate as an `ExceptionGroup`.
     """
-    results: list[T] = [None] * len(coros)  # type: ignore[list-item]
+    sentinel = Unset()
+    results: list[T | Unset] = [sentinel] * len(coros)
 
     async def _run(index: int, coro: Awaitable[T]) -> None:
         results[index] = await coro
@@ -213,7 +214,11 @@ async def gather(*coros: Awaitable[T]) -> list[T]:
             raise exc
         raise
 
-    return results
+    final_results: list[T] = []
+    for result in results:
+        assert not isinstance(result, Unset)
+        final_results.append(result)
+    return final_results
 
 
 class Unset:
