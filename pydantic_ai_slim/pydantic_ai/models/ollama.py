@@ -87,7 +87,7 @@ class OllamaModel(OpenAIChatModel):
 
         if profile is None and _routes_to_ollama_cloud(provider, model_name):
             base_profile = provider.model_profile(model_name)
-            if base_profile is not None:
-                profile = replace(base_profile, supports_json_schema_output=False)
+            assert base_profile is not None  # OllamaProvider always returns a profile
+            profile = replace(base_profile, supports_json_schema_output=False)
 
         super().__init__(model_name, provider=provider, profile=profile, settings=settings)

@@ -124,29 +124,16 @@ async def test_ollama_local_cloud_suffix_native_output_raises(allow_model_reques
         await agent.run('What is the capital of France?')
 
 
-def test_ollama_provider_name_routes_through_ollama_model() -> None:
+def test_ollama_provider_name_routes_through_ollama_model(monkeypatch: pytest.MonkeyPatch) -> None:
     """`Agent('ollama:<model>')` should resolve to an [`OllamaModel`][pydantic_ai.models.ollama.OllamaModel]
     (not a bare [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]), so the Cloud detection
     kicks in automatically for users who configure Ollama via the `OLLAMA_BASE_URL` env var."""
-    import os
+    monkeypatch.setenv('OLLAMA_BASE_URL', OLLAMA_CLOUD_BASE_URL)
+    monkeypatch.setenv('OLLAMA_API_KEY', 'test-key')
 
-    prev_base = os.environ.get('OLLAMA_BASE_URL')
-    prev_key = os.environ.get('OLLAMA_API_KEY')
-    os.environ['OLLAMA_BASE_URL'] = OLLAMA_CLOUD_BASE_URL
-    os.environ['OLLAMA_API_KEY'] = 'test-key'
-    try:
-        agent = Agent('ollama:gpt-oss:20b')
-        assert isinstance(agent.model, OllamaModel)
-        assert agent.model.profile.supports_json_schema_output is False
-    finally:
-        if prev_base is None:
-            os.environ.pop('OLLAMA_BASE_URL', None)
-        else:
-            os.environ['OLLAMA_BASE_URL'] = prev_base
-        if prev_key is None:
-            os.environ.pop('OLLAMA_API_KEY', None)
-        else:
-            os.environ['OLLAMA_API_KEY'] = prev_key
+    agent = Agent('ollama:gpt-oss:20b')
+    assert isinstance(agent.model, OllamaModel)
+    assert agent.model.profile.supports_json_schema_output is False
 
 
 # ---------- VCR integration tests against live Ollama ----------
