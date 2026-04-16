@@ -84,7 +84,7 @@ interactions:
             additionalProperties: false
             properties: {}
             type: object
-    uri: https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai-dev/locations/global/publishers/google/models/gemini-2.5-flash:generateContent
+    uri: https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai/locations/global/publishers/google/models/gemini-2.5-flash:generateContent
   response:
     headers:
       alt-svc:
@@ -189,7 +189,7 @@ interactions:
             additionalProperties: false
             properties: {}
             type: object
-    uri: https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai-dev/locations/global/publishers/google/models/gemini-2.5-flash:generateContent
+    uri: https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai/locations/global/publishers/google/models/gemini-2.5-flash:generateContent
   response:
     headers:
       alt-svc:
