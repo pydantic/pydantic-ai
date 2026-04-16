@@ -1593,12 +1593,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if not isinstance(compaction, ResponseCompactionItem):  # pragma: no cover
             raise UnexpectedModelBehavior(f'Last item in response is not a compaction, got: {compaction.type}')
 
-        part = CompactionPart(
-            content=None,
-            id=compaction.id,
-            provider_name=self.system,
-            provider_details=compaction.model_dump(),
-        )
+        part = _map_compaction_item(compaction, self.system)
         return ModelResponse(
             parts=[part],
             usage=_map_usage(response, self._provider.name, self._provider.base_url, self.model_name),
@@ -1779,18 +1774,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     items.append(file_part)
                 items.append(return_part)
             elif isinstance(item, ResponseCompactionItem):
-                # Stateful compaction: the server-side `context_management` configuration
-                # triggered a compaction and emitted this item alongside the regular output.
-                # We round-trip it via `CompactionPart` so subsequent requests can send the
-                # encrypted content back via the `input` array (see `_map_messages`).
-                items.append(
-                    CompactionPart(
-                        content=None,
-                        id=item.id,
-                        provider_name=self.system,
-                        provider_details=item.model_dump(),
-                    )
-                )
+                items.append(_map_compaction_item(item, self.system))
             elif isinstance(item, responses.ResponseComputerToolCall):  # pragma: no cover
                 # Pydantic AI doesn't yet support the ComputerUse built-in tool
                 pass
@@ -2891,7 +2875,12 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         call_part, _ = _map_mcp_list_tools(chunk.item, self.provider_name)
                         yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
                     elif isinstance(chunk.item, ResponseCompactionItem):
-                        pass  # handled in ResponseOutputItemDoneEvent with final encrypted_content
+                        # Emit a PartStartEvent so UIs can render compaction in progress.
+                        # The "done" event replaces this with the final encrypted_content.
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=chunk.item.id,
+                            part=_map_compaction_item(chunk.item, self.provider_name),
+                        )
                     else:
                         warnings.warn(  # pragma: no cover
                             f'Handling of this item type is not yet implemented. Please report on our GitHub: {chunk}',
@@ -2965,16 +2954,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             vendor_part_id=f'{chunk.item.id}-return', part=return_part
                         )
                     elif isinstance(chunk.item, ResponseCompactionItem):
-                        # Stateful compaction: use the "done" event (not "added") to
-                        # capture the final encrypted_content for round-tripping.
+                        # Replace the preliminary part from the "added" event with the
+                        # final encrypted_content for round-tripping.
                         yield self._parts_manager.handle_part(
                             vendor_part_id=chunk.item.id,
-                            part=CompactionPart(
-                                content=None,
-                                id=chunk.item.id,
-                                provider_name=self.provider_name,
-                                provider_details=chunk.item.model_dump(),
-                            ),
+                            part=_map_compaction_item(chunk.item, self.provider_name),
                         )
 
                 elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
@@ -3218,9 +3202,11 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
 
     - **Stateless mode** (`stateless=True`): calls the stateless
       `/responses/compact` endpoint from a `before_model_request` hook when
-      your trigger condition is met. ZDR-friendly — use this when you can't
-      have conversation data persisted server-side, or when you need explicit
-      out-of-band control over when compaction runs.
+      your trigger condition is met. Use this in
+      [ZDR](https://openai.com/enterprise-privacy/) environments where
+      OpenAI must not retain conversation data, when you set
+      [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store],
+      or when you need explicit out-of-band control over when compaction runs.
 
       Requires either `message_count_threshold` or a custom `trigger` callable.
 
@@ -3431,6 +3417,16 @@ def _map_logprobs(
         }
         for lp in logprobs
     ]
+
+
+def _map_compaction_item(item: ResponseCompactionItem, system: str) -> CompactionPart:
+    """Convert an OpenAI ``ResponseCompactionItem`` to a ``CompactionPart``."""
+    return CompactionPart(
+        content=None,
+        id=item.id,
+        provider_name=system,
+        provider_details=item.model_dump(),
+    )
 
 
 def _map_usage(
