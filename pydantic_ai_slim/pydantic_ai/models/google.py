@@ -344,16 +344,16 @@ class GoogleModel(Model[Client]):
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         google_profile = GoogleModelProfile.from_profile(self.profile)
-        if (
-            model_request_parameters.builtin_tools
-            and model_request_parameters.output_tools
-            and not google_profile.google_supports_tool_combination
-        ):
-            model_request_parameters = model_request_parameters.with_default_output_mode('prompted')
+        if model_request_parameters.builtin_tools and model_request_parameters.output_tools:
+            supports_native_output_with_builtin_tools = google_profile.google_supports_tool_combination
+            default_mode = 'native' if supports_native_output_with_builtin_tools else 'prompted'
+            model_request_parameters = model_request_parameters.with_default_output_mode(default_mode)
             if model_request_parameters.output_mode not in ('native', 'prompted'):
+                suggested_output_type = (
+                    'NativeOutput' if supports_native_output_with_builtin_tools else 'PromptedOutput'
+                )
                 raise UserError(
-                    'This model does not support output tools and built-in tools at the same time. '
-                    'Use `output_type=PromptedOutput(...)` instead.'
+                    f'Google does not support output tools and built-in tools at the same time. Use `output_type={suggested_output_type}(...)` instead.'
                 )
         return super().prepare_request(model_settings, model_request_parameters)
 

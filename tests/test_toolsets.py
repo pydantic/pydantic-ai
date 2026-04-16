@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import re
+import sys
 from collections import defaultdict
 from dataclasses import dataclass, replace
 from typing import Any, TypeVar
 from unittest.mock import AsyncMock
 
+import anyio
 import pytest
 from typing_extensions import Self
+
+if sys.version_info < (3, 11):
+    from exceptiongroup import BaseExceptionGroup as BaseExceptionGroup  # pragma: lax no cover
+else:
+    BaseExceptionGroup = BaseExceptionGroup  # pragma: lax no cover
 
 from pydantic_ai import (
     AbstractToolset,
@@ -22,10 +29,10 @@ from pydantic_ai import (
     WrapperToolset,
 )
 from pydantic_ai._run_context import RunContext
-from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import InstructionPart, ModelRequest, ModelResponse, TextPart
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.usage import RunUsage
@@ -120,6 +127,7 @@ async def test_function_toolset():
                     'type': 'object',
                 },
                 description='Add two numbers',
+                return_schema={'type': 'integer'},
             )
         ]
     )
@@ -138,6 +146,7 @@ async def test_function_toolset():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
+                return_schema={'type': 'integer'},
             )
         ]
     )
@@ -161,6 +170,7 @@ async def test_function_toolset():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
+                return_schema={'type': 'integer'},
             ),
             ToolDefinition(
                 name='subtract',
@@ -171,10 +181,33 @@ async def test_function_toolset():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
+                return_schema={'type': 'integer'},
             ),
         ]
     )
     assert await bar_toolset.handle_call(ToolCallPart(tool_name='bar_add', args={'a': 1, 'b': 2})) == 3
+
+
+async def test_toolset_tool_function_signature_property():
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def add(a: int, b: int) -> int:
+        return a + b
+
+    managed_toolset = await ToolManager[None](toolset).for_run_step(build_run_context(None))
+    assert managed_toolset.tools is not None
+
+    td = managed_toolset.tools['add'].tool_def
+    sig = td.function_signature
+    assert sig is not None
+    assert list(sig.params) == ['a', 'b']
+    assert td.render_signature('...') == snapshot("""\
+def add(*, a: int, b: int) -> int:
+    ...\
+""")
+
+    assert await managed_toolset.handle_call(ToolCallPart(tool_name='add', args={'a': 1, 'b': 2})) == 3
 
 
 async def test_function_toolset_with_defaults():
@@ -393,6 +426,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
+                return_schema={'type': 'integer'},
             ),
             ToolDefinition(
                 name='math_subtract',
@@ -403,6 +437,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
+                return_schema={'type': 'integer'},
             ),
             ToolDefinition(
                 name='math_multiply',
@@ -413,6 +448,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
+                return_schema={'type': 'integer'},
             ),
             ToolDefinition(
                 name='adv_power',
@@ -423,6 +459,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['base', 'exponent'],
                     'type': 'object',
                 },
+                return_schema={'type': 'integer'},
             ),
         ]
     )
@@ -445,6 +482,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
+                return_schema={'type': 'integer'},
             ),
             ToolDefinition(
                 name='math_subtract',
@@ -455,6 +493,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
+                return_schema={'type': 'integer'},
             ),
             ToolDefinition(
                 name='math_multiply',
@@ -465,6 +504,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
+                return_schema={'type': 'integer'},
             ),
             ToolDefinition(
                 name='str_concat',
@@ -475,6 +515,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['s1', 's2'],
                     'type': 'object',
                 },
+                return_schema={'type': 'string'},
             ),
             ToolDefinition(
                 name='str_uppercase',
@@ -485,6 +526,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['text'],
                     'type': 'object',
                 },
+                return_schema={'type': 'string'},
             ),
             ToolDefinition(
                 name='str_reverse',
@@ -495,6 +537,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['text'],
                     'type': 'object',
                 },
+                return_schema={'type': 'string'},
             ),
             ToolDefinition(
                 name='adv_power',
@@ -505,6 +548,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['base', 'exponent'],
                     'type': 'object',
                 },
+                return_schema={'type': 'integer'},
             ),
         ]
     )
@@ -528,6 +572,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
+                return_schema={'type': 'integer'},
             ),
             ToolDefinition(
                 name='math_subtract',
@@ -538,6 +583,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
+                return_schema={'type': 'integer'},
             ),
             ToolDefinition(
                 name='math_multiply',
@@ -548,6 +594,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
+                return_schema={'type': 'integer'},
             ),
         ]
     )
@@ -1237,6 +1284,74 @@ async def test_combined_toolset_with_nested_list_instructions():
     ]
 
 
+async def test_combined_toolset_cancels_siblings_on_get_tools_failure():
+    """When one child's get_tools fails, siblings are cancelled instead of leaking as orphan tasks."""
+    sibling_completed = False
+
+    class FailingToolset(WrapperToolset[Any]):
+        async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
+            raise RuntimeError('boom')
+
+    class SlowToolset(WrapperToolset[Any]):
+        async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
+            nonlocal sibling_completed
+            await anyio.sleep(0.1)
+            sibling_completed = True  # pragma: no cover
+            return await self.wrapped.get_tools(ctx)  # pragma: no cover
+
+    inner = FunctionToolset[None]()
+    combined = CombinedToolset([FailingToolset(inner), SlowToolset(inner)])
+    ctx = build_run_context(None)
+
+    with pytest.raises(RuntimeError, match='boom'):
+        await combined.get_tools(ctx)
+
+    await anyio.sleep(0.2)
+    assert sibling_completed is False
+
+
+async def test_combined_toolset_get_tools_preserves_exception_cause():
+    """Unwrapping the single-failure exception must preserve the original `__cause__` chain."""
+    original = ValueError('underlying')
+
+    class FailingToolset(WrapperToolset[Any]):
+        async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
+            raise RuntimeError('wrapper') from original
+
+    inner = FunctionToolset[None]()
+    combined = CombinedToolset([FailingToolset(inner)])
+    ctx = build_run_context(None)
+
+    with pytest.raises(RuntimeError, match='wrapper') as exc_info:
+        await combined.get_tools(ctx)
+
+    assert exc_info.value.__cause__ is original
+
+
+async def test_combined_toolset_get_tools_raises_group_on_multiple_failures():
+    """When multiple children fail concurrently, their errors surface as an ExceptionGroup."""
+
+    @dataclass
+    class RaisingToolset(WrapperToolset[Any]):
+        message: str = ''
+
+        async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
+            await anyio.sleep(0)
+            raise RuntimeError(self.message)
+
+    inner = FunctionToolset[None]()
+    combined = CombinedToolset(
+        [RaisingToolset(wrapped=inner, message='first'), RaisingToolset(wrapped=inner, message='second')]
+    )
+    ctx = build_run_context(None)
+
+    with pytest.raises(BaseExceptionGroup) as exc_info:
+        await combined.get_tools(ctx)
+
+    messages = {str(e) for e in exc_info.value.exceptions}
+    assert messages == {'first', 'second'}
+
+
 async def test_dynamic_toolset_instructions_before_resolution():
     """DynamicToolset returns None for instructions before get_tools resolves it."""
     dynamic = DynamicToolset(lambda ctx: FunctionToolset(instructions='Dynamic instructions.'))
@@ -1759,6 +1874,256 @@ async def test_concurrent_runs_dont_share_state():
     assert results[1].output == 'Done'
     # Each run should have its own count (1), not share state (1, 2)
     assert all(c == 1 for c in call_counts)
+
+
+def test_include_return_schemas_toolset():
+    """IncludeReturnSchemasToolset sets include_return_schema=True on wrapped tools."""
+
+    def my_tool(x: int) -> int:
+        return x
+
+    toolset = FunctionToolset(tools=[my_tool])
+    test_model = TestModel()
+    agent = Agent(test_model, toolsets=[toolset.include_return_schemas()])
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    td = next(td for td in params.function_tools if td.name == 'my_tool')
+    assert td.include_return_schema is True
+    assert 'Return schema' in (td.description or '')
+
+
+def test_set_metadata_toolset():
+    """SetMetadataToolset merges metadata onto all wrapped tools."""
+
+    def my_tool(x: int) -> int:
+        return x
+
+    toolset = FunctionToolset(tools=[my_tool])
+    test_model = TestModel()
+    agent = Agent(test_model, toolsets=[toolset.with_metadata(code_mode=True, priority=1)])
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    td = next(td for td in params.function_tools if td.name == 'my_tool')
+    assert td.metadata is not None
+    assert td.metadata['code_mode'] is True
+    assert td.metadata['priority'] == 1
+
+
+async def test_filtered_toolset_async_filter():
+    """FilteredToolset supports async filter functions."""
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x  # pragma: no cover
+
+    async def async_filter(ctx: RunContext, td: ToolDefinition) -> bool:
+        return td.name == 'tool_a'
+
+    toolset = FunctionToolset(tools=[tool_a, tool_b])
+    test_model = TestModel()
+    agent = Agent(test_model, toolsets=[toolset.filtered(async_filter)])
+    await agent.run('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    tool_names = [td.name for td in params.function_tools]
+    assert tool_names == ['tool_a']
+
+
+def test_set_tool_metadata_capability():
+    """SetToolMetadata capability merges metadata onto selected tools."""
+    from pydantic_ai.capabilities import SetToolMetadata
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x
+
+    test_model = TestModel()
+    agent = Agent(
+        test_model,
+        tools=[tool_a, tool_b],
+        capabilities=[SetToolMetadata(tools=['tool_a'], code_mode=True)],
+    )
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    td_a = next(td for td in params.function_tools if td.name == 'tool_a')
+    td_b = next(td for td in params.function_tools if td.name == 'tool_b')
+    assert td_a.metadata is not None
+    assert td_a.metadata['code_mode'] is True
+    # tool_b should not have the metadata
+    assert td_b.metadata is None or 'code_mode' not in td_b.metadata
+
+
+def test_set_tool_metadata_capability_with_async_selector():
+    """SetToolMetadata with async callable selector."""
+    from pydantic_ai.capabilities import SetToolMetadata
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x
+
+    async def only_tool_a(ctx: RunContext, td: ToolDefinition) -> bool:
+        return td.name == 'tool_a'
+
+    test_model = TestModel()
+    agent = Agent(
+        test_model,
+        tools=[tool_a, tool_b],
+        capabilities=[SetToolMetadata(tools=only_tool_a, tagged=True)],
+    )
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    td_a = next(td for td in params.function_tools if td.name == 'tool_a')
+    td_b = next(td for td in params.function_tools if td.name == 'tool_b')
+    assert td_a.metadata is not None
+    assert td_a.metadata['tagged'] is True
+    assert td_b.metadata is None or 'tagged' not in td_b.metadata
+
+
+def test_set_tool_metadata_capability_with_bare_string_selector():
+    """SetToolMetadata with a bare string selector matches by exact name, not substring."""
+    from pydantic_ai.capabilities import SetToolMetadata
+
+    def my_tool(x: int) -> int:
+        return x
+
+    def my(x: str) -> str:
+        return x
+
+    test_model = TestModel()
+    agent = Agent(
+        test_model,
+        tools=[my_tool, my],
+        capabilities=[SetToolMetadata(tools='my_tool', tagged=True)],
+    )
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    td_my_tool = next(td for td in params.function_tools if td.name == 'my_tool')
+    td_my = next(td for td in params.function_tools if td.name == 'my')
+    assert td_my_tool.metadata is not None
+    assert td_my_tool.metadata['tagged'] is True
+    # 'my' should NOT match — bare string does exact match, not substring
+    assert td_my.metadata is None or 'tagged' not in td_my.metadata
+
+
+def test_set_tool_metadata_capability_with_sync_callable_selector():
+    """SetToolMetadata with sync callable selector."""
+    from pydantic_ai.capabilities import SetToolMetadata
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x
+
+    test_model = TestModel()
+    agent = Agent(
+        test_model,
+        tools=[tool_a, tool_b],
+        capabilities=[SetToolMetadata(tools=lambda ctx, td: td.name == 'tool_a', flagged=True)],
+    )
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    td_a = next(td for td in params.function_tools if td.name == 'tool_a')
+    td_b = next(td for td in params.function_tools if td.name == 'tool_b')
+    assert td_a.metadata is not None
+    assert td_a.metadata['flagged'] is True
+    assert td_b.metadata is None or 'flagged' not in td_b.metadata
+
+
+def test_set_tool_metadata_capability_with_nested_dict_selector():
+    """SetToolMetadata with nested dict selector exercises deep metadata matching."""
+    from pydantic_ai.capabilities import SetToolMetadata
+    from pydantic_ai.tools import Tool
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x
+
+    def tool_c(x: float) -> float:
+        return x
+
+    test_model = TestModel()
+    agent = Agent(
+        test_model,
+        tools=[
+            Tool(tool_a, metadata={'config': {'env': 'prod', 'region': 'us'}}),
+            Tool(tool_b, metadata={'config': {'env': 'staging'}}),
+            Tool(tool_c, metadata={'other': 'value'}),  # missing 'config' key entirely
+        ],
+        capabilities=[SetToolMetadata(tools={'config': {'env': 'prod'}}, verified=True)],
+    )
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    td_a = next(td for td in params.function_tools if td.name == 'tool_a')
+    td_b = next(td for td in params.function_tools if td.name == 'tool_b')
+    td_c = next(td for td in params.function_tools if td.name == 'tool_c')
+    # tool_a matches: config.env == 'prod' (deep inclusion, extra 'region' key is fine)
+    assert td_a.metadata is not None
+    assert td_a.metadata['verified'] is True
+    # tool_b doesn't match: config.env == 'staging'
+    assert td_b.metadata is not None
+    assert 'verified' not in td_b.metadata
+    # tool_c doesn't match: 'config' key missing entirely
+    assert td_c.metadata is not None
+    assert 'verified' not in td_c.metadata
+
+
+def test_set_tool_metadata_capability_with_dict_selector():
+    """SetToolMetadata with dict selector matches tools by metadata."""
+    from pydantic_ai.capabilities import SetToolMetadata
+    from pydantic_ai.tools import Tool
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x
+
+    test_model = TestModel()
+    agent = Agent(
+        test_model,
+        tools=[
+            Tool(tool_a, metadata={'env': 'prod'}),
+            Tool(tool_b, metadata={'env': 'staging'}),
+        ],
+        capabilities=[SetToolMetadata(tools={'env': 'prod'}, audited=True)],
+    )
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    td_a = next(td for td in params.function_tools if td.name == 'tool_a')
+    td_b = next(td for td in params.function_tools if td.name == 'tool_b')
+    # tool_a matched the dict selector, gets audited=True merged
+    assert td_a.metadata is not None
+    assert td_a.metadata['audited'] is True
+    assert td_a.metadata['env'] == 'prod'
+    # tool_b didn't match
+    assert td_b.metadata is not None
+    assert 'audited' not in td_b.metadata
 
 
 async def test_custom_toolset_returning_plain_str_instructions():

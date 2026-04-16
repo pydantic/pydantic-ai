@@ -210,6 +210,8 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                     'logfire.span_type': 'span',
                     'gen_ai.response.model': 'gpt-4o-2024-11-20',
                     'gen_ai.response.id': 'response_id',
+                    'gen_ai.usage.cache_creation.input_tokens': 10,
+                    'gen_ai.usage.cache_read.input_tokens': 20,
                     'gen_ai.usage.details.reasoning_tokens': 30,
                     'gen_ai.usage.details.cache_write_tokens': 10,
                     'gen_ai.usage.details.cache_read_tokens': 20,
@@ -765,6 +767,8 @@ Fix the errors and try again.\
                                 'event.name': 'gen_ai.choice',
                             },
                         ],
+                        'gen_ai.usage.cache_creation.input_tokens': 10,
+                        'gen_ai.usage.cache_read.input_tokens': 20,
                         'gen_ai.usage.details.reasoning_tokens': 30,
                         'gen_ai.usage.details.cache_write_tokens': 10,
                         'gen_ai.usage.details.cache_read_tokens': 20,
@@ -872,6 +876,8 @@ Fix the errors and try again.\
                         'gen_ai.system_instructions': [{'type': 'text', 'content': 'instructions'}],
                         'gen_ai.usage.input_tokens': 100,
                         'gen_ai.usage.output_tokens': 200,
+                        'gen_ai.usage.cache_creation.input_tokens': 10,
+                        'gen_ai.usage.cache_read.input_tokens': 20,
                         'gen_ai.usage.details.reasoning_tokens': 30,
                         'gen_ai.usage.details.cache_write_tokens': 10,
                         'gen_ai.usage.details.cache_read_tokens': 20,
@@ -1086,6 +1092,42 @@ def test_messages_to_otel_events_instructions_multiple_messages():
             {'role': 'user', 'parts': [{'type': 'text', 'content': 'user_prompt2'}]},
         ]
     )
+
+
+def test_messages_to_otel_events_compaction_part():
+    """CompactionPart is not a standard OTel GenAI convention type and is skipped in OTel events."""
+    from pydantic_ai.messages import CompactionPart
+
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[CompactionPart(content='Summary of conversation.', provider_name='anthropic'), TextPart('response')]
+        ),
+    ]
+    settings = InstrumentationSettings()
+    # CompactionPart is skipped; only the TextPart appears
+    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'content': 'response',
+                'gen_ai.message.index': 0,
+                'event.name': 'gen_ai.assistant.message',
+            }
+        ]
+    )
+
+
+def test_messages_to_otel_message_parts_compaction_part():
+    """CompactionPart is skipped in otel_message_parts (not a standard GenAI convention type)."""
+    from pydantic_ai.messages import CompactionPart
+
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[CompactionPart(content='Summary.', provider_name='anthropic'), TextPart('response')]),
+    ]
+    settings = InstrumentationSettings()
+    otel_messages = settings.messages_to_otel_messages(messages)
+    # CompactionPart is skipped; only TextPart appears
+    assert otel_messages == snapshot([{'role': 'assistant', 'parts': [{'type': 'text', 'content': 'response'}]}])
 
 
 def test_messages_to_otel_events_image_url(document_content: BinaryContent):
@@ -1817,6 +1859,8 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
                     },
                     'gen_ai.usage.input_tokens': 100,
                     'gen_ai.usage.output_tokens': 200,
+                    'gen_ai.usage.cache_creation.input_tokens': 10,
+                    'gen_ai.usage.cache_read.input_tokens': 20,
                     'gen_ai.usage.details.reasoning_tokens': 30,
                     'gen_ai.usage.details.cache_write_tokens': 10,
                     'gen_ai.usage.details.cache_read_tokens': 20,

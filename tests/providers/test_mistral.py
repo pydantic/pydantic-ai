@@ -32,7 +32,7 @@ def test_mistral_provider_need_api_key(env: TestEnv) -> None:
         UserError,
         match=re.escape(
             'Set the `MISTRAL_API_KEY` environment variable or pass it via `MistralProvider(api_key=...)`'
-            'to use the Mistral provider.'
+            ' to use the Mistral provider.'
         ),
     ):
         MistralProvider()

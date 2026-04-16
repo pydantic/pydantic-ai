@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import inspect
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field
+from functools import cached_property
 from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, Union, cast
 
 from pydantic import Discriminator, Tag
@@ -14,6 +15,7 @@ from . import _function_schema, _utils
 from ._run_context import AgentDepsT, RunContext
 from .builtin_tools import AbstractBuiltinTool
 from .exceptions import ModelRetry
+from .function_signature import FunctionSignature
 from .messages import RetryPromptPart, ToolCallPart, ToolReturn
 
 __all__ = (
@@ -28,6 +30,9 @@ __all__ = (
     'ToolParams',
     'ToolPrepareFunc',
     'ToolsPrepareFunc',
+    'ToolSelectorFunc',
+    'ToolSelector',
+    'matches_tool_selector',
     'AgentBuiltinTool',
     'BuiltinToolFunc',
     'Tool',
@@ -144,6 +149,81 @@ agent = Agent('openai:gpt-5.2', prepare_tools=turn_on_strict_if_openai)
 
 Usage `ToolsPrepareFunc[AgentDepsT]`.
 """
+
+ToolSelectorFunc: TypeAlias = Callable[
+    [RunContext[AgentDepsT], 'ToolDefinition'],
+    bool | Awaitable[bool],
+]
+"""A callable that decides whether a tool matches a selection criterion.
+
+Receives the run context and a tool definition, returns `True` if the tool is selected.
+Both sync and async functions are accepted.
+
+Usage `ToolSelectorFunc[AgentDepsT]`.
+"""
+
+ToolSelector: TypeAlias = Literal['all'] | Sequence[str] | dict[str, Any] | ToolSelectorFunc[AgentDepsT]
+"""Specifies which tools a capability or toolset wrapper should apply to.
+
+- `'all'`: matches every tool (default for most capabilities).
+- `Sequence[str]`: matches tools whose names are in the sequence.
+- `dict[str, Any]`: matches tools whose
+  [`metadata`][pydantic_ai.tools.ToolDefinition.metadata] contains all the
+  specified key-value pairs (deep inclusion check — nested dicts are compared
+  recursively, and the tool's metadata may have additional keys).
+- `Callable[[RunContext, ToolDefinition], bool | Awaitable[bool]]`:
+  custom sync or async predicate.
+
+The first three forms are serializable for use in agent specs (YAML/JSON).
+
+Usage `ToolSelector[AgentDepsT]`.
+"""
+
+
+def _metadata_includes(metadata: dict[str, Any], selector: dict[str, Any]) -> bool:
+    """Check whether *metadata* deeply includes all key-value pairs from *selector*."""
+    for key, expected in selector.items():
+        if key not in metadata:
+            return False
+        actual = metadata[key]
+        if isinstance(expected, dict) and isinstance(actual, dict):
+            if not _metadata_includes(cast(dict[str, Any], actual), cast(dict[str, Any], expected)):
+                return False
+        elif actual != expected:
+            return False
+    return True
+
+
+async def matches_tool_selector(
+    selector: ToolSelector[AgentDepsT],
+    ctx: RunContext[AgentDepsT],
+    tool_def: ToolDefinition,
+) -> bool:
+    """Check whether a tool definition matches a [`ToolSelector`][pydantic_ai.tools.ToolSelector].
+
+    Args:
+        selector: The selector to check against.
+        ctx: The current run context.
+        tool_def: The tool definition to test.
+
+    Returns:
+        `True` if the tool matches the selector.
+    """
+    if selector == 'all':
+        return True
+    if callable(selector):
+        result = selector(ctx, tool_def)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+    if isinstance(selector, dict):
+        metadata: dict[str, Any] = tool_def.metadata or {}
+        return _metadata_includes(metadata, selector)
+    if isinstance(selector, str):
+        return tool_def.name == selector
+    # Sequence[str] — match by tool name
+    return tool_def.name in selector
+
 
 BuiltinToolFunc: TypeAlias = Callable[
     [RunContext[AgentDepsT]], Awaitable[AbstractBuiltinTool | None] | AbstractBuiltinTool | None
@@ -292,6 +372,7 @@ class Tool(Generic[ToolAgentDepsT]):
     metadata: dict[str, Any] | None
     timeout: float | None
     defer_loading: bool
+    include_return_schema: bool | None
     function_schema: _function_schema.FunctionSchema
     """
     The base JSON schema for the tool's parameters.
@@ -318,6 +399,7 @@ class Tool(Generic[ToolAgentDepsT]):
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
+        include_return_schema: bool | None = None,
         function_schema: _function_schema.FunctionSchema | None = None,
     ):
         """Create a new tool instance.
@@ -384,19 +466,22 @@ class Tool(Generic[ToolAgentDepsT]):
                 Defaults to None (no timeout).
             defer_loading: Whether to hide this tool until it's discovered via tool search. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
+            include_return_schema: Whether to include the return schema in the tool definition sent to the model.
+                If `None`, defaults to `False` unless the [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
         """
         self.function = function
+        self.name = name or function.__name__
         self.function_schema = function_schema or _function_schema.function_schema(
             function,
             schema_generator,
+            tool_name=self.name,
             takes_ctx=takes_ctx,
             docstring_format=docstring_format,
             require_parameter_descriptions=require_parameter_descriptions,
         )
         self.takes_ctx = self.function_schema.takes_ctx
         self.max_retries = max_retries
-        self.name = name or function.__name__
         self.description = description or self.function_schema.description
         self.prepare = prepare
         self.args_validator = args_validator
@@ -408,6 +493,7 @@ class Tool(Generic[ToolAgentDepsT]):
         self.metadata = metadata
         self.timeout = timeout
         self.defer_loading = defer_loading
+        self.include_return_schema = include_return_schema
 
     @classmethod
     def from_schema(
@@ -446,6 +532,7 @@ class Tool(Generic[ToolAgentDepsT]):
         """
         function_schema = _function_schema.FunctionSchema(
             function=function,
+            name=name,
             description=description,
             validator=SchemaValidator(schema=core_schema.any_schema()),
             json_schema=json_schema,
@@ -453,7 +540,7 @@ class Tool(Generic[ToolAgentDepsT]):
             is_async=_utils.is_async_callable(function),
         )
 
-        return cls(
+        tool = cls(
             function,
             takes_ctx=takes_ctx,
             name=name,
@@ -462,9 +549,10 @@ class Tool(Generic[ToolAgentDepsT]):
             sequential=sequential,
             args_validator=args_validator,
         )
+        return tool
 
     @property
-    def tool_def(self):
+    def tool_def(self) -> ToolDefinition:
         return ToolDefinition(
             name=self.name,
             description=self.description,
@@ -475,6 +563,8 @@ class Tool(Generic[ToolAgentDepsT]):
             timeout=self.timeout,
             defer_loading=self.defer_loading,
             kind='unapproved' if self.requires_approval else 'function',
+            return_schema=self.function_schema.return_schema,
+            include_return_schema=self.include_return_schema,
         )
 
     async def prepare_tool_def(self, ctx: RunContext[ToolAgentDepsT]) -> ToolDefinition | None:
@@ -486,15 +576,15 @@ class Tool(Generic[ToolAgentDepsT]):
         Returns:
             return a `ToolDefinition` or `None` if the tools should not be registered for this run.
         """
-        base_tool_def = self.tool_def
+        tool_def = self.tool_def
 
         if self.prepare is not None:
-            result = self.prepare(ctx, base_tool_def)
+            result = self.prepare(ctx, tool_def)
             if inspect.isawaitable(result):
                 return await result
             return result
         else:
-            return base_tool_def
+            return tool_def
 
 
 ObjectJsonSchema: TypeAlias = dict[str, Any]
@@ -583,6 +673,45 @@ class ToolDefinition:
     removed from the request. When the model does not support the builtin, the builtin is
     removed and this function tool stays.
     """
+
+    return_schema: ObjectJsonSchema | None = None
+    """The JSON schema for the tool's return value.
+
+    For models that natively support return schemas (e.g. Google Gemini), this is passed as a
+    structured field in the API request. For other models, it is injected into the tool's
+    description as JSON text. Only included when `include_return_schema` resolves to `True`.
+    """
+
+    include_return_schema: bool | None = None
+    """Whether to include the return schema in the tool definition sent to the model.
+
+    When `True`, the `return_schema` will be preserved and sent to the model.
+    When `False`, the `return_schema` will be cleared before sending.
+    When `None` (default), defaults to `False` unless the
+    [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
+    """
+
+    @cached_property
+    def function_signature(self) -> FunctionSignature:
+        """The function signature shape for this tool.
+
+        Lazily computed from `parameters_json_schema` and `return_schema` on first access.
+        Name and description are not stored on the signature — pass them at render time
+        via `sig.render(body, name=td.name, description=td.description)`.
+        """
+        return FunctionSignature.from_schema(
+            name=self.name,
+            parameters_schema=self.parameters_json_schema,
+            return_schema=self.return_schema,
+        )
+
+    def render_signature(self, body: str, **kwargs: Any) -> str:
+        """Render the function signature with this tool's name and description.
+
+        Convenience wrapper around `self.function_signature.render()` that
+        supplies `name` and `description` from this tool definition.
+        """
+        return self.function_signature.render(body, name=self.name, description=self.description, **kwargs)
 
     @property
     def defer(self) -> bool:

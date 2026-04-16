@@ -149,16 +149,11 @@ See [Anthropic's Microsoft Foundry documentation](https://platform.claude.com/do
 
 ## Prompt Caching
 
-Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) to reduce costs by caching parts of your prompts. Pydantic AI provides four ways to use prompt caching:
+Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) to reduce costs by caching parts of your prompts. Pydantic AI supports both automatic and explicit caching approaches:
 
-1. **Cache User Messages with [`CachePoint`][pydantic_ai.messages.CachePoint]**: Insert a `CachePoint` marker in your user messages to cache everything before it
-2. **Cache System Instructions**: Set [`AnthropicModelSettings.anthropic_cache_instructions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_instructions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly. When you have both static and dynamic [instructions](../agent.md#instructions), the cache point is automatically placed after the last static instruction, so dynamic instructions can change without invalidating the static cache.
-3. **Cache Tool Definitions**: Set [`AnthropicModelSettings.anthropic_cache_tool_definitions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_tool_definitions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly
-4. **Cache All Messages**: Set [`AnthropicModelSettings.anthropic_cache_messages`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_messages] to `True` to automatically cache all messages
+### Automatic Caching
 
-### Example 1: Automatic Message Caching
-
-Use `anthropic_cache_messages` to automatically cache all messages up to and including the newest user message:
+The simplest way to enable prompt caching is with [`AnthropicModelSettings.anthropic_cache`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache]. This uses Anthropic's [automatic caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#automatic-caching), passing a top-level `cache_control` parameter so the server automatically applies a cache breakpoint to the last cacheable block in each request:
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -168,22 +163,35 @@ agent = Agent(
     'anthropic:claude-sonnet-4-6',
     instructions='You are a helpful assistant.',
     model_settings=AnthropicModelSettings(
-        anthropic_cache_messages=True,  # Automatically caches the last message
+        anthropic_cache=True,
     ),
 )
 
-# The last message is automatically cached - no need for manual CachePoint
 result1 = agent.run_sync('What is the capital of France?')
 
-# Subsequent calls with similar conversation benefit from cache
-result2 = agent.run_sync('What is the capital of Germany?')
+result2 = agent.run_sync(
+    'What is the capital of Germany?', message_history=result1.all_messages()
+)
 print(f'Cache write: {result1.usage().cache_write_tokens}')
 print(f'Cache read: {result2.usage().cache_read_tokens}')
 ```
 
-### Example 2: Comprehensive Caching Strategy
+This is ideal for multi-turn conversations where the cache breakpoint should move forward as the conversation grows. You can also specify a custom TTL with `anthropic_cache='1h'`.
 
-Combine multiple cache settings for maximum savings:
+!!! note "Bedrock and Vertex"
+    Bedrock and Vertex [do not yet support automatic caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#automatic-caching). On these platforms, `anthropic_cache` falls back to per-block caching on the last user message, providing the same benefit for multi-turn conversations.
+
+### Explicit Cache Breakpoints
+
+In addition to automatic caching, Pydantic AI provides several ways to place cache breakpoints on specific content:
+
+1. **Cache User Messages with [`CachePoint`][pydantic_ai.messages.CachePoint]**: Insert a `CachePoint` marker in your user messages to cache everything before it
+2. **Cache System Instructions**: Set [`AnthropicModelSettings.anthropic_cache_instructions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_instructions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly
+3. **Cache Tool Definitions**: Set [`AnthropicModelSettings.anthropic_cache_tool_definitions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_tool_definitions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly
+
+#### Example: Comprehensive Caching Strategy
+
+Combine automatic caching with explicit breakpoints for maximum savings. Automatic caching handles the conversation, while explicit breakpoints pin system instructions and tool definitions:
 
 ```python {test="skip"}
 from pydantic_ai import Agent, RunContext
@@ -193,9 +201,9 @@ agent = Agent(
     'anthropic:claude-sonnet-4-6',
     instructions='Detailed instructions...',
     model_settings=AnthropicModelSettings(
-        anthropic_cache_instructions=True,      # Cache system instructions
-        anthropic_cache_tool_definitions='1h',  # Cache tool definitions with 1h TTL
-        anthropic_cache_messages=True,          # Also cache the last message
+        anthropic_cache=True,                   # Server auto-caches last block
+        anthropic_cache_instructions=True,      # Explicitly cache system instructions
+        anthropic_cache_tool_definitions='1h',  # Explicitly cache tool definitions with 1h TTL
     ),
 )
 
@@ -244,7 +252,7 @@ print(result.output)
 2. Enables smart cache placement at the static/dynamic boundary.
 3. Dynamic instructions change per-request and are not cached.
 
-### Example 3: Fine-Grained Control with CachePoint
+### Fine-Grained Control with CachePoint
 
 Use manual `CachePoint` markers to control cache locations precisely:
 
@@ -277,7 +285,7 @@ agent = Agent(
     'anthropic:claude-sonnet-4-6',
     instructions='Instructions...',
     model_settings=AnthropicModelSettings(
-        anthropic_cache_instructions=True  # Default 5m TTL
+        anthropic_cache=True,
     ),
 )
 
@@ -293,17 +301,18 @@ Anthropic enforces a maximum of 4 cache points per request. Pydantic AI automati
 
 #### How Cache Points Are Allocated
 
-Cache points can be placed in three locations:
+Cache points can come from several sources:
 
-1. **System Prompt**: Via `anthropic_cache_instructions` setting (adds cache point to last system prompt block)
-2. **Tool Definitions**: Via `anthropic_cache_tool_definitions` setting (adds cache point to last tool definition)
-3. **Messages**: Via `CachePoint` markers or `anthropic_cache_messages` setting (adds cache points to message content)
+1. **Automatic caching**: Via `anthropic_cache` (the server applies 1 cache point to the last cacheable block)
+2. **System Prompt**: Via `anthropic_cache_instructions` setting (adds cache point to last system prompt block)
+3. **Tool Definitions**: Via `anthropic_cache_tool_definitions` setting (adds cache point to last tool definition)
+4. **Messages**: Via `CachePoint` markers (adds cache points to message content)
 
-Each setting uses **at most 1 cache point**, but you can combine them.
+Each setting uses **at most 1 cache point**, but you can combine them. If the total exceeds 4, Pydantic AI automatically trims excess cache points from older messages.
 
-#### Example: Using All 3 Cache Point Sources
+#### Example: Combining Automatic and Explicit Caching
 
-Define an agent with all cache settings enabled:
+Define an agent with automatic caching plus explicit breakpoints:
 
 ```python {test="skip"}
 from pydantic_ai import Agent, CachePoint
@@ -313,9 +322,9 @@ agent = Agent(
     'anthropic:claude-sonnet-4-6',
     instructions='Detailed instructions...',
     model_settings=AnthropicModelSettings(
+        anthropic_cache=True,                   # 1 cache point (server-applied)
         anthropic_cache_instructions=True,      # 1 cache point
         anthropic_cache_tool_definitions=True,  # 1 cache point
-        anthropic_cache_messages=True,          # 1 cache point
     ),
 )
 
@@ -324,8 +333,8 @@ def my_tool() -> str:
     return 'result'
 
 
-# This uses 3 cache points (instructions + tools + last message)
-# You can add 1 more CachePoint marker before hitting the limit
+# 3 of 4 slots used (1 automatic + 1 instructions + 1 tools)
+# Room for 1 more explicit CachePoint marker
 result = agent.run_sync([
     'Context', CachePoint(),  # 4th cache point - OK
     'Question'
@@ -338,9 +347,9 @@ print(f'Cache read tokens: {usage.cache_read_tokens}')
 
 #### Automatic Cache Point Limiting
 
-When cache points from all sources (settings + `CachePoint` markers) exceed 4, Pydantic AI automatically removes excess cache points from **older message content** (keeping the most recent ones).
+When explicit cache points from all sources (settings + `CachePoint` markers) exceed the available budget, Pydantic AI automatically removes excess cache points from **older message content** (keeping the most recent ones).
 
-Define an agent with 2 cache points from settings:
+Define an agent with 2 explicit cache points from settings:
 
 ```python {test="skip"}
 from pydantic_ai import Agent, CachePoint
@@ -376,6 +385,48 @@ print(f'Cache read tokens: {usage.cache_read_tokens}')
 
 **Key Points**:
 - System and tool cache points are **always preserved**
-- The cache point created by `anthropic_cache_messages` is **always preserved** (as it's the newest message cache point)
-- Additional `CachePoint` markers in messages are removed from oldest to newest when the limit is exceeded
+- `anthropic_cache` counts as 1 cache point, just like `anthropic_cache_instructions` and `anthropic_cache_tool_definitions`
+- Excess `CachePoint` markers in messages are removed from oldest to newest when the limit is exceeded
 - This ensures critical caching (instructions/tools) is maintained while still benefiting from message-level caching
+
+## Message Compaction
+
+Anthropic supports [automatic context compaction](https://docs.anthropic.com/en/docs/build-with-claude/compaction) to manage long conversations. When input tokens exceed a configured threshold, the API automatically generates a summary that replaces older messages while preserving context.
+
+The easiest way to enable compaction is with the [`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction] capability:
+
+```python {title="anthropic_compaction.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicCompaction
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    capabilities=[AnthropicCompaction(token_threshold=100_000)],
+)
+```
+
+The capability accepts:
+
+- **`token_threshold`** (default: 150,000, minimum: 50,000): Compaction triggers when input tokens exceed this value.
+- **`instructions`**: Custom instructions for how the summary should be generated.
+- **`pause_after_compaction`**: When `True`, the response stops after the compaction block with `stop_reason='compaction'`, allowing explicit handling before continuing.
+
+Alternatively, you can configure compaction directly via model settings using [`anthropic_context_management`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_context_management]:
+
+```python {title="anthropic_compaction_settings.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+agent = Agent('anthropic:claude-sonnet-4-6')
+result = agent.run_sync(
+    'Hello!',
+    model_settings=AnthropicModelSettings(
+        anthropic_context_management={
+            'edits': [{'type': 'compact_20260112', 'trigger': {'type': 'input_tokens', 'value': 100_000}}]
+        }
+    ),
+)
+```
+
+!!! note
+    Compaction blocks returned by Anthropic contain readable text summaries. They are automatically round-tripped in subsequent requests when included in the message history.

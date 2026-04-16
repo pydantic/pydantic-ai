@@ -330,6 +330,253 @@ async def test_google_model_stream(allow_model_requests: None, google_provider: 
     assert data == snapshot('The capital of France is Paris.\n')
 
 
+async def test_google_model_builtin_code_execution_stream(
+    allow_model_requests: None,
+    google_provider: GoogleProvider,
+):
+    """Test Gemini streaming only code execution result or executable_code."""
+    model = GoogleModel('gemini-2.5-pro', provider=google_provider)
+    agent = Agent(
+        model=model,
+        instructions='Be concise and always use Python to do calculations no matter how small.',
+        builtin_tools=[CodeExecutionTool()],
+    )
+
+    event_parts: list[Any] = []
+    async with agent.iter(user_prompt='what is 65465-6544 * 65464-6+1.02255') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert agent_run.result is not None
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='what is 65465-6544 * 65464-6+1.02255',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions='Be concise and always use Python to do calculations no matter how small.',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={
+                            'code': """\
+    result = 65465 - 6544 * 65464 - 6 + 1.02255
+    print(result)
+    \
+""",
+                            'language': 'PYTHON',
+                        },
+                        tool_call_id=IsStr(),
+                        provider_name='google-gla',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='google-gla',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={
+                            'code': """\
+# Calculate the expression 65465-6544 * 65464-6+1.02255
+result = 65465 - 6544 * 65464 - 6 + 1.02255
+print(result)\
+""",
+                            'language': 'PYTHON',
+                        },
+                        tool_call_id=IsStr(),
+                        provider_name='google-gla',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='google-gla',
+                    ),
+                    TextPart(content='The result is -428,330,955.97745.'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=46,
+                    output_tokens=1429,
+                    details={
+                        'thoughts_tokens': 396,
+                        'tool_use_prompt_tokens': 901,
+                        'text_prompt_tokens': 46,
+                        'text_tool_use_prompt_tokens': 901,
+                    },
+                ),
+                model_name='gemini-2.5-pro',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args={
+                        'code': """\
+    result = 65465 - 6544 * 65464 - 6 + 1.02255
+    print(result)
+    \
+""",
+                        'language': 'PYTHON',
+                    },
+                    tool_call_id=IsStr(),
+                    provider_name='google-gla',
+                ),
+            ),
+            PartEndEvent(
+                index=0,
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args={
+                        'code': """\
+    result = 65465 - 6544 * 65464 - 6 + 1.02255
+    print(result)
+    \
+""",
+                        'language': 'PYTHON',
+                    },
+                    tool_call_id=IsStr(),
+                    provider_name='google-gla',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=1,
+                part=BuiltinToolReturnPart(
+                    tool_name='code_execution',
+                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='google-gla',
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=2,
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args={
+                        'code': """\
+# Calculate the expression 65465-6544 * 65464-6+1.02255
+result = 65465 - 6544 * 65464 - 6 + 1.02255
+print(result)\
+""",
+                        'language': 'PYTHON',
+                    },
+                    tool_call_id=IsStr(),
+                    provider_name='google-gla',
+                ),
+                previous_part_kind='builtin-tool-return',
+            ),
+            PartEndEvent(
+                index=2,
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args={
+                        'code': """\
+# Calculate the expression 65465-6544 * 65464-6+1.02255
+result = 65465 - 6544 * 65464 - 6 + 1.02255
+print(result)\
+""",
+                        'language': 'PYTHON',
+                    },
+                    tool_call_id=IsStr(),
+                    provider_name='google-gla',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=3,
+                part=BuiltinToolReturnPart(
+                    tool_name='code_execution',
+                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='google-gla',
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(index=4, part=TextPart(content='The result is'), previous_part_kind='builtin-tool-return'),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' -428,330,955.977')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='45.')),
+            PartEndEvent(index=4, part=TextPart(content='The result is -428,330,955.97745.')),
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args={
+                        'code': """\
+    result = 65465 - 6544 * 65464 - 6 + 1.02255
+    print(result)
+    \
+""",
+                        'language': 'PYTHON',
+                    },
+                    tool_call_id=IsStr(),
+                    provider_name='google-gla',
+                )
+            ),
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+                result=BuiltinToolReturnPart(
+                    tool_name='code_execution',
+                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='google-gla',
+                )
+            ),
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args={
+                        'code': """\
+# Calculate the expression 65465-6544 * 65464-6+1.02255
+result = 65465 - 6544 * 65464 - 6 + 1.02255
+print(result)\
+""",
+                        'language': 'PYTHON',
+                    },
+                    tool_call_id=IsStr(),
+                    provider_name='google-gla',
+                )
+            ),
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+                result=BuiltinToolReturnPart(
+                    tool_name='code_execution',
+                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='google-gla',
+                )
+            ),
+        ]
+    )
+
+
 async def test_google_model_retry(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.5-pro', provider=google_provider)
     agent = Agent(
@@ -1520,6 +1767,164 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                     provider_name='google-gla',
                 )
             ),
+        ]
+    )
+
+
+async def test_google_model_code_execution_tool(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-pro', provider=google_provider)
+    agent = Agent(m, instructions='You are a helpful chatbot.', builtin_tools=[CodeExecutionTool()])
+
+    result = await agent.run('What day is today in Utrecht?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What day is today in Utrecht?', timestamp=IsDatetime())],
+                instructions='You are a helpful chatbot.',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={
+                            'code': """\
+from datetime import datetime
+import pytz
+
+# Get the current time in UTC
+utc_now = datetime.now(pytz.utc)
+
+# Get the timezone for Utrecht (which is in the Netherlands, using Europe/Amsterdam)
+utrecht_tz = pytz.timezone('Europe/Amsterdam')
+
+# Convert the current UTC time to Utrecht's local time
+utrecht_now = utc_now.astimezone(utrecht_tz)
+
+# Format the date to be easily readable (e.g., "Tuesday, May 21, 2024")
+formatted_date = utrecht_now.strftime("%A, %B %d, %Y")
+
+print(f"Today in Utrecht is {formatted_date}.")
+""",
+                            'language': 'PYTHON',
+                        },
+                        tool_call_id=IsStr(),
+                        provider_name='google-gla',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content={
+                            'outcome': 'OUTCOME_OK',
+                            'output': 'Today in Utrecht is Tuesday, September 16, 2025.\n',
+                        },
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='google-gla',
+                    ),
+                    TextPart(content='Today in Utrecht is Tuesday, September 16, 2025.'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=15,
+                    output_tokens=1335,
+                    details={
+                        'thoughts_tokens': 483,
+                        'tool_use_prompt_tokens': 675,
+                        'text_prompt_tokens': 15,
+                        'text_tool_use_prompt_tokens': 675,
+                    },
+                ),
+                model_name='gemini-2.5-pro',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+    result = await agent.run('What day is tomorrow?', message_history=result.all_messages())
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What day is tomorrow?', timestamp=IsDatetime())],
+                instructions='You are a helpful chatbot.',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={
+                            'code': """\
+from datetime import date, timedelta
+
+tomorrow = date.today() + timedelta(days=1)
+print(f"Tomorrow is {tomorrow.strftime('%A, %B %d, %Y')}.")
+""",
+                            'language': 'PYTHON',
+                        },
+                        tool_call_id=IsStr(),
+                        provider_name='google-gla',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content={'outcome': 'OUTCOME_OK', 'output': 'Tomorrow is Wednesday, September 17, 2025.\n'},
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='google-gla',
+                    ),
+                    TextPart(content='Tomorrow is Wednesday, September 17, 2025.'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=39,
+                    output_tokens=1235,
+                    details={
+                        'thoughts_tokens': 540,
+                        'tool_use_prompt_tokens': 637,
+                        'text_prompt_tokens': 39,
+                        'text_tool_use_prompt_tokens': 637,
+                    },
+                ),
+                model_name='gemini-2.5-pro',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_google_model_server_tool_receive_history_from_another_provider(
+    allow_model_requests: None, anthropic_api_key: str, gemini_api_key: str
+):
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    anthropic_model = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+    google_model = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    agent = Agent(builtin_tools=[CodeExecutionTool()])
+
+    result = await agent.run('How much is 3 * 12390?', model=anthropic_model)
+    assert part_types_from_messages(result.all_messages()) == snapshot(
+        [[UserPromptPart], [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart]]
+    )
+
+    result = await agent.run('Multiplied by 12390', model=google_model, message_history=result.all_messages())
+    assert part_types_from_messages(result.all_messages()) == snapshot(
+        [
+            [UserPromptPart],
+            [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+            [UserPromptPart],
+            [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
         ]
     )
 
