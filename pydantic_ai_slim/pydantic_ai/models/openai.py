@@ -3271,10 +3271,16 @@ def _map_logprobs(
     return [
         {
             'token': lp.token,
-            'bytes': getattr(lp, 'bytes', None),
+            'bytes': lp.bytes if not isinstance(lp, responses.response_text_done_event.Logprob) else None,
             'logprob': lp.logprob,
             'top_logprobs': [
-                {'token': tlp.token, 'bytes': getattr(tlp, 'bytes', None), 'logprob': tlp.logprob}
+                {
+                    'token': tlp.token,
+                    'bytes': tlp.bytes
+                    if not isinstance(tlp, responses.response_text_done_event.LogprobTopLogprob)
+                    else None,
+                    'logprob': tlp.logprob,
+                }
                 for tlp in (lp.top_logprobs or [])
             ],
         }
