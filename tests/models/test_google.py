@@ -6495,3 +6495,48 @@ async def test_google_vertex_service_tier_flex_stream(
             ),
         ]
     )
+
+
+@pytest.mark.parametrize(
+    'backend,tool_call_id,expected_ids_on_wire',
+    [
+        pytest.param('vertex', 'pyd_ai_abc123', 0, id='vertex-pyd-ai-dropped'),
+        pytest.param('vertex', 'call_openai_xyz', 0, id='vertex-cross-provider-dropped'),
+        pytest.param('gla', 'pyd_ai_abc123', 0, id='gla-pyd-ai-dropped'),
+        pytest.param('gla', 'call_openai_xyz', 2, id='gla-model-provided-preserved'),
+    ],
+)
+async def test_google_tool_call_id_wire_format(
+    allow_model_requests: None,
+    google_provider: GoogleProvider,
+    mock_vertex_provider: GoogleProvider,
+    mocker: MockerFixture,
+    backend: str,
+    tool_call_id: str,
+    expected_ids_on_wire: int,
+):
+    provider = mock_vertex_provider if backend == 'vertex' else google_provider
+    model = GoogleModel('gemini-2.5-flash', provider=provider)
+
+    mocked_error = errors.ClientError(500, {'error': {'code': 500, 'message': 'captured by test'}})
+    mock = mocker.patch.object(model.client.aio.models, 'generate_content', side_effect=mocked_error)
+
+    agent = Agent(model=model)
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='What is the answer?')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_answer', args={}, tool_call_id=tool_call_id)]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_answer', content=42, tool_call_id=tool_call_id)]),
+    ]
+
+    with pytest.raises(ModelHTTPError):
+        await agent.run('continue', message_history=history)
+
+    ids_on_wire = [
+        part[field]['id']
+        for content in mock.call_args.kwargs['contents']
+        for part in content.get('parts', [])
+        for field in ('function_call', 'function_response')
+        if 'id' in part.get(field, {})
+    ]
+    assert len(ids_on_wire) == expected_ids_on_wire
+    assert all(sent == tool_call_id for sent in ids_on_wire)

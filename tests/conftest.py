@@ -801,6 +801,32 @@ async def vertex_provider(vertex_provider_auth: None):  # pragma: lax no cover
     yield GoogleProvider(project=project, location=cast(VertexAILocation, location))
 
 
+@dataclass
+class _NoOpCredentials:
+    token = 'mock-token'
+    quota_project_id = 'mock-project'
+
+    def refresh(self, request: Any) -> None: ...
+    def expired(self) -> bool:
+        return False
+
+
+@pytest.fixture()
+def mock_vertex_provider(mocker: MockerFixture):
+    """Vertex provider with stubbed auth, so tests run without real gcloud credentials."""
+    try:
+        from google.genai import _api_client
+
+        from pydantic_ai.providers.google import GoogleProvider
+    except ImportError:  # pragma: lax no cover
+        pytest.skip('google is not installed')
+
+    auth_return = (_NoOpCredentials(), 'mock-project')
+    mocker.patch.object(_api_client, 'load_auth', return_value=auth_return)
+    mocker.patch('pydantic_ai.providers.google_vertex.google.auth.default', return_value=auth_return)
+    return GoogleProvider(project='mock-project', location='global')
+
+
 @pytest.fixture()
 def model(
     request: pytest.FixtureRequest,

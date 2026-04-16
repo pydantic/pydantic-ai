@@ -250,6 +250,23 @@ class GoogleModelSettings(ModelSettings, total=False):
     """
 
 
+def _should_include_tool_call_id(provider_name: str, tool_call_id: str) -> bool:
+    """Whether to include `id` on `function_call` / `function_response` parts sent to a Google backend.
+
+    Vertex's REST v1 schema does not declare `id` on these parts and rejects unknown fields with
+    `400 INVALID_ARGUMENT` (https://docs.cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1/Content#FunctionCall).
+    The google-genai SDK defaults Vertex to `v1beta1`, which does declare the field, so the
+    rejection only surfaces for callers who explicitly pin `api_version='v1'`; we drop the field
+    unconditionally on Vertex to stay correct across both API versions and across message history
+    imported from other providers (OpenAI `call_*`, Anthropic `toolu_*`, etc.).
+    Framework-generated `pyd_ai_*` IDs are internal tracking that Gemini never echoes back, so we
+    also drop them on AI Studio (`google-gla`).
+    """
+    if provider_name == 'google-vertex':
+        return False
+    return not _utils.is_auto_generated_tool_call_id(tool_call_id)
+
+
 def _google_vertex_service_tier_headers(service_tier: GoogleServiceTier) -> dict[str, str]:
     """HTTP headers for Vertex AI Provisioned Throughput and Flex PayGo routing."""
     if service_tier == 'pt_then_on_demand':
@@ -785,15 +802,12 @@ class GoogleModel(Model[Client]):
                         if part.tool_name is None:
                             message_parts.append({'text': part.model_response()})
                         else:
-                            message_parts.append(
-                                {
-                                    'function_response': {
-                                        'name': part.tool_name,
-                                        'response': {'error': part.model_response()},
-                                        'id': part.tool_call_id,
-                                    }
-                                }
+                            function_response = FunctionResponseDict(
+                                name=part.tool_name, response={'error': part.model_response()}
                             )
+                            if _should_include_tool_call_id(self.system, part.tool_call_id):
+                                function_response['id'] = part.tool_call_id
+                            message_parts.append({'function_response': function_response})
                     else:
                         assert_never(part)
 
@@ -866,11 +880,9 @@ class GoogleModel(Model[Client]):
         if fallback_refs:
             response = {'output': [response, *fallback_refs]}
 
-        function_response_dict: FunctionResponseDict = {
-            'name': part.tool_name,
-            'response': response,
-            'id': part.tool_call_id,
-        }
+        function_response_dict = FunctionResponseDict(name=part.tool_name, response=response)
+        if _should_include_tool_call_id(self.system, part.tool_call_id):
+            function_response_dict['id'] = part.tool_call_id
         if function_response_parts:
             function_response_dict['parts'] = function_response_parts
 
@@ -1271,7 +1283,9 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
         thinking_part_signature = None
 
         if isinstance(item, ToolCallPart):
-            function_call = FunctionCallDict(name=item.tool_name, args=item.args_as_dict(), id=item.tool_call_id)
+            function_call = FunctionCallDict(name=item.tool_name, args=item.args_as_dict())
+            if _should_include_tool_call_id(provider_name, item.tool_call_id):
+                function_call['id'] = item.tool_call_id
             part['function_call'] = function_call
             if function_call_requires_signature and not part.get('thought_signature'):
                 # Per https://ai.google.dev/gemini-api/docs/thought-signatures#faqs:
