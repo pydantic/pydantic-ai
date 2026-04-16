@@ -2656,11 +2656,13 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
         openai_store=True,
         openai_previous_response_id=seed_response_id,
     )
-    await agent.run("What's the weather in New York?", model_settings=settings)
+    result2 = await agent.run("What's the weather in New York?", model_settings=settings)
 
     # Tool was called at least twice: first with wrong input, then correctly with "NYC".
     assert len(attempts) >= 2
     assert 'NYC' in attempts
+    # Final answer reports the weather returned by the tool.
+    assert 'Sunny' in result2.output or 'sunny' in result2.output
     # At least 3 model requests: initial tool call, retry after ModelRetry, final answer.
     assert len(captured_previous_response_ids) >= 3
     # First request seeds from the prior turn.
@@ -2671,6 +2673,92 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
         assert resolved != seed_response_id
     # All subsequent previous_response_ids are distinct — each chains to the most recent prior response.
     assert len(set(captured_previous_response_ids[1:])) == len(captured_previous_response_ids[1:])
+    # Snapshot the full trace so regressions in message trimming or retry structure surface here too.
+    assert result2.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content="What's the weather in New York?", timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_weather',
+                        args=IsStr(),
+                        tool_call_id=IsStr(),
+                        id=IsStr(),
+                        provider_name='openai',
+                    ),
+                ],
+                usage=IsInstance(RequestUsage),
+                model_name=IsStr(),
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': IsStr(), 'timestamp': IsDatetime()},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content=IsStr(),
+                        tool_name='get_weather',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_weather',
+                        args='{"city":"NYC"}',
+                        tool_call_id=IsStr(),
+                        id=IsStr(),
+                        provider_name='openai',
+                    ),
+                ],
+                usage=IsInstance(RequestUsage),
+                model_name=IsStr(),
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': IsStr(), 'timestamp': IsDatetime()},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_weather',
+                        content='Sunny, 72F',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr(), id=IsStr(), provider_name='openai')],
+                usage=IsInstance(RequestUsage),
+                model_name=IsStr(),
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': IsStr(), 'timestamp': IsDatetime()},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_openai_responses_usage_without_tokens_details(allow_model_requests: None):
