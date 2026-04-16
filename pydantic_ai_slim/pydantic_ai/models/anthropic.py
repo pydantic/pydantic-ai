@@ -429,7 +429,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
-        settings = merge_model_settings(self.settings, model_settings) or {}
+        settings: ModelSettings = {**(merge_model_settings(self.settings, model_settings) or {})}
         profile = AnthropicModelProfile.from_profile(self.profile)
         self._validate_thinking_settings(settings, profile)
         self._drop_unsupported_sampling_settings(settings, profile)

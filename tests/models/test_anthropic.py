@@ -122,6 +122,9 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.filterwarnings(
+        "ignore:The model 'claude-sonnet-4-0' is deprecated and will reach end-of-life.*:DeprecationWarning"
+    ),
+    pytest.mark.filterwarnings(
         'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
     ),
     pytest.mark.filterwarnings(
@@ -3604,7 +3607,12 @@ async def test_anthropic_unified_thinking_opus_47_xhigh(allow_model_requests: No
 async def test_anthropic_opus_47_drops_sampling_settings(allow_model_requests: None):
     from anthropic._types import omit as OMIT
 
+    settings = AnthropicModelSettings(temperature=0.2, top_p=0.3)
     responses = [
+        completion_message(
+            [BetaTextBlock(text='4', type='text')],
+            usage=BetaUsage(input_tokens=10, output_tokens=1),
+        ),
         completion_message(
             [BetaTextBlock(text='4', type='text')],
             usage=BetaUsage(input_tokens=10, output_tokens=1),
@@ -3612,14 +3620,19 @@ async def test_anthropic_opus_47_drops_sampling_settings(allow_model_requests: N
     ]
     mock_client = MockAnthropic.create_mock(responses)
     m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m, model_settings=AnthropicModelSettings(temperature=0.2, top_p=0.3))
+    agent = Agent(m, model_settings=settings)
 
     with pytest.warns(UserWarning, match='Sampling parameters'):
         await agent.run('What is 2+2?')
+    with pytest.warns(UserWarning, match='Sampling parameters'):
+        await agent.run('What is 2+2?')
 
-    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert kwargs['temperature'] is OMIT
-    assert kwargs['top_p'] is OMIT
+    all_kwargs = get_mock_chat_completion_kwargs(mock_client)
+    assert settings.get('temperature') == 0.2
+    assert settings.get('top_p') == 0.3
+    for kwargs in all_kwargs:
+        assert kwargs['temperature'] is OMIT
+        assert kwargs['top_p'] is OMIT
 
 
 async def test_anthropic_opus_46_adaptive_thinking_rejects_tool_output(allow_model_requests: None):
