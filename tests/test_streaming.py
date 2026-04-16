@@ -27,6 +27,8 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -3081,6 +3083,15 @@ async def test_run_event_stream_handler():
     assert result.output == snapshot('{"ret_a":"a-apple"}')
     assert events == snapshot(
         [
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    usage=RequestUsage(input_tokens=51),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
+                )
+            ),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
@@ -3088,6 +3099,15 @@ async def test_run_event_stream_handler():
             PartEndEvent(
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
+            ),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a')],
+                    usage=RequestUsage(input_tokens=51),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
+                )
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
@@ -3100,11 +3120,29 @@ async def test_run_event_stream_handler():
                     timestamp=IsNow(tz=timezone.utc),
                 )
             ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    usage=RequestUsage(input_tokens=52, output_tokens=5),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
+                )
+            ),
             PartStartEvent(index=0, part=TextPart(content='')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"ret_a":')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='"a-apple"}')),
             PartEndEvent(index=0, part=TextPart(content='{"ret_a":"a-apple"}')),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[TextPart(content='{"ret_a":"a-apple"}')],
+                    usage=RequestUsage(input_tokens=52, output_tokens=11),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
+                )
+            ),
         ]
     )
 
@@ -3129,6 +3167,15 @@ def test_run_sync_event_stream_handler():
     assert result.output == snapshot('{"ret_a":"a-apple"}')
     assert events == snapshot(
         [
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    usage=RequestUsage(input_tokens=51),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
+                )
+            ),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
@@ -3136,6 +3183,15 @@ def test_run_sync_event_stream_handler():
             PartEndEvent(
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
+            ),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a')],
+                    usage=RequestUsage(input_tokens=51),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
+                )
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
@@ -3148,11 +3204,29 @@ def test_run_sync_event_stream_handler():
                     timestamp=IsNow(tz=timezone.utc),
                 )
             ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    usage=RequestUsage(input_tokens=52, output_tokens=5),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
+                )
+            ),
             PartStartEvent(index=0, part=TextPart(content='')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"ret_a":')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='"a-apple"}')),
             PartEndEvent(index=0, part=TextPart(content='{"ret_a":"a-apple"}')),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[TextPart(content='{"ret_a":"a-apple"}')],
+                    usage=RequestUsage(input_tokens=52, output_tokens=11),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
+                )
+            ),
         ]
     )
 
@@ -3180,6 +3254,15 @@ async def test_run_stream_event_stream_handler():
 
     assert events == snapshot(
         [
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    usage=RequestUsage(input_tokens=51),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
+                )
+            ),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
@@ -3187,6 +3270,15 @@ async def test_run_stream_event_stream_handler():
             PartEndEvent(
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
+            ),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a')],
+                    usage=RequestUsage(input_tokens=51),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
+                )
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
@@ -3197,6 +3289,15 @@ async def test_run_stream_event_stream_handler():
                     content='a-apple',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
+                )
+            ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    usage=RequestUsage(input_tokens=52, output_tokens=5),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 )
             ),
             PartStartEvent(index=0, part=TextPart(content='')),

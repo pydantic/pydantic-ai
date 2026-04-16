@@ -24,6 +24,8 @@ from ..messages import (
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     MultiModalContent,
     PartDeltaEvent,
     PartEndEvent,
@@ -63,6 +65,19 @@ OnCompleteFunc: TypeAlias = (
     | Callable[[AgentRunResult[Any]], AsyncIterator[EventT]]
 )
 """Callback function type that receives the `AgentRunResult` of the completed run. Can be sync, async, or an async generator of protocol-specific events."""
+
+_EVENT_HANDLER_NAMES: tuple[tuple[type[Any], str], ...] = (
+    (ModelResponseStartEvent, 'handle_model_response_start'),
+    (ModelResponseEndEvent, 'handle_model_response_end'),
+    (PartStartEvent, 'handle_part_start'),
+    (PartDeltaEvent, 'handle_part_delta'),
+    (PartEndEvent, 'handle_part_end'),
+    (FinalResultEvent, 'handle_final_result'),
+    (FunctionToolCallEvent, 'handle_function_tool_call'),
+    (FunctionToolResultEvent, 'handle_function_tool_result'),
+    (AgentRunResultEvent, 'handle_run_result'),
+)
+"""Lookup table mapping native events to their handler methods."""
 
 
 @dataclass
@@ -157,7 +172,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
         try:
             async for event in stream:
-                if isinstance(event, PartStartEvent):
+                if isinstance(event, ModelResponseStartEvent | PartStartEvent):
                     async for e in self._turn_to('response'):
                         yield e
                 elif isinstance(event, FunctionToolCallEvent):
@@ -280,6 +295,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         - [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] -> `handle_part_delta`
         - [`PartEndEvent`][pydantic_ai.messages.PartEndEvent] -> `handle_part_end`
         - [`FinalResultEvent`][pydantic_ai.messages.FinalResultEvent] -> `handle_final_result`
+        - [`ModelResponseStartEvent`][pydantic_ai.messages.ModelResponseStartEvent] -> `handle_model_response_start`
+        - [`ModelResponseEndEvent`][pydantic_ai.messages.ModelResponseEndEvent] -> `handle_model_response_end`
         - [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] -> `handle_function_tool_call`
         - [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] -> `handle_function_tool_result`
         - [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] -> `handle_run_result`
@@ -287,30 +304,22 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         Subclasses are encouraged to override the individual `handle_*` methods rather than this one.
         If you need specific behavior for all events, make sure you call the super method.
         """
-        match event:
-            case PartStartEvent():
-                async for e in self.handle_part_start(event):
+        for event_type, handler_name in _EVENT_HANDLER_NAMES:
+            if isinstance(event, event_type):
+                handler = cast(Callable[[Any], AsyncIterator[EventT]], getattr(self, handler_name))
+                async for e in handler(event):
                     yield e
-            case PartDeltaEvent():
-                async for e in self.handle_part_delta(event):
-                    yield e
-            case PartEndEvent():
-                async for e in self.handle_part_end(event):
-                    yield e
-            case FinalResultEvent():
-                async for e in self.handle_final_result(event):
-                    yield e
-            case FunctionToolCallEvent():
-                async for e in self.handle_function_tool_call(event):
-                    yield e
-            case FunctionToolResultEvent():
-                async for e in self.handle_function_tool_result(event):
-                    yield e
-            case AgentRunResultEvent():
-                async for e in self.handle_run_result(event):
-                    yield e
-            case _:
-                pass
+                return
+
+    async def handle_model_response_start(self, event: ModelResponseStartEvent) -> AsyncIterator[EventT]:
+        """Handle a `ModelResponseStartEvent`."""
+        return  # pragma: no cover
+        yield  # Make this an async generator
+
+    async def handle_model_response_end(self, event: ModelResponseEndEvent) -> AsyncIterator[EventT]:
+        """Handle a `ModelResponseEndEvent`."""
+        return  # pragma: no cover
+        yield  # Make this an async generator
 
     async def handle_part_start(self, event: PartStartEvent) -> AsyncIterator[EventT]:
         """Handle a `PartStartEvent`.

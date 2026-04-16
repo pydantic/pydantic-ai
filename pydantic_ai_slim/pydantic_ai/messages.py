@@ -2444,10 +2444,45 @@ class FinalResultEvent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass(repr=False, kw_only=True)
+class ModelResponseStartEvent:
+    """An event indicating a model response stream has started.
+
+    The attached [`ModelResponse`][pydantic_ai.messages.ModelResponse] reflects the response state available at the
+    start of the stream, which may already include provider metadata or input-token usage.
+    """
+
+    response: ModelResponse
+    """The model response state at the start of the stream."""
+
+    event_kind: Literal['model_response_start'] = 'model_response_start'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class ModelResponseEndEvent:
+    """An event indicating a model response stream has completed."""
+
+    response: ModelResponse
+    """The final model response for the completed stream."""
+
+    event_kind: Literal['model_response_end'] = 'model_response_end'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 ModelResponseStreamEvent = Annotated[
     PartStartEvent | PartDeltaEvent | PartEndEvent | FinalResultEvent, pydantic.Discriminator('event_kind')
 ]
 """An event in the model response stream, starting a new part, applying a delta to an existing one, indicating a part is complete, or indicating the final result."""
+
+ModelResponseLifecycleEvent = Annotated[
+    ModelResponseStartEvent | ModelResponseEndEvent, pydantic.Discriminator('event_kind')
+]
+"""An event describing the lifecycle of a model response stream."""
 
 
 @dataclass(repr=False)
@@ -2549,5 +2584,8 @@ HandleResponseEvent = Annotated[
 ]
 """An event yielded when handling a model response, indicating tool calls and results."""
 
-AgentStreamEvent = Annotated[ModelResponseStreamEvent | HandleResponseEvent, pydantic.Discriminator('event_kind')]
-"""An event in the agent stream: model response stream events and response-handling events."""
+AgentStreamEvent = Annotated[
+    ModelResponseStreamEvent | ModelResponseLifecycleEvent | HandleResponseEvent,
+    pydantic.Discriminator('event_kind'),
+]
+"""An event in the agent stream: model response lifecycle events, model response stream events, and response-handling events."""
