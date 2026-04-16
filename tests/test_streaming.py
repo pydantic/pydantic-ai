@@ -3326,6 +3326,15 @@ async def test_stream_tool_returning_user_content():
 
     assert events == snapshot(
         [
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    usage=RequestUsage(input_tokens=51),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
+                )
+            ),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr()),
@@ -3333,6 +3342,15 @@ async def test_stream_tool_returning_user_content():
             PartEndEvent(
                 index=0,
                 part=ToolCallPart(tool_name='get_image', args={}, tool_call_id='pyd_ai_tool_call_id__get_image'),
+            ),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[ToolCallPart(tool_name='get_image', args={}, tool_call_id='pyd_ai_tool_call_id__get_image')],
+                    usage=RequestUsage(input_tokens=51),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
+                )
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr()), args_valid=True
@@ -3345,6 +3363,15 @@ async def test_stream_tool_returning_user_content():
                     ),
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
+                )
+            ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    usage=RequestUsage(input_tokens=51, output_tokens=2),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 )
             ),
             PartStartEvent(index=0, part=TextPart(content='')),
@@ -3367,6 +3394,19 @@ async def test_stream_tool_returning_user_content():
                     content='{"get_image":{"url":"https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg","force_download":false,"vendor_metadata":null,"kind":"image-url","media_type":"image/jpeg","identifier":"bd38f5"}}'
                 ),
             ),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[
+                        TextPart(
+                            content='{"get_image":{"url":"https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg","force_download":false,"vendor_metadata":null,"kind":"image-url","media_type":"image/jpeg","identifier":"bd38f5"}}'
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=51, output_tokens=23),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
+                )
+            ),
         ]
     )
 
@@ -3386,6 +3426,15 @@ async def test_run_stream_events():
 
     assert events == snapshot(
         [
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    usage=RequestUsage(input_tokens=51),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
+                )
+            ),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
@@ -3393,6 +3442,15 @@ async def test_run_stream_events():
             PartEndEvent(
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
+            ),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a')],
+                    usage=RequestUsage(input_tokens=51),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
+                )
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
@@ -3405,11 +3463,29 @@ async def test_run_stream_events():
                     timestamp=IsNow(tz=timezone.utc),
                 )
             ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    usage=RequestUsage(input_tokens=52, output_tokens=5),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
+                )
+            ),
             PartStartEvent(index=0, part=TextPart(content='')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"ret_a":')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='"a-apple"}')),
             PartEndEvent(index=0, part=TextPart(content='{"ret_a":"a-apple"}')),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[TextPart(content='{"ret_a":"a-apple"}')],
+                    usage=RequestUsage(input_tokens=52, output_tokens=11),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
+                )
+            ),
             AgentRunResultEvent(result=AgentRunResult(output='{"ret_a":"a-apple"}')),
         ]
     )
@@ -3552,6 +3628,15 @@ async def test_args_validator_failure_events():
 
     assert events == snapshot(
         [
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    usage=RequestUsage(input_tokens=56),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
+                )
+            ),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
@@ -3559,6 +3644,15 @@ async def test_args_validator_failure_events():
             PartEndEvent(
                 index=0,
                 part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
+            ),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr())],
+                    usage=RequestUsage(input_tokens=56),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
+                )
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
@@ -3572,6 +3666,15 @@ async def test_args_validator_failure_events():
                     timestamp=IsNow(tz=timezone.utc),
                 ),
             ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    usage=RequestUsage(input_tokens=69, output_tokens=6),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
+                )
+            ),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
@@ -3579,6 +3682,15 @@ async def test_args_validator_failure_events():
             PartEndEvent(
                 index=0,
                 part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
+            ),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr())],
+                    usage=RequestUsage(input_tokens=69, output_tokens=6),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
+                )
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
@@ -3592,11 +3704,29 @@ async def test_args_validator_failure_events():
                     timestamp=IsNow(tz=timezone.utc),
                 ),
             ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    usage=RequestUsage(input_tokens=70, output_tokens=12),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
+                )
+            ),
             PartStartEvent(index=0, part=TextPart(content='')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"add_nu')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='mbers":0}')),
             PartEndEvent(index=0, part=TextPart(content='{"add_numbers":0}')),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[TextPart(content='{"add_numbers":0}')],
+                    usage=RequestUsage(input_tokens=70, output_tokens=16),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
+                )
+            ),
             AgentRunResultEvent(result=AgentRunResult(output='{"add_numbers":0}')),
         ]
     )
@@ -3624,6 +3754,15 @@ async def test_args_validator_event_args_valid_field():
 
     assert events == snapshot(
         [
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    usage=RequestUsage(input_tokens=56),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
+                )
+            ),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(
@@ -3635,6 +3774,21 @@ async def test_args_validator_event_args_valid_field():
                 part=ToolCallPart(
                     tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id='pyd_ai_tool_call_id__add_numbers'
                 ),
+            ),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='add_numbers',
+                            args={'x': 0, 'y': 0},
+                            tool_call_id='pyd_ai_tool_call_id__add_numbers',
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=56),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
+                )
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(
@@ -3650,11 +3804,29 @@ async def test_args_validator_event_args_valid_field():
                     timestamp=IsDatetime(),
                 )
             ),
+            ModelResponseStartEvent(
+                response=ModelResponse(
+                    parts=[],
+                    usage=RequestUsage(input_tokens=57, output_tokens=6),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
+                )
+            ),
             PartStartEvent(index=0, part=TextPart(content='')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"add_nu')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='mbers":0}')),
             PartEndEvent(index=0, part=TextPart(content='{"add_numbers":0}')),
+            ModelResponseEndEvent(
+                response=ModelResponse(
+                    parts=[TextPart(content='{"add_numbers":0}')],
+                    usage=RequestUsage(input_tokens=57, output_tokens=10),
+                    model_name='test',
+                    timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
+                )
+            ),
             AgentRunResultEvent(result=AgentRunResult(output='{"add_numbers":0}')),
         ]
     )
