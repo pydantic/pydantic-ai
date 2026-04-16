@@ -8,4 +8,14 @@
 
 Examples of how to use Pydantic AI and what it can do.
 
+## Available Examples
+
+- **bank_support** - Customer support agent with database access
+- **aml_compliance** - Anti-Money Laundering compliance workflow (NEW)
+- **flight_booking** - Flight booking agent
+- **rag** - Retrieval-Augmented Generation example
+- **sql_gen** - SQL query generation
+- **weather_agent** - Weather information agent
+- And more...
+
 For full documentation of these examples and how to run them, see [ai.pydantic.dev/examples/](https://ai.pydantic.dev/examples/).
