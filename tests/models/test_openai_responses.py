@@ -2486,6 +2486,282 @@ async def test_openai_previous_response_id_same_model_history(allow_model_reques
     )
 
 
+async def test_openai_previous_response_id_concrete_seed_without_history(openai_api_key: str):
+    """A concrete seed is used as-is when there is no prior response in the history."""
+    history = [ModelRequest(parts=[UserPromptPart(content='Continue')])]
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    previous_response_id, messages = model._resolve_previous_response_id('resp_seed_from_prior_turn', history)  # type: ignore
+    assert previous_response_id == 'resp_seed_from_prior_turn'
+    assert messages is history
+
+
+async def test_openai_previous_response_id_concrete_seed_overridden_by_history(openai_api_key: str):
+    """When the history contains a same-provider response, it overrides the concrete seed.
+
+    Regression test for the retry/continuation bug in https://github.com/pydantic/pydantic-ai/issues/5113:
+    a static seed sent on every in-run request causes OpenAI to store duplicate copies of the
+    conversation state. The most recent `provider_response_id` must take precedence.
+    """
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='Q')]),
+        ModelResponse(
+            parts=[TextPart(content='A1')],
+            model_name='gpt-5',
+            provider_name='openai',
+            provider_response_id='resp_from_first_call',
+        ),
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content='ok', tool_call_id='tc_1')]),
+    ]
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    previous_response_id, messages = model._resolve_previous_response_id('resp_seed_from_prior_turn', history)  # type: ignore
+    assert previous_response_id == 'resp_from_first_call'
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[ToolReturnPart(tool_name='t', content='ok', tool_call_id='tc_1', timestamp=IsDatetime())]
+            ),
+        ]
+    )
+
+
+async def test_openai_previous_response_id_concrete_seed_with_mixed_provider_history(openai_api_key: str):
+    """Responses from other providers don't override the concrete seed."""
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='Q')]),
+        ModelResponse(
+            parts=[TextPart(content='A1')],
+            model_name='claude-sonnet-4-5',
+            provider_name='anthropic',
+            provider_response_id='msg_abc',
+        ),
+        ModelRequest(parts=[UserPromptPart(content='Follow-up')]),
+    ]
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    previous_response_id, messages = model._resolve_previous_response_id('resp_seed_from_prior_turn', history)  # type: ignore
+    assert previous_response_id == 'resp_seed_from_prior_turn'
+    assert messages is history
+
+
+async def test_openai_previous_response_id_concrete_seed_broken_by_compaction(openai_api_key: str):
+    """A compaction in the tail is a hard chain boundary even with a concrete seed.
+
+    Crossing a compaction would re-inject the context that the compaction was meant
+    to replace, since `previous_response_id` loads the referenced response's full
+    input/output and the compaction summary is included in the new input.
+    """
+    history = [
+        ModelResponse(
+            parts=[TextPart(content='compacted summary')],
+            model_name='gpt-4.1',
+            provider_name='openai',
+            provider_response_id='resp_compact',
+            provider_details={'compaction': True},
+        ),
+        ModelRequest(parts=[UserPromptPart(content='continue after compaction')]),
+    ]
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    previous_response_id, messages = model._resolve_previous_response_id('resp_seed_from_prior_turn', history)  # type: ignore
+    assert previous_response_id is None
+    assert messages is history
+
+
+async def test_openai_previous_response_id_auto_broken_by_compaction(openai_api_key: str):
+    """`'auto'` also breaks the chain at compaction, matching the concrete-seed behavior."""
+    history = [
+        ModelResponse(
+            parts=[TextPart(content='compacted summary')],
+            model_name='gpt-4.1',
+            provider_name='openai',
+            provider_response_id='resp_compact',
+            provider_details={'compaction': True},
+        ),
+        ModelRequest(parts=[UserPromptPart(content='continue after compaction')]),
+    ]
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    previous_response_id, messages = model._resolve_previous_response_id('auto', history)  # type: ignore
+    assert previous_response_id is None
+    assert messages is history
+
+
+async def test_openai_previous_response_id_unset_never_chains(openai_api_key: str):
+    """No opt-in means no auto-chaining, even when the history contains a chainable response."""
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='Q')]),
+        ModelResponse(
+            parts=[TextPart(content='A1')],
+            model_name='gpt-5',
+            provider_name='openai',
+            provider_response_id='resp_from_first_call',
+        ),
+        ModelRequest(parts=[UserPromptPart(content='Follow-up')]),
+    ]
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    previous_response_id, messages = model._resolve_previous_response_id(None, history)  # type: ignore
+    assert previous_response_id is None
+    assert messages is history
+
+
+async def test_openai_previous_response_id_seed_auto_chains_through_retries(
+    allow_model_requests: None, openai_api_key: str
+):
+    """Regression test for https://github.com/pydantic/pydantic-ai/issues/5113.
+
+    A concrete seed from a prior turn must act as the starting point for the first
+    in-run request only. On subsequent in-run requests (tool-call continuations,
+    `ModelRetry` retries), auto-chaining takes over so we chain to the latest stored
+    response instead of re-sending the same static seed and duplicating stored state.
+    """
+    model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, retries=3)
+
+    attempts: list[str] = []
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        attempts.append(city)
+        if city != 'NYC':
+            raise ModelRetry(
+                'Location not recognized. The tool only supports the airport code "NYC". Call again with city="NYC".'
+            )
+        return 'Sunny, 72F'
+
+    # Turn 1 establishes a stored response we can seed from.
+    result1 = await agent.run('Say hi in one word, no punctuation.')
+    last = result1.all_messages()[-1]
+    assert isinstance(last, ModelResponse)
+    seed_response_id = last.provider_response_id
+    assert seed_response_id is not None
+
+    # Turn 2 uses the seed and forces a retry + tool-call continuation inside the run.
+    captured_previous_response_ids: list[str | None] = []
+    original_responses_create: Any = model._responses_create  # pyright: ignore[reportPrivateUsage]
+
+    async def capture(*args: Any, **kwargs: Any) -> Any:
+        messages = args[0] if args else kwargs['messages']
+        settings = args[2] if len(args) >= 3 else kwargs['model_settings']
+        resolved, _ = model._resolve_previous_response_id(  # pyright: ignore[reportPrivateUsage]
+            settings.get('openai_previous_response_id'), messages
+        )
+        captured_previous_response_ids.append(resolved)
+        return await original_responses_create(*args, **kwargs)
+
+    model._responses_create = capture  # type: ignore[method-assign]
+
+    settings = OpenAIResponsesModelSettings(
+        openai_store=True,
+        openai_previous_response_id=seed_response_id,
+    )
+    result2 = await agent.run("What's the weather in New York?", model_settings=settings)
+
+    # Tool was called at least twice: first with wrong input, then correctly with "NYC".
+    assert len(attempts) >= 2
+    assert 'NYC' in attempts
+    # Final answer reports the weather returned by the tool.
+    assert 'Sunny' in result2.output or 'sunny' in result2.output
+    # At least 3 model requests: initial tool call, retry after ModelRetry, final answer.
+    assert len(captured_previous_response_ids) >= 3
+    # First request seeds from the prior turn.
+    assert captured_previous_response_ids[0] == seed_response_id
+    # Subsequent requests chain to the most recent stored response, never re-sending the static seed.
+    for resolved in captured_previous_response_ids[1:]:
+        assert resolved is not None
+        assert resolved != seed_response_id
+    # All subsequent previous_response_ids are distinct — each chains to the most recent prior response.
+    assert len(set(captured_previous_response_ids[1:])) == len(captured_previous_response_ids[1:])
+    # Snapshot the full trace so regressions in message trimming or retry structure surface here too.
+    assert result2.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content="What's the weather in New York?", timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_weather',
+                        args=IsStr(),
+                        tool_call_id=IsStr(),
+                        id=IsStr(),
+                        provider_name='openai',
+                    ),
+                ],
+                usage=IsInstance(RequestUsage),
+                model_name=IsStr(),
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': IsStr(), 'timestamp': IsDatetime()},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content=IsStr(),
+                        tool_name='get_weather',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_weather',
+                        args='{"city":"NYC"}',
+                        tool_call_id=IsStr(),
+                        id=IsStr(),
+                        provider_name='openai',
+                    ),
+                ],
+                usage=IsInstance(RequestUsage),
+                model_name=IsStr(),
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': IsStr(), 'timestamp': IsDatetime()},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_weather',
+                        content='Sunny, 72F',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr(), id=IsStr(), provider_name='openai')],
+                usage=IsInstance(RequestUsage),
+                model_name=IsStr(),
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': IsStr(), 'timestamp': IsDatetime()},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
 async def test_openai_responses_usage_without_tokens_details(allow_model_requests: None):
     c = response_message(
         [
