@@ -2891,15 +2891,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         call_part, _ = _map_mcp_list_tools(chunk.item, self.provider_name)
                         yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
                     elif isinstance(chunk.item, ResponseCompactionItem):
-                        yield self._parts_manager.handle_part(
-                            vendor_part_id=chunk.item.id,
-                            part=CompactionPart(
-                                content=None,
-                                id=chunk.item.id,
-                                provider_name=self.provider_name,
-                                provider_details=chunk.item.model_dump(),
-                            ),
-                        )
+                        pass  # handled in ResponseOutputItemDoneEvent with final encrypted_content
                     else:
                         warnings.warn(  # pragma: no cover
                             f'Handling of this item type is not yet implemented. Please report on our GitHub: {chunk}',
@@ -2971,6 +2963,18 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         _, return_part = _map_mcp_list_tools(chunk.item, self.provider_name)
                         yield self._parts_manager.handle_part(
                             vendor_part_id=f'{chunk.item.id}-return', part=return_part
+                        )
+                    elif isinstance(chunk.item, ResponseCompactionItem):
+                        # Stateful compaction: use the "done" event (not "added") to
+                        # capture the final encrypted_content for round-tripping.
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=chunk.item.id,
+                            part=CompactionPart(
+                                content=None,
+                                id=chunk.item.id,
+                                provider_name=self.provider_name,
+                                provider_details=chunk.item.model_dump(),
+                            ),
                         )
 
                 elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
