@@ -313,12 +313,12 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
     async def handle_model_response_start(self, event: ModelResponseStartEvent) -> AsyncIterator[EventT]:
         """Handle a `ModelResponseStartEvent`."""
-        return  # pragma: no cover
+        return
         yield  # Make this an async generator
 
     async def handle_model_response_end(self, event: ModelResponseEndEvent) -> AsyncIterator[EventT]:
         """Handle a `ModelResponseEndEvent`."""
-        return  # pragma: no cover
+        return
         yield  # Make this an async generator
 
     async def handle_part_start(self, event: PartStartEvent) -> AsyncIterator[EventT]:

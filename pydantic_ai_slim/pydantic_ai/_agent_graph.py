@@ -508,7 +508,7 @@ class _SkipStreamedResponse(models.StreamedResponse):
         return
         yield  # pragma: no cover
 
-    def get(self) -> _messages.ModelResponse:  # pragma: no cover
+    def get(self) -> _messages.ModelResponse:
         return self._response
 
 
