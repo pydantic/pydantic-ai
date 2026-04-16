@@ -40,6 +40,7 @@ from pydantic_ai.capabilities import (
     WebFetch,
     WebSearch,
     WrapperCapability,
+    XSearch,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
@@ -81,7 +82,7 @@ from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as xai_imports:
-    from pydantic_ai.models.xai import XSearch
+    from pydantic_ai.models.xai import XaiModel  # noqa: F401 # pyright: ignore[reportUnusedImport]
 
 pytestmark = [
     pytest.mark.anyio,
@@ -100,6 +101,7 @@ def test_capability_types() -> None:
             'Thinking': Thinking,
             'WebFetch': WebFetch,
             'WebSearch': WebSearch,
+            'XSearch': XSearch,
         }
     )
 
@@ -1250,6 +1252,13 @@ Supported by:
                     'title': 'spec_WebSearch',
                     'type': 'object',
                 },
+                'spec_XSearch': {
+                    'additionalProperties': False,
+                    'properties': {'XSearch': {'$ref': '#/$defs/spec_params_XSearch'}},
+                    'required': ['XSearch'],
+                    'title': 'spec_XSearch',
+                    'type': 'object',
+                },
                 'spec_params_ImageGeneration': {
                     'additionalProperties': False,
                     'properties': {
@@ -1364,6 +1373,8 @@ Supported by:
                                 {'$ref': '#/$defs/spec_WebFetch'},
                                 {'const': 'WebSearch', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_WebSearch'},
+                                {'const': 'XSearch', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_XSearch'},
                             ]
                         },
                     },
@@ -1430,6 +1441,41 @@ Supported by:
                         'max_uses': {'anyOf': [{'type': 'integer'}, {'type': 'null'}], 'title': 'Max Uses'},
                     },
                     'title': 'spec_params_WebSearch',
+                    'type': 'object',
+                },
+                'spec_params_XSearch': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'builtin': {
+                            'anyOf': [{'$ref': '#/$defs/XSearchTool'}, {'type': 'boolean'}],
+                            'title': 'Builtin',
+                        },
+                        'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'fallback_model': {
+                            'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
+                            'title': 'Fallback Model',
+                        },
+                        'allowed_x_handles': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'title': 'Allowed X Handles',
+                        },
+                        'excluded_x_handles': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'title': 'Excluded X Handles',
+                        },
+                        'from_date': {
+                            'anyOf': [{'format': 'date-time', 'type': 'string'}, {'type': 'null'}],
+                            'title': 'From Date',
+                        },
+                        'to_date': {
+                            'anyOf': [{'format': 'date-time', 'type': 'string'}, {'type': 'null'}],
+                            'title': 'To Date',
+                        },
+                        'enable_image_understanding': {'title': 'Enable Image Understanding', 'type': 'boolean'},
+                        'enable_video_understanding': {'title': 'Enable Video Understanding', 'type': 'boolean'},
+                        'include_output': {'title': 'Include Output', 'type': 'boolean'},
+                    },
+                    'title': 'spec_params_XSearch',
                     'type': 'object',
                 },
             },
@@ -1506,6 +1552,8 @@ Supported by:
                             {'$ref': '#/$defs/spec_WebFetch'},
                             {'const': 'WebSearch', 'type': 'string'},
                             {'$ref': '#/$defs/spec_WebSearch'},
+                            {'const': 'XSearch', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_XSearch'},
                         ]
                     },
                     'title': 'Capabilities',
@@ -3929,7 +3977,14 @@ class TestXSearchCapability:
         """XSearch() with defaults → builtin XSearchTool, no local."""
         cap = XSearch()
         assert cap.get_builtin_tools() == snapshot([XSearchTool()])
+        assert cap.fallback_model is None
         assert cap.get_toolset() is None
+
+    def test_xsearch_with_fallback_model(self):
+        """XSearch(fallback_model=...) → builtin XSearchTool, local subagent fallback."""
+        cap = XSearch(fallback_model='xai:grok-4-1-fast-non-reasoning')
+        assert cap.get_builtin_tools() == snapshot([XSearchTool()])
+        assert cap.get_toolset() is not None
 
     def test_xsearch_with_all_constraints(self):
         """XSearch with all constraint fields → XSearchTool configured."""
