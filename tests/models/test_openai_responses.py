@@ -58,6 +58,7 @@ from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, respons
 
 with try_import() as imports_successful:
     from openai import AsyncOpenAI
+    from openai.types import responses as resp
     from openai.types.responses import ResponseFunctionWebSearch
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
     from openai.types.responses.response_output_refusal import ResponseOutputRefusal
@@ -10095,8 +10096,6 @@ async def test_openai_responses_refusal_non_streaming(allow_model_requests: None
 
 async def test_openai_responses_refusal_streaming(allow_model_requests: None):
     """Test that ResponseRefusalDeltaEvent/DoneEvent in streaming triggers ContentFilterError."""
-    from openai.types import responses as resp
-
     base_response = resp.Response(
         id='resp_001',
         model='gpt-4o',
@@ -10227,8 +10226,6 @@ async def test_openai_responses_null_text(allow_model_requests: None):
 
 async def test_openai_responses_null_text_stream(allow_model_requests: None):
     """Test that ResponseTextDeltaEvent with delta=null (from gateways like Bifrost) is handled gracefully."""
-    from openai.types import responses as resp
-
     base_response = resp.Response(
         id='resp_001',
         model='gpt-4o',
