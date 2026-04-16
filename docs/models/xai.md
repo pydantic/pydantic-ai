@@ -75,13 +75,13 @@ agent = Agent(model)
 
 ## X Search
 
-xAI models support searching X (formerly Twitter) for real-time posts and content. The recommended way to enable it is with the [`XSearch`][pydantic_ai.models.xai.XSearch] capability, which configures the underlying `x_search` builtin tool and can be passed alongside any other capabilities on the agent. See the [xAI X Search documentation](https://docs.x.ai/developers/tools/x-search) for the full list of supported options.
+xAI models support searching X (formerly Twitter) for real-time posts and content. The recommended way to enable it is with the [`XSearch`][pydantic_ai.capabilities.XSearch] capability, which configures the underlying `x_search` builtin tool and can be passed alongside any other capabilities on the agent. When you're already using an xAI model, no `fallback_model` is needed. See the [xAI X Search documentation](https://docs.x.ai/developers/tools/x-search) for the full list of supported options.
 
 ```py {title="xai_x_search.py"}
 from datetime import datetime
 
 from pydantic_ai import Agent
-from pydantic_ai.models.xai import XSearch
+from pydantic_ai.capabilities import XSearch
 
 agent = Agent(
     'xai:grok-4-1-fast',
