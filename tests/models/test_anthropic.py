@@ -3463,6 +3463,26 @@ async def test_anthropic_opus_46_features(
     assert any(isinstance(p, TextPart) for p in response.parts)
 
 
+async def test_anthropic_opus_47_features(allow_model_requests: None, anthropic_api_key: str, vcr: Any):
+    settings = AnthropicModelSettings(
+        anthropic_thinking={'type': 'adaptive', 'display': 'summarized'},
+        anthropic_effort='xhigh',
+    )
+    m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, model_settings=settings)
+
+    result = await agent.run('What is 2+2?')
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.model_name == 'claude-opus-4-7'
+    assert len(vcr.requests) == 1
+    request_body = json.loads(vcr.requests[0].body)
+    assert request_body['model'] == 'claude-opus-4-7'
+    assert request_body['thinking'] == {'type': 'adaptive', 'display': 'summarized'}
+    assert request_body['output_config'] == {'effort': 'xhigh'}
+    assert any(isinstance(p, TextPart) for p in response.parts)
+
+
 @pytest.mark.parametrize(
     'thinking_value,expected_thinking,expected_effort',
     [
@@ -3544,6 +3564,62 @@ async def test_anthropic_unified_thinking_false_omits_param(allow_model_requests
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     # thinking=False on always-thinking model is silently ignored — thinking param is OMIT
     assert kwargs.get('thinking') is OMIT
+
+
+async def test_anthropic_opus_47_rejects_budget_thinking(allow_model_requests: None):
+    mock_client = MockAnthropic.create_mock(
+        completion_message(
+            [BetaTextBlock(text='4', type='text')],
+            usage=BetaUsage(input_tokens=10, output_tokens=1),
+        )
+    )
+    m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        model_settings=AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024}),
+    )
+
+    with pytest.raises(UserError, match='Claude Opus 4.7 does not support'):
+        await agent.run('What is 2+2?')
+
+
+async def test_anthropic_unified_thinking_opus_47_xhigh(allow_model_requests: None):
+    responses = [
+        completion_message(
+            [BetaTextBlock(text='4', type='text')],
+            usage=BetaUsage(input_tokens=10, output_tokens=1),
+        ),
+    ]
+    mock_client = MockAnthropic.create_mock(responses)
+    m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, model_settings=ModelSettings(thinking='xhigh'))
+
+    await agent.run('What is 2+2?')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['thinking'] == {'type': 'adaptive'}
+    assert kwargs['output_config'] == {'effort': 'xhigh'}
+
+
+async def test_anthropic_opus_47_drops_sampling_settings(allow_model_requests: None):
+    from anthropic._types import omit as OMIT
+
+    responses = [
+        completion_message(
+            [BetaTextBlock(text='4', type='text')],
+            usage=BetaUsage(input_tokens=10, output_tokens=1),
+        ),
+    ]
+    mock_client = MockAnthropic.create_mock(responses)
+    m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, model_settings=AnthropicModelSettings(temperature=0.2, top_p=0.3))
+
+    with pytest.warns(UserWarning, match='Sampling parameters'):
+        await agent.run('What is 2+2?')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['temperature'] is OMIT
+    assert kwargs['top_p'] is OMIT
 
 
 async def test_anthropic_opus_46_adaptive_thinking_rejects_tool_output(allow_model_requests: None):

@@ -169,6 +169,8 @@ except ImportError as _import_error:
 
 _NON_AUTOMATIC_CACHING_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
 
+_ANTHROPIC_SAMPLING_PARAMS = ('temperature', 'top_p')
+
 
 @contextmanager
 def _map_api_errors(model_name: str) -> Iterator[None]:
@@ -256,7 +258,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     for more information.
     """
 
-    anthropic_effort: Literal['low', 'medium', 'high', 'max'] | None
+    anthropic_effort: Literal['low', 'medium', 'high', 'xhigh', 'max'] | None
     """The effort level for the model to use when generating a response.
 
     See [the Anthropic docs](https://docs.anthropic.com/en/docs/build-with-claude/effort) for more information.
@@ -427,15 +429,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
-        settings = merge_model_settings(self.settings, model_settings)
+        settings = merge_model_settings(self.settings, model_settings) or {}
+        profile = AnthropicModelProfile.from_profile(self.profile)
+        self._validate_thinking_settings(settings, profile)
+        self._drop_unsupported_sampling_settings(settings, profile)
 
         # Determine if thinking is effectively enabled (check both provider-specific and unified fields)
         thinking_enabled = False
-        if settings:
-            if anthropic_thinking := settings.get('anthropic_thinking'):
-                thinking_enabled = anthropic_thinking.get('type') in ('enabled', 'adaptive')
-            elif settings.get('thinking'):
-                thinking_enabled = True
+        if anthropic_thinking := settings.get('anthropic_thinking'):
+            thinking_enabled = anthropic_thinking.get('type') in ('enabled', 'adaptive')
+        elif settings.get('thinking'):
+            thinking_enabled = True
 
         if model_request_parameters.output_tools and thinking_enabled:
             output_mode = 'native' if self.profile.supports_json_schema_output else 'prompted'
@@ -458,7 +462,33 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             model_request_parameters = replace(
                 model_request_parameters, output_object=replace(model_request_parameters.output_object, strict=True)
             )
-        return super().prepare_request(model_settings, model_request_parameters)
+        return super().prepare_request(settings, model_request_parameters)
+
+    @staticmethod
+    def _validate_thinking_settings(model_settings: ModelSettings, profile: AnthropicModelProfile) -> None:
+        if (
+            profile.anthropic_disallows_budget_thinking
+            and (anthropic_thinking := model_settings.get('anthropic_thinking'))
+            and anthropic_thinking.get('type') == 'enabled'
+        ):
+            raise UserError(
+                "Claude Opus 4.7 does not support `anthropic_thinking={'type': 'enabled', 'budget_tokens': ...}`. "
+                "Use `anthropic_thinking={'type': 'adaptive'}` and `anthropic_effort=...` instead."
+            )
+
+    @staticmethod
+    def _drop_unsupported_sampling_settings(model_settings: ModelSettings, profile: AnthropicModelProfile) -> None:
+        if not profile.anthropic_disallows_sampling_settings:
+            return
+
+        if dropped := [setting for setting in _ANTHROPIC_SAMPLING_PARAMS if setting in model_settings]:
+            warnings.warn(
+                f'Sampling parameters {dropped} are not supported by Claude Opus 4.7. These settings will be ignored.',
+                UserWarning,
+            )
+
+        for setting in _ANTHROPIC_SAMPLING_PARAMS:
+            model_settings.pop(setting, None)
 
     def _translate_thinking(
         self,
@@ -1439,6 +1469,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # Fall back to unified thinking effort level when anthropic_effort is not set
         # Only map effort level strings; bare True just enables thinking without a specific effort
         profile = AnthropicModelProfile.from_profile(self.profile)
+        if effort == 'xhigh' and not profile.anthropic_supports_xhigh_effort:
+            raise UserError(f"Model {self.model_name!r} does not support `anthropic_effort='xhigh'`.")
         if effort is None and profile.anthropic_supports_effort and isinstance(model_request_parameters.thinking, str):
             # Map unified levels to Anthropic effort; Anthropic accepts low/medium/high/max
             effort_map: dict[ThinkingEffort, str] = {
@@ -1446,7 +1478,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 'low': 'low',
                 'medium': 'medium',
                 'high': 'high',
-                'xhigh': 'max',  # Opus 4.6 only; other models ignore unsupported values
+                'xhigh': 'xhigh' if profile.anthropic_supports_xhigh_effort else 'max',
             }
             effort = effort_map.get(model_request_parameters.thinking, model_request_parameters.thinking)
 
@@ -1816,6 +1848,8 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
         raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
     elif item.name in ('tool_search_tool_regex', 'tool_search_tool_bm25'):  # pragma: no cover
         # NOTE this is being implemented in https://github.com/pydantic/pydantic-ai/pull/3550
+        raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
+    elif item.name == 'advisor':  # pragma: no cover
         raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
     else:
         assert_never(item.name)
