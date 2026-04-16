@@ -1,0 +1,90 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '669'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the answer?
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            id: call_openai_xyz
+            name: get_answer
+          thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
+        role: model
+      - parts:
+        - functionResponse:
+            id: call_openai_xyz
+            name: get_answer
+            response:
+              return_value: 42
+        role: user
+      - parts:
+        - text: continue
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_answer
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1496'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=2401
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: I'm sorry, I cannot provide more context without additional information. The `get_answer` function simply
+              returns a value and does not provide further details.
+            thoughtSignature: Cr0FAb4+9vvZySfAkIcf4jO0cn0wPFK/g5bxHDi7aJwVUHZNZy9Cfx6JvEskh/XvLStcjq3Tx90nWYqXu12YcRPDnjXg0CS7OtoKVkbuW0SkXTC5IVC/43bfGK44kf/1AVlU4/R7cOg9tmSL1wWhqj6ioXu7ouwFxXII1MmDLHwow55+3oC9QK584BqqWwO8sKu5YXUO8PlP8A4ojZcdXwjsFU9TQMcHDZAo0GZdPEfA2bKXke2I5A7Mfc2scxNYYuseKdhDKSGOoItagaETxNAteTwge+PbXbSxE7L6JQ8KPvipEgBWEmab6HBjp87p6l9+xkmjEUoM8AVeVaaxLvaX+eoyBLDiiDj4BhcDYVZUA5FAfgpTCjSOAeU21ZPqcRfLWl3rmi9ygprxZ07cZWERP6C0hfMLpzUZ/Y9jbD9lM351yPQs7x9dQYgI19Xiht3Xh7h8TR9CQpcZ86IJa9UiqebexFwJeT8ud2YnAFLI0T7+zHqZDPlv4kZSuo7XAQkc8K72ICFXS/6p9L2LdcG1YniqgFgkt0XjJhZJXBnD/CQb5Cvq5mxyE/YO33vITo5EAlpJMDu9ZE5Q5HG/o0Jn8dOF9c58Trcurbv7tbONljYYMyZj6Lj3Z5h1FRVUB1ZFFx9r3Y/nO5izZnkkjB9QoHQlMpT9OJjMtdTuDGvmhRbwrCnAMZ+SSzYrdLr6wVu/78wd0K7rTtVJBfacch5NiLJ8kpDPu+wrGjWpENJix8sm4UNf1GHNkIOgRVM5u8cN1P4CT//qW7mWy7T4bAxRWfFCcsR19wMGgpqTpoeE2SDNZLvE2KH5quS678acoFlUt/EyhgRibM2vsGob+G6L8WGyH/+YGQFeD0cd+oWOCZtTY76QFMUh/TGYfb5hRx0T7Uq/m/K6ioQ5Aee0jwEbtwYPpdB8s//x9INdhJo=
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: _qfgaevzGcz2juMP8pCmoAE
+      usageMetadata:
+        candidatesTokenCount: 32
+        promptTokenCount: 57
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 57
+        thoughtsTokenCount: 141
+        totalTokenCount: 230
+    status:
+      code: 200
+      message: OK
+version: 1

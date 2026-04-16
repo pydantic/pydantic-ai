@@ -6497,36 +6497,542 @@ async def test_google_vertex_service_tier_flex_stream(
     )
 
 
+@pytest.mark.vcr()
 @pytest.mark.parametrize(
-    'use_retry_prompt_part',
-    [pytest.param(False, id='tool-return'), pytest.param(True, id='retry-prompt')],
-)
-@pytest.mark.parametrize(
-    'backend,tool_call_id,expected_ids_on_wire',
+    'backend,tool_call_id,use_retry_prompt_part,expected_messages',
     [
-        pytest.param('vertex', 'pyd_ai_abc123', 0, id='vertex-pyd-ai-dropped'),
-        pytest.param('vertex', 'call_openai_xyz', 0, id='vertex-cross-provider-dropped'),
-        pytest.param('gla', 'pyd_ai_abc123', 0, id='gla-pyd-ai-dropped'),
-        pytest.param('gla', 'call_openai_xyz', 2, id='gla-model-provided-preserved'),
+        pytest.param(
+            'vertex',
+            'pyd_ai_abc123',
+            False,
+            snapshot(
+                [
+                    ModelRequest(parts=[UserPromptPart(content='What is the answer?', timestamp=IsDatetime())]),
+                    ModelResponse(
+                        parts=[ToolCallPart(tool_name='get_answer', args={}, tool_call_id='pyd_ai_abc123')],
+                        timestamp=IsDatetime(),
+                    ),
+                    ModelRequest(
+                        parts=[
+                            ToolReturnPart(
+                                tool_name='get_answer', content=42, tool_call_id='pyd_ai_abc123', timestamp=IsDatetime()
+                            )
+                        ]
+                    ),
+                    ModelRequest(
+                        parts=[UserPromptPart(content='continue', timestamp=IsDatetime())],
+                        timestamp=IsDatetime(),
+                        run_id='019d9590-1614-7606-ba9f-bdb24e373424',
+                    ),
+                    ModelResponse(
+                        parts=[
+                            TextPart(
+                                content='I have already provided the answer to the previous question. Do you have any other questions or would you like me to do something else?',
+                                provider_name='google-vertex',
+                                provider_details={
+                                    'thought_signature': 'CtMBAY89a19OkRHJv7gYwNeTDjuO8ouvx1UZX0vLr4dTACQLfYc6c7eB8HIiVj9kBv8TDU8Wna+B7enzuAJriyqDCSiUZDCRx0yxltbdzhDlRZIeqAjvyKfJXFkpq52i8q8BhPtNf4F9VsXd7Ao6Cj5Eas8YuaaD7mbZMEJe1ks2HQhOYSfL6y/FQMu5nrQAtaomcJj/nFhHRLMdl9XJldPJJ6vITdI5CfGe/cw1y+IOiJo44cvSo1G0NjxGn0YjSmzM3N0Z7ZbiRK3NhlLftZzvi2ms5g=='
+                                },
+                            )
+                        ],
+                        usage=RequestUsage(
+                            input_tokens=19,
+                            output_tokens=62,
+                            details={'thoughts_tokens': 35, 'text_prompt_tokens': 19, 'text_candidates_tokens': 27},
+                        ),
+                        model_name='gemini-2.5-flash',
+                        timestamp=IsDatetime(),
+                        provider_name='google-vertex',
+                        provider_url='https://aiplatform.googleapis.com/',
+                        provider_details={
+                            'finish_reason': 'STOP',
+                            'timestamp': IsDatetime(),
+                            'traffic_type': 'ON_DEMAND',
+                        },
+                        provider_response_id='9qfgacmML5Kapt8Py6va-QE',
+                        finish_reason='stop',
+                        run_id='019d9590-1614-7606-ba9f-bdb24e373424',
+                    ),
+                ]
+            ),
+            id='vertex-pyd-ai-tool-return',
+        ),
+        pytest.param(
+            'vertex',
+            'call_openai_xyz',
+            False,
+            snapshot(
+                [
+                    ModelRequest(parts=[UserPromptPart(content='What is the answer?', timestamp=IsDatetime())]),
+                    ModelResponse(
+                        parts=[ToolCallPart(tool_name='get_answer', args={}, tool_call_id='call_openai_xyz')],
+                        timestamp=IsDatetime(),
+                    ),
+                    ModelRequest(
+                        parts=[
+                            ToolReturnPart(
+                                tool_name='get_answer',
+                                content=42,
+                                tool_call_id='call_openai_xyz',
+                                timestamp=IsDatetime(),
+                            )
+                        ]
+                    ),
+                    ModelRequest(
+                        parts=[UserPromptPart(content='continue', timestamp=IsDatetime())],
+                        timestamp=IsDatetime(),
+                        run_id='019d9590-20a3-7211-8f1d-25bffa1232d1',
+                    ),
+                    ModelResponse(
+                        parts=[TextPart(content='The answer is 42.')],
+                        usage=RequestUsage(
+                            input_tokens=19,
+                            output_tokens=7,
+                            details={'text_prompt_tokens': 19, 'text_candidates_tokens': 7},
+                        ),
+                        model_name='gemini-2.5-flash',
+                        timestamp=IsDatetime(),
+                        provider_name='google-vertex',
+                        provider_url='https://aiplatform.googleapis.com/',
+                        provider_details={
+                            'finish_reason': 'STOP',
+                            'timestamp': IsDatetime(),
+                            'traffic_type': 'ON_DEMAND',
+                        },
+                        provider_response_id='-6fgaYuRDbDJk7QPtZWXgAk',
+                        finish_reason='stop',
+                        run_id='019d9590-20a3-7211-8f1d-25bffa1232d1',
+                    ),
+                ]
+            ),
+            id='vertex-cross-provider-tool-return',
+        ),
+        pytest.param(
+            'gla',
+            'pyd_ai_abc123',
+            False,
+            snapshot(
+                [
+                    ModelRequest(parts=[UserPromptPart(content='What is the answer?', timestamp=IsDatetime())]),
+                    ModelResponse(
+                        parts=[ToolCallPart(tool_name='get_answer', args={}, tool_call_id='pyd_ai_abc123')],
+                        timestamp=IsDatetime(),
+                    ),
+                    ModelRequest(
+                        parts=[
+                            ToolReturnPart(
+                                tool_name='get_answer', content=42, tool_call_id='pyd_ai_abc123', timestamp=IsDatetime()
+                            )
+                        ]
+                    ),
+                    ModelRequest(
+                        parts=[UserPromptPart(content='continue', timestamp=IsDatetime())],
+                        timestamp=IsDatetime(),
+                        run_id='019d9590-303e-7739-8d03-4a415a56fd25',
+                    ),
+                    ModelResponse(
+                        parts=[TextPart(content='The answer is 42.')],
+                        usage=RequestUsage(input_tokens=57, output_tokens=7, details={'text_prompt_tokens': 57}),
+                        model_name='gemini-2.5-flash',
+                        timestamp=IsDatetime(),
+                        provider_name='google-gla',
+                        provider_url='https://generativelanguage.googleapis.com/',
+                        provider_details={'finish_reason': 'STOP'},
+                        provider_response_id='_KfgaYvTJauL4-EP74jngA8',
+                        finish_reason='stop',
+                        run_id='019d9590-303e-7739-8d03-4a415a56fd25',
+                    ),
+                ]
+            ),
+            id='gla-pyd-ai-tool-return',
+        ),
+        pytest.param(
+            'gla',
+            'call_openai_xyz',
+            False,
+            snapshot(
+                [
+                    ModelRequest(parts=[UserPromptPart(content='What is the answer?', timestamp=IsDatetime())]),
+                    ModelResponse(
+                        parts=[ToolCallPart(tool_name='get_answer', args={}, tool_call_id='call_openai_xyz')],
+                        timestamp=IsDatetime(),
+                    ),
+                    ModelRequest(
+                        parts=[
+                            ToolReturnPart(
+                                tool_name='get_answer',
+                                content=42,
+                                tool_call_id='call_openai_xyz',
+                                timestamp=IsDatetime(),
+                            )
+                        ]
+                    ),
+                    ModelRequest(
+                        parts=[UserPromptPart(content='continue', timestamp=IsDatetime())],
+                        timestamp=IsDatetime(),
+                        run_id='019d9590-377e-762d-a73b-6ff99c25c092',
+                    ),
+                    ModelResponse(
+                        parts=[
+                            TextPart(
+                                content="I'm sorry, I cannot provide more context without additional information. The `get_answer` function simply returns a value and does not provide further details.",
+                                provider_name='google-gla',
+                                provider_details={
+                                    'thought_signature': 'Cr0FAb4+9vvZySfAkIcf4jO0cn0wPFK/g5bxHDi7aJwVUHZNZy9Cfx6JvEskh/XvLStcjq3Tx90nWYqXu12YcRPDnjXg0CS7OtoKVkbuW0SkXTC5IVC/43bfGK44kf/1AVlU4/R7cOg9tmSL1wWhqj6ioXu7ouwFxXII1MmDLHwow55+3oC9QK584BqqWwO8sKu5YXUO8PlP8A4ojZcdXwjsFU9TQMcHDZAo0GZdPEfA2bKXke2I5A7Mfc2scxNYYuseKdhDKSGOoItagaETxNAteTwge+PbXbSxE7L6JQ8KPvipEgBWEmab6HBjp87p6l9+xkmjEUoM8AVeVaaxLvaX+eoyBLDiiDj4BhcDYVZUA5FAfgpTCjSOAeU21ZPqcRfLWl3rmi9ygprxZ07cZWERP6C0hfMLpzUZ/Y9jbD9lM351yPQs7x9dQYgI19Xiht3Xh7h8TR9CQpcZ86IJa9UiqebexFwJeT8ud2YnAFLI0T7+zHqZDPlv4kZSuo7XAQkc8K72ICFXS/6p9L2LdcG1YniqgFgkt0XjJhZJXBnD/CQb5Cvq5mxyE/YO33vITo5EAlpJMDu9ZE5Q5HG/o0Jn8dOF9c58Trcurbv7tbONljYYMyZj6Lj3Z5h1FRVUB1ZFFx9r3Y/nO5izZnkkjB9QoHQlMpT9OJjMtdTuDGvmhRbwrCnAMZ+SSzYrdLr6wVu/78wd0K7rTtVJBfacch5NiLJ8kpDPu+wrGjWpENJix8sm4UNf1GHNkIOgRVM5u8cN1P4CT//qW7mWy7T4bAxRWfFCcsR19wMGgpqTpoeE2SDNZLvE2KH5quS678acoFlUt/EyhgRibM2vsGob+G6L8WGyH/+YGQFeD0cd+oWOCZtTY76QFMUh/TGYfb5hRx0T7Uq/m/K6ioQ5Aee0jwEbtwYPpdB8s//x9INdhJo='
+                                },
+                            )
+                        ],
+                        usage=RequestUsage(
+                            input_tokens=57,
+                            output_tokens=173,
+                            details={'thoughts_tokens': 141, 'text_prompt_tokens': 57},
+                        ),
+                        model_name='gemini-2.5-flash',
+                        timestamp=IsDatetime(),
+                        provider_name='google-gla',
+                        provider_url='https://generativelanguage.googleapis.com/',
+                        provider_details={'finish_reason': 'STOP'},
+                        provider_response_id='_qfgaevzGcz2juMP8pCmoAE',
+                        finish_reason='stop',
+                        run_id='019d9590-377e-762d-a73b-6ff99c25c092',
+                    ),
+                ]
+            ),
+            id='gla-model-provided-tool-return',
+        ),
+        pytest.param(
+            'vertex',
+            'pyd_ai_abc123',
+            True,
+            snapshot(
+                [
+                    ModelRequest(parts=[UserPromptPart(content='What is the answer?', timestamp=IsDatetime())]),
+                    ModelResponse(
+                        parts=[ToolCallPart(tool_name='get_answer', args={}, tool_call_id='pyd_ai_abc123')],
+                        timestamp=IsDatetime(),
+                    ),
+                    ModelRequest(
+                        parts=[
+                            RetryPromptPart(
+                                content='Try again.',
+                                tool_name='get_answer',
+                                tool_call_id='pyd_ai_abc123',
+                                timestamp=IsDatetime(),
+                            )
+                        ]
+                    ),
+                    ModelRequest(
+                        parts=[UserPromptPart(content='continue', timestamp=IsDatetime())],
+                        timestamp=IsDatetime(),
+                        run_id='019d9590-428d-708c-97ae-781f620b7e24',
+                    ),
+                    ModelResponse(
+                        parts=[
+                            ToolCallPart(
+                                tool_name='get_answer',
+                                args={},
+                                tool_call_id='pyd_ai_d4fed8d1a3654214ab256ac55f3ee421',
+                                provider_name='google-vertex',
+                                provider_details={
+                                    'thought_signature': 'Cr4EAY89a19gr1/7J407ikUV06BJAb9LAlnSTP0ILW1eJucjE2fp+96GdVsYKFVYXn2NAosKh5b5uHqC9b1CXQEKeX5//tBcNaMfkkn8udSRXPiT6Y0WNSOMYDbphaq1BiziDFWAWnKhpEd5eNzwf0nxeRpyfxNbR2fX6U3rzJPe1PlgZkiCrEL3cR0uDIGt5DeCr4sl6qmrCLHzCsgQQN9hRKbbjMv8K5PtbC2RTwuWjDuRWJpgEmGbPwAwWNjWu627D+Zg3XhZFQuq9geWsL5Abix+QumKlnEQEFxB8491IogDmheoGK88oyVUcP/VtwSyQhELAhahLbqbB1tXDDrdNNs+3Zv1A0r6OfndkeCgOwqrw/o5Ia2dZdumq1k7YPai7bpLpbFQTXNCNu3m1WgGe3ga2k0e0WLXYwmj1noD2W7YjhCiZU7xHJ6qRRc+RrQGG041cN/TVxAtxDjd5qSfgnTi1xnhETzHXnomqiH3OIHE9Y8Uf/wgZlyOKHFoUdLfYMns3IJXDRGfYmy3U//mz7A9aaeObAgGkoie1MI2TBYg+fVW/hS/7Q524EgLMlRmkr04OPW6+EryjLl7eaHk4OTXs7hbdJzo8F7bp+ihGl/4ageDVxNXet0l0cNdlCr4HF3k4WapwQxsOfq8bKJSODabTpyfZnmsgdXuvApOQT6YpQugwbKAXfal9vx+v5Juw8E5oQXTAwdjkcYqYMCRlwUf4cal1GnLcHcPBdOIl3K4wanywQ7U307nzCCt7Q=='
+                                },
+                            )
+                        ],
+                        usage=RequestUsage(
+                            input_tokens=27,
+                            output_tokens=129,
+                            details={'thoughts_tokens': 126, 'text_prompt_tokens': 27, 'text_candidates_tokens': 3},
+                        ),
+                        model_name='gemini-2.5-flash',
+                        timestamp=IsDatetime(),
+                        provider_name='google-vertex',
+                        provider_url='https://aiplatform.googleapis.com/',
+                        provider_details={
+                            'finish_reason': 'STOP',
+                            'timestamp': IsDatetime(),
+                            'traffic_type': 'ON_DEMAND',
+                        },
+                        provider_response_id='AajgaaKAIoeipt8PiKfB8Qg',
+                        finish_reason='stop',
+                        run_id='019d9590-428d-708c-97ae-781f620b7e24',
+                    ),
+                    ModelRequest(
+                        parts=[
+                            ToolReturnPart(
+                                tool_name='get_answer',
+                                content=42,
+                                tool_call_id='pyd_ai_d4fed8d1a3654214ab256ac55f3ee421',
+                                timestamp=IsDatetime(),
+                            )
+                        ],
+                        timestamp=IsDatetime(),
+                        run_id='019d9590-428d-708c-97ae-781f620b7e24',
+                    ),
+                    ModelResponse(
+                        parts=[TextPart(content='The answer is 42.')],
+                        usage=RequestUsage(
+                            input_tokens=163,
+                            output_tokens=7,
+                            details={'text_prompt_tokens': 163, 'text_candidates_tokens': 7},
+                        ),
+                        model_name='gemini-2.5-flash',
+                        timestamp=IsDatetime(),
+                        provider_name='google-vertex',
+                        provider_url='https://aiplatform.googleapis.com/',
+                        provider_details={
+                            'finish_reason': 'STOP',
+                            'timestamp': IsDatetime(),
+                            'traffic_type': 'ON_DEMAND',
+                        },
+                        provider_response_id='BKjgaac2w57V7w-b39mYBw',
+                        finish_reason='stop',
+                        run_id='019d9590-428d-708c-97ae-781f620b7e24',
+                    ),
+                ]
+            ),
+            id='vertex-pyd-ai-retry-prompt',
+        ),
+        pytest.param(
+            'vertex',
+            'call_openai_xyz',
+            True,
+            snapshot(
+                [
+                    ModelRequest(parts=[UserPromptPart(content='What is the answer?', timestamp=IsDatetime())]),
+                    ModelResponse(
+                        parts=[ToolCallPart(tool_name='get_answer', args={}, tool_call_id='call_openai_xyz')],
+                        timestamp=IsDatetime(),
+                    ),
+                    ModelRequest(
+                        parts=[
+                            RetryPromptPart(
+                                content='Try again.',
+                                tool_name='get_answer',
+                                tool_call_id='call_openai_xyz',
+                                timestamp=IsDatetime(),
+                            )
+                        ]
+                    ),
+                    ModelRequest(
+                        parts=[UserPromptPart(content='continue', timestamp=IsDatetime())],
+                        timestamp=IsDatetime(),
+                        run_id='019d9590-52b3-729f-b99a-5511c5407424',
+                    ),
+                    ModelResponse(
+                        parts=[
+                            ToolCallPart(
+                                tool_name='get_answer',
+                                args={},
+                                tool_call_id='pyd_ai_3ef79674777e429e82cafada2abae513',
+                                provider_name='google-vertex',
+                                provider_details={
+                                    'thought_signature': 'CsQFAY89a19IkQbH8ZUxbUMUafR1k2w98ec287jpp/7vMsHllFQ3QFeDF/vMCcwgTW0BP5f3p8ED2GO+LwY737PylEKgy+QJUeJI9gArMikBpFKgpp7JdBzhUA802uIEpnvwqgLMJXOZLCOaqvuhpDzw3y5tNOsBwXn2K7YNBWgYZrNq3ZO2JMvUeUGIRTxpUiHJZSsn7v0il5mELo1HImloUi/SZQSCIy7K11HeV4/63P/D7/xpnHWJl2xC6Iu09zaXfZ/PFKP1xzAzVKZpKi/aE+OU9DhseU1z1hlr3isu+1UzyL8yPgZvF+mOqlIYJcDqbaYeVmF8bDANLj+tBHAJkELGG5zfq81fk0HZevXPkacUxl+ofQ1c+sDRoQ5f/8gKnoBWEQVCGJGSW8wbc7JhqIrDzz6Y8FmKDNEhuFXcLBJVXNZsp3/bziIyuBA6sLEOjkV1zPzKt/D0rBzKEYMhIowjXSdVaQgIPLiWwL2ExCe3AFCjvMwGkF2bBtpIrkK8VlHIHk2qV1d9uiqp5P4eOxEhht8HdxDYiwlVF65hBUsJHofXSjvsvcYK3qCIn0a/ZTHyG2fMPLtLwPVOX2tADxtGHfrqsbWuPrsj118oaWVMxVC9fHpgH8gZpy5ba6aWsKrny8vT2U/jA4+ZqCWaH6EPCoXAb8OaR//KkT8Vd8t95LRpv7VzYbdA8T1rTLUDxt+9ofpPn3d75EfNUpsrsx7/rz5b+ePJotrMthfOCQeJHhKOy11/U5km/o2rVnZCE180X5V1foJdjaqiZRj+vbd7Ww6WB60CdlK6LqVcEahFcxRE5narb81PGNWtt2As4C0+dNjWVOE9uq/S3H91dffpB0lbxbmMBB6b+vE3//kfc0wYZa4xbx9UJ458p838oJNwdxlxrjvxA0bFERnCD7gxwcodC7N4TYaQu+Q7loq2lvv5'
+                                },
+                            )
+                        ],
+                        usage=RequestUsage(
+                            input_tokens=27,
+                            output_tokens=155,
+                            details={'thoughts_tokens': 152, 'text_prompt_tokens': 27, 'text_candidates_tokens': 3},
+                        ),
+                        model_name='gemini-2.5-flash',
+                        timestamp=IsDatetime(),
+                        provider_name='google-vertex',
+                        provider_url='https://aiplatform.googleapis.com/',
+                        provider_details={
+                            'finish_reason': 'STOP',
+                            'timestamp': IsDatetime(),
+                            'traffic_type': 'ON_DEMAND',
+                        },
+                        provider_response_id='BajgaZOANLDJk7QPtZWXgAk',
+                        finish_reason='stop',
+                        run_id='019d9590-52b3-729f-b99a-5511c5407424',
+                    ),
+                    ModelRequest(
+                        parts=[
+                            ToolReturnPart(
+                                tool_name='get_answer',
+                                content=42,
+                                tool_call_id='pyd_ai_3ef79674777e429e82cafada2abae513',
+                                timestamp=IsDatetime(),
+                            )
+                        ],
+                        timestamp=IsDatetime(),
+                        run_id='019d9590-52b3-729f-b99a-5511c5407424',
+                    ),
+                    ModelResponse(
+                        parts=[TextPart(content='The answer is 42.')],
+                        usage=RequestUsage(
+                            input_tokens=189,
+                            output_tokens=7,
+                            details={'text_prompt_tokens': 189, 'text_candidates_tokens': 7},
+                        ),
+                        model_name='gemini-2.5-flash',
+                        timestamp=IsDatetime(),
+                        provider_name='google-vertex',
+                        provider_url='https://aiplatform.googleapis.com/',
+                        provider_details={
+                            'finish_reason': 'STOP',
+                            'timestamp': IsDatetime(),
+                            'traffic_type': 'ON_DEMAND',
+                        },
+                        provider_response_id='CKjgafbdAsuB4vEPs8DHkAE',
+                        finish_reason='stop',
+                        run_id='019d9590-52b3-729f-b99a-5511c5407424',
+                    ),
+                ]
+            ),
+            id='vertex-cross-provider-retry-prompt',
+        ),
+        pytest.param(
+            'gla',
+            'pyd_ai_abc123',
+            True,
+            snapshot(
+                [
+                    ModelRequest(parts=[UserPromptPart(content='What is the answer?', timestamp=IsDatetime())]),
+                    ModelResponse(
+                        parts=[ToolCallPart(tool_name='get_answer', args={}, tool_call_id='pyd_ai_abc123')],
+                        timestamp=IsDatetime(),
+                    ),
+                    ModelRequest(
+                        parts=[
+                            RetryPromptPart(
+                                content='Try again.',
+                                tool_name='get_answer',
+                                tool_call_id='pyd_ai_abc123',
+                                timestamp=IsDatetime(),
+                            )
+                        ]
+                    ),
+                    ModelRequest(
+                        parts=[UserPromptPart(content='continue', timestamp=IsDatetime())],
+                        timestamp=IsDatetime(),
+                        run_id='019d9590-626a-76fc-b1ff-acba43fec656',
+                    ),
+                    ModelResponse(
+                        parts=[
+                            ToolCallPart(
+                                tool_name='get_answer',
+                                args={},
+                                tool_call_id='pyd_ai_16f9e242c0e34de9a2f2b09a03a79287',
+                                provider_name='google-gla',
+                                provider_details={
+                                    'thought_signature': 'CtECAb4+9vvonGXxxt75b+aPrQX3KTQvQiCxQgpil/HbdeF26CsfxjKT3LAc4VDTOOO+w+wIDX24RNYzBD4+GKrxdksvfOLQvba4+ulk1gltSSmR+zICGELOyLlSTOICsLCht5TM5evKl43eGnsoTHyx4hHSryTCq9cNffZ3aUokGMZ0/wa74DB+2/O2ujvyx/mlku4UXu8qFhwQoBUhpcR2bp2SogCumq/4xPldoXOHoC0MD1miUOXcw7AiaLA1K2WOy/HzBknx+XADW/1eAMYxLzX0UdXFsKMlOzq5Bx8MqdA+DRoc4Dbrb5BEo8hrn8esJq0AuspxjOCXPGqrNrhcWrUEEoTuoms+Isvt8O/9sSOirBk8c6Y43ymNaqBiLHFdaCTrgFjbQ6X1Yk422NIB01GYOdM8HPptRecZJO7eULUDtyVjivpsvPbXi9GXMkGmrQ=='
+                                },
+                            )
+                        ],
+                        usage=RequestUsage(
+                            input_tokens=66, output_tokens=92, details={'thoughts_tokens': 82, 'text_prompt_tokens': 66}
+                        ),
+                        model_name='gemini-2.5-flash',
+                        timestamp=IsDatetime(),
+                        provider_name='google-gla',
+                        provider_url='https://generativelanguage.googleapis.com/',
+                        provider_details={'finish_reason': 'STOP'},
+                        provider_response_id='CajgaciuB9Wq4-EP96DRmQ4',
+                        finish_reason='stop',
+                        run_id='019d9590-626a-76fc-b1ff-acba43fec656',
+                    ),
+                    ModelRequest(
+                        parts=[
+                            ToolReturnPart(
+                                tool_name='get_answer',
+                                content=42,
+                                tool_call_id='pyd_ai_16f9e242c0e34de9a2f2b09a03a79287',
+                                timestamp=IsDatetime(),
+                            )
+                        ],
+                        timestamp=IsDatetime(),
+                        run_id='019d9590-626a-76fc-b1ff-acba43fec656',
+                    ),
+                    ModelResponse(
+                        parts=[TextPart(content='The answer is 42.')],
+                        usage=RequestUsage(input_tokens=94, output_tokens=7, details={'text_prompt_tokens': 94}),
+                        model_name='gemini-2.5-flash',
+                        timestamp=IsDatetime(),
+                        provider_name='google-gla',
+                        provider_url='https://generativelanguage.googleapis.com/',
+                        provider_details={'finish_reason': 'STOP'},
+                        provider_response_id='C6jgab7lB5i84-EPxZiziQE',
+                        finish_reason='stop',
+                        run_id='019d9590-626a-76fc-b1ff-acba43fec656',
+                    ),
+                ]
+            ),
+            id='gla-pyd-ai-retry-prompt',
+        ),
+        pytest.param(
+            'gla',
+            'call_openai_xyz',
+            True,
+            snapshot(
+                [
+                    ModelRequest(parts=[UserPromptPart(content='What is the answer?', timestamp=IsDatetime())]),
+                    ModelResponse(
+                        parts=[ToolCallPart(tool_name='get_answer', args={}, tool_call_id='call_openai_xyz')],
+                        timestamp=IsDatetime(),
+                    ),
+                    ModelRequest(
+                        parts=[
+                            RetryPromptPart(
+                                content='Try again.',
+                                tool_name='get_answer',
+                                tool_call_id='call_openai_xyz',
+                                timestamp=IsDatetime(),
+                            )
+                        ]
+                    ),
+                    ModelRequest(
+                        parts=[UserPromptPart(content='continue', timestamp=IsDatetime())],
+                        timestamp=IsDatetime(),
+                        run_id='019d9590-6e10-748e-977f-dd5ad8ab3ff9',
+                    ),
+                    ModelResponse(
+                        parts=[
+                            TextPart(
+                                content="I'm sorry, I was unable to get the answer. The previous attempt resulted in an error. Please let me know if there's anything else I can help with or if you'd like to try something different.",
+                                provider_name='google-gla',
+                                provider_details={
+                                    'thought_signature': 'CukDAb4+9vtdOmXU4b3aEpWfKMzuXPfTqGTS7xpnHig6EJ2dEk2yZQMdvpFIu4ynvaNcUjbH2ef6KdAjLXWvynO8+4zPKfyTsX0FD9kEVt+lFS01Fko1nmUBXoZ17OODLXe7yTFSLlpG4PoM7qLITnfnRIlnBg2C1c+eYGtGOTQkdJVP9Tb3qdk5Jx6ihB8IiluJemILR7poUQueXdyfNt0akPnXU5vKGic9nqDmbvtUBUuI/nZNPD0QPf+rlYsRvKCiLa6YGyafUvPE3/8LZqGYBuqOAAbtoaKbPxtjBtYM4zTeKRBfnTdgKmfOGLVOh7O58Sw3QD1/n+BvPt/kdynTSp6MILA9/pw2UzZ6HJMYN2mYjfbUww8THxewjpnVmZXnsjlvmVxkTGcDIJdEpnzJYKEnbRb6vh2bYjF3iGVBEAyLR/n8E6ic8wRQei18wtkePv8uzLZtIg52X0GzlScjIT4NRt2TGK4ul4I9Zd2cOlhqHPR/jWoPg/ZPEX7yKKGe8CDUJNhfWBCR0ZGFOL1p3ctrREvUBOjS07Vb4W18kMmOTPMheKVLSbcueOwkIPtBLD/t7tUqS8ZGPKb4vnAlGskACUgjKdLvAP2jJUFnL3KgtO4h+vRZf1smmWl73jSFc2z7grYIphTw'
+                                },
+                            )
+                        ],
+                        usage=RequestUsage(
+                            input_tokens=66,
+                            output_tokens=145,
+                            details={'thoughts_tokens': 99, 'text_prompt_tokens': 66},
+                        ),
+                        model_name='gemini-2.5-flash',
+                        timestamp=IsDatetime(),
+                        provider_name='google-gla',
+                        provider_url='https://generativelanguage.googleapis.com/',
+                        provider_details={'finish_reason': 'STOP'},
+                        provider_response_id='DKjgaZOKBtPUjuMPpLLZ6Q4',
+                        finish_reason='stop',
+                        run_id='019d9590-6e10-748e-977f-dd5ad8ab3ff9',
+                    ),
+                ]
+            ),
+            id='gla-model-provided-retry-prompt',
+        ),
     ],
 )
 async def test_google_tool_call_id_wire_format(
     allow_model_requests: None,
     google_provider: GoogleProvider,
-    mock_vertex_provider: GoogleProvider,
-    mocker: MockerFixture,
+    vertex_provider: GoogleProvider,
     backend: str,
     tool_call_id: str,
-    expected_ids_on_wire: int,
     use_retry_prompt_part: bool,
+    expected_messages: list[ModelMessage],
 ):
-    provider = mock_vertex_provider if backend == 'vertex' else google_provider
-    model = GoogleModel('gemini-2.5-flash', provider=provider)
+    provider = vertex_provider if backend == 'vertex' else google_provider
+    agent = Agent(model=GoogleModel('gemini-2.5-flash', provider=provider))
 
-    mocked_error = errors.ClientError(500, {'error': {'code': 500, 'message': 'captured by test'}})
-    mock = mocker.patch.object(model.client.aio.models, 'generate_content', side_effect=mocked_error)
+    @agent.tool_plain
+    def get_answer() -> int:
+        return 42
 
-    agent = Agent(model=model)
     reply_part: ToolReturnPart | RetryPromptPart = (
         RetryPromptPart(tool_name='get_answer', content='Try again.', tool_call_id=tool_call_id)
         if use_retry_prompt_part
@@ -6538,15 +7044,5 @@ async def test_google_tool_call_id_wire_format(
         ModelRequest(parts=[reply_part]),
     ]
 
-    with pytest.raises(ModelHTTPError):
-        await agent.run('continue', message_history=history)
-
-    ids_on_wire = [
-        part[field]['id']
-        for content in mock.call_args.kwargs['contents']
-        for part in content.get('parts', [])
-        for field in ('function_call', 'function_response')
-        if 'id' in part.get(field, {})
-    ]
-    assert len(ids_on_wire) == expected_ids_on_wire
-    assert all(sent == tool_call_id for sent in ids_on_wire)
+    result = await agent.run('continue', message_history=history)
+    assert result.all_messages() == expected_messages
