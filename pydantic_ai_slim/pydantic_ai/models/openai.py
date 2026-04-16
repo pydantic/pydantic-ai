@@ -2986,7 +2986,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
                 elif isinstance(chunk, responses.ResponseTextDeltaEvent):
                     # Guard against delta=null from OpenAI-compatible gateways (e.g. Bifrost).
-                    if chunk.delta is not None:
+                    if chunk.delta is not None:  # pyright: ignore[reportUnnecessaryComparison]
                         for event in self._parts_manager.handle_text_delta(
                             vendor_part_id=chunk.item_id,
                             content=chunk.delta,
