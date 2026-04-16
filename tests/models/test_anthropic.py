@@ -3615,11 +3615,25 @@ async def test_anthropic_explicit_effort_xhigh_unsupported_model_errors(
     with pytest.raises(ModelHTTPError) as exc_info:
         await agent.run('What is 2+2?')
 
-    assert exc_info.value.status_code == 400
-    assert exc_info.value.model_name == 'claude-opus-4-6'
-    assert len(vcr.requests) == 1
+    assert (
+        exc_info.value.status_code,
+        exc_info.value.model_name,
+        exc_info.value.body,
+    ) == snapshot(
+        (
+            400,
+            'claude-opus-4-6',
+            {
+                'error': {
+                    'message': "This model does not support effort level 'xhigh'. Supported levels: high, low, max, medium.",
+                    'type': 'invalid_request_error',
+                },
+                'request_id': IsStr(),
+                'type': 'error',
+            },
+        )
+    )
     request_body = json.loads(vcr.requests[0].body)
-    assert request_body['model'] == 'claude-opus-4-6'
     assert request_body['output_config'] == {'effort': 'xhigh'}
 
 
