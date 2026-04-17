@@ -14,6 +14,7 @@ from temporalio.workflow import ActivityConfig
 from pydantic_ai import ModelMessage, ModelResponse, models
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.agent import EventStreamHandler
+from pydantic_ai.agent.abstract import consume_event_stream_handler
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, infer_model_profile, parse_model_id
 from pydantic_ai.models.wrapper import CompletedStreamedResponse, WrapperModel
@@ -110,7 +111,7 @@ class TemporalModel(WrapperModel):
                 params.model_request_parameters,
                 run_context,
             ) as streamed_response:
-                await self.event_stream_handler(run_context, streamed_response)
+                await consume_event_stream_handler(self.event_stream_handler, run_context, streamed_response)
 
                 async for _ in streamed_response:
                     pass

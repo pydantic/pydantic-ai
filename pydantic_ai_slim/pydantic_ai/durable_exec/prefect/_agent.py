@@ -20,7 +20,12 @@ from pydantic_ai import (
     usage as _usage,
 )
 from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, WrapperAgent
-from pydantic_ai.agent.abstract import AgentMetadata, AgentModelSettings, RunOutputDataT
+from pydantic_ai.agent.abstract import (
+    AgentMetadata,
+    AgentModelSettings,
+    RunOutputDataT,
+    consume_event_stream_handler,
+)
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
@@ -159,7 +164,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             async def streamed_response():
                 yield event
 
-            await handler(ctx, streamed_response())
+            await consume_event_stream_handler(handler, ctx, streamed_response())
 
         async for event in stream:
             await event_stream_handler_task(event)

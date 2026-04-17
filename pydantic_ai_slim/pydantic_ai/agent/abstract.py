@@ -77,7 +77,7 @@ EventStreamHandler: TypeAlias = (
 It can either be an **observer** (an `async def` that returns `None`) or a **transformer** (an async generator that yields `AgentStreamEvent`s); when used with the [`HandleEventStream`][pydantic_ai.capabilities.HandleEventStream] capability, a transformer can modify, add, or drop events that are visible to the rest of the capability chain."""
 
 
-async def _consume_event_stream_handler(
+async def consume_event_stream_handler(
     handler: EventStreamHandler[AgentDepsT],
     ctx: RunContext[AgentDepsT],
     stream: AsyncIterable[_messages.AgentStreamEvent],
@@ -93,6 +93,7 @@ async def _consume_event_stream_handler(
             pass
     else:
         await result
+
 
 AgentMetadata = dict[str, Any] | Callable[[RunContext[AgentDepsT]], dict[str, Any]]
 
@@ -344,7 +345,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                             run_ctx = _agent_graph.build_run_context(agent_run.ctx)
                             wrapped = agent_run.ctx.deps.root_capability.wrap_run_event_stream(run_ctx, stream=stream)
                             if _handler is not None:
-                                await _consume_event_stream_handler(_handler, run_ctx, wrapped)
+                                await consume_event_stream_handler(_handler, run_ctx, wrapped)
                             else:
                                 async for _ in wrapped:
                                     pass
@@ -672,7 +673,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
                         wrapped = cap.wrap_run_event_stream(run_ctx, stream=stream_to_final(stream))
                         if event_stream_handler is not None:
-                            await _consume_event_stream_handler(event_stream_handler, run_ctx, wrapped)
+                            await consume_event_stream_handler(event_stream_handler, run_ctx, wrapped)
                         else:
                             async for _ in wrapped:
                                 pass
@@ -744,7 +745,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     async with node.stream(agent_run.ctx) as stream:
                         wrapped = cap.wrap_run_event_stream(run_ctx, stream=stream)
                         if event_stream_handler is not None:
-                            await _consume_event_stream_handler(event_stream_handler, run_ctx, wrapped)
+                            await consume_event_stream_handler(event_stream_handler, run_ctx, wrapped)
                         else:
                             async for _ in wrapped:
                                 pass

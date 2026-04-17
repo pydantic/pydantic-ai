@@ -26,7 +26,12 @@ from pydantic_ai import (
     usage as _usage,
 )
 from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, WrapperAgent
-from pydantic_ai.agent.abstract import AgentMetadata, AgentModelSettings, RunOutputDataT
+from pydantic_ai.agent.abstract import (
+    AgentMetadata,
+    AgentModelSettings,
+    RunOutputDataT,
+    consume_event_stream_handler,
+)
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
@@ -157,7 +162,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             async def streamed_response():
                 yield params.event
 
-            await self.event_stream_handler(run_context, streamed_response())
+            await consume_event_stream_handler(self.event_stream_handler, run_context, streamed_response())
 
         # Set type hint explicitly so that Temporal can take care of serialization and deserialization
         event_stream_handler_activity.__annotations__['deps'] = self.deps_type

@@ -12,6 +12,7 @@ from pydantic_ai import (
     ModelResponse,
 )
 from pydantic_ai.agent import EventStreamHandler
+from pydantic_ai.agent.abstract import consume_event_stream_handler
 from pydantic_ai.models import ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.wrapper import CompletedStreamedResponse, WrapperModel
 from pydantic_ai.settings import ModelSettings
@@ -60,7 +61,7 @@ class PrefectModel(WrapperModel):
                         'A Prefect model cannot be used with `pydantic_ai.direct.model_request_stream()` as it requires a `run_context`. '
                         'Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
                     )
-                    await self.event_stream_handler(ctx, streamed_response)
+                    await consume_event_stream_handler(self.event_stream_handler, ctx, streamed_response)
 
                 # Consume the entire stream
                 async for _ in streamed_response:
