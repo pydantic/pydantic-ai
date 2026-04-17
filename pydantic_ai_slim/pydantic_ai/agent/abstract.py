@@ -1094,7 +1094,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 )
 
         task = asyncio.create_task(run_agent())
-        # TODO(v2): asyncio.create_task here is incorrect for anyio contract
 
         # TODO: Replace _task_cancel_sent flag with task.cancelling() when Python 3.10 is dropped (3.11+).
         _task_cancel_sent: bool = False
@@ -1112,6 +1111,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             raise
 
         finally:
+            # This would get triggered directly if someone broke out of the loop without cancelling the task
+            # running run_stream_events in which case we would still want to cancel this out
             cancelled_exc = anyio.get_cancelled_exc_class()
             if not task.done() and not _task_cancel_sent:
                 task.cancel()
