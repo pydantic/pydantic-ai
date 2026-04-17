@@ -425,10 +425,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         any_handled = False
         for capability in self.capabilities:
             result = await capability.handle_deferred_tool_calls(ctx, requests=remaining)
-            if result is None:
+            if result is None or not (result.approvals or result.calls):
                 continue
             any_handled = True
-            accumulated.merge(result)
+            accumulated.update(result)
             remaining_or_none = remaining.remaining(result)
             if remaining_or_none is None:
                 break

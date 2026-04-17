@@ -277,7 +277,7 @@ class DeferredToolRequests:
         """Create a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] for these requests."""
         return DeferredToolResults(approvals=approvals or {}, calls=calls or {}, metadata=metadata or {})
 
-    def remaining(self, results: DeferredToolResults) -> Self | None:
+    def remaining(self, results: DeferredToolResults) -> DeferredToolRequests | None:
         """Return unresolved requests after applying results, or `None` if all resolved."""
         resolved_ids = set(results.approvals) | set(results.calls)
         remaining = DeferredToolRequests(
@@ -285,7 +285,7 @@ class DeferredToolRequests:
             approvals=[c for c in self.approvals if c.tool_call_id not in resolved_ids],
             metadata={k: v for k, v in self.metadata.items() if k not in resolved_ids},
         )
-        return remaining if remaining.calls or remaining.approvals else None  # pyright: ignore[reportReturnType]
+        return remaining if remaining.calls or remaining.approvals else None
 
 
 @dataclass(kw_only=True)
@@ -355,8 +355,8 @@ class DeferredToolResults:
     metadata: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     """Metadata for deferred tool calls, keyed by `tool_call_id`. Each value will be available in the tool's RunContext as `tool_call_metadata`."""
 
-    def merge(self, other: DeferredToolResults) -> None:
-        """Merge another `DeferredToolResults` into this one in-place."""
+    def update(self, other: DeferredToolResults) -> None:
+        """Update this `DeferredToolResults` with entries from another, in-place."""
         self.approvals.update(other.approvals)
         self.calls.update(other.calls)
         self.metadata.update(other.metadata)
