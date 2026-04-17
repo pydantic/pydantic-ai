@@ -102,12 +102,28 @@ async def main():
     print(events)
     """
     [
+        ModelResponseStartEvent(
+            response=ModelResponse(
+                parts=[],
+                usage=RequestUsage(input_tokens=50),
+                model_name='gpt-5.2',
+                timestamp=datetime.datetime(...),
+            )
+        ),
         PartStartEvent(index=0, part=TextPart(content='The capital of ')),
         FinalResultEvent(tool_name=None, tool_call_id=None),
         PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='Mexico is Mexico ')),
         PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='City.')),
         PartEndEvent(
             index=0, part=TextPart(content='The capital of Mexico is Mexico City.')
+        ),
+        ModelResponseEndEvent(
+            response=ModelResponse(
+                parts=[TextPart(content='The capital of Mexico is Mexico City.')],
+                usage=RequestUsage(input_tokens=50, output_tokens=8),
+                model_name='gpt-5.2',
+                timestamp=datetime.datetime(...),
+            )
         ),
         AgentRunResultEvent(
             result=AgentRunResult(output='The capital of Mexico is Mexico City.')

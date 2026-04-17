@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping
-from dataclasses import KW_ONLY, dataclass
+from dataclasses import KW_ONLY, asdict, dataclass
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -16,6 +16,7 @@ from ...messages import (
     FilePart,
     FinishReason as PydanticFinishReason,
     FunctionToolResultEvent,
+    ModelResponseEndEvent,
     RetryPromptPart,
     TextPart,
     TextPartDelta,
@@ -34,6 +35,7 @@ from ._utils import dump_provider_metadata, iter_metadata_chunks, tool_return_ou
 from .request_types import RequestData
 from .response_types import (
     BaseChunk,
+    DataChunk,
     DoneChunk,
     ErrorChunk,
     FileChunk,
@@ -82,6 +84,12 @@ def _tool_return_with_files(part: BaseToolReturnPart) -> Any:
     if file_descriptions := [describe_file(f) for f in part.files]:
         return [part.model_response_object(), *file_descriptions]
     return tool_return_output(part)
+
+
+def _usage_chunk_data(event: ModelResponseEndEvent) -> dict[str, Any] | None:
+    """Serialize request usage for `data-usage` chunks."""
+    usage_data = {k: v for k, v in asdict(event.response.usage).items() if v not in (0, {}, None)}
+    return usage_data or None
 
 
 @dataclass
@@ -136,6 +144,10 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             return
         return
         yield
+
+    async def handle_model_response_end(self, event: ModelResponseEndEvent) -> AsyncIterator[BaseChunk]:
+        if self.sdk_version >= 6 and (usage_data := _usage_chunk_data(event)):
+            yield DataChunk(type='data-usage', data=usage_data, transient=True)
 
     async def on_error(self, error: Exception) -> AsyncIterator[BaseChunk]:
         self._finish_reason = 'error'

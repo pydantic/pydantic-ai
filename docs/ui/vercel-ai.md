@@ -96,6 +96,8 @@ The supported chunk types are [`DataChunk`][pydantic_ai.ui.vercel_ai.response_ty
 and [`FileChunk`][pydantic_ai.ui.vercel_ai.response_types.FileChunk].
 This is useful for attaching structured data to the frontend alongside the tool result, such as source URLs or custom data payloads.
 
+When `sdk_version=6`, Pydantic AI also emits a transient `data-usage` chunk at the end of each model response whenever that response includes non-empty [`RequestUsage`][pydantic_ai.usage.RequestUsage] data. This makes per-request token usage available to the frontend during multi-step runs without waiting for the final aggregated run result.
+
 ```python {title="vercel_ai_tool_chunks.py"}
 from pydantic_ai import Agent, ToolReturn
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk, SourceUrlChunk

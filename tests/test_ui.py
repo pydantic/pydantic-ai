@@ -422,6 +422,14 @@ async def test_event_stream_file():
     )
 
 
+async def test_handle_event_ignores_unregistered_event_types():
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = DummyUIEventStream(run_input=request)
+    unregistered_event: Any = object()
+
+    assert [event async for event in event_stream.handle_event(unregistered_event)] == []
+
+
 async def test_run_stream_external_tools():
     agent = Agent(model=TestModel())
 

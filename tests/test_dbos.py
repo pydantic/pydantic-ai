@@ -258,14 +258,20 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
             'complex_agent__model.request_stream',
             'event_stream_handler',
             'event_stream_handler',
+            'event_stream_handler',
+            'event_stream_handler',
             'complex_agent__mcp_server__mcp.call_tool',
             'event_stream_handler',
             'event_stream_handler',
             'complex_agent__model.request_stream',
             'event_stream_handler',
+            'event_stream_handler',
+            'event_stream_handler',
             'get_weather',
             'event_stream_handler',
             'complex_agent__model.request_stream',
+            'event_stream_handler',
+            'event_stream_handler',
         ]
     )
 
@@ -324,6 +330,24 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                     content='complex_agent run',
                     children=[
                         BasicSpan(content='complex_agent__mcp_server__mcp.get_tools'),
+                        BasicSpan(
+                            content='event_stream_handler',
+                            children=[
+                                BasicSpan(content='ctx.run_step=1'),
+                                BasicSpan(
+                                    content='{"response": {"parts": [{"tool_name": "get_country", "args": "{}", "tool_call_id": "call_3rqTYrA6H21AYUaRGP4F66oq", "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, {"tool_name": "get_product_name", "args": "{}", "tool_call_id": "call_Xw9XMKBJU48kAAd78WgIswDx", "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}], "usage": {"input_tokens": 364, "cache_write_tokens": 0, "cache_read_tokens": 0, "output_tokens": 40, "input_audio_tokens": 0, "cache_audio_read_tokens": 0, "output_audio_tokens": 0, "details": {"accepted_prediction_tokens": 0, "audio_tokens": 0, "reasoning_tokens": 0, "rejected_prediction_tokens": 0}}, "model_name": "gpt-4o-2024-08-06", "timestamp": null, "kind": "response", "provider_name": "openai", "provider_url": "https://api.openai.com/v1/", "provider_details": {"timestamp": null, "finish_reason": "tool_calls"}, "provider_response_id": "chatcmpl-C1KMEUDb1vVwsROQUCZTgG6A6vtWo", "finish_reason": "tool_call", "run_id": null, "metadata": null}, "event_kind": "model_response_start"}'
+                                ),
+                            ],
+                        ),
+                        BasicSpan(
+                            content='event_stream_handler',
+                            children=[
+                                BasicSpan(content='ctx.run_step=1'),
+                                BasicSpan(
+                                    content='{"response": {"parts": [{"tool_name": "get_country", "args": "{}", "tool_call_id": "call_3rqTYrA6H21AYUaRGP4F66oq", "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, {"tool_name": "get_product_name", "args": "{}", "tool_call_id": "call_Xw9XMKBJU48kAAd78WgIswDx", "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}], "usage": {"input_tokens": 364, "cache_write_tokens": 0, "cache_read_tokens": 0, "output_tokens": 40, "input_audio_tokens": 0, "cache_audio_read_tokens": 0, "output_audio_tokens": 0, "details": {"accepted_prediction_tokens": 0, "audio_tokens": 0, "reasoning_tokens": 0, "rejected_prediction_tokens": 0}}, "model_name": "gpt-4o-2024-08-06", "timestamp": null, "kind": "response", "provider_name": "openai", "provider_url": "https://api.openai.com/v1/", "provider_details": {"timestamp": null, "finish_reason": "tool_calls"}, "provider_response_id": "chatcmpl-C1KMEUDb1vVwsROQUCZTgG6A6vtWo", "finish_reason": "tool_call", "run_id": null, "metadata": null}, "event_kind": "model_response_end"}'
+                                ),
+                            ],
+                        ),
                         BasicSpan(
                             content='chat gpt-4o',
                             children=[
@@ -395,6 +419,24 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             ],
                         ),
                         BasicSpan(
+                            content='event_stream_handler',
+                            children=[
+                                BasicSpan(content='ctx.run_step=2'),
+                                BasicSpan(
+                                    content='{"response": {"parts": [{"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": "call_Vz0Sie91Ap56nH0ThKGrZXT7", "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}], "usage": {"input_tokens": 423, "cache_write_tokens": 0, "cache_read_tokens": 0, "output_tokens": 15, "input_audio_tokens": 0, "cache_audio_read_tokens": 0, "output_audio_tokens": 0, "details": {"accepted_prediction_tokens": 0, "audio_tokens": 0, "reasoning_tokens": 0, "rejected_prediction_tokens": 0}}, "model_name": "gpt-4o-2024-08-06", "timestamp": null, "kind": "response", "provider_name": "openai", "provider_url": "https://api.openai.com/v1/", "provider_details": {"timestamp": null, "finish_reason": "tool_calls"}, "provider_response_id": "chatcmpl-C1KMJC4uUHgeJ4A0e8jM8wufrmdxX", "finish_reason": "tool_call", "run_id": null, "metadata": null}, "event_kind": "model_response_start"}'
+                                ),
+                            ],
+                        ),
+                        BasicSpan(
+                            content='event_stream_handler',
+                            children=[
+                                BasicSpan(content='ctx.run_step=2'),
+                                BasicSpan(
+                                    content='{"response": {"parts": [{"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": "call_Vz0Sie91Ap56nH0ThKGrZXT7", "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}], "usage": {"input_tokens": 423, "cache_write_tokens": 0, "cache_read_tokens": 0, "output_tokens": 15, "input_audio_tokens": 0, "cache_audio_read_tokens": 0, "output_audio_tokens": 0, "details": {"accepted_prediction_tokens": 0, "audio_tokens": 0, "reasoning_tokens": 0, "rejected_prediction_tokens": 0}}, "model_name": "gpt-4o-2024-08-06", "timestamp": null, "kind": "response", "provider_name": "openai", "provider_url": "https://api.openai.com/v1/", "provider_details": {"timestamp": null, "finish_reason": "tool_calls"}, "provider_response_id": "chatcmpl-C1KMJC4uUHgeJ4A0e8jM8wufrmdxX", "finish_reason": "tool_call", "run_id": null, "metadata": null}, "event_kind": "model_response_end"}'
+                                ),
+                            ],
+                        ),
+                        BasicSpan(
                             content='chat gpt-4o',
                             children=[
                                 BasicSpan(
@@ -445,6 +487,24 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                 BasicSpan(content='ctx.run_step=2'),
                                 BasicSpan(
                                     content='{"result": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                ),
+                            ],
+                        ),
+                        BasicSpan(
+                            content='event_stream_handler',
+                            children=[
+                                BasicSpan(content='ctx.run_step=3'),
+                                BasicSpan(
+                                    content='{"response": {"parts": [{"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": "call_4kc6691zCzjPnOuEtbEGUvz2", "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}], "usage": {"input_tokens": 448, "cache_write_tokens": 0, "cache_read_tokens": 0, "output_tokens": 49, "input_audio_tokens": 0, "cache_audio_read_tokens": 0, "output_audio_tokens": 0, "details": {"accepted_prediction_tokens": 0, "audio_tokens": 0, "reasoning_tokens": 0, "rejected_prediction_tokens": 0}}, "model_name": "gpt-4o-2024-08-06", "timestamp": null, "kind": "response", "provider_name": "openai", "provider_url": "https://api.openai.com/v1/", "provider_details": {"timestamp": null, "finish_reason": "tool_calls"}, "provider_response_id": "chatcmpl-C1KMMrEA9QLIX25pFjKjoRdNkO0nN", "finish_reason": "tool_call", "run_id": null, "metadata": null}, "event_kind": "model_response_start"}'
+                                ),
+                            ],
+                        ),
+                        BasicSpan(
+                            content='event_stream_handler',
+                            children=[
+                                BasicSpan(content='ctx.run_step=3'),
+                                BasicSpan(
+                                    content='{"response": {"parts": [{"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": "call_4kc6691zCzjPnOuEtbEGUvz2", "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}], "usage": {"input_tokens": 448, "cache_write_tokens": 0, "cache_read_tokens": 0, "output_tokens": 49, "input_audio_tokens": 0, "cache_audio_read_tokens": 0, "output_audio_tokens": 0, "details": {"accepted_prediction_tokens": 0, "audio_tokens": 0, "reasoning_tokens": 0, "rejected_prediction_tokens": 0}}, "model_name": "gpt-4o-2024-08-06", "timestamp": null, "kind": "response", "provider_name": "openai", "provider_url": "https://api.openai.com/v1/", "provider_details": {"timestamp": null, "finish_reason": "tool_calls"}, "provider_response_id": "chatcmpl-C1KMMrEA9QLIX25pFjKjoRdNkO0nN", "finish_reason": "tool_call", "run_id": null, "metadata": null}, "event_kind": "model_response_end"}'
                                 ),
                             ],
                         ),
@@ -659,13 +719,19 @@ async def test_complex_agent_run_sequential_tool(allow_model_requests: None, dbo
             'event_stream_handler',
             'event_stream_handler',
             'event_stream_handler',
+            'event_stream_handler',
+            'event_stream_handler',
             'seq_complex_agent__mcp_server__mcp.call_tool',
             'event_stream_handler',
             'seq_complex_agent__model.request_stream',
             'event_stream_handler',
+            'event_stream_handler',
+            'event_stream_handler',
             'get_weather',
             'event_stream_handler',
             'seq_complex_agent__model.request_stream',
+            'event_stream_handler',
+            'event_stream_handler',
         ]
     )
 
