@@ -1,3 +1,4 @@
+from .agentic import ArgumentCorrectness, StepEfficiency, ToolCorrectness, TrajectoryMatch
 from .common import (
     Contains,
     Equals,
@@ -28,6 +29,11 @@ __all__ = (
     'LLMJudge',
     'HasMatchingSpan',
     'OutputConfig',
+    # agentic
+    'ToolCorrectness',
+    'TrajectoryMatch',
+    'ArgumentCorrectness',
+    'StepEfficiency',
     # context
     'EvaluatorContext',
     # evaluator
