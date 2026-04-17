@@ -163,9 +163,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         return _messages.ModelMessagesTypeAdapter.dump_json(self.all_messages())
 
     def new_messages(self) -> list[_messages.ModelMessage]:
-        """Return new messages for the run so far.
+        """Return the messages produced during this run so far.
 
-        Messages from older runs are excluded.
+        Messages provided via `message_history` and messages from older runs are excluded.
         """
         return self.all_messages()[self.ctx.deps.new_message_index :]
 
@@ -478,9 +478,9 @@ class AgentRunResult(Generic[OutputDataT]):
         )
 
     def new_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
-        """Return new messages associated with this run.
+        """Return the messages produced during this run.
 
-        Messages from older runs are excluded.
+        Messages provided via `message_history` and messages from older runs are excluded.
 
         Args:
             output_tool_return_content: The return content of the tool call to set in the last message.

@@ -1883,13 +1883,14 @@ def _first_new_message_index(
     if resumed_request is not None:
         for index, message in enumerate(messages):
             if message is resumed_request:
-                # Include the resumed request in new_messages only if it was
-                # mapped/created during the current run (e.g., via adapters).
-                return index if message.run_id == run_id else index + 1
+                # Requests passed in via `message_history` are prior context,
+                # even if they are stamped with the current `run_id` for adapter
+                # bookkeeping.
+                return index + 1
 
         for index in range(len(messages) - 1, -1, -1):
             if _is_same_request(messages[index], resumed_request):
-                return index if messages[index].run_id == run_id else index + 1
+                return index + 1
     return _first_run_id_index(messages, run_id)
 
 

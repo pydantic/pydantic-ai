@@ -65,18 +65,12 @@ See https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.p
 KnownModelName = TypeAliasType(
     'KnownModelName',
     Literal[
-        'anthropic:claude-3-5-haiku-20241022',
-        'anthropic:claude-3-5-haiku-latest',
-        'anthropic:claude-3-7-sonnet-20250219',
-        'anthropic:claude-3-7-sonnet-latest',
         'anthropic:claude-3-haiku-20240307',
-        'anthropic:claude-3-opus-20240229',
-        'anthropic:claude-3-opus-latest',
-        'anthropic:claude-4-opus-20250514',
-        'anthropic:claude-4-sonnet-20250514',
         'anthropic:claude-haiku-4-5-20251001',
+        'anthropic:claude-mythos-preview',
         'anthropic:claude-haiku-4-5',
         'anthropic:claude-opus-4-0',
+        'anthropic:claude-opus-4-1',
         'anthropic:claude-opus-4-1-20250805',
         'anthropic:claude-opus-4-20250514',
         'anthropic:claude-opus-4-5-20251101',
@@ -160,11 +154,11 @@ KnownModelName = TypeAliasType(
         'deepseek:deepseek-chat',
         'deepseek:deepseek-reasoner',
         'gateway/anthropic:claude-3-haiku-20240307',
-        'gateway/anthropic:claude-4-opus-20250514',
-        'gateway/anthropic:claude-4-sonnet-20250514',
         'gateway/anthropic:claude-haiku-4-5-20251001',
+        'gateway/anthropic:claude-mythos-preview',
         'gateway/anthropic:claude-haiku-4-5',
         'gateway/anthropic:claude-opus-4-0',
+        'gateway/anthropic:claude-opus-4-1',
         'gateway/anthropic:claude-opus-4-1-20250805',
         'gateway/anthropic:claude-opus-4-20250514',
         'gateway/anthropic:claude-opus-4-5-20251101',
@@ -1278,7 +1272,7 @@ def infer_model(  # noqa: C901
 
         model_kind = normalize_gateway_provider(model_kind)
 
-    # OpenRouter and Cerebras need to be checked before OpenAI,
+    # OpenRouter, Cerebras and Ollama need to be checked before OpenAI,
     # as they are in `OpenAIChatCompatibleProvider` but have their own model classes.
     if model_kind == 'openrouter':
         from .openrouter import OpenRouterModel
@@ -1288,6 +1282,10 @@ def infer_model(  # noqa: C901
         from .cerebras import CerebrasModel
 
         return CerebrasModel(model_name, provider=provider)
+    elif model_kind == 'ollama':
+        from .ollama import OllamaModel
+
+        return OllamaModel(model_name, provider=provider)
     elif model_kind in ('openai-chat', 'openai', *get_args(OpenAIChatCompatibleProvider.__value__)):
         from .openai import OpenAIChatModel
 

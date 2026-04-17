@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Annotated, Any
 
@@ -18,6 +19,7 @@ _SEARCH_TOOLS_NAME = 'search_tools'
 _DISCOVERED_TOOLS_METADATA_KEY = 'discovered_tools'
 
 _MAX_SEARCH_RESULTS = 10
+_SEARCH_TOKEN_RE = re.compile(r'[a-z0-9]+')
 
 
 class _SearchToolArgs(TypedDict):
@@ -42,9 +44,8 @@ _SEARCH_TOOL_SCHEMA['title'] = 'SearchToolArgs'
 @dataclass(kw_only=True)
 class _SearchIndexEntry:
     name: str
-    name_lower: str
     description: str | None
-    description_lower: str | None
+    search_terms: set[str]
 
 
 @dataclass(kw_only=True)
@@ -90,9 +91,8 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         search_index = [
             _SearchIndexEntry(
                 name=name,
-                name_lower=name.lower(),
                 description=tool.tool_def.description,
-                description_lower=tool.tool_def.description.lower() if tool.tool_def.description else None,
+                search_terms=self._search_terms(name, tool.tool_def.description),
             )
             for name, tool in deferred.items()
             if name not in discovered
@@ -148,34 +148,46 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             return await self._search_tools(tool_args, tool)
         return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 
-    async def _search_tools(self, tool_args: dict[str, Any], search_tool: _SearchTool[AgentDepsT]) -> ToolReturn:
-        """Search for tools matching the keywords.
+    @staticmethod
+    def _search_terms(name: str, description: str | None) -> set[str]:
+        search_terms = set(_SEARCH_TOKEN_RE.findall(name.lower()))
+        if description:
+            search_terms.update(_SEARCH_TOKEN_RE.findall(description.lower()))
+        return search_terms
 
-        Splits the keywords into individual terms and matches any term against
-        tool names and descriptions. This handles multi-keyword queries
-        like "exchange rate" matching a tool named "get_exchange_rate".
+    async def _search_tools(self, tool_args: dict[str, Any], search_tool: _SearchTool[AgentDepsT]) -> ToolReturn:
+        """Search for tools ordered by token overlap with the query.
+
+        Tokenizes both the query and each tool's name/description on alphanumeric runs,
+        scores each tool by how many query tokens it contains, and returns all positive
+        matches ordered from highest to lowest score. This prefers more specific
+        matches such as `github_get_me` for "github profile" without matching
+        substrings inside words like `comment` for the query `me`.
         """
         keywords = tool_args['keywords']
         if not keywords:
             raise ModelRetry('Please provide search keywords.')
 
-        terms = keywords.lower().split()
+        terms = self._search_terms(keywords, None)
+        if not terms:
+            raise ModelRetry('Please provide search keywords.')
 
-        matches: list[dict[str, str | None]] = []
+        scored_matches: list[tuple[int, dict[str, str | None]]] = []
         for entry in search_tool.search_index:
-            searchable = entry.name_lower + (' ' + entry.description_lower if entry.description_lower else '')
-            if any(term in searchable for term in terms):
-                matches.append({'name': entry.name, 'description': entry.description})
-                if len(matches) >= _MAX_SEARCH_RESULTS:
-                    break
+            score = len(terms & entry.search_terms)
+            if score == 0:
+                continue
+            scored_matches.append((score, {'name': entry.name, 'description': entry.description}))
 
-        tool_names = [match['name'] for match in matches]
-
-        if not matches:
+        if not scored_matches:
             return ToolReturn(
                 return_value='No matching tools found. The tools you need may not be available.',
-                metadata={_DISCOVERED_TOOLS_METADATA_KEY: tool_names},
+                metadata={_DISCOVERED_TOOLS_METADATA_KEY: []},
             )
+
+        scored_matches.sort(key=lambda item: item[0], reverse=True)
+        matches = [match for _, match in scored_matches[:_MAX_SEARCH_RESULTS]]
+        tool_names = [match['name'] for match in matches]
 
         return ToolReturn(
             return_value=matches,
