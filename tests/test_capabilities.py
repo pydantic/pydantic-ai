@@ -31,6 +31,7 @@ from pydantic_ai.capabilities import (
     MCP,
     BuiltinTool,
     CapabilityOrdering,
+    HandleEventStream,
     ImageGeneration,
     IncludeToolReturnSchemas,
     PrefixTools,
@@ -3602,6 +3603,65 @@ class TestWrapRunEventStream:
         result = await agent.run('hello')
         assert result.output is not None
         assert any(isinstance(e, PartStartEvent) for e in observed_events)
+
+
+class TestHandleEventStream:
+    """Tests for the HandleEventStream capability."""
+
+    async def test_handler_receives_events(self):
+        """Handler registered via capability receives events from model streaming."""
+        handler_events: list[AgentStreamEvent] = []
+
+        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                handler_events.append(event)
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[HandleEventStream(handler=handler)],
+        )
+
+        # No event_stream_handler arg — capability should drive streaming
+        result = await agent.run('hello')
+        assert result.output is not None
+        assert any(isinstance(e, PartStartEvent) for e in handler_events)
+
+    async def test_handler_sees_events_after_inner_wrappers(self):
+        """Handler capability is outermost, so it sees events after inner wrap_run_event_stream transforms."""
+        order: list[str] = []
+
+        @dataclass
+        class InnerWrapper(AbstractCapability[Any]):
+            async def wrap_run_event_stream(
+                self,
+                ctx: RunContext[Any],
+                *,
+                stream: AsyncIterable[AgentStreamEvent],
+            ) -> AsyncIterable[AgentStreamEvent]:
+                order.append('inner:enter')
+                async for event in stream:
+                    yield event
+                order.append('inner:exit')
+
+        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            order.append('handler:enter')
+            async for _ in stream:
+                pass
+            order.append('handler:exit')
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            # Deliberately list handler AFTER inner to verify ordering places it outermost.
+            capabilities=[InnerWrapper(), HandleEventStream(handler=handler)],
+        )
+
+        await agent.run('hello')
+        assert order.index('handler:enter') < order.index('inner:enter')
+        assert order.index('inner:exit') < order.index('handler:exit')
+
+    async def test_not_spec_serializable(self):
+        """HandleEventStream holds a callable so it cannot participate in spec-based construction."""
+        assert HandleEventStream.get_serialization_name() is None
 
 
 class TestWrapRunShortCircuit:
