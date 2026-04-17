@@ -119,6 +119,7 @@ try:
         WebSearchToolParam,
     )
     from openai.types.responses.response_compaction_item_param_param import ResponseCompactionItemParamParam
+    from openai.types.responses.response_create_params import ContextManagement
     from openai.types.responses.response_input_file_content_param import ResponseInputFileContentParam
     from openai.types.responses.response_input_image_content_param import ResponseInputImageContentParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
@@ -414,7 +415,13 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     """Whether or not to store the output of this request in OpenAI's systems.
 
     If `False`, OpenAI will not store the request for its own internal review or training.
-    See [OpenAI API reference](https://platform.openai.com/docs/api-reference/chat/create#chat-create-store)."""
+    See [OpenAI API reference](https://platform.openai.com/docs/api-reference/chat/create#chat-create-store).
+
+    When used with `OpenAIResponsesModel`, stored responses appear in OpenAI's dashboard and
+    can be referenced via [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id].
+    Pair this with `openai_previous_response_id='auto'` to avoid storing duplicate copies of
+    the conversation history across retries and subsequent requests within the same run.
+    """
 
     openai_user: str
     """A unique identifier representing the end-user, which can help OpenAI monitor and detect abuse.
@@ -517,12 +524,23 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """
 
     openai_previous_response_id: Literal['auto'] | str
-    """The ID of a previous response from the model to use as the starting point for a continued conversation.
+    """Reference a prior OpenAI response to continue a conversation server-side, omitting already-stored messages from the input.
 
-    When set to `'auto'`, the request automatically uses the most recent
-    `provider_response_id` from the message history and omits earlier messages.
+    - `'auto'`: chain to the most recent `provider_response_id` in the message history.
+      If the history contains no such response, no `previous_response_id` is sent.
+    - A concrete response ID string: use it as the seed for the first request in the run
+      (e.g. to continue from a prior turn). On subsequent in-run requests (retries,
+      tool-call continuations), the most recent `provider_response_id` from the message
+      history takes precedence so the chain extends correctly without re-sending messages
+      that are already server-side.
 
-    This enables the model to use server-side conversation state and faithfully reference previous reasoning.
+    In both cases, messages that precede the chosen response in the history are omitted
+    from the input, since OpenAI reconstructs them from server-side state.
+
+    Requires the referenced response to have been stored (see
+    [`openai_store`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store],
+    which defaults to `True` on OpenAI's side). Not compatible with Zero Data Retention.
+
     See the [OpenAI Responses API documentation](https://platform.openai.com/docs/guides/reasoning#keeping-reasoning-items-in-context)
     for more information.
     """
@@ -552,6 +570,18 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     in the `provider_details['annotations']` field of text parts.
     This is opt-in since there may be overlap with native annotation support once
     added via https://github.com/pydantic/pydantic-ai/issues/3126.
+    """
+
+    openai_context_management: list[ContextManagement]
+    """Context management configuration for the request.
+
+    This enables OpenAI's server-side automatic compaction inside the regular
+    `/responses` call, as opposed to the standalone `/responses/compact` endpoint.
+    See [OpenAI's compaction guide](https://developers.openai.com/api/docs/guides/compaction)
+    for details.
+
+    The [`OpenAICompaction`][pydantic_ai.models.openai.OpenAICompaction] capability
+    sets this automatically in its default (stateful) mode.
     """
 
 
@@ -1580,12 +1610,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if not isinstance(compaction, ResponseCompactionItem):  # pragma: no cover
             raise UnexpectedModelBehavior(f'Last item in response is not a compaction, got: {compaction.type}')
 
-        part = CompactionPart(
-            content=None,
-            id=compaction.id,
-            provider_name=self.system,
-            provider_details=compaction.model_dump(),
-        )
+        part = _map_compaction_item(compaction, self.system)
         return ModelResponse(
             parts=[part],
             usage=_map_usage(response, self._provider.name, self._provider.base_url, self.model_name),
@@ -1609,11 +1634,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         instructions_override: str | None = None,
     ) -> responses.CompactedResponse | ModelResponse:
         """Call the OpenAI Responses compaction endpoint."""
-        previous_response_id = model_settings.get('openai_previous_response_id')
-        if previous_response_id == 'auto':
-            previous_response_id, messages = self._get_previous_response_id_and_new_messages(
-                messages, allow_no_new_messages=True
-            )
+        previous_response_id, messages = self._resolve_previous_response_id(
+            model_settings.get('openai_previous_response_id'), messages, allow_no_new_messages=True
+        )
 
         instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
         if instructions_override is not None:
@@ -1735,9 +1758,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             part_provider_details['annotations'] = responses_output_text_annotations_ta.dump_python(
                                 list(content.annotations), warnings=False
                             )
+                        # Some OpenAI-compatible gateways (e.g. Bifrost) return text=null;
+                        # coalesce to '' so the part (and its ID) is preserved for round-tripping.
                         items.append(
                             TextPart(
-                                content.text,
+                                content.text or '',
                                 id=item.id,
                                 provider_name=self.system,
                                 provider_details=part_provider_details,
@@ -1765,6 +1790,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 if file_part:  # pragma: no branch
                     items.append(file_part)
                 items.append(return_part)
+            elif isinstance(item, ResponseCompactionItem):
+                items.append(_map_compaction_item(item, self.system))
             elif isinstance(item, responses.ResponseComputerToolCall):  # pragma: no cover
                 # Pydantic AI doesn't yet support the ComputerUse built-in tool
                 pass
@@ -1881,9 +1908,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         else:
             tool_choice = 'auto'
 
-        previous_response_id = model_settings.get('openai_previous_response_id')
-        if previous_response_id == 'auto':
-            previous_response_id, messages = self._get_previous_response_id_and_new_messages(messages)
+        previous_response_id, messages = self._resolve_previous_response_id(
+            model_settings.get('openai_previous_response_id'), messages
+        )
 
         instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
         reasoning = self._translate_thinking(model_settings, model_request_parameters)
@@ -1963,6 +1990,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     timeout=model_settings.get('timeout', NOT_GIVEN),
                     service_tier=model_settings.get('openai_service_tier', OMIT),
                     previous_response_id=previous_response_id or OMIT,
+                    context_management=model_settings.get('openai_context_management', OMIT),
                     top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
                     store=model_settings.get('openai_store', OMIT),
                     reasoning=reasoning,
@@ -2101,14 +2129,48 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             ),
         }
 
+    def _resolve_previous_response_id(
+        self,
+        setting: str | None,
+        messages: list[ModelMessage],
+        *,
+        allow_no_new_messages: bool = False,
+    ) -> tuple[str | None, list[ModelMessage]]:
+        # Resolve the effective `previous_response_id` and trim already-stored messages.
+        #
+        # A concrete ID in `setting` acts as a seed for the first request in a run (to
+        # continue from a prior turn's stored response). On subsequent in-run requests
+        # (retries, tool-call continuations), the most recent `provider_response_id`
+        # from the message history takes precedence, so we chain to the latest stored
+        # response instead of re-sending messages that are already server-side.
+        #
+        # A compaction response in the tail is a hard chain boundary even with a
+        # concrete seed: crossing it would re-inject the context that compaction was
+        # meant to replace.
+        if setting is None:
+            return None, messages
+        auto_id, trimmed = self._get_previous_response_id_and_new_messages(
+            messages, allow_no_new_messages=allow_no_new_messages
+        )
+        if auto_id is not None:
+            return auto_id, trimmed
+        if setting == 'auto' or self._is_at_compaction_boundary(messages):
+            return None, messages
+        return setting, messages
+
+    def _is_at_compaction_boundary(self, messages: list[ModelMessage]) -> bool:
+        for m in reversed(messages):
+            if isinstance(m, ModelResponse) and m.provider_name == self.system:
+                return bool(m.provider_details and m.provider_details.get('compaction'))
+        return False
+
     def _get_previous_response_id_and_new_messages(
         self, messages: list[ModelMessage], *, allow_no_new_messages: bool = False
     ) -> tuple[str | None, list[ModelMessage]]:
-        # When `openai_previous_response_id` is set to 'auto', the most recent
-        # `provider_response_id` from the message history is selected and all
-        # earlier messages are omitted. This allows the OpenAI SDK to reuse
-        # server-side history for efficiency. The returned tuple contains the
-        # `previous_response_id` (if found) and the trimmed list of messages.
+        # Find the most recent `provider_response_id` from messages produced by this
+        # provider, and return it along with the messages that came after it (which
+        # still need to be sent as new input). When nothing suitable is found, returns
+        # `(None, messages)` with the full list unchanged.
         previous_response_id = None
         trimmed_messages: list[ModelMessage] = []
         for m in reversed(messages):
@@ -2863,6 +2925,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     elif isinstance(chunk.item, responses.response_output_item.McpListTools):
                         call_part, _ = _map_mcp_list_tools(chunk.item, self.provider_name)
                         yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
+                    elif isinstance(chunk.item, ResponseCompactionItem):
+                        # Emit a PartStartEvent so UIs can render compaction in progress.
+                        # The "done" event replaces this with the final encrypted_content.
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=chunk.item.id,
+                            part=_map_compaction_item(chunk.item, self.provider_name),
+                        )
                     else:
                         warnings.warn(  # pragma: no cover
                             f'Handling of this item type is not yet implemented. Please report on our GitHub: {chunk}',
@@ -2935,6 +3004,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         yield self._parts_manager.handle_part(
                             vendor_part_id=f'{chunk.item.id}-return', part=return_part
                         )
+                    elif isinstance(chunk.item, ResponseCompactionItem):
+                        # Replace the preliminary part from the "added" event with the
+                        # final encrypted_content for round-tripping.
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=chunk.item.id,
+                            part=_map_compaction_item(chunk.item, self.provider_name),
+                        )
 
                 elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
                     # Use same vendor_part_id as raw CoT for first summary (index 0) so they merge into one ThinkingPart
@@ -2983,13 +3059,15 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         _annotations_by_item.setdefault(chunk.item_id, []).append(chunk.annotation)
 
                 elif isinstance(chunk, responses.ResponseTextDeltaEvent):
-                    for event in self._parts_manager.handle_text_delta(
-                        vendor_part_id=chunk.item_id,
-                        content=chunk.delta,
-                        id=chunk.item_id,
-                        provider_name=self.provider_name,
-                    ):
-                        yield event
+                    # Guard against delta=null from OpenAI-compatible gateways (e.g. Bifrost).
+                    if chunk.delta is not None:  # pyright: ignore[reportUnnecessaryComparison]
+                        for event in self._parts_manager.handle_text_delta(
+                            vendor_part_id=chunk.item_id,
+                            content=chunk.delta,
+                            id=chunk.item_id,
+                            provider_name=self.provider_name,
+                        ):
+                            yield event
 
                 elif isinstance(chunk, responses.ResponseTextDoneEvent):
                     # Add annotations to provider_details if available
@@ -3161,24 +3239,64 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 class OpenAICompaction(AbstractCapability[AgentDepsT]):
     """Compaction capability for OpenAI Responses API.
 
-    Calls the `responses.compact` endpoint via a `before_model_request` hook
-    when the trigger condition is met. The compacted history replaces the
-    original messages, keeping conversation context within manageable limits.
+    Automatically compacts conversation history to keep long-running agent
+    runs within manageable context limits. Two modes are supported, selected
+    by the `stateless` flag:
+
+    - **Stateful mode** (default, `stateless=False`): configures
+      [OpenAI's server-side auto-compaction](https://developers.openai.com/api/docs/guides/compaction)
+      via the `context_management` field on the regular `/responses` request.
+      The server triggers compaction when input tokens cross a threshold,
+      and the compacted item is returned alongside the normal response.
+      Compatible with [`openai_previous_response_id='auto'`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id]
+      and server-side conversation state.
+
+      Configurable with `token_threshold` (`compact_threshold` on the API).
+      If omitted, OpenAI picks a server-side default.
+
+    - **Stateless mode** (`stateless=True`): calls the stateless
+      `/responses/compact` endpoint from a `before_model_request` hook when
+      your trigger condition is met. Use this in
+      [ZDR](https://openai.com/enterprise-privacy/) environments where
+      OpenAI must not retain conversation data, when you set
+      [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store],
+      or when you need explicit out-of-band control over when compaction runs.
+
+      Requires either `message_count_threshold` or a custom `trigger` callable.
+
+    If `stateless` is not set, it is inferred from which parameters you
+    provide: passing any stateless-only parameter (`message_count_threshold`
+    or `trigger`) implies `stateless=True`; otherwise stateful mode is used.
 
     Example usage::
 
         from pydantic_ai import Agent
         from pydantic_ai.models.openai import OpenAICompaction
 
+        # Stateful mode with OpenAI's server-side default threshold:
         agent = Agent(
-            'openai-responses:gpt-4o',
-            capabilities=[OpenAICompaction(message_count_threshold=10)],
+            'openai-responses:gpt-5.2',
+            capabilities=[OpenAICompaction()],
+        )
+
+        # Stateful mode with a custom token threshold:
+        agent = Agent(
+            'openai-responses:gpt-5.2',
+            capabilities=[OpenAICompaction(token_threshold=100_000)],
+        )
+
+        # Stateless mode for ZDR environments or explicit control:
+        agent = Agent(
+            'openai-responses:gpt-5.2',
+            capabilities=[OpenAICompaction(message_count_threshold=20)],
         )
     """
 
     def __init__(
         self,
         *,
+        stateless: bool | None = None,
+        token_threshold: int | None = None,
         message_count_threshold: int | None = None,
         trigger: Callable[[list[ModelMessage]], bool] | None = None,
         instructions: str | None = None,
@@ -3186,21 +3304,96 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
         """Initialize the OpenAI compaction capability.
 
         Args:
-            message_count_threshold: Compact when the message count exceeds this threshold.
-            trigger: Custom callable that decides whether to compact based on the current messages.
-                Takes precedence over `message_count_threshold`.
-            instructions: Custom instructions for the compaction summarization.
+            stateless: Select the compaction mode explicitly. If `None` (the
+                default), the mode is inferred from the other parameters:
+                passing any stateless-only parameter (`message_count_threshold`
+                or `trigger`) implies `stateless=True`; otherwise stateful
+                mode is used.
+            token_threshold: Stateful-mode only. Input token threshold at which
+                OpenAI's server-side compaction is triggered. Corresponds to
+                `compact_threshold` in the `context_management` API field. If
+                `None`, OpenAI picks a server-side default.
+            message_count_threshold: Stateless-mode only. Compact when the
+                message count exceeds this threshold.
+            trigger: Stateless-mode only. Custom callable that decides whether
+                to compact based on the current messages. Takes precedence
+                over `message_count_threshold`.
+            instructions: Deprecated. OpenAI's `/compact` endpoint treats
+                `instructions` as a system/developer message inserted into
+                the compaction model's context, not as a directive for how
+                to summarize the conversation. This does not match
+                [`AnthropicCompaction.instructions`][pydantic_ai.models.anthropic.AnthropicCompaction]
+                semantics, so the field is deprecated and will be removed
+                in a future version.
         """
+        if instructions is not None:
+            warnings.warn(
+                '`OpenAICompaction(instructions=...)` is deprecated and will be removed in a future version. '
+                "OpenAI's `/compact` endpoint treats `instructions` as a system/developer message inserted "
+                "into the compaction model's context, not as a directive for how to summarize the conversation, "
+                'so this field does not match `AnthropicCompaction(instructions=...)` semantics.',
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+        has_stateless_only = message_count_threshold is not None or trigger is not None
+        has_stateful_only = token_threshold is not None
+
+        if stateless is None:
+            stateless = has_stateless_only
+
+        if stateless:
+            if has_stateful_only:
+                raise UserError(
+                    '`token_threshold` is only valid for stateful compaction (`stateless=False`). '
+                    'For stateless `/compact` endpoint compaction, use `message_count_threshold` or `trigger`.'
+                )
+            if not has_stateless_only:
+                raise UserError(
+                    '`stateless=True` requires `message_count_threshold` or `trigger` '
+                    'to determine when to invoke the `/compact` endpoint.'
+                )
+        else:
+            if has_stateless_only:
+                raise UserError(
+                    '`message_count_threshold` and `trigger` are only valid for stateless compaction '
+                    '(`stateless=True`). For stateful server-side compaction, use `token_threshold` '
+                    '(or omit it to use the OpenAI-managed default).'
+                )
+
+        self.stateless = stateless
+        self.token_threshold = token_threshold
         self.message_count_threshold = message_count_threshold
         self.trigger = trigger
         self.instructions = instructions
 
+    def get_model_settings(self) -> Callable[[RunContext[AgentDepsT]], ModelSettings] | None:
+        if self.stateless:
+            return None
+        edit: ContextManagement = {'type': 'compaction'}
+        if self.token_threshold is not None:
+            edit['compact_threshold'] = self.token_threshold
+
+        def resolve(ctx: RunContext[AgentDepsT]) -> ModelSettings:
+            # If the user already set `openai_context_management` on their model settings,
+            # defer to it entirely — we don't want to end up with two conflicting `compaction`
+            # entries, since OpenAI's context_management list only meaningfully supports one.
+            if ctx.model_settings:
+                existing = cast(dict[str, Any], ctx.model_settings).get('openai_context_management')
+                if existing:
+                    return cast(ModelSettings, {})
+            return cast(ModelSettings, {'openai_context_management': [edit]})
+
+        return resolve
+
     def _should_compact(self, messages: list[ModelMessage]) -> bool:
+        if not self.stateless:
+            return False
         if self.trigger is not None:
             return self.trigger(messages)
         if self.message_count_threshold is not None:
             return len(messages) > self.message_count_threshold
-        return False
+        return False  # pragma: no cover
 
     async def before_model_request(
         self,
@@ -3286,6 +3479,16 @@ def _map_logprobs(
         }
         for lp in logprobs
     ]
+
+
+def _map_compaction_item(item: ResponseCompactionItem, system: str) -> CompactionPart:
+    """Convert an OpenAI ``ResponseCompactionItem`` to a ``CompactionPart``."""
+    return CompactionPart(
+        content=None,
+        id=item.id,
+        provider_name=system,
+        provider_details=item.model_dump(),
+    )
 
 
 def _map_usage(
