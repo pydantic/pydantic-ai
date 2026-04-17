@@ -70,7 +70,5 @@ def _has_system_prompt(messages: list[ModelMessage]) -> bool:
 
 
 def _prepend_to_first_request(messages: list[ModelMessage], sys_parts: list[SystemPromptPart]) -> None:
-    for msg in messages:
-        if isinstance(msg, ModelRequest):
-            msg.parts = [*sys_parts, *msg.parts]
-            return
+    first_request = next(msg for msg in messages if isinstance(msg, ModelRequest))
+    first_request.parts = [*sys_parts, *first_request.parts]

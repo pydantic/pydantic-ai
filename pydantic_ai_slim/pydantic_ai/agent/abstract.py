@@ -166,7 +166,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         Dynamic runners produce parts with `dynamic_ref` set so they can continue to be
         re-evaluated by the standard agent graph path on subsequent turns.
         """
-        return []
+        return []  # pragma: no cover — concrete subclasses override this
 
     def output_json_schema(self, output_type: OutputSpec[OutputDataT | RunOutputDataT] | None = None) -> JsonSchema:
         """The output return JSON schema."""
