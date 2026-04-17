@@ -2727,8 +2727,4 @@ class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
         return 'the agent'
 
     def add_tool(self, tool: Tool[AgentDepsT]) -> None:
-        if tool.requires_approval and not self.output_schema.allows_deferred_tools:
-            raise exceptions.UserError(
-                'To use tools that require approval, add `DeferredToolRequests` to the list of output types for this agent.'
-            )
         super().add_tool(tool)

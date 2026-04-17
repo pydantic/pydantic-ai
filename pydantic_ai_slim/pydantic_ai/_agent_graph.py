@@ -1536,17 +1536,42 @@ async def process_tool_calls(  # noqa: C901
                         yield _messages.FunctionToolResultEvent(e.tool_retry)
 
     if not final_result and deferred_calls:
-        if not ctx.deps.output_schema.allows_deferred_tools:
-            raise exceptions.UserError(
-                'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
-            )
-        deferred_tool_requests = _output.DeferredToolRequests(
+        deferred_tool_requests: _output.DeferredToolRequests | None = _output.DeferredToolRequests(
             calls=deferred_calls['external'],
             approvals=deferred_calls['unapproved'],
             metadata=deferred_metadata,
         )
 
-        final_result = result.FinalResult(cast(NodeRunEndT, deferred_tool_requests), None, None)
+        # Let capability handlers resolve deferred calls inline.
+        # Loop to handle cases where re-execution raises new deferrals that the
+        # same handler chain can resolve (e.g. a capability that registers
+        # approval-required tools and also handles them).
+        max_resolution_rounds = 5
+        for _round in range(max_resolution_rounds):
+            assert deferred_tool_requests is not None
+            handler_results = await tool_manager.resolve_deferred_tool_calls(deferred_tool_requests)
+            if handler_results is None:
+                break
+
+            executed, deferred_tool_requests = await tool_manager.execute_deferred_tool_results(
+                deferred_tool_requests, handler_results
+            )
+            for _call_part, result_part in executed:
+                output_parts.append(result_part)
+                yield _messages.FunctionToolResultEvent(result_part)
+
+            if deferred_tool_requests is None:
+                break
+        # else: hit max rounds — treat remaining as unresolved
+
+        if deferred_tool_requests is not None:
+            if not ctx.deps.output_schema.allows_deferred_tools:
+                raise exceptions.UserError(
+                    'A deferred tool call was present, but `DeferredToolRequests` is not among output types. '
+                    'To resolve this, add `DeferredToolRequests` to the list of output types for this agent, '
+                    'or use a `HandleDeferredToolCalls` capability to handle deferred tool calls inline.'
+                )
+            final_result = result.FinalResult(cast(NodeRunEndT, deferred_tool_requests), None, None)
 
     if final_result:
         output_final_result.append(final_result)
