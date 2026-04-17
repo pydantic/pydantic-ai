@@ -152,6 +152,10 @@ agent = Agent(model)
 
 See [Anthropic's Microsoft Foundry documentation](https://platform.claude.com/docs/en/build-with-claude/claude-in-microsoft-foundry) for setup instructions including Entra ID authentication.
 
+## Task Budgets (Beta)
+
+Claude Opus 4.7 task budgets are available through [`AnthropicModelSettings.anthropic_task_budget`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_task_budget]. See [Thinking](../thinking.md#task-budgets-beta) for the request shape, beta semantics, and guidance on when to supply `remaining`.
+
 ## Prompt Caching
 
 Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) to reduce costs by caching parts of your prompts. Pydantic AI supports both automatic and explicit caching approaches:

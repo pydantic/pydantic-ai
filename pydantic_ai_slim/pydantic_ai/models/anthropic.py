@@ -6,7 +6,7 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callab
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import Any, Literal, cast, overload
+from typing import Any, Literal, TypeAlias, cast, overload
 
 from pydantic import TypeAdapter, ValidationError
 from typing_extensions import assert_never
@@ -139,6 +139,7 @@ try:
         BetaThinkingBlockParam,
         BetaThinkingConfigParam,
         BetaThinkingDelta,
+        BetaTokenTaskBudgetParam,
         BetaToolChoiceParam,
         BetaToolParam,
         BetaToolUnionParam,
@@ -170,6 +171,7 @@ except ImportError as _import_error:
 _NON_AUTOMATIC_CACHING_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
 
 _ANTHROPIC_SAMPLING_PARAMS = ('temperature', 'top_p', 'top_k')
+_ANTHROPIC_TASK_BUDGETS_BETA = 'task-budgets-2026-03-13'
 _STR_OBJECT_DICT = TypeAdapter(dict[str, object])
 
 
@@ -201,6 +203,9 @@ AnthropicModelName = LatestAnthropicModelNames
 The installed Anthropic SDK exposes the current literal set and still allows arbitrary string model names.
 See [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/models) for a full list.
 """
+
+AnthropicTaskBudget: TypeAlias = BetaTokenTaskBudgetParam
+"""Anthropic task budget payload for `output_config.task_budget`."""
 
 
 class AnthropicModelSettings(ModelSettings, total=False):
@@ -239,7 +244,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """
 
     anthropic_cache_messages: bool | Literal['5m', '1h']
-    """Deprecated: use `anthropic_cache` instead.
+    """Deprecated: use `anthropic_cache` instead. Will be removed in V2.
 
     Behaves the same as `anthropic_cache`: uses automatic caching where supported,
     falls back to per-block caching on Bedrock and Vertex. Emits a deprecation warning.
@@ -269,6 +274,17 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """The effort level for the model to use when generating a response.
 
     See [the Anthropic docs](https://docs.anthropic.com/en/docs/build-with-claude/effort) for more information.
+    """
+
+    anthropic_task_budget: AnthropicTaskBudget
+    """Task budget configuration for Claude Opus 4.7 beta requests.
+
+    Maps to `output_config.task_budget`. This setting is currently only supported on
+    `claude-opus-4-7`, and Pydantic AI automatically enables Anthropic's required
+    task-budget beta when it is present.
+
+    Omit `remaining` unless you are intentionally carrying a budget across compaction
+    or other rewritten context.
     """
 
     anthropic_container: BetaContainerParams | Literal[False]
@@ -447,7 +463,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         settings: ModelSettings = {**(merge_model_settings(self.settings, model_settings) or {})}
         profile = AnthropicModelProfile.from_profile(self.profile)
         self._validate_thinking_settings(settings, profile)
-        self._drop_unsupported_sampling_settings(settings, profile)
 
         # Determine if thinking is effectively enabled (check both provider-specific and unified fields)
         thinking_enabled = False
@@ -481,7 +496,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
         if prepared_settings is not None:
             filtered_settings: ModelSettings = {**prepared_settings}
-            self._drop_unsupported_sampling_settings(filtered_settings, profile, warn=False)
+            self._drop_unsupported_sampling_settings(filtered_settings, profile)
             prepared_settings = filtered_settings or None
         return prepared_settings, model_request_parameters
 
@@ -656,6 +671,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         if model_settings.get('anthropic_context_management'):
             betas.add('compact-2026-01-12')
+        if self._get_task_budget(model_settings) is not None:
+            betas.add(_ANTHROPIC_TASK_BUDGETS_BETA)
 
         if model_settings.get('anthropic_speed') == 'fast' and anthropic_profile.anthropic_supports_fast_speed:
             betas.add('fast-mode-2026-02-01')
@@ -668,12 +685,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         return betas, extra_headers
 
-    def _effective_speed(self, model_settings: AnthropicModelSettings, anthropic_profile: AnthropicModelProfile):
+    def _effective_speed(
+        self, model_settings: AnthropicModelSettings, anthropic_profile: AnthropicModelProfile
+    ) -> Literal['standard', 'fast']:
         """Speed to pass to the API: only 'fast' when profile supports it, otherwise setting or OMIT."""
         s = model_settings.get('anthropic_speed', OMIT)
         if s == 'fast' and not anthropic_profile.anthropic_supports_fast_speed:
-            return OMIT
-        return s if s in ('standard', 'fast') else OMIT
+            warnings.warn(
+                f"anthropic_speed='fast' is not supported by {self.model_name}. This setting will be ignored.",
+                UserWarning,
+                stacklevel=2,
+            )
+            return OMIT  # type: ignore[return-value]
+        return s if s in ('standard', 'fast') else OMIT  # type: ignore[return-value]
 
     def _get_container(
         self, messages: list[ModelMessage], model_settings: AnthropicModelSettings
@@ -1534,7 +1558,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             }
             effort = effort_map.get(model_request_parameters.thinking, model_request_parameters.thinking)
 
-        if output_format is None and effort is None:
+        task_budget = self._get_task_budget(model_settings)
+
+        if output_format is None and effort is None and task_budget is None:
             return None
 
         config: BetaOutputConfigParam = {}
@@ -1542,7 +1568,41 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             config['format'] = output_format
         if effort is not None:
             config['effort'] = effort  # type: ignore[typeddict-item]
+        if task_budget is not None:
+            config['task_budget'] = task_budget
         return config
+
+    def _get_task_budget(self, model_settings: AnthropicModelSettings) -> AnthropicTaskBudget | None:
+        task_budget = model_settings.get('anthropic_task_budget')
+        if task_budget is None:
+            return None
+
+        profile = AnthropicModelProfile.from_profile(self.profile)
+        if not profile.anthropic_supports_task_budgets:
+            raise UserError(
+                f'Model {self.model_name!r} does not support `anthropic_task_budget`. '
+                'Anthropic task budgets are currently only supported on `claude-opus-4-7`.'
+            )
+
+        if task_budget.get('type') != 'tokens':
+            raise UserError("`anthropic_task_budget['type']` must be `'tokens'`.")
+
+        total = task_budget.get('total')
+        if not isinstance(total, int) or isinstance(total, bool) or total <= 0:
+            raise UserError("`anthropic_task_budget['total']` must be a positive integer.")
+
+        remaining = task_budget.get('remaining')
+        if remaining is not None and (not isinstance(remaining, int) or isinstance(remaining, bool) or remaining <= 0):
+            raise UserError("`anthropic_task_budget['remaining']` must be a positive integer when provided.")
+        if remaining is not None and remaining > total:
+            raise UserError(
+                "`anthropic_task_budget['remaining']` must be less than or equal to `anthropic_task_budget['total']`."
+            )
+
+        validated_task_budget: AnthropicTaskBudget = {'type': 'tokens', 'total': total}
+        if remaining is not None:
+            validated_task_budget['remaining'] = remaining
+        return validated_task_budget
 
 
 class AnthropicCompaction(AbstractCapability[AgentDepsT]):
