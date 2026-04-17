@@ -63,7 +63,7 @@ def test_openrouter_provider_need_api_key(env: TestEnv) -> None:
         UserError,
         match=re.escape(
             'Set the `OPENROUTER_API_KEY` environment variable or pass it via `OpenRouterProvider(api_key=...)`'
-            'to use the OpenRouter provider.'
+            ' to use the OpenRouter provider.'
         ),
     ):
         OpenRouterProvider()
@@ -125,9 +125,19 @@ def test_openrouter_provider_model_profile(mocker: MockerFixture):
     assert openai_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     anthropic_profile = provider.model_profile('anthropic/claude-3.5-sonnet')
-    anthropic_model_profile_mock.assert_called_with('claude-3.5-sonnet')
+    anthropic_model_profile_mock.assert_called_with('claude-3-5-sonnet')
     assert anthropic_profile is not None
     assert anthropic_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+
+    anthropic_profile = provider.model_profile('anthropic/claude-sonnet-4.5')
+    anthropic_model_profile_mock.assert_called_with('claude-sonnet-4-5')
+    assert anthropic_profile is not None
+    assert anthropic_profile.supports_json_schema_output is True
+
+    anthropic_profile = provider.model_profile('anthropic/claude-haiku-4.5:free')
+    anthropic_model_profile_mock.assert_called_with('claude-haiku-4-5')
+    assert anthropic_profile is not None
+    assert anthropic_profile.supports_json_schema_output is True
 
     mistral_profile = provider.model_profile('mistralai/mistral-large-2407')
     mistral_model_profile_mock.assert_called_with('mistral-large-2407')

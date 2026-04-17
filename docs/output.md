@@ -360,9 +360,16 @@ _(This example is complete, it can be run "as is")_
 When the model calls other tools in parallel with an output tool, you can control how tool calls are executed by setting the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy]:
 
 - `'early'` (default): Output tools are executed first. Once a valid final result is found, remaining function and output tool calls are skipped
+- `'graceful'`: Output tools are executed first. Once a valid final result is found, remaining output tool calls are skipped, but function tools are still executed
 - `'exhaustive'`: Output tools are executed first, then all function tools are executed. The first valid output tool result becomes the final output
 
-The `'exhaustive'` strategy is useful when tools have important side effects (like logging, sending notifications, or updating metrics) that should always execute.
+| Strategy | Function tools | Output tools |
+|---|---|---|
+| `'early'` (default) | Skip remaining | Skip remaining |
+| `'graceful'` | Execute all | Skip remaining |
+| `'exhaustive'` | Execute all | Execute all (first valid result wins) |
+
+The `'graceful'` and `'exhaustive'` strategies are useful when function tools have important side effects (like logging, sending notifications, or updating metrics) that should always execute. Use `'graceful'` over `'exhaustive'` when you want to avoid executing additional output tools unnecessarily — for example, when output tools have side effects that should only fire once.
 
 !!! warning "Priority of output and deferred tools in streaming methods"
     The [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] methods will consider the first output that matches the [output type](output.md#structured-output) (which could be text, an [output tool](output.md#tool-output) call, or a [deferred](deferred-tools.md) tool call) to be the final output of the agent run, even when the model generates (additional) tool calls after this "final" output.
@@ -406,7 +413,7 @@ While we would generally suggest starting with tool or native output, in some ca
 
 If the model API supports the "JSON Mode" feature (aka "JSON Object response format") to force the model to output valid JSON, this is enabled, but it's still up to the model to abide by the schema. Pydantic AI will validate the returned structured data and tell the model to try again if validation fails, but if the model is not intelligent enough this may not be sufficient.
 
-To use this mode, you can wrap the output type(s) in the [`PromptedOutput`][pydantic_ai.output.PromptedOutput] marker class that also lets you specify a `name` and `description` if the name and docstring of the type or function are not sufficient. Additionally, it supports an `template` argument lets you specify a custom instructions template to be used instead of the [default][pydantic_ai.profiles.ModelProfile.prompted_output_template].
+To use this mode, you can wrap the output type(s) in the [`PromptedOutput`][pydantic_ai.output.PromptedOutput] marker class that also lets you specify a `name` and `description` if the name and docstring of the type or function are not sufficient. Additionally, `template` lets you specify a custom instructions template to be used instead of the [default][pydantic_ai.profiles.ModelProfile.prompted_output_template], or `template=False` to disable the schema prompt entirely.
 
 ```python {title="prompted_output.py" requires="tool_output.py"}
 from pydantic import BaseModel
@@ -667,6 +674,44 @@ print(result.response.text)
 Once upon a time, in a hidden underwater cave, lived a curious axolotl named Pip who loved to explore. One day, while venturing further than usual, Pip discovered a shimmering, ancient coin that granted wishes!
 """
 ```
+
+## Optional output (allowing `None`) {#optional-output}
+
+Some agents perform their work entirely through tool calls and don't need to produce a final output — for example, an agent that updates a record via a tool and then stops. Certain models (notably [Anthropic](models/anthropic.md)) will return an empty response in this case, which by default causes Pydantic AI to retry until the model produces content.
+
+To instead treat an empty response as a successful run, include `None` in the `output_type`:
+
+```python {title="optional_output.py"}
+from pydantic_ai import Agent
+
+agent = Agent('anthropic:claude-opus-4-6', output_type=str | None)
+
+
+@agent.tool_plain
+def mark_task_done(task_id: int) -> str:
+    """Mark the task as done."""
+    return f'Task {task_id} marked done.'
+
+
+result = agent.run_sync('Mark task 1 as done, then stop without saying anything.')
+print(result.output)
+#> None
+```
+
+When the model returns an empty response and `None` is an allowed output type, the agent will return `None` instead of retrying. [Output validator functions](#output-validator-functions) still run with `None` as the argument, so you can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject it if needed.
+
+`output_type=str | None` is the canonical case: it's handled as regular text output, and the **only** way the model signals `None` is by returning an empty response — there's no output tool or structured schema involved. This mirrors how plain `str` is already treated specially as free-form text output rather than a structured tool call.
+
+`None` is also supported in the other output modes, with an extra structured commit path in addition to (or in place of) the empty-response fallback:
+
+- **Bare unions including `None` that use tool mode** — e.g. `output_type=int | None`, `output_type=[int, float, None]`, or `output_type=[ToolOutput(Foo), None]`: a dedicated `final_result_NoneType` output tool is exposed alongside the other output tools, so the model can commit to `None` through a tool call. An empty model response is still also treated as `None`, as with `str | None`.
+- **Explicit output mode markers** — e.g. `output_type=ToolOutput(int | None)`, `output_type=NativeOutput([int, None])`, or `output_type=PromptedOutput([int, None])`: `None` is included as a branch of the structured schema the wrapper generates. The model commits by calling the tool with `null` (for `ToolOutput`) or by selecting the `NoneType` branch of the discriminated schema (for `NativeOutput`/`PromptedOutput`). An empty response is **not** accepted — once you've opted into an explicit structured output mode, the model is expected to commit through the schema.
+
+!!! note
+    `output_type=None` on its own is not valid — at least one other output type must be provided alongside `None`.
+
+!!! note
+    When using [`agent.run_stream()`][pydantic_ai.Agent.run_stream] with an optional output type, an empty model response has no intermediate values to yield, so [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] produces an empty iterator in this case. Use [`get_output()`][pydantic_ai.result.StreamedRunResult.get_output] to retrieve the final `None` value instead.
 
 ## Streamed Results
 
