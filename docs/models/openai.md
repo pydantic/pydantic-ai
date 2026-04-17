@@ -819,3 +819,37 @@ model = OpenAIChatModel(
 agent = Agent(model)
 ...
 ```
+
+### Doubleword
+
+To use [Doubleword](https://doubleword.ai), create an API key from the [Doubleword dashboard](https://doubleword.ai).
+
+You can set the `DOUBLEWORD_API_KEY` environment variable and use `OpenAIProvider` with the Doubleword base URL:
+
+```python
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+model = OpenAIChatModel(
+    'Qwen/Qwen3.5-397B-A17B-FP8',
+    provider=OpenAIProvider(
+        base_url='https://api.doubleword.ai/v1',
+        api_key=os.environ['DOUBLEWORD_API_KEY'],
+    ),
+)
+agent = Agent(model)
+...
+```
+
+For a complete list of available models, see the [Doubleword models documentation](https://docs.doubleword.ai/inference-api/models).
+
+#### Batch Pricing
+
+Doubleword offers batch pricing with up to 90% savings on inference costs. You can use the [`autobatcher`](https://pypi.org/project/autobatcher/) package to automatically batch requests:
+
+```bash
+pip install autobatcher
+```
