@@ -7,13 +7,14 @@ already uses [Ragas](https://github.com/explodinggradients/ragas),
 upstream metric and run it inside any Pydantic Evals dataset. This page shows worked examples for
 the common ones.
 
-!!! tip "Prefer a native evaluator where you can"
-    If a rubric-based [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] or a
-    [custom evaluator](custom.md) covers your use case, that's usually simpler — zero extra
-    dependencies and the scores slot into reports cleanly. Reach for the integrations below
-    when you specifically want the *exact* upstream implementation (for reproducibility with
-    published benchmarks, parity with an existing evaluation suite, or features we don't
-    expose natively). You can mix external and native evaluators in one dataset.
+!!! tip "Prefer the native pack where you can"
+    For most use cases the [curated quality metrics](standard-quality-metrics.md) pack is enough —
+    it has zero extra dependencies, reuses the same `LLMJudge` infrastructure you already
+    configure for other evaluators, and produces scores/assertions that slot into reports
+    cleanly. Reach for the integrations below when you specifically want the *exact* upstream
+    implementation (for reproducibility with published benchmarks, parity with an existing
+    evaluation suite, or features we don't expose natively). You can freely mix both in one
+    dataset.
 
 ## Pattern
 

@@ -10,6 +10,17 @@ from .common import (
 )
 from .context import EvaluatorContext
 from .evaluator import EvaluationReason, EvaluationResult, Evaluator, EvaluatorFailure, EvaluatorOutput, EvaluatorSpec
+from .quality import (
+    AnswerRelevance,
+    ContextPrecision,
+    ContextRecall,
+    Faithfulness,
+    GembaScore,
+    GEval,
+    Hallucination,
+    HasQuestion,
+    QuestionWithContext,
+)
 from .report_common import (
     ConfusionMatrixEvaluator,
     KolmogorovSmirnovEvaluator,
@@ -37,6 +48,16 @@ __all__ = (
     'EvaluatorOutput',
     'EvaluatorSpec',
     'EvaluationResult',
+    # quality (curated LLM-backed metrics)
+    'AnswerRelevance',
+    'ContextPrecision',
+    'ContextRecall',
+    'Faithfulness',
+    'GEval',
+    'GembaScore',
+    'Hallucination',
+    'HasQuestion',
+    'QuestionWithContext',
     # report evaluators
     'ReportEvaluator',
     'ReportEvaluatorContext',
