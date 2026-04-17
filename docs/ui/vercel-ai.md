@@ -155,8 +155,8 @@ The rest of this section only matters if you use `system_prompt`. If you only us
 
 For `system_prompt`, you choose who owns it with the `manage_system_prompt` parameter on [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter]:
 
-- `'server'` (default): the agent's configured `system_prompt` is authoritative. Any system message sent by the frontend is stripped with a warning (a malicious client could otherwise inject arbitrary instructions via crafted API requests), and the agent's own system prompt is injected on every request.
-- `'client'`: the frontend owns the system prompt. Frontend system messages are preserved as-is, and the agent's configured `system_prompt` is never injected — the caller is fully responsible for sending it on every turn if desired.
+- `'server'` (default): the agent's configured `system_prompt` is authoritative. Any system message sent by the frontend is stripped with a warning (a malicious client could otherwise inject arbitrary instructions via crafted API requests), and the agent's own system prompt is injected at the head of the first request.
+- `'client'`: frontend system messages are preserved as-is. If the frontend sends none, the agent's configured `system_prompt` is used as a fallback (via the general [auto-injection](../message-history.md#using-messages-as-input-for-further-agent-runs) that applies to any agent run with a history missing sys_parts). To have the frontend strictly own the system prompt, configure the agent without a `system_prompt`.
 
 ```python {title="vercel_ai_client_managed_system_prompt.py"}
 from fastapi import FastAPI

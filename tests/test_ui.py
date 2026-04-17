@@ -10,7 +10,6 @@ import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
-from pydantic_ai._agent_graph import UserPromptNode
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.messages import (
@@ -783,30 +782,22 @@ def test_dummy_adapter_dump_messages():
     assert result == messages
 
 
-async def test_reinject_system_prompts_with_user_prompt_and_history():
-    """`reinject_system_prompts()` reinjects the agent's system prompt at position 0 of the first `ModelRequest` in history.
-
-    The UI adapter itself always calls the agent with `user_prompt=None` (everything comes in via `message_history`),
-    but the context manager's contract — "injected on every request" — must hold for any caller, so the setting is
-    never silently ignored by the path that builds a new `ModelRequest` from a fresh `user_prompt`. System parts land
-    in the first historical `ModelRequest` (not the latest turn) to preserve the invariant that sys_parts only ever
-    live at the head of the first request in a conversation.
+async def test_system_prompt_auto_injected_into_history_without_sys_parts():
+    """When `message_history` is passed to an agent with a configured `system_prompt` but has no
+    `SystemPromptPart`s, the agent's sys_parts are auto-injected at the head of the first
+    `ModelRequest`. This covers conversations reconstructed from persistence / UI frontends that
+    dropped the original sys_parts, so the agent always behaves as configured.
     """
     agent = Agent(model=TestModel(), system_prompt='You are a helpful assistant')
 
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='First message')]),
         ModelResponse(parts=[TextPart(content='First response')]),
-        ModelRequest(parts=[UserPromptPart(content='Second message')]),
-        ModelResponse(parts=[TextPart(content='Second response')]),
     ]
 
-    with UserPromptNode.reinject_system_prompts():
-        result = await agent.run('Third message', message_history=history)
+    result = await agent.run('Second message', message_history=history)
 
-    all_messages = result.all_messages()
-
-    first_request = all_messages[0]
+    first_request = result.all_messages()[0]
     assert isinstance(first_request, ModelRequest)
     assert first_request.parts == snapshot(
         [
@@ -815,60 +806,36 @@ async def test_reinject_system_prompts_with_user_prompt_and_history():
         ]
     )
 
-    new_request = all_messages[4]
-    assert isinstance(new_request, ModelRequest)
-    assert new_request.parts == snapshot([UserPromptPart(content='Third message', timestamp=IsDatetime())])
 
-
-async def test_reinject_system_prompts_does_not_leak_to_nested_agent_runs():
-    """The reinject flag must not propagate into sub-agent runs spawned from tools.
-
-    ContextVars propagate through `await` chains and `asyncio.create_task` copies them, so without
-    defensive handling, a sub-agent called from a tool during a UIAdapter-driven run would see the
-    flag and reinject its own system prompt into its own history — duplicating any sys_parts already
-    present. Resetting the var inside `UserPromptNode.run` after reading it keeps the behavior scoped
-    to the run the UIAdapter actually wrapped.
+async def test_system_prompt_not_re_injected_when_already_present_in_history():
+    """If any `SystemPromptPart` is already in the history (e.g. from a prior agent), it is preserved
+    and the agent's configured `system_prompt` is not added alongside — multi-agent handoff keeps
+    the original system prompt authoritative.
     """
-    outer = Agent(model=TestModel(), system_prompt='Outer assistant')
-    inner = Agent(model=TestModel(), system_prompt='Inner assistant')
+    agent = Agent(model=TestModel(), system_prompt='Second agent')
 
-    inner_history: list[ModelMessage] = [
+    history: list[ModelMessage] = [
         ModelRequest(
             parts=[
-                SystemPromptPart(content='Inner assistant'),
-                UserPromptPart(content='Prior inner prompt'),
+                SystemPromptPart(content='First agent'),
+                UserPromptPart(content='Hi'),
             ]
         ),
-        ModelResponse(parts=[TextPart(content='Prior inner response')]),
+        ModelResponse(parts=[TextPart(content='Hello')]),
     ]
 
-    inner_results: list[AgentRunResult[str]] = []
+    result = await agent.run('Follow up', message_history=history)
 
-    @outer.tool_plain
-    async def call_inner() -> str:
-        result = await inner.run('New inner prompt', message_history=inner_history)
-        inner_results.append(result)
-        return result.output
-
-    with UserPromptNode.reinject_system_prompts():
-        await outer.run('hello')
-
-    assert inner_results, 'Expected the outer agent to call the inner tool'
-    inner_messages = inner_results[0].all_messages()
-    first_inner_request = inner_messages[0]
-    assert isinstance(first_inner_request, ModelRequest)
-    sys_parts = [p for p in first_inner_request.parts if isinstance(p, SystemPromptPart)]
-    assert len(sys_parts) == 1
-    assert sys_parts[0].content == 'Inner assistant'
+    first_request = result.all_messages()[0]
+    assert isinstance(first_request, ModelRequest)
+    sys_parts = [p for p in first_request.parts if isinstance(p, SystemPromptPart)]
+    assert [p.content for p in sys_parts] == ['First agent']
 
 
-async def test_reinject_system_prompts_with_pending_tool_calls_in_history():
-    """Reinject still injects sys_parts at position 0 when history ends with a pending tool call.
-
-    `UserPromptNode.run` early-returns `CallToolsNode` to process pending tool calls before any
-    new request is built. Without special handling, that early return would skip the reinject
-    block, and a server-mode conversation resumed from a tool-call state would send the stripped
-    history back to the model without the agent's system prompt.
+async def test_system_prompt_auto_injected_with_pending_tool_calls_in_history():
+    """History ending with pending tool calls early-returns `CallToolsNode` before the usual
+    request-building path — auto-inject must still apply so the subsequent model request (with
+    tool results) includes the agent's system prompt.
     """
 
     def respond(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
@@ -885,8 +852,7 @@ async def test_reinject_system_prompts_with_pending_tool_calls_in_history():
         ModelResponse(parts=[ToolCallPart(tool_name='do_something', args={'x': 1}, tool_call_id='call_1')]),
     ]
 
-    with UserPromptNode.reinject_system_prompts():
-        result = await agent.run(message_history=history)
+    result = await agent.run(message_history=history)
 
     first_request = result.all_messages()[0]
     assert isinstance(first_request, ModelRequest)

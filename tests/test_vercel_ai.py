@@ -7052,8 +7052,12 @@ async def test_client_mode_keeps_frontend_system_prompt_no_agent_prompt():
     )
 
 
-async def test_client_mode_does_not_reinject_agent_system_prompt():
-    """In `manage_system_prompt='client'`, the agent's configured prompt is not injected when the frontend sends none."""
+async def test_client_mode_falls_back_to_agent_system_prompt():
+    """In `manage_system_prompt='client'`, if the frontend sends no system message, the agent's
+    configured `system_prompt` is used as a fallback (the same auto-injection that applies to any
+    `agent.run` with a history missing sys_parts). Frontends that want strict client ownership
+    should configure their agents without a `system_prompt`.
+    """
     agent = Agent(model=TestModel(), system_prompt='Agent system prompt')
 
     request = SubmitMessage(
@@ -7077,6 +7081,7 @@ async def test_client_mode_does_not_reinject_agent_system_prompt():
         [
             ModelRequest(
                 parts=[
+                    SystemPromptPart(content='Agent system prompt', timestamp=IsDatetime()),
                     UserPromptPart(content='Hello', timestamp=IsDatetime()),
                 ],
                 timestamp=IsDatetime(),
@@ -7084,7 +7089,7 @@ async def test_client_mode_does_not_reinject_agent_system_prompt():
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
-                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                usage=RequestUsage(input_tokens=54, output_tokens=4),
                 model_name='test',
                 timestamp=IsDatetime(),
                 provider_name='test',

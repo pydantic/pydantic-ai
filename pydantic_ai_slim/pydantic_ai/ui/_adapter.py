@@ -3,7 +3,6 @@ from __future__ import annotations
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Sequence
-from contextlib import nullcontext
 from dataclasses import KW_ONLY, Field, dataclass, replace
 from functools import cached_property
 from http import HTTPStatus
@@ -22,7 +21,6 @@ from pydantic import BaseModel, ValidationError
 from typing_extensions import Self, TypeVar
 
 from pydantic_ai import DeferredToolRequests, DeferredToolResults, _instructions
-from pydantic_ai._agent_graph import UserPromptNode
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.agent.abstract import AgentMetadata
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
@@ -326,24 +324,22 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 stacklevel=2,
             )
 
-        ctx = UserPromptNode.reinject_system_prompts() if self.manage_system_prompt == 'server' else nullcontext()
-        with ctx:
-            async for event in self.agent.run_stream_events(
-                output_type=output_type,
-                message_history=message_history,
-                deferred_tool_results=deferred_tool_results,
-                model=model,
-                deps=deps,
-                model_settings=model_settings,
-                instructions=instructions,
-                usage_limits=usage_limits,
-                usage=usage,
-                metadata=metadata,
-                infer_name=infer_name,
-                toolsets=toolsets,
-                builtin_tools=builtin_tools,
-            ):
-                yield event
+        async for event in self.agent.run_stream_events(
+            output_type=output_type,
+            message_history=message_history,
+            deferred_tool_results=deferred_tool_results,
+            model=model,
+            deps=deps,
+            model_settings=model_settings,
+            instructions=instructions,
+            usage_limits=usage_limits,
+            usage=usage,
+            metadata=metadata,
+            infer_name=infer_name,
+            toolsets=toolsets,
+            builtin_tools=builtin_tools,
+        ):
+            yield event
 
     def run_stream(
         self,

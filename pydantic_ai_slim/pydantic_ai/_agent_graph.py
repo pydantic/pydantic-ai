@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import field, replace
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
@@ -169,24 +169,8 @@ def is_agent_node(
 
 
 @dataclasses.dataclass
-class _ReinjectSystemPromptsState:
-    """Mutable state tracking whether system prompts should be reinjected.
-
-    Stored in a `ContextVar` by reference so that consuming the flag (mutating `active`
-    to `False`) is visible across all task-local context copies that share the reference,
-    preventing nested agent runs (e.g. from tools) from inheriting an already-consumed flag.
-    """
-
-    active: bool
-
-
-@dataclasses.dataclass
 class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that handles the user prompt and instructions."""
-
-    _reinject_system_prompts_var: ClassVar[ContextVar[_ReinjectSystemPromptsState | None]] = ContextVar(
-        '_reinject_system_prompts', default=None
-    )
 
     user_prompt: str | Sequence[_messages.UserContent] | None
 
@@ -206,24 +190,6 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[DepsT]] = dataclasses.field(
         default_factory=dict[str, _system_prompt.SystemPromptRunner[DepsT]]
     )
-
-    @staticmethod
-    @contextmanager
-    def reinject_system_prompts() -> Iterator[None]:
-        """Force the agent's configured system prompt to be injected on the next agent run.
-
-        Used by [`UIAdapter`][pydantic_ai.ui.UIAdapter] when `manage_system_prompt='server'`
-        so the server-owned prompt is always applied, regardless of what the frontend sent.
-
-        The flag is consumed on first use so nested agent runs (e.g. from tools) inside
-        the same context don't inherit it and reinject their own system prompt on top of
-        their own history.
-        """
-        token = UserPromptNode._reinject_system_prompts_var.set(_ReinjectSystemPromptsState(active=True))
-        try:
-            yield
-        finally:
-            UserPromptNode._reinject_system_prompts_var.reset(token)
 
     async def run(  # noqa: C901
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -287,18 +253,10 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                         max_retries=ctx.deps.max_result_retries,
                     )
                     ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
-                    # Apply reinject (if pending) into the first historical ModelRequest before
-                    # the potential early returns below — otherwise a server-mode conversation
-                    # resuming from pending tool calls would send the stripped history back to
-                    # the model without the agent's system prompt.
-                    early_state = UserPromptNode._reinject_system_prompts_var.get()
-                    if early_state is not None and early_state.active:
-                        early_state.active = False
-                        early_sys_parts = await self._sys_parts(run_context)
-                        if early_sys_parts:
-                            first_mr = next((m for m in messages if isinstance(m, _messages.ModelRequest)), None)
-                            if first_mr is not None:
-                                first_mr.parts = [*early_sys_parts, *first_mr.parts]
+                    # Ensure the agent's system prompts are present before any early return below,
+                    # otherwise a conversation resuming from pending tool calls would send a
+                    # history without sys_parts back to the model on the subsequent request.
+                    await self._ensure_system_prompt_present(messages, run_context)
                     if last_message.tool_calls:
                         # Pending tool calls must be processed before any new ModelRequest, regardless
                         # of instructions.  Instructions will be applied by ModelRequestNode.run() on
@@ -327,24 +285,11 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 parts.append(_messages.UserPromptPart(self.user_prompt))
             next_message = _messages.ModelRequest(parts=parts)
 
-        reinject = False
-        reinject_state = UserPromptNode._reinject_system_prompts_var.get()
-        if reinject_state is not None and reinject_state.active:
-            reinject = True
-            # Mark the shared state consumed so nested agent runs (e.g. from tools) don't
-            # inherit the flag and reinject their own system prompt into their own history.
-            # Mutating the referenced object (rather than `set()`ing a new value) makes the
-            # change visible across all task-local context copies that share the reference.
-            reinject_state.active = False
-
-        if (not messages and not is_resuming_without_prompt) or reinject:
-            sys_parts = await self._sys_parts(run_context)
-            if sys_parts:
-                # Keep system parts at the head of the first request in the conversation
-                # (invariant established when agents generate their own history), rather
-                # than scattering them at the head of each new turn.
-                target = next((m for m in messages if isinstance(m, _messages.ModelRequest)), next_message)
-                target.parts = [*sys_parts, *target.parts]
+        # Ensure the agent's system prompts are at the head of the first request in the
+        # conversation. Does nothing if a `SystemPromptPart` is already present anywhere
+        # (e.g. preserved from a prior run, or handed off from another agent), so that
+        # multi-agent histories and user-provided sys_parts remain authoritative.
+        await self._ensure_system_prompt_present([*messages, next_message], run_context)
 
         return ModelRequestNode[DepsT, NodeRunEndT](
             request=next_message, is_resuming_without_prompt=is_resuming_without_prompt
@@ -435,6 +380,31 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                     # Replace message parts with reevaluated ones to prevent mutating parts list
                     if reevaluated_message_parts != msg.parts:
                         msg.parts = reevaluated_message_parts
+
+    async def _ensure_system_prompt_present(
+        self,
+        messages: Sequence[_messages.ModelMessage | None],
+        run_context: RunContext[DepsT],
+    ) -> None:
+        """Inject the agent's configured system prompts at the head of the first `ModelRequest`, if missing.
+
+        If any `SystemPromptPart` already exists in any of the provided messages, nothing is done —
+        a user-provided or other-agent system prompt is always preserved. This is what establishes
+        the invariant that sys_parts live at the head of the first `ModelRequest` in a conversation.
+        """
+        first_request: _messages.ModelRequest | None = None
+        for msg in messages:
+            if not isinstance(msg, _messages.ModelRequest):
+                continue
+            if any(isinstance(p, _messages.SystemPromptPart) for p in msg.parts):
+                return
+            if first_request is None:
+                first_request = msg
+        if first_request is None:
+            return
+        sys_parts = await self._sys_parts(run_context)
+        if sys_parts:
+            first_request.parts = [*sys_parts, *first_request.parts]
 
     async def _sys_parts(self, run_context: RunContext[DepsT]) -> list[_messages.ModelRequestPart]:
         """Build the initial messages for the conversation."""
