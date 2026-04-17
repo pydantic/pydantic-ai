@@ -202,6 +202,7 @@ Learn more:
 - [Evaluators Overview](evals/evaluators/overview.md) - When to use different types
 - [Built-in Evaluators](evals/evaluators/built-in.md) - Complete reference
 - [LLM Judge](evals/evaluators/llm-judge.md) - Using LLMs as evaluators
+- [Conversation Evaluators](evals/evaluators/conversation.md) - Judge multi-turn agent runs end-to-end
 - [Custom Evaluators](evals/evaluators/custom.md) - Write your own logic
 - [Span-Based Evaluation](evals/evaluators/span-based.md) - Analyze execution traces
 

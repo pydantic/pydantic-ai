@@ -17,6 +17,17 @@ Use deterministic evaluators when you can define exact rules:
 | [`MaxDuration`][pydantic_evals.evaluators.MaxDuration] | Performance threshold | SLA compliance |
 | [`HasMatchingSpan`][pydantic_evals.evaluators.HasMatchingSpan] | Behavior verification | Tool calls, code paths |
 
+### Conversation-Level LLM Judges
+
+For multi-turn agent runs, evaluators under [Conversation Evaluators](conversation.md) judge the whole conversation in a single judge call:
+
+| Evaluator | Use Case |
+|-----------|----------|
+| [`ConversationGoalAchievement`][pydantic_evals.evaluators.ConversationGoalAchievement] | Did the conversation achieve the stated goal? |
+| [`RoleAdherence`][pydantic_evals.evaluators.RoleAdherence] | Did every assistant turn stay within its assigned role? |
+
+These share the extraction layer ([`ConversationTurn`][pydantic_evals.evaluators.ConversationTurn], [`extract_conversation_turns`][pydantic_evals.evaluators.extract_conversation_turns], [`format_transcript`][pydantic_evals.evaluators.format_transcript]), which you can reuse to build your own conversation evaluators.
+
 **Advantages:**
 
 - Fast execution (microseconds to milliseconds)

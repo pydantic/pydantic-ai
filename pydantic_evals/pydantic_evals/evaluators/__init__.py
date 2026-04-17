@@ -9,7 +9,9 @@ from .common import (
     OutputConfig,
 )
 from .context import EvaluatorContext
+from .conversation import ConversationGoalAchievement, RoleAdherence
 from .evaluator import EvaluationReason, EvaluationResult, Evaluator, EvaluatorFailure, EvaluatorOutput, EvaluatorSpec
+from .extraction import ConversationTurn, extract_conversation_turns, format_transcript
 from .report_common import (
     ConfusionMatrixEvaluator,
     KolmogorovSmirnovEvaluator,
@@ -28,6 +30,13 @@ __all__ = (
     'LLMJudge',
     'HasMatchingSpan',
     'OutputConfig',
+    # conversation
+    'ConversationGoalAchievement',
+    'RoleAdherence',
+    # extraction (reusable primitives for building custom conversation evaluators)
+    'ConversationTurn',
+    'extract_conversation_turns',
+    'format_transcript',
     # context
     'EvaluatorContext',
     # evaluator
