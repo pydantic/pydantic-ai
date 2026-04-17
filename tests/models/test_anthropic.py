@@ -1253,6 +1253,28 @@ async def test_anthropic_task_budget_adds_output_config_and_beta(allow_model_req
     assert 'task-budgets-2026-03-13' in completion_kwargs['betas']
 
 
+async def test_anthropic_task_budget_remaining_zero(allow_model_requests: None):
+    c = completion_message(
+        [BetaTextBlock(text='Hello!', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+
+    model = AnthropicModel(
+        'claude-opus-4-7',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        settings=AnthropicModelSettings(
+            anthropic_task_budget={'type': 'tokens', 'total': 2_000, 'remaining': 0},
+        ),
+    )
+    agent = Agent(model)
+
+    await agent.run('Hello')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['output_config'] == {'task_budget': {'type': 'tokens', 'total': 2_000, 'remaining': 0}}
+
+
 async def test_anthropic_task_budget_merges_with_other_beta_sources(allow_model_requests: None):
     c = completion_message(
         [BetaTextBlock(text='Hello!', type='text')],
@@ -1329,8 +1351,8 @@ async def test_anthropic_task_budget_rejects_invalid_type(allow_model_requests: 
             id='invalid-total',
         ),
         pytest.param(
-            {'type': 'tokens', 'total': 2_000, 'remaining': 0},
-            r"`anthropic_task_budget\['remaining'\]` must be a positive integer when provided\.",
+            {'type': 'tokens', 'total': 2_000, 'remaining': -1},
+            r"`anthropic_task_budget\['remaining'\]` must be a non-negative integer when provided\.",
             id='invalid-remaining',
         ),
         pytest.param(

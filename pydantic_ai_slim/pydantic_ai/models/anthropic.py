@@ -513,9 +513,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
 
     @staticmethod
-    def _drop_unsupported_sampling_settings(
-        model_settings: ModelSettings, profile: AnthropicModelProfile, *, warn: bool = True
-    ) -> None:
+    def _drop_unsupported_sampling_settings(model_settings: ModelSettings, profile: AnthropicModelProfile) -> None:
         if not profile.anthropic_disallows_sampling_settings:
             return
 
@@ -533,12 +531,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             for setting in _ANTHROPIC_SAMPLING_PARAMS
             if setting in dropped_from_settings or setting in dropped_from_extra_body
         ]:
-            if warn:
-                warnings.warn(
-                    f'Sampling parameters {dropped} are not supported by Claude Opus 4.7. These settings will be ignored.',
-                    UserWarning,
-                    stacklevel=2,
-                )
+            warnings.warn(
+                f'Sampling parameters {dropped} are not supported by Claude Opus 4.7. These settings will be ignored.',
+                UserWarning,
+                stacklevel=2,
+            )
 
         for setting in _ANTHROPIC_SAMPLING_PARAMS:
             model_settings.pop(setting, None)
@@ -1592,8 +1589,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             raise UserError("`anthropic_task_budget['total']` must be a positive integer.")
 
         remaining = task_budget.get('remaining')
-        if remaining is not None and (not isinstance(remaining, int) or isinstance(remaining, bool) or remaining <= 0):
-            raise UserError("`anthropic_task_budget['remaining']` must be a positive integer when provided.")
+        if remaining is not None and (not isinstance(remaining, int) or isinstance(remaining, bool) or remaining < 0):
+            raise UserError("`anthropic_task_budget['remaining']` must be a non-negative integer when provided.")
         if remaining is not None and remaining > total:
             raise UserError(
                 "`anthropic_task_budget['remaining']` must be less than or equal to `anthropic_task_budget['total']`."
