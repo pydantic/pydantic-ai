@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import functools
-from collections.abc import AsyncIterator, Callable, Iterator, Mapping
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -11,10 +11,9 @@ from pydantic import ConfigDict, with_config
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
-from pydantic_ai import ModelMessage, ModelResponse, models
+from pydantic_ai import ModelMessage, ModelResponse, messages as _messages, models
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.agent import EventStreamHandler
-from pydantic_ai.agent.abstract import consume_event_stream_handler
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, infer_model_profile, parse_model_id
 from pydantic_ai.models.wrapper import CompletedStreamedResponse, WrapperModel
@@ -111,7 +110,11 @@ class TemporalModel(WrapperModel):
                 params.model_request_parameters,
                 run_context,
             ) as streamed_response:
-                await consume_event_stream_handler(self.event_stream_handler, run_context, streamed_response)
+                root_capability = self._agent.root_capability if self._agent is not None else None
+                stream_for_handler: AsyncIterable[_messages.AgentStreamEvent] = streamed_response
+                if root_capability is not None and root_capability.has_wrap_run_event_stream:
+                    stream_for_handler = root_capability.wrap_run_event_stream(run_context, stream=streamed_response)
+                await self.event_stream_handler(run_context, stream_for_handler)
 
                 async for _ in streamed_response:
                     pass

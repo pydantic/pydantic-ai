@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from prefect import task
 from prefect.context import FlowRunContext
@@ -10,15 +10,18 @@ from prefect.context import FlowRunContext
 from pydantic_ai import (
     ModelMessage,
     ModelResponse,
+    messages as _messages,
 )
 from pydantic_ai.agent import EventStreamHandler
-from pydantic_ai.agent.abstract import consume_event_stream_handler
 from pydantic_ai.models import ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.wrapper import CompletedStreamedResponse, WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 
 from ._types import TaskConfig, default_task_config
+
+if TYPE_CHECKING:
+    from pydantic_ai.agent.abstract import AbstractAgent
 
 
 class PrefectModel(WrapperModel):
@@ -30,10 +33,12 @@ class PrefectModel(WrapperModel):
         *,
         task_config: TaskConfig,
         event_stream_handler: EventStreamHandler[Any] | None = None,
+        agent: AbstractAgent[Any, Any] | None = None,
     ):
         super().__init__(model)
         self.task_config = default_task_config | (task_config or {})
         self.event_stream_handler = event_stream_handler
+        self._agent = agent
 
         @task
         async def wrapped_request(
@@ -61,7 +66,12 @@ class PrefectModel(WrapperModel):
                         'A Prefect model cannot be used with `pydantic_ai.direct.model_request_stream()` as it requires a `run_context`. '
                         'Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
                     )
-                    await consume_event_stream_handler(self.event_stream_handler, ctx, streamed_response)
+                    stream_for_handler: AsyncIterable[_messages.AgentStreamEvent] = streamed_response
+                    if self._agent is not None and self._agent.root_capability.has_wrap_run_event_stream:
+                        stream_for_handler = self._agent.root_capability.wrap_run_event_stream(
+                            ctx, stream=streamed_response
+                        )
+                    await self.event_stream_handler(ctx, stream_for_handler)
 
                 # Consume the entire stream
                 async for _ in streamed_response:

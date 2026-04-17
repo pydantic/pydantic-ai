@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import AsyncIterable, Awaitable, Callable
+from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
@@ -13,7 +13,10 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from .abstract import AbstractCapability
 
 if TYPE_CHECKING:
-    from pydantic_ai.agent.abstract import EventStreamHandler as EventStreamHandlerFunc
+    from pydantic_ai.agent.abstract import (
+        EventStreamHandler as EventStreamHandlerFunc,
+        EventStreamProcessor as EventStreamProcessorFunc,
+    )
 
 
 @dataclass
@@ -22,14 +25,15 @@ class HandleEventStream(AbstractCapability[AgentDepsT]):
 
     The handler receives the stream of [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s
     emitted during model streaming and tool execution for each `ModelRequestNode` and
-    `CallToolsNode`. The handler can be either of the two forms supported by
-    [`EventStreamHandler`][pydantic_ai.agent.EventStreamHandler]:
+    `CallToolsNode`. Two forms are supported:
 
-    - **Observer**: an `async def` returning `None`. Events are forwarded to the handler
-      while also being passed through unchanged to the rest of the capability chain, so
-      multiple observers (and the top-level `event_stream_handler` argument) can all see
-      the same stream without interfering.
-    - **Transformer**: an async generator yielding [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s.
+    - An [`EventStreamHandler`][pydantic_ai.agent.EventStreamHandler] — an `async def`
+      returning `None`. Events are forwarded to the handler while also being passed
+      through unchanged to the rest of the capability chain, so multiple handlers (and
+      the top-level `event_stream_handler` argument) can all see the same stream without
+      interfering.
+    - An [`EventStreamProcessor`][pydantic_ai.agent.EventStreamProcessor] — an async
+      generator yielding [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s.
       The events it yields replace the inner stream for downstream wrappers and consumers,
       so it can modify, drop, or add events.
 
@@ -38,7 +42,7 @@ class HandleEventStream(AbstractCapability[AgentDepsT]):
     argument.
     """
 
-    handler: EventStreamHandlerFunc[AgentDepsT]
+    handler: EventStreamHandlerFunc[AgentDepsT] | EventStreamProcessorFunc[AgentDepsT]
 
     async def wrap_run_event_stream(
         self,
@@ -51,10 +55,7 @@ class HandleEventStream(AbstractCapability[AgentDepsT]):
                 yield event
             return
 
-        observer = cast(
-            'Callable[[RunContext[AgentDepsT], AsyncIterable[AgentStreamEvent]], Awaitable[None]]',
-            self.handler,
-        )
+        observer = cast('EventStreamHandlerFunc[AgentDepsT]', self.handler)
         send_stream, receive_stream = anyio.create_memory_object_stream[AgentStreamEvent]()
 
         async def run_handler() -> None:

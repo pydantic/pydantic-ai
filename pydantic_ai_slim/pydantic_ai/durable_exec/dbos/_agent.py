@@ -24,12 +24,7 @@ from pydantic_ai.agent import (
     ParallelExecutionMode,
     WrapperAgent,
 )
-from pydantic_ai.agent.abstract import (
-    AgentMetadata,
-    AgentModelSettings,
-    RunOutputDataT,
-    consume_event_stream_handler,
-)
+from pydantic_ai.agent.abstract import AgentMetadata, AgentModelSettings, RunOutputDataT
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
@@ -106,6 +101,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             step_name_prefix=self._name,
             step_config=self._model_step_config,
             event_stream_handler=self.event_stream_handler,
+            agent=wrapped,
         )
         self._model = dbos_model
 
@@ -273,7 +269,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             yield event
 
         async for event in stream:
-            await consume_event_stream_handler(handler, ctx, streamed_response(event))
+            await handler(ctx, streamed_response(event))
 
     @property
     def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
