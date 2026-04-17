@@ -2173,3 +2173,125 @@ async def test_sync_call_span_with_extract_args(capfire: CaptureLogfire):
     attrs = call_spans[0]['attributes']
     assert attrs['x'] == 21
     assert attrs['return'] == 42
+
+
+# --- Evaluator span: parenting and result attributes -----------------------
+
+
+@needs_logfire
+@pytest.mark.anyio
+async def test_evaluator_span_nested_under_call_span(capfire: CaptureLogfire):
+    """The `evaluator: {name}` span created in `run_evaluator` parents to the call span."""
+    config = OnlineEvalConfig(emit_otel_events=False)
+
+    @config.evaluate(AlwaysTrue())
+    async def my_func(x: int) -> int:
+        return x
+
+    await my_func(1)
+    await wait_for_evaluations()
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    call_spans = [s for s in spans if 'my_func' in s['name']]
+    evaluator_spans = [s for s in spans if s['name'] == 'evaluator: {evaluator_name}']
+    assert len(call_spans) == 1
+    assert len(evaluator_spans) == 1
+    assert evaluator_spans[0]['parent']['span_id'] == call_spans[0]['context']['span_id']
+
+
+@needs_logfire
+@pytest.mark.anyio
+async def test_evaluator_span_carries_score_attributes(capfire: CaptureLogfire):
+    """Single-result evaluators expose their score on the evaluator span."""
+    config = OnlineEvalConfig(emit_otel_events=False)
+
+    @config.evaluate(AlwaysTrue())
+    async def my_func(x: int) -> int:
+        return x
+
+    await my_func(1)
+    await wait_for_evaluations()
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    eval_spans = [s for s in spans if s['name'] == 'evaluator: {evaluator_name}']
+    assert len(eval_spans) == 1
+    attrs = eval_spans[0]['attributes']
+    assert attrs['gen_ai.evaluation.name'] == 'AlwaysTrue'
+    assert attrs['gen_ai.evaluation.score.value'] == 1.0
+    assert attrs['gen_ai.evaluation.score.label'] == 'pass'
+    assert 'gen_ai.evaluation.evaluator_source' in attrs
+
+
+@needs_logfire
+@pytest.mark.anyio
+async def test_evaluator_span_multi_result_summary(capfire: CaptureLogfire):
+    """Multi-result evaluators record a count and the result names on the span."""
+    config = OnlineEvalConfig(emit_otel_events=False)
+
+    @config.evaluate(MultiResultEvaluator())
+    async def my_func(x: int) -> int:
+        return x
+
+    await my_func(1)
+    await wait_for_evaluations()
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    eval_spans = [s for s in spans if s['name'] == 'evaluator: {evaluator_name}']
+    assert len(eval_spans) == 1
+    attrs = eval_spans[0]['attributes']
+    assert attrs['gen_ai.evaluation.result_count'] == 3
+    assert set(attrs['gen_ai.evaluation.names']) == {'accuracy', 'score', 'label'}
+    assert 'gen_ai.evaluation.score.value' not in attrs
+
+
+# --- Baggage propagation ---------------------------------------------------
+
+
+@needs_logfire
+@pytest.mark.anyio
+async def test_baggage_attached_to_evaluation_event(capfire: CaptureLogfire):
+    """Baggage set in the calling context propagates onto emitted evaluation events."""
+    from opentelemetry import baggage as ot_baggage, context as ot_context
+
+    config = OnlineEvalConfig()  # emit_otel_events=True
+
+    @config.evaluate(AlwaysTrue())
+    async def my_func(x: int) -> int:
+        return x
+
+    bag_ctx = ot_baggage.set_baggage('tenant', 'acme')
+    token = ot_context.attach(bag_ctx)
+    try:
+        await my_func(1)
+        await wait_for_evaluations()
+    finally:
+        ot_context.detach(token)
+
+    finished = capfire.log_exporter.get_finished_logs()
+    assert len(finished) == 1
+    attrs = dict(finished[0].log_record.attributes or {})
+    assert attrs['tenant'] == 'acme'
+
+
+@needs_logfire
+@pytest.mark.anyio
+async def test_baggage_disabled_via_config(capfire: CaptureLogfire):
+    """`include_baggage=False` keeps baggage out of emitted events."""
+    from opentelemetry import baggage as ot_baggage, context as ot_context
+
+    config = OnlineEvalConfig(include_baggage=False)
+
+    @config.evaluate(AlwaysTrue())
+    async def my_func(x: int) -> int:
+        return x
+
+    bag_ctx = ot_baggage.set_baggage('tenant', 'acme')
+    token = ot_context.attach(bag_ctx)
+    try:
+        await my_func(1)
+        await wait_for_evaluations()
+    finally:
+        ot_context.detach(token)
+
+    attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
+    assert 'tenant' not in attrs

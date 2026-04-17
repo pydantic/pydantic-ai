@@ -9,7 +9,9 @@ import pytest
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_evals._otel_emit import emit_otel_events
+    from opentelemetry import baggage as _baggage, context as _otel_context
+
+    from pydantic_evals._otel_emit import build_parent_context, emit_otel_events
     from pydantic_evals.evaluators.evaluator import EvaluationResult, EvaluatorFailure, EvaluatorSpec
     from pydantic_evals.online import SpanReference
 
@@ -48,12 +50,17 @@ if TYPE_CHECKING or imports_successful():
 def test_emits_event_with_parent_span(capfire: CaptureLogfire):
     span_ref = SpanReference(trace_id='0' * 31 + '1', span_id='0' * 15 + '2')
 
-    emit_otel_events(
-        results=[_result('Correctness', True, reason='looks right')],
-        failures=[],
-        span_reference=span_ref,
-        target=_target(),
-    )
+    parent_ctx = build_parent_context(span_ref)
+    assert parent_ctx is not None
+    token = _otel_context.attach(parent_ctx)
+    try:
+        emit_otel_events(
+            results=[_result('Correctness', True, reason='looks right')],
+            failures=[],
+            target=_target(),
+        )
+    finally:
+        _otel_context.detach(token)
 
     finished = capfire.log_exporter.get_finished_logs()
     assert len(finished) == 1
@@ -61,7 +68,7 @@ def test_emits_event_with_parent_span(capfire: CaptureLogfire):
     attrs = dict(record.attributes or {})
 
     assert record.event_name == 'gen_ai.evaluation.result'
-    assert record.body == 'Correctness: pass'
+    assert record.body == 'evaluation: Correctness=pass'
     assert attrs['gen_ai.evaluation.name'] == 'Correctness'
     assert attrs['gen_ai.evaluation.score.value'] == 1.0
     assert attrs['gen_ai.evaluation.score.label'] == 'pass'
@@ -78,7 +85,6 @@ def test_bool_false_emits_fail_label(capfire: CaptureLogfire):
     emit_otel_events(
         results=[_result('X', False)],
         failures=[],
-        span_reference=None,
         target=_target('f'),
     )
 
@@ -91,7 +97,6 @@ def test_numeric_score_only(capfire: CaptureLogfire):
     emit_otel_events(
         results=[_result('X', 0.73)],
         failures=[],
-        span_reference=None,
         target=_target('f'),
     )
 
@@ -104,7 +109,6 @@ def test_string_label_only(capfire: CaptureLogfire):
     emit_otel_events(
         results=[_result('X', 'excellent')],
         failures=[],
-        span_reference=None,
         target=_target('f'),
     )
 
@@ -123,7 +127,6 @@ def test_failure_emits_error_type_and_no_score(capfire: CaptureLogfire):
     emit_otel_events(
         results=[],
         failures=[failure],
-        span_reference=None,
         target=_target('f'),
     )
 
@@ -138,7 +141,6 @@ def test_evaluator_version_and_extra_attributes(capfire: CaptureLogfire):
     emit_otel_events(
         results=[_result('X', True, evaluator_version='v2')],
         failures=[],
-        span_reference=None,
         target=_target('f'),
         extra_attributes={'team': 'platform'},
     )
@@ -152,7 +154,6 @@ def test_no_version_attribute_when_none(capfire: CaptureLogfire):
     emit_otel_events(
         results=[_result('X', True)],
         failures=[],
-        span_reference=None,
         target=_target('f'),
     )
 
@@ -171,7 +172,6 @@ def test_failure_carries_evaluator_version(capfire: CaptureLogfire):
     emit_otel_events(
         results=[],
         failures=[failure],
-        span_reference=None,
         target=_target('f'),
     )
 
@@ -183,7 +183,6 @@ def test_empty_results_and_failures_emits_nothing(capfire: CaptureLogfire):
     emit_otel_events(
         results=[],
         failures=[],
-        span_reference=None,
         target=_target('f'),
     )
 
@@ -200,7 +199,6 @@ def test_failure_without_error_message_omits_explanation(capfire: CaptureLogfire
     emit_otel_events(
         results=[],
         failures=[failure],
-        span_reference=None,
         target=_target('f'),
     )
 
@@ -215,7 +213,6 @@ def test_non_scalar_value_yields_no_score_attrs(capfire: CaptureLogfire):
     emit_otel_events(
         results=[_result('X', value=None)],
         failures=[],
-        span_reference=None,
         target=_target('f'),
     )
 
@@ -235,17 +232,16 @@ def test_body_formatting_for_score_types(capfire: CaptureLogfire):
             _result('Tone', 'neutral'),
         ],
         failures=[],
-        span_reference=None,
         target=_target('f'),
     )
 
     bodies = [r.log_record.body for r in capfire.log_exporter.get_finished_logs()]
     assert bodies == [
-        'Passed: pass',
-        'Failed: fail',
-        'Score: 0.73',
-        'Whole: 5',
-        'Tone: neutral',
+        'evaluation: Passed=pass',
+        'evaluation: Failed=fail',
+        'evaluation: Score=0.73',
+        'evaluation: Whole=5',
+        'evaluation: Tone=neutral',
     ]
 
 
@@ -267,9 +263,81 @@ def test_failure_body(capfire: CaptureLogfire):
                 source=_spec('Silent'),
             ),
         ],
-        span_reference=None,
         target=_target('f'),
     )
 
     bodies = [r.log_record.body for r in capfire.log_exporter.get_finished_logs()]
-    assert bodies == ['Judge failed: ValueError: bad input', 'Silent failed']
+    assert bodies == ['evaluation: Judge failed: ValueError: bad input', 'evaluation: Silent failed']
+
+
+def test_baggage_attached_to_event_attributes(capfire: CaptureLogfire):
+    """Baggage from the current OTel context is copied onto each emitted event."""
+    ctx = _baggage.set_baggage('tenant', 'acme', _baggage.set_baggage('user_id', '42'))
+    token = _otel_context.attach(ctx)
+    try:
+        emit_otel_events(
+            results=[_result('X', True)],
+            failures=[],
+            target=_target('f'),
+        )
+    finally:
+        _otel_context.detach(token)
+
+    attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
+    assert attrs['tenant'] == 'acme'
+    assert attrs['user_id'] == '42'
+
+
+def test_baggage_does_not_overwrite_standard_attrs(capfire: CaptureLogfire):
+    """Standard `gen_ai.*`/`error.type` attrs win over conflicting baggage keys."""
+    ctx = _baggage.set_baggage('gen_ai.evaluation.target', 'baggage_target')
+    ctx = _baggage.set_baggage('gen_ai.evaluation.score.label', 'baggage_label', ctx)
+    token = _otel_context.attach(ctx)
+    try:
+        emit_otel_events(
+            results=[_result('X', True)],
+            failures=[],
+            target=_target('real_target'),
+        )
+    finally:
+        _otel_context.detach(token)
+
+    attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
+    assert attrs['gen_ai.evaluation.target'] == 'real_target'
+    assert attrs['gen_ai.evaluation.score.label'] == 'pass'
+
+
+def test_include_baggage_false_skips_snapshot(capfire: CaptureLogfire):
+    """`include_baggage=False` omits baggage entirely."""
+    ctx = _baggage.set_baggage('tenant', 'acme')
+    token = _otel_context.attach(ctx)
+    try:
+        emit_otel_events(
+            results=[_result('X', True)],
+            failures=[],
+            target=_target('f'),
+            include_baggage=False,
+        )
+    finally:
+        _otel_context.detach(token)
+
+    attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
+    assert 'tenant' not in attrs
+
+
+def test_extra_attributes_win_over_baggage(capfire: CaptureLogfire):
+    """When baggage and `extra_attributes` collide, the explicit extras win."""
+    ctx = _baggage.set_baggage('team', 'baggage_team')
+    token = _otel_context.attach(ctx)
+    try:
+        emit_otel_events(
+            results=[_result('X', True)],
+            failures=[],
+            target=_target('f'),
+            extra_attributes={'team': 'platform'},
+        )
+    finally:
+        _otel_context.detach(token)
+
+    attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
+    assert attrs['team'] == 'platform'

@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from opentelemetry import context as otel_context, trace
+from opentelemetry import baggage, trace
 from opentelemetry._logs import LogRecord, get_logger
 from opentelemetry.context import Context
 from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
@@ -27,7 +27,7 @@ from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
 from .evaluators.evaluator import EvaluationResult, EvaluatorFailure
 from .evaluators.spec import EvaluatorSpec
 
-__all__ = ('emit_otel_events',)
+__all__ = ('build_parent_context', 'emit_otel_events')
 
 
 # --- Attribute name constants -------------------------------------------------
@@ -66,48 +66,59 @@ def emit_otel_events(
     *,
     results: Sequence[EvaluationResult],
     failures: Sequence[EvaluatorFailure],
-    span_reference: Any | None,
     target: str,
+    include_baggage: bool = True,
     extra_attributes: Mapping[str, Any] | None = None,
 ) -> None:
     """Emit one `gen_ai.evaluation.result` OTel event per result/failure.
 
-    Each `EvaluationResult` produces one event; each `EvaluatorFailure`
-    produces one event with `error.type` set and no score. Events are parented
-    to the span referenced by `span_reference` when supplied, so they appear
-    nested under the original function call in the trace.
+    Each `EvaluationResult` produces one event; each `EvaluatorFailure` produces
+    one event with `error.type` set and no score. The caller is responsible for
+    attaching the appropriate parent OTel context (e.g. via
+    `build_parent_context`) so events appear nested under the function call.
 
     Args:
         results: Evaluation results from a single evaluator run. Each result's
             `evaluator_version` is written to `gen_ai.evaluation.evaluator_version`.
         failures: Failures from a single evaluator run. Each failure's
             `evaluator_version` is written to `gen_ai.evaluation.evaluator_version`.
-        span_reference: Optional reference to the span being evaluated.
-            When supplied, emitted events are parented to that span.
         target: Name of the function/agent being evaluated. Written to
             `gen_ai.evaluation.target`.
+        include_baggage: When True (the default), each emitted event also carries
+            every key from the current OTel baggage as an attribute. Standard
+            `gen_ai.*` and `error.type` attributes always win on conflict.
         extra_attributes: Optional extra attributes to include on every emitted
             event. Escape hatch for custom metadata without subclassing.
     """
     if not results and not failures:
         return
 
-    parent_ctx = _build_parent_context(span_reference)
-    if parent_ctx is None:
-        for result in results:
-            _emit_result(result, target, extra_attributes)
-        for failure in failures:
-            _emit_failure(failure, target, extra_attributes)
-        return
+    base_extras = _collect_extra_attributes(include_baggage, extra_attributes)
+    for result in results:
+        _emit_result(result, target, base_extras)
+    for failure in failures:
+        _emit_failure(failure, target, base_extras)
 
-    token = otel_context.attach(parent_ctx)
-    try:
-        for result in results:
-            _emit_result(result, target, extra_attributes)
-        for failure in failures:
-            _emit_failure(failure, target, extra_attributes)
-    finally:
-        otel_context.detach(token)
+
+def _collect_extra_attributes(
+    include_baggage: bool,
+    extra_attributes: Mapping[str, Any] | None,
+) -> Mapping[str, Any] | None:
+    """Merge OTel baggage with caller-provided extras (caller wins)."""
+    if not include_baggage:
+        return extra_attributes
+    bag = baggage.get_all()
+    if not bag and not extra_attributes:
+        return None
+    merged: dict[str, Any] = {str(k): v for k, v in bag.items()}
+    if extra_attributes:
+        merged.update(extra_attributes)
+    return merged
+
+
+def build_parent_context(span_reference: Any | None) -> Context | None:
+    """Public: build an OTel context with a non-recording parent span, or None."""
+    return _build_parent_context(span_reference)
 
 
 # --- emission helpers ---------------------------------------------------------
@@ -180,18 +191,18 @@ def _format_result_body(result: EvaluationResult) -> str:
     """Build the human-readable log body for a successful evaluation.
 
     The body is shown inline in the Logfire live trace view, so it should be
-    short and dense. Keep it to ``"<evaluator>: <score>"`` — attributes carry
-    the structured detail, and long ``reason`` strings live on
-    ``gen_ai.evaluation.explanation``.
+    short and dense. Format mirrors a simple ``key=value`` expression, with
+    bools rendered as ``pass``/``fail`` to stay consistent with the
+    ``gen_ai.evaluation.score.label`` attribute.
     """
-    return f'{result.name}: {_format_score(result.value)}'
+    return f'evaluation: {result.name}={_format_score(result.value)}'
 
 
 def _format_failure_body(failure: EvaluatorFailure) -> str:
     """Build the human-readable log body for an evaluator failure."""
     if failure.error_message:
-        return f'{failure.name} failed: {failure.error_message}'
-    return f'{failure.name} failed'
+        return f'evaluation: {failure.name} failed: {failure.error_message}'
+    return f'evaluation: {failure.name} failed'
 
 
 def _format_score(value: Any) -> str:

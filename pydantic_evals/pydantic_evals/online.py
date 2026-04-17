@@ -509,6 +509,17 @@ class OnlineEvalConfig:
     sink alone, or in environments where OTel emission is undesirable. Custom
     sinks registered via `default_sink` still run regardless of this flag.
     """
+    include_baggage: bool = True
+    """Whether to copy OTel baggage entries onto every emitted evaluation event.
+
+    When `True` (the default), each emitted `gen_ai.evaluation.result` event also
+    carries the keys present in the current OTel baggage as attributes — useful
+    for propagating tenant/user/request identifiers from the calling context.
+    Standard `gen_ai.*` and `error.type` attributes always win on conflict, so
+    baggage cannot accidentally overwrite the semantic-convention attributes.
+
+    Set to `False` to skip the baggage snapshot per event.
+    """
     sampling_mode: SamplingMode = 'independent'
     """Controls how per-evaluator sample rates interact for a single call.
 
@@ -931,6 +942,7 @@ def configure(
     on_sampling_error: OnSamplingErrorCallback | None | Unset = UNSET,
     on_error: OnErrorCallback | None | Unset = UNSET,
     emit_otel_events: bool | Unset = UNSET,
+    include_baggage: bool | Unset = UNSET,
 ) -> None:
     """Configure the global default `OnlineEvalConfig`.
 
@@ -948,6 +960,7 @@ def configure(
         on_sampling_error: Default handler for sample_rate exceptions. Pass `None` to clear.
         on_error: Default handler for pipeline exceptions. Pass `None` to clear.
         emit_otel_events: Whether to emit `gen_ai.evaluation.result` OTel events.
+        include_baggage: Whether to copy current OTel baggage onto every emitted event.
     """
     if not isinstance(default_sink, Unset):
         DEFAULT_CONFIG.default_sink = default_sink
@@ -967,6 +980,8 @@ def configure(
         DEFAULT_CONFIG.on_error = on_error
     if not isinstance(emit_otel_events, Unset):
         DEFAULT_CONFIG.emit_otel_events = emit_otel_events
+    if not isinstance(include_baggage, Unset):
+        DEFAULT_CONFIG.include_baggage = include_baggage
 
 
 async def wait_for_evaluations(*, timeout: float = 30.0) -> None:

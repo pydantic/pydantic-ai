@@ -16,8 +16,9 @@ from typing import Any, Literal, Protocol, cast, runtime_checkable
 import anyio
 import sniffio
 from anyio.to_thread import run_sync
+from opentelemetry import context as otel_context
 
-from ._otel_emit import emit_otel_events
+from ._otel_emit import build_parent_context, emit_otel_events
 from .evaluators._run_evaluator import run_evaluator
 from .evaluators.context import EvaluatorContext
 from .evaluators.evaluator import EvaluationResult, Evaluator, EvaluatorFailure
@@ -67,6 +68,7 @@ class OnlineEvalConfigLike(Protocol):
     sampling_mode: SamplingMode
     enabled: bool
     emit_otel_events: bool
+    include_baggage: bool
     metadata: dict[str, Any] | None
     on_max_concurrency: OnMaxConcurrencyCallback | None
     on_sampling_error: OnSamplingErrorCallback | None
@@ -369,6 +371,7 @@ async def _dispatch_single_evaluator(
     target: str,
     sinks: list[EvaluationSink],
     emit_events: bool,
+    include_baggage: bool,
     on_max_concurrency: OnMaxConcurrencyCallback | None,
     on_error: OnErrorCallback | None,
 ) -> None:
@@ -384,6 +387,12 @@ async def _dispatch_single_evaluator(
                 await _call_on_error(on_error, exc, context, evaluator, 'on_max_concurrency')
         return
 
+    # Attach the call's span as the current OTel parent for the whole evaluator
+    # run. This nests the `evaluator: {name}` span (created inside `run_evaluator`)
+    # under the decorated function's call span, and parents the emitted events
+    # the same way without each emit having to attach independently.
+    parent_ctx = build_parent_context(span_reference)
+    parent_token = otel_context.attach(parent_ctx) if parent_ctx is not None else None
     try:
         raw_result = await run_evaluator(evaluator, context)
 
@@ -402,8 +411,8 @@ async def _dispatch_single_evaluator(
                 emit_otel_events(
                     results=results,
                     failures=failures,
-                    span_reference=span_reference,
                     target=target,
+                    include_baggage=include_baggage,
                 )
             except Exception as exc:  # pragma: no cover - defensive
                 await _call_on_error(on_error, exc, context, evaluator, 'sink')
@@ -422,6 +431,8 @@ async def _dispatch_single_evaluator(
                     evaluator,
                 )
     finally:
+        if parent_token is not None:
+            otel_context.detach(parent_token)
         online_eval.semaphore.release()
 
 
@@ -453,6 +464,7 @@ async def dispatch_evaluators(
                     target,
                     sinks,
                     emit_events=config.emit_otel_events,
+                    include_baggage=config.include_baggage,
                     on_max_concurrency=on_max_concurrency,
                     on_error=on_error,
                 )
