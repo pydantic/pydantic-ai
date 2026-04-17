@@ -39,17 +39,17 @@ if TYPE_CHECKING:
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
-    pytest.mark.skip(reason='Google code execution cassettes were not added in this branch refactor.'),
     pytest.mark.filterwarnings(
         'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
     ),
     pytest.mark.filterwarnings(
         'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
     ),
+    pytest.mark.filterwarnings('ignore:.*is deprecated and will reach end-of-life.*:DeprecationWarning'),
 ]
 
 
-async def test_code_execution_stream(  # pragma: no cover
+async def test_code_execution_stream(
     allow_model_requests: None,
     google_model: GoogleModelFactory,
 ):
@@ -89,54 +89,34 @@ async def test_code_execution_stream(  # pragma: no cover
                         tool_name='code_execution',
                         args={
                             'code': """\
-    result = 65465 - 6544 * 65464 - 6 + 1.02255
-    print(result)
-    \
-""",
-                            'language': 'PYTHON',
-                            'id': None,
-                        },
-                        tool_call_id=IsStr(),
-                        provider_name='google-gla',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='code_execution',
-                        content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': None},
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='google-gla',
-                    ),
-                    BuiltinToolCallPart(
-                        tool_name='code_execution',
-                        args={
-                            'code': """\
-# Calculate the expression 65465-6544 * 65464-6+1.02255
 result = 65465 - 6544 * 65464 - 6 + 1.02255
 print(result)\
 """,
                             'language': 'PYTHON',
-                            'id': None,
+                            'id': 'gzl5c0n7',
                         },
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
+                        provider_details={'thought_signature': IsStr()},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
-                        content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': None},
+                        content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': 'gzl5c0n7'},
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
                     ),
-                    TextPart(content='The result is -428,330,955.97745.'),
+                    TextPart(
+                        content='The result of $65465 - 6544 \\times 65464 - 6 + 1.02255$ is **-428,330,955.97745**.'
+                    ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=46,
-                    output_tokens=1429,
+                    input_tokens=213,
+                    output_tokens=483,
                     details={
-                        'thoughts_tokens': 396,
-                        'tool_use_prompt_tokens': 901,
-                        'text_prompt_tokens': 46,
-                        'text_tool_use_prompt_tokens': 901,
+                        'tool_use_prompt_tokens': 426,
+                        'text_prompt_tokens': 213,
+                        'text_tool_use_prompt_tokens': 426,
                     },
                 ),
                 model_name='gemini-3-flash-preview',
@@ -158,15 +138,15 @@ print(result)\
                     tool_name='code_execution',
                     args={
                         'code': """\
-    result = 65465 - 6544 * 65464 - 6 + 1.02255
-    print(result)
-    \
+result = 65465 - 6544 * 65464 - 6 + 1.02255
+print(result)\
 """,
                         'language': 'PYTHON',
-                        'id': None,
+                        'id': 'gzl5c0n7',
                     },
                     tool_call_id=IsStr(),
                     provider_name='google-gla',
+                    provider_details={'thought_signature': IsStr()},
                 ),
             ),
             PartEndEvent(
@@ -175,15 +155,15 @@ print(result)\
                     tool_name='code_execution',
                     args={
                         'code': """\
-    result = 65465 - 6544 * 65464 - 6 + 1.02255
-    print(result)
-    \
+result = 65465 - 6544 * 65464 - 6 + 1.02255
+print(result)\
 """,
                         'language': 'PYTHON',
-                        'id': None,
+                        'id': 'gzl5c0n7',
                     },
                     tool_call_id=IsStr(),
                     provider_name='google-gla',
+                    provider_details={'thought_signature': IsStr()},
                 ),
                 next_part_kind='builtin-tool-return',
             ),
@@ -191,7 +171,7 @@ print(result)\
                 index=1,
                 part=BuiltinToolReturnPart(
                     tool_name='code_execution',
-                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': None},
+                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': 'gzl5c0n7'},
                     tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
@@ -200,101 +180,39 @@ print(result)\
             ),
             PartStartEvent(
                 index=2,
-                part=BuiltinToolCallPart(
-                    tool_name='code_execution',
-                    args={
-                        'code': """\
-# Calculate the expression 65465-6544 * 65464-6+1.02255
-result = 65465 - 6544 * 65464 - 6 + 1.02255
-print(result)\
-""",
-                        'language': 'PYTHON',
-                        'id': None,
-                    },
-                    tool_call_id=IsStr(),
-                    provider_name='google-gla',
-                ),
+                part=TextPart(content='The result of'),
                 previous_part_kind='builtin-tool-return',
             ),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' $65465 - 6544 \\times 654')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='64 - 6 + 1.02255$ is **-428,33')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='0,955.97745**.')),
             PartEndEvent(
                 index=2,
-                part=BuiltinToolCallPart(
-                    tool_name='code_execution',
-                    args={
-                        'code': """\
-# Calculate the expression 65465-6544 * 65464-6+1.02255
-result = 65465 - 6544 * 65464 - 6 + 1.02255
-print(result)\
-""",
-                        'language': 'PYTHON',
-                        'id': None,
-                    },
-                    tool_call_id=IsStr(),
-                    provider_name='google-gla',
+                part=TextPart(
+                    content='The result of $65465 - 6544 \\times 65464 - 6 + 1.02255$ is **-428,330,955.97745**.'
                 ),
-                next_part_kind='builtin-tool-return',
-            ),
-            PartStartEvent(
-                index=3,
-                part=BuiltinToolReturnPart(
-                    tool_name='code_execution',
-                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': None},
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='google-gla',
-                ),
-                previous_part_kind='builtin-tool-call',
-            ),
-            PartStartEvent(index=4, part=TextPart(content='The result is'), previous_part_kind='builtin-tool-return'),
-            FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' -428,330,955.977')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='45.')),
-            PartEndEvent(index=4, part=TextPart(content='The result is -428,330,955.97745.')),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
-                    tool_name='code_execution',
-                    args={
-                        'code': """\
-    result = 65465 - 6544 * 65464 - 6 + 1.02255
-    print(result)
-    \
-""",
-                        'language': 'PYTHON',
-                        'id': None,
-                    },
-                    tool_call_id=IsStr(),
-                    provider_name='google-gla',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
-                    tool_name='code_execution',
-                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': None},
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='google-gla',
-                )
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='code_execution',
                     args={
                         'code': """\
-# Calculate the expression 65465-6544 * 65464-6+1.02255
 result = 65465 - 6544 * 65464 - 6 + 1.02255
 print(result)\
 """,
                         'language': 'PYTHON',
-                        'id': None,
+                        'id': 'gzl5c0n7',
                     },
                     tool_call_id=IsStr(),
                     provider_name='google-gla',
+                    provider_details={'thought_signature': IsStr()},
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='code_execution',
-                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': None},
+                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': 'gzl5c0n7'},
                     tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
@@ -304,7 +222,7 @@ print(result)\
     )
 
 
-async def test_code_execution(allow_model_requests: None, google_model: GoogleModelFactory):  # pragma: no cover
+async def test_code_execution(allow_model_requests: None, google_model: GoogleModelFactory):
     m = google_model('gemini-3-flash-preview')
     agent = Agent(m, instructions='You are a helpful chatbot.', builtin_tools=[CodeExecutionTool()])
 
@@ -313,8 +231,8 @@ async def test_code_execution(allow_model_requests: None, google_model: GoogleMo
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What day is today in Utrecht?', timestamp=IsDatetime())],
-                instructions='You are a helpful chatbot.',
                 timestamp=IsNow(tz=timezone.utc),
+                instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -326,47 +244,64 @@ async def test_code_execution(allow_model_requests: None, google_model: GoogleMo
 from datetime import datetime
 import pytz
 
-# Get the current time in UTC
-utc_now = datetime.now(pytz.utc)
-
-# Get the timezone for Utrecht (which is in the Netherlands, using Europe/Amsterdam)
+# Get the timezone for Utrecht
 utrecht_tz = pytz.timezone('Europe/Amsterdam')
 
-# Convert the current UTC time to Utrecht's local time
-utrecht_now = utc_now.astimezone(utrecht_tz)
+# Get the current time in Utrecht
+utrecht_now = datetime.now(utrecht_tz)
 
-# Format the date to be easily readable (e.g., "Tuesday, May 21, 2024")
-formatted_date = utrecht_now.strftime("%A, %B %d, %Y")
-
-print(f"Today in Utrecht is {formatted_date}.")
+# Format the date
+print(utrecht_now.strftime('%A, %B %d, %Y'))
 """,
                             'language': 'PYTHON',
-                            'id': None,
+                            'id': '2biwo6yl',
                         },
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
+                        provider_details={'thought_signature': IsStr()},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
-                        content={
-                            'outcome': 'OUTCOME_OK',
-                            'output': 'Today in Utrecht is Tuesday, September 16, 2025.\n',
-                            'id': None,
-                        },
+                        content={'outcome': 'OUTCOME_OK', 'output': 'Friday, April 17, 2026\n', 'id': '2biwo6yl'},
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
                     ),
-                    TextPart(content='Today in Utrecht is Tuesday, September 16, 2025.'),
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={
+                            'code': """\
+import datetime
+print(datetime.datetime.now())
+""",
+                            'language': 'PYTHON',
+                            'id': 'yskzpivu',
+                        },
+                        tool_call_id=IsStr(),
+                        provider_name='google-gla',
+                        provider_details={'thought_signature': IsStr()},
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content={'outcome': 'OUTCOME_OK', 'output': '2026-04-17 19:38:50.433087\n', 'id': 'yskzpivu'},
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='google-gla',
+                    ),
+                    TextPart(
+                        content=IsStr(),
+                        provider_name='google-gla',
+                        provider_details={'thought_signature': IsStr()},
+                    ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=15,
-                    output_tokens=1335,
+                    input_tokens=94,
+                    output_tokens=3559,
                     details={
-                        'thoughts_tokens': 483,
-                        'tool_use_prompt_tokens': 675,
-                        'text_prompt_tokens': 15,
-                        'text_tool_use_prompt_tokens': 675,
+                        'thoughts_tokens': 1761,
+                        'tool_use_prompt_tokens': 1760,
+                        'text_prompt_tokens': 94,
+                        'text_tool_use_prompt_tokens': 1760,
                     },
                 ),
                 model_name='gemini-3-flash-preview',
@@ -386,8 +321,8 @@ print(f"Today in Utrecht is {formatted_date}.")
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What day is tomorrow?', timestamp=IsDatetime())],
-                instructions='You are a helpful chatbot.',
                 timestamp=IsNow(tz=timezone.utc),
+                instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
             ),
             ModelResponse(
@@ -396,38 +331,48 @@ print(f"Today in Utrecht is {formatted_date}.")
                         tool_name='code_execution',
                         args={
                             'code': """\
-from datetime import date, timedelta
+from datetime import datetime, timedelta
+import pytz
 
-tomorrow = date.today() + timedelta(days=1)
-print(f"Tomorrow is {tomorrow.strftime('%A, %B %d, %Y')}.")
+utrecht_tz = pytz.timezone('Europe/Amsterdam')
+utrecht_now = datetime.now(utrecht_tz)
+tomorrow = utrecht_now + timedelta(days=1)
+
+print(f"Today: {utrecht_now.strftime('%A, %B %d, %Y')}")
+print(f"Tomorrow: {tomorrow.strftime('%A, %B %d, %Y')}")
 """,
                             'language': 'PYTHON',
-                            'id': None,
+                            'id': 'x9aranmq',
                         },
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
+                        provider_details={'thought_signature': IsStr()},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
                         content={
                             'outcome': 'OUTCOME_OK',
-                            'output': 'Tomorrow is Wednesday, September 17, 2025.\n',
-                            'id': None,
+                            'output': IsStr(),
+                            'id': 'x9aranmq',
                         },
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
                     ),
-                    TextPart(content='Tomorrow is Wednesday, September 17, 2025.'),
+                    TextPart(
+                        content=IsStr(),
+                        provider_name='google-gla',
+                        provider_details={'thought_signature': IsStr()},
+                    ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=39,
-                    output_tokens=1235,
+                    input_tokens=728,
+                    output_tokens=2178,
                     details={
-                        'thoughts_tokens': 540,
-                        'tool_use_prompt_tokens': 637,
-                        'text_prompt_tokens': 39,
-                        'text_tool_use_prompt_tokens': 637,
+                        'thoughts_tokens': 986,
+                        'tool_use_prompt_tokens': 1173,
+                        'text_prompt_tokens': 728,
+                        'text_tool_use_prompt_tokens': 1173,
                     },
                 ),
                 model_name='gemini-3-flash-preview',
@@ -443,7 +388,7 @@ print(f"Tomorrow is {tomorrow.strftime('%A, %B %d, %Y')}.")
     )
 
 
-async def test_receive_history_from_another_provider(  # pragma: no cover
+async def test_receive_history_from_another_provider(
     allow_model_requests: None, anthropic_api_key: str, gemini_api_key: str
 ):
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -466,6 +411,6 @@ async def test_receive_history_from_another_provider(  # pragma: no cover
             [UserPromptPart],
             [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
             [UserPromptPart],
-            [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+            [BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
         ]
     )
