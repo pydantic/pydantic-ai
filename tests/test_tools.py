@@ -3728,6 +3728,33 @@ def test_args_validator_not_double_called_for_approved_tools():
     assert validator_calls[0] == (0, True)  # retry=0, approved=True
 
 
+def test_args_validator_single_base_model_arg():
+    """`args_validator` works when a tool has a single BaseModel parameter.
+
+    The tool's JSON schema is the BaseModel's fields directly (unwrapped), but the validated
+    args dict remains keyed by parameter name so `args_validator_func(ctx, **args)` unpacks correctly.
+    """
+
+    class MyArgs(BaseModel):
+        x: int
+        y: int
+
+    validator_calls: list[MyArgs] = []
+
+    def my_validator(ctx: RunContext[int], argument: MyArgs) -> None:
+        validator_calls.append(argument)
+
+    agent = Agent(TestModel(), deps_type=int)
+
+    @agent.tool(args_validator=my_validator)
+    def add_numbers(ctx: RunContext[int], argument: MyArgs) -> int:
+        return argument.x + argument.y
+
+    agent.run_sync('call add_numbers', deps=42)
+    assert len(validator_calls) == 1
+    assert isinstance(validator_calls[0], MyArgs)
+
+
 def test_tool_ctx_agent():
     """ctx.agent gives tools access to the running agent's properties."""
     agent = Agent('test', name='my_agent', output_type=int)

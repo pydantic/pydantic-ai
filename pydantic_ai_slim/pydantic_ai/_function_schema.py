@@ -72,9 +72,6 @@ class FunctionSchema:
         args_dict: dict[str, Any],
         ctx: RunContext[Any],
     ) -> tuple[list[Any], dict[str, Any]]:
-        if self.single_arg_name:
-            args_dict = {self.single_arg_name: args_dict}
-
         args = [ctx] if self.takes_ctx else []
         for positional_field in self.positional_fields:
             args.append(args_dict.pop(positional_field))  # pragma: no cover
@@ -298,7 +295,14 @@ def _build_schema(
         name = next(iter(fields))
         td_field = fields[name]
         if td_field['metadata']['is_model_like']:  # type: ignore
-            return td_field['schema'], name
+            # The JSON schema sent to the model is the model-like parameter's schema directly (unwrapped),
+            # so the model generates its fields at the top level rather than inside a redundant wrapper.
+            # The validator output is wrapped to `{name: value}` so validated args are always a dict
+            # keyed by parameter name — matching the contract that hooks and `call_tool` rely on.
+            return (
+                core_schema.no_info_after_validator_function(partial(_wrap_single_arg, name=name), td_field['schema']),
+                name,
+            )
 
     extra_behavior: Literal['allow', 'forbid'] = 'allow' if var_kwargs_schema else 'forbid'
     td_schema = core_schema.typed_dict_schema(
@@ -308,6 +312,10 @@ def _build_schema(
         extras_schema=var_kwargs_schema,
     )
     return td_schema, None
+
+
+def _wrap_single_arg(value: Any, *, name: str) -> dict[str, Any]:
+    return {name: value}
 
 
 def _extract_return_schema_type(return_annotation: Any, function: Callable[..., Any]) -> Any:
