@@ -4456,13 +4456,15 @@ async def test_system_prompt_reinjected_with_ag_ui_history():
 
     assert messages == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='First message', timestamp=IsDatetime())]),
-            ModelResponse(parts=[TextPart(content='First response')], timestamp=IsDatetime()),
             ModelRequest(
                 parts=[
                     SystemPromptPart(content='You are a helpful assistant', timestamp=IsDatetime()),
-                    UserPromptPart(content='Second message', timestamp=IsDatetime()),
-                ],
+                    UserPromptPart(content='First message', timestamp=IsDatetime()),
+                ]
+            ),
+            ModelResponse(parts=[TextPart(content='First response')], timestamp=IsDatetime()),
+            ModelRequest(
+                parts=[UserPromptPart(content='Second message', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),

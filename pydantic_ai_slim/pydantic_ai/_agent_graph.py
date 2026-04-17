@@ -291,18 +291,20 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
         if next_message:
             await self._reevaluate_dynamic_prompts([next_message], run_context)
-            inject_sys_parts = UserPromptNode._reinject_system_prompts_var.get()
         else:
             parts: list[_messages.ModelRequestPart] = []
             if self.user_prompt is not None:
                 parts.append(_messages.UserPromptPart(self.user_prompt))
             next_message = _messages.ModelRequest(parts=parts)
-            inject_sys_parts = not messages or UserPromptNode._reinject_system_prompts_var.get()
 
-        if inject_sys_parts:
+        if (not messages and not is_resuming_without_prompt) or UserPromptNode._reinject_system_prompts_var.get():
             sys_parts = await self._sys_parts(run_context)
             if sys_parts:
-                next_message.parts = [*sys_parts, *next_message.parts]
+                # Keep system parts at the head of the first request in the conversation
+                # (invariant established when agents generate their own history), rather
+                # than scattering them at the head of each new turn.
+                target = next((m for m in messages if isinstance(m, _messages.ModelRequest)), next_message)
+                target.parts = [*sys_parts, *target.parts]
 
         return ModelRequestNode[DepsT, NodeRunEndT](
             request=next_message, is_resuming_without_prompt=is_resuming_without_prompt

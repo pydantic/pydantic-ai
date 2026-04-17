@@ -784,27 +784,37 @@ def test_dummy_adapter_dump_messages():
 
 
 async def test_reinject_system_prompts_with_user_prompt_and_history():
-    """`reinject_system_prompts()` injects the agent's system prompt even when a new `user_prompt` is sent on top of existing history.
+    """`reinject_system_prompts()` reinjects the agent's system prompt at position 0 of the first `ModelRequest` in history.
 
     The UI adapter itself always calls the agent with `user_prompt=None` (everything comes in via `message_history`),
     but the context manager's contract — "injected on every request" — must hold for any caller, so the setting is
-    never silently ignored by the path that builds a new `ModelRequest` from a fresh `user_prompt`.
+    never silently ignored by the path that builds a new `ModelRequest` from a fresh `user_prompt`. System parts land
+    in the first historical `ModelRequest` (not the latest turn) to preserve the invariant that sys_parts only ever
+    live at the head of the first request in a conversation.
     """
     agent = Agent(model=TestModel(), system_prompt='You are a helpful assistant')
 
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='First message')]),
         ModelResponse(parts=[TextPart(content='First response')]),
+        ModelRequest(parts=[UserPromptPart(content='Second message')]),
+        ModelResponse(parts=[TextPart(content='Second response')]),
     ]
 
     with UserPromptNode.reinject_system_prompts():
-        result = await agent.run('Second message', message_history=history)
+        result = await agent.run('Third message', message_history=history)
 
-    new_request = result.all_messages()[2]
-    assert isinstance(new_request, ModelRequest)
-    assert new_request.parts == snapshot(
+    all_messages = result.all_messages()
+
+    first_request = all_messages[0]
+    assert isinstance(first_request, ModelRequest)
+    assert first_request.parts == snapshot(
         [
             SystemPromptPart(content='You are a helpful assistant', timestamp=IsDatetime()),
-            UserPromptPart(content='Second message', timestamp=IsDatetime()),
+            UserPromptPart(content='First message', timestamp=IsDatetime()),
         ]
     )
+
+    new_request = all_messages[4]
+    assert isinstance(new_request, ModelRequest)
+    assert new_request.parts == snapshot([UserPromptPart(content='Third message', timestamp=IsDatetime())])
