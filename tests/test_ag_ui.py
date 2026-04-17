@@ -51,8 +51,8 @@ from pydantic_ai import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    capture_run_messages,
 )
-from pydantic_ai._agent_graph import capture_run_messages
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent, AgentRunResult
 from pydantic_ai.builtin_tools import WebSearchTool
@@ -383,10 +383,10 @@ async def test_multiple_messages() -> None:
         ),
     )
 
-    adapter = AGUIAdapter(agent=agent, run_input=run_input, manage_system_prompt='client')
-    events: list[dict[str, Any]] = [
-        json.loads(event.removeprefix('data: ')) async for event in adapter.encode_stream(adapter.run_stream())
-    ]
+    # The frontend-sent `SystemMessage` is stripped by the default server mode; verify
+    # that doesn't change the event stream (which is driven by the assistant's output).
+    with pytest.warns(UserWarning, match='manage_system_prompt'):
+        events = await run_and_collect_events(agent, run_input)
 
     assert events == simple_result()
 

@@ -9,8 +9,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from pydantic_ai import Agent
-from pydantic_ai._agent_graph import capture_run_messages
+from pydantic_ai import Agent, capture_run_messages
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.builtin_tools import WebSearchTool

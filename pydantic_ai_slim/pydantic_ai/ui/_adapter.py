@@ -240,7 +240,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         """
         return self.build_event_stream().streaming_response(stream)
 
-    async def run_stream_native(
+    def run_stream_native(
         self,
         *,
         output_type: OutputSpec[Any] | None = None,
@@ -326,7 +326,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 stacklevel=2,
             )
 
-        async for event in self.agent.run_stream_events(
+        return self.agent.run_stream_events(
             output_type=output_type,
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
@@ -340,8 +340,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             infer_name=infer_name,
             toolsets=toolsets,
             builtin_tools=builtin_tools,
-        ):
-            yield event
+        )
 
     def run_stream(
         self,
