@@ -1329,8 +1329,8 @@ async def test_anthropic_task_budget_rejects_invalid_type(allow_model_requests: 
             id='invalid-total',
         ),
         pytest.param(
-            {'type': 'tokens', 'total': 2_000, 'remaining': 0},
-            r"`anthropic_task_budget\['remaining'\]` must be a positive integer when provided\.",
+            {'type': 'tokens', 'total': 2_000, 'remaining': -1},
+            r"`anthropic_task_budget\['remaining'\]` must be a non-negative integer when provided\.",
             id='invalid-remaining',
         ),
         pytest.param(

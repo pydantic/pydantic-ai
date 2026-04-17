@@ -1565,8 +1565,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             raise UserError("`anthropic_task_budget['total']` must be a positive integer.")
 
         remaining = task_budget.get('remaining')
-        if remaining is not None and (not isinstance(remaining, int) or isinstance(remaining, bool) or remaining <= 0):
-            raise UserError("`anthropic_task_budget['remaining']` must be a positive integer when provided.")
+        if remaining is not None and (not isinstance(remaining, int) or isinstance(remaining, bool) or remaining < 0):
+            raise UserError("`anthropic_task_budget['remaining']` must be a non-negative integer when provided.")
         if remaining is not None and remaining > total:
             raise UserError(
                 "`anthropic_task_budget['remaining']` must be less than or equal to `anthropic_task_budget['total']`."

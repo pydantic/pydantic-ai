@@ -154,7 +154,7 @@ See [Anthropic's Microsoft Foundry documentation](https://platform.claude.com/do
 
 ## Task Budgets (Beta)
 
-Claude Opus 4.7 task budgets are available for native Anthropic `claude-opus-4-7` requests through [`AnthropicModelSettings.anthropic_task_budget`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_task_budget]. This PR does not add task-budget support for Bedrock, Vertex, or Microsoft Foundry Anthropic model IDs. See [Thinking](../thinking.md#task-budgets-beta) for the request shape, beta semantics, and guidance on when to supply `remaining`.
+Claude Opus 4.7 task budgets are available for native Anthropic `claude-opus-4-7` requests through [`AnthropicModelSettings.anthropic_task_budget`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_task_budget]. Task budget support is currently limited to native Anthropic `claude-opus-4-7` requests, not Bedrock, Vertex, or Microsoft Foundry Anthropic model IDs. See [Thinking](../thinking.md#task-budgets-beta) for the request shape, beta semantics, and guidance on when to supply `remaining`.
 
 ## Prompt Caching
 
