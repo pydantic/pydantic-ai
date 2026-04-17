@@ -899,14 +899,14 @@ async def main():
                 break
         print(result.cancelled)  # (3)!
         #> True
-        print(result.response.interrupted)  # (4)!
+        print(result.response.state == 'interrupted')  # (4)!
         #> True
 ```
 
 1. Check a condition during streaming, for example whether enough text has been received.
 2. `cancel()` tells the model provider to stop generating tokens and closes the HTTP connection.
 3. The `cancelled` property reflects the cancellation state.
-4. The final [`ModelResponse`][pydantic_ai.messages.ModelResponse] is marked with `interrupted=True` so that downstream code can identify incomplete responses.
+4. The final [`ModelResponse`][pydantic_ai.messages.ModelResponse] is marked with `state='interrupted'` so that downstream code can identify incomplete responses.
 
 _(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
 
@@ -963,7 +963,7 @@ _(This example is complete, it can be run "as is" -- you'll need to add `asyncio
 
 #### Message History After Cancellation
 
-When a stream is cancelled, the response is recorded with `interrupted=True` in the message history. If you pass this history into a subsequent run, Pydantic AI automatically filters out incomplete tool calls from interrupted responses to avoid errors from model providers that reject malformed tool call arguments:
+When a stream is cancelled, the response is recorded with `state='interrupted'` in the message history. If you pass this history into a subsequent run, Pydantic AI automatically filters out incomplete tool calls from interrupted responses to avoid errors from model providers that reject malformed tool call arguments:
 
 ```python {title="stream_cancel_history.py"}
 from pydantic_ai import Agent
