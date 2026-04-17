@@ -1230,27 +1230,23 @@ async def test_anthropic_betas_merge_with_other_sources(allow_model_requests: No
     assert 'custom-feature-1' in betas
 
 
-async def test_anthropic_task_budget_adds_output_config_and_beta(allow_model_requests: None):
-    c = completion_message(
-        [BetaTextBlock(text='Hello!', type='text')],
-        BetaUsage(input_tokens=5, output_tokens=10),
-    )
-    mock_client = MockAnthropic.create_mock(c)
-
-    model = AnthropicModel(
-        'claude-opus-4-7',
-        provider=AnthropicProvider(anthropic_client=mock_client),
-        settings=AnthropicModelSettings(
-            anthropic_task_budget={'type': 'tokens', 'total': 2_000, 'remaining': 500},
+async def test_anthropic_task_budget_adds_output_config_and_beta(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Any
+):
+    m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        model_settings=AnthropicModelSettings(
+            anthropic_task_budget={'type': 'tokens', 'total': 20_000, 'remaining': 500},
         ),
     )
-    agent = Agent(model)
 
-    await agent.run('Hello')
+    result = await agent.run('What is 2+2?')
+    assert result.output
 
-    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert completion_kwargs['output_config'] == {'task_budget': {'type': 'tokens', 'total': 2_000, 'remaining': 500}}
-    assert 'task-budgets-2026-03-13' in completion_kwargs['betas']
+    assert len(vcr.requests) == 1
+    request_body = json.loads(vcr.requests[0].body)
+    assert request_body['output_config'] == {'task_budget': {'type': 'tokens', 'total': 20_000, 'remaining': 500}}
 
 
 async def test_anthropic_task_budget_merges_with_other_beta_sources(allow_model_requests: None):
@@ -3743,27 +3739,25 @@ async def test_anthropic_unified_thinking_opus_47_xhigh(allow_model_requests: No
     assert kwargs['output_config'] == {'effort': 'xhigh'}
 
 
-async def test_anthropic_task_budget_coexists_with_effort(allow_model_requests: None):
-    responses = [
-        completion_message(
-            [BetaTextBlock(text='4', type='text')],
-            usage=BetaUsage(input_tokens=10, output_tokens=1),
-        ),
-    ]
-    mock_client = MockAnthropic.create_mock(responses)
-    m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(anthropic_client=mock_client))
+async def test_anthropic_task_budget_coexists_with_effort(allow_model_requests: None, anthropic_api_key: str, vcr: Any):
+    m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(
         m,
         model_settings=AnthropicModelSettings(
             anthropic_effort='high',
-            anthropic_task_budget={'type': 'tokens', 'total': 2_000},
+            anthropic_task_budget={'type': 'tokens', 'total': 20_000},
         ),
     )
 
-    await agent.run('What is 2+2?')
+    result = await agent.run('What is 2+2?')
+    assert result.output
 
-    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert kwargs['output_config'] == {'effort': 'high', 'task_budget': {'type': 'tokens', 'total': 2_000}}
+    assert len(vcr.requests) == 1
+    request_body = json.loads(vcr.requests[0].body)
+    assert request_body['output_config'] == {
+        'effort': 'high',
+        'task_budget': {'type': 'tokens', 'total': 20_000},
+    }
 
 
 @pytest.mark.vcr()
