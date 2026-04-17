@@ -257,6 +257,47 @@ async def test_legacy_sink_without_target_kwarg_is_wrapped_with_deprecation_warn
 
 
 @pytest.mark.anyio
+async def test_legacy_sink_warning_fires_once_per_class():
+    """The back-compat shim warns the first time it wraps a given class, not every time.
+
+    TODO(v2): delete this test alongside the shim in pydantic_evals/_online.py.
+    """
+
+    class OnceLegacySink:
+        async def submit(
+            self,
+            *,
+            results: Sequence[EvaluationResult],
+            failures: Sequence[EvaluatorFailure],
+            context: EvaluatorContext[Any, Any, Any],
+            span_reference: SpanReference | None,
+        ) -> None:
+            pass
+
+    @dataclass
+    class E(Evaluator):
+        def evaluate(self, ctx: EvaluatorContext) -> bool:
+            return True
+
+    config = OnlineEvalConfig(default_sink=cast(Any, OnceLegacySink()), emit_otel_events=False)
+
+    @config.evaluate(E())
+    async def run(x: int) -> int:
+        return x
+
+    # First call warns; second call reuses the already-wrapped class and must not re-warn.
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always', DeprecationWarning)
+        await run(1)
+        await wait_for_evaluations()
+        await run(2)
+        await wait_for_evaluations()
+
+    legacy_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+    assert len(legacy_warnings) == 1
+
+
+@pytest.mark.anyio
 async def test_sink_with_var_keyword_is_treated_as_modern():
     """A sink whose `submit` uses **kwargs is assumed to accept `target` — no shim, no warning."""
     calls: list[dict[str, Any]] = []

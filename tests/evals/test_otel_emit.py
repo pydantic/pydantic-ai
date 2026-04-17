@@ -187,3 +187,37 @@ def test_empty_results_and_failures_emits_nothing(capfire: CaptureLogfire):
     )
 
     assert list(capfire.log_exporter.get_finished_logs()) == []
+
+
+def test_failure_without_error_message_omits_explanation(capfire: CaptureLogfire):
+    failure = EvaluatorFailure(
+        name='X',
+        error_message='',
+        error_stacktrace='tb',
+        source=_spec('X'),
+    )
+    emit_otel_events(
+        results=[],
+        failures=[failure],
+        span_reference=None,
+        target=_target('f'),
+    )
+
+    attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
+    assert attrs['error.type'] == 'pydantic_evals.EvaluatorFailure'
+    assert 'gen_ai.evaluation.explanation' not in attrs
+
+
+def test_non_scalar_value_yields_no_score_attrs(capfire: CaptureLogfire):
+    """Defensive: a value that isn't bool/int/float/str leaves score attrs unset."""
+    # A `None` value bypasses the EvaluationScalar contract and exercises the fall-through.
+    emit_otel_events(
+        results=[_result('X', value=None)],
+        failures=[],
+        span_reference=None,
+        target=_target('f'),
+    )
+
+    attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
+    assert 'gen_ai.evaluation.score.value' not in attrs
+    assert 'gen_ai.evaluation.score.label' not in attrs
