@@ -12,7 +12,12 @@ from pydantic_ai.messages import MULTI_MODAL_CONTENT_TYPES
 from pydantic_ai.settings import ModelSettings
 
 __all__ = (
+    'GEvalOutput',
+    'GembaScoreOutput',
     'GradingOutput',
+    'judge_g_eval',
+    'judge_gemba_da',
+    'judge_gemba_sqm',
     'judge_input_output',
     'judge_input_output_expected',
     'judge_output',
@@ -263,3 +268,209 @@ def _build_prompt(
     if all(isinstance(section, str) for section in sections):
         return '\n'.join(sections)  # type: ignore[arg-type]
     return sections
+
+
+class GEvalOutput(BaseModel):
+    """The output of a G-Eval grading operation.
+
+    G-Eval asks the judge to emit a short chain-of-thought `reason` followed by an
+    integer `score` in a user-specified range (see [`judge_g_eval`][pydantic_evals.evaluators.llm_as_a_judge.judge_g_eval]).
+    """
+
+    reason: str
+    score: int
+
+
+_judge_g_eval_agent = Agent(
+    name='judge_g_eval',
+    system_prompt=dedent(
+        """
+        You are a rigorous evaluator scoring LLM outputs using the G-Eval framework.
+
+        Follow the evaluation steps exactly, then return a JSON object with this structure:
+        {"reason": string, "score": integer}
+
+        - `reason`: a concise chain-of-thought summary of how you applied the evaluation steps.
+        - `score`: a single integer within the score range specified in the prompt.
+
+        Do not include any other keys or prose outside the JSON object.
+        """
+    ),
+    output_type=GEvalOutput,
+)
+
+
+async def judge_g_eval(
+    output: Any,
+    criteria: str,
+    evaluation_steps: Sequence[str],
+    score_range: tuple[int, int] = (1, 5),
+    inputs: Any | None = None,
+    model: models.Model | models.KnownModelName | str | None = None,
+    model_settings: ModelSettings | None = None,
+) -> GEvalOutput:
+    """Judge an output using a G-Eval style chain-of-thought prompt.
+
+    This is a simplified implementation of G-Eval (Liu et al., 2023, "G-Eval: NLG Evaluation using
+    GPT-4 with Better Human Alignment"). The original paper computes an expectation over the
+    distribution of score tokens using log-probs. We skip that step and simply ask the model for
+    a direct integer score. This keeps the evaluator provider-agnostic at the cost of some
+    correlation with human judgments.
+
+    Args:
+        output: The output being evaluated.
+        criteria: The aspect being evaluated (e.g. "coherence", "fluency").
+        evaluation_steps: Explicit chain-of-thought steps the judge should follow.
+        score_range: Inclusive `(min, max)` integer score range.
+        inputs: Optional inputs/context to show alongside the output.
+        model: The model to use. If not specified, the default judge model is used.
+        model_settings: Optional model settings.
+
+    Returns:
+        A [`GEvalOutput`][pydantic_evals.evaluators.llm_as_a_judge.GEvalOutput] containing
+        the judge's reasoning and integer score.
+    """
+    if score_range[0] >= score_range[1]:
+        raise ValueError(f'`score_range` must satisfy min < max, got {score_range!r}')
+
+    numbered_steps = '\n'.join(f'{i}. {step}' for i, step in enumerate(evaluation_steps, start=1))
+    rubric = dedent(
+        f"""\
+        Evaluation criteria: {criteria}
+
+        Evaluation steps (apply each step in order):
+        {numbered_steps}
+
+        Produce a single integer score between {score_range[0]} and {score_range[1]} inclusive,
+        where {score_range[0]} is the worst and {score_range[1]} is the best according to the criteria.
+        """
+    )
+    user_prompt = _build_prompt(output=output, rubric=rubric, inputs=inputs)
+    return (
+        await _judge_g_eval_agent.run(user_prompt, model=model or _default_model, model_settings=model_settings)
+    ).output
+
+
+class GembaScoreOutput(BaseModel):
+    """The output of a GEMBA grading operation.
+
+    `score` is an integer within the range required by the selected GEMBA variant (0-100 for DA,
+    0-6 for SQM). See [`judge_gemba_da`][pydantic_evals.evaluators.llm_as_a_judge.judge_gemba_da]
+    and [`judge_gemba_sqm`][pydantic_evals.evaluators.llm_as_a_judge.judge_gemba_sqm].
+    """
+
+    reason: str
+    score: int
+
+
+_judge_gemba_agent = Agent(
+    name='judge_gemba',
+    system_prompt=dedent(
+        """
+        You are a professional translator scoring machine translation quality using the GEMBA
+        (GPT Estimation Metric Based Assessment) protocol.
+
+        Follow the scoring rubric in the user prompt exactly. Respond with a JSON object of the form:
+        {"reason": string, "score": integer}
+
+        - `reason`: a one-sentence justification for the score.
+        - `score`: an integer within the range described in the prompt.
+        """
+    ),
+    output_type=GembaScoreOutput,
+)
+
+
+def _gemba_da_prompt(
+    source_text: str,
+    target_text: str,
+    source_lang: str,
+    target_lang: str,
+    reference: str | None,
+) -> str:
+    reference_block = f'{target_lang} human reference: "{reference}"\n' if reference is not None else ''
+    return dedent(
+        f"""\
+        Score the following translation from {source_lang} to {target_lang} on a continuous scale
+        from 0 to 100, where a score of zero means "no meaning preserved" and a score of one hundred
+        means "perfect meaning and grammar".
+
+        {source_lang} source: "{source_text}"
+        {reference_block}{target_lang} translation: "{target_text}"
+
+        Return an integer score between 0 and 100 inclusive.
+        """
+    )
+
+
+def _gemba_sqm_prompt(
+    source_text: str,
+    target_text: str,
+    source_lang: str,
+    target_lang: str,
+    reference: str | None,
+) -> str:
+    reference_block = f'{target_lang} human reference: "{reference}"\n' if reference is not None else ''
+    return dedent(
+        f"""\
+        Score the following translation from {source_lang} to {target_lang} using the Scalar Quality Metrics (SQM) rubric on an integer scale from 0 to 6:
+
+        0 = Nonsense/No meaning preserved
+        2 = Some meaning preserved
+        4 = Most meaning preserved with few grammar mistakes
+        6 = Perfect meaning and grammar
+
+        {source_lang} source: "{source_text}"
+        {reference_block}{target_lang} translation: "{target_text}"
+
+        Return an integer score between 0 and 6 inclusive.
+        """
+    )
+
+
+async def judge_gemba_da(
+    source_text: str,
+    target_text: str,
+    source_lang: str,
+    target_lang: str,
+    reference: str | None = None,
+    model: models.Model | models.KnownModelName | str | None = None,
+    model_settings: ModelSettings | None = None,
+) -> GembaScoreOutput:
+    """Judge translation quality using the GEMBA Direct Assessment (0-100) prompt.
+
+    Implements the zero-shot GEMBA-DA prompt from Kocmi & Federmann, 2023 ("Large Language Models
+    Are State-of-the-Art Evaluators of Translation Quality"). When `reference` is provided, the
+    human reference is included alongside the candidate translation.
+
+    Returns:
+        A [`GembaScoreOutput`][pydantic_evals.evaluators.llm_as_a_judge.GembaScoreOutput] with a
+        0-100 integer score.
+    """
+    user_prompt = _gemba_da_prompt(source_text, target_text, source_lang, target_lang, reference)
+    return (
+        await _judge_gemba_agent.run(user_prompt, model=model or _default_model, model_settings=model_settings)
+    ).output
+
+
+async def judge_gemba_sqm(
+    source_text: str,
+    target_text: str,
+    source_lang: str,
+    target_lang: str,
+    reference: str | None = None,
+    model: models.Model | models.KnownModelName | str | None = None,
+    model_settings: ModelSettings | None = None,
+) -> GembaScoreOutput:
+    """Judge translation quality using the GEMBA Scalar Quality Metrics (0-6) prompt.
+
+    Implements the zero-shot GEMBA-SQM prompt from Kocmi & Federmann, 2023.
+
+    Returns:
+        A [`GembaScoreOutput`][pydantic_evals.evaluators.llm_as_a_judge.GembaScoreOutput] with a
+        0-6 integer score.
+    """
+    user_prompt = _gemba_sqm_prompt(source_text, target_text, source_lang, target_lang, reference)
+    return (
+        await _judge_gemba_agent.run(user_prompt, model=model or _default_model, model_settings=model_settings)
+    ).output

@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import TypeAdapter
 from typing_extensions import TypedDict
@@ -14,6 +14,11 @@ from pydantic_ai.settings import ModelSettings
 from ..otel.span_tree import SpanQuery
 from .context import EvaluatorContext
 from .evaluator import EvaluationReason, EvaluationScalar, Evaluator, EvaluatorOutput
+
+if TYPE_CHECKING:
+    # DEFAULT_EVALUATORS is assembled lazily via __getattr__ to avoid a circular import
+    # between `common` and `quality`; expose it here for type checkers.
+    DEFAULT_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...]
 
 __all__ = (
     'Equals',
@@ -280,7 +285,7 @@ class HasMatchingSpan(Evaluator[object, object, object]):
         return ctx.span_tree.any(self.query)
 
 
-DEFAULT_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...] = (
+_COMMON_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...] = (
     Equals,
     EqualsExpected,
     Contains,
@@ -292,6 +297,19 @@ DEFAULT_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...] = (
 
 
 def __getattr__(name: str):
+    if name == 'DEFAULT_EVALUATORS':
+        # Import quality lazily to avoid a circular import (quality imports helpers from this module).
+        from . import quality
+
+        return _COMMON_EVALUATORS + (
+            quality.Faithfulness,
+            quality.AnswerRelevance,
+            quality.ContextPrecision,
+            quality.ContextRecall,
+            quality.Hallucination,
+            quality.GEval,
+            quality.GembaScore,
+        )
     if name == 'Python':
         raise ImportError(
             'The `Python` evaluator has been removed for security reasons. See https://github.com/pydantic/pydantic-ai/pull/2808 for more details and a workaround.'
