@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import warnings
 from dataclasses import dataclass
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
@@ -33,6 +34,10 @@ class GoogleModelProfile(ModelProfile):
     See https://ai.google.dev/gemini-api/docs/tool-combination
     """
 
+    # TODO(v2): remove google_supports_native_output_with_builtin_tools
+    google_supports_native_output_with_builtin_tools: bool | None = None
+    """Deprecated: use `google_supports_tool_combination` instead."""
+
     google_supported_mime_types_in_tool_returns: tuple[str, ...] = ()
     """MIME types supported in native FunctionResponseDict.parts.
     See https://ai.google.dev/gemini-api/docs/function-calling#multimodal-function-responses"""
@@ -42,6 +47,16 @@ class GoogleModelProfile(ModelProfile):
 
     Gemini 3+ models use `thinking_level`; Gemini 2.5 uses `thinking_budget`.
     """
+
+    def __post_init__(self):
+        if self.google_supports_native_output_with_builtin_tools is not None:
+            warnings.warn(
+                '`google_supports_native_output_with_builtin_tools` is deprecated, '
+                'use `google_supports_tool_combination` instead.',
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            self.google_supports_tool_combination = self.google_supports_native_output_with_builtin_tools
 
 
 def google_model_profile(model_name: str) -> ModelProfile | None:
