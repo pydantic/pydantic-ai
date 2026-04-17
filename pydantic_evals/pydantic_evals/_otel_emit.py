@@ -146,13 +146,12 @@ def _base_attrs(
     evaluator_version: str | None,
     extra_attributes: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
-    attrs: dict[str, Any] = {
-        _ATTR_TARGET: target,
-    }
+    # Apply extras first so standard attributes always win — consistent with the
+    # standard attrs written by _emit_result / _emit_failure after this returns.
+    attrs: dict[str, Any] = dict(extra_attributes) if extra_attributes else {}
+    attrs[_ATTR_TARGET] = target
     if evaluator_version is not None:
         attrs[_ATTR_EVALUATOR_VERSION] = evaluator_version
-    if extra_attributes:
-        attrs.update(extra_attributes)
     return attrs
 
 

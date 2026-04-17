@@ -208,6 +208,37 @@ def test_failure_without_error_message_omits_explanation(capfire: CaptureLogfire
     assert 'gen_ai.evaluation.explanation' not in attrs
 
 
+def test_extra_attributes_cannot_override_standard_attrs(capfire: CaptureLogfire):
+    """otel_extra_attributes must not clobber any standard gen_ai.* semconv attribute."""
+    emit_otel_events(
+        results=[_result('Correctness', True, reason='looks right', evaluator_version='v9')],
+        failures=[],
+        span_reference=None,
+        target=_target('real_target'),
+        extra_attributes={
+            'gen_ai.evaluation.target': 'hijacked',
+            'gen_ai.evaluation.evaluator_version': 'hijacked',
+            'gen_ai.evaluation.name': 'hijacked',
+            'gen_ai.evaluation.score.value': 0.0,
+            'gen_ai.evaluation.score.label': 'hijacked',
+            'gen_ai.evaluation.explanation': 'hijacked',
+            'gen_ai.evaluation.evaluator_source': 'hijacked',
+            'team': 'platform',
+        },
+    )
+
+    attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
+    assert attrs['gen_ai.evaluation.target'] == 'real_target'
+    assert attrs['gen_ai.evaluation.evaluator_version'] == 'v9'
+    assert attrs['gen_ai.evaluation.name'] == 'Correctness'
+    assert attrs['gen_ai.evaluation.score.value'] == 1.0
+    assert attrs['gen_ai.evaluation.score.label'] == 'pass'
+    assert attrs['gen_ai.evaluation.explanation'] == 'looks right'
+    assert attrs['gen_ai.evaluation.evaluator_source'] != 'hijacked'
+    # Non-standard extras pass through unchanged.
+    assert attrs['team'] == 'platform'
+
+
 def test_non_scalar_value_yields_no_score_attrs(capfire: CaptureLogfire):
     """Defensive: a value that isn't bool/int/float/str leaves score attrs unset."""
     # A `None` value bypasses the EvaluationScalar contract and exercises the fall-through.
