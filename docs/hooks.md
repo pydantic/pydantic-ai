@@ -169,7 +169,7 @@ The primary use case is **pre-parse normalization**: `before_output_validate` le
 | `output_process` | `output_process=` | `wrap_output_process` |
 | `output_process_error` | `output_process_error=` | `on_output_process_error` |
 
-Output processing hooks fire when the output is processed — extracting values and calling output functions. These hooks fire for **all** output types (text, structured, tool, image). Output validators ([`@agent.output_validator`][pydantic_ai.Agent.output_validator]) run after all output hooks for both text and tool output.
+Output processing hooks fire when the output is processed — extracting values, calling output functions, and running output validators. These hooks fire for **all** output types (text, structured, tool, image). Output validators ([`@agent.output_validator`][pydantic_ai.Agent.output_validator]) run inside the processing pipeline (within `wrap_output_process`), so `after_output_process` sees the fully validated result.
 
 ### Tool preparation
 

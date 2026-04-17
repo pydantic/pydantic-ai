@@ -478,11 +478,13 @@ class ToolManager(Generic[AgentDepsT]):
             UnexpectedModelBehavior: If max retries exceeded.
         """
         assert self.ctx is not None
+        # Output tool names are pre-classified by _classify_tool_calls, so _resolve_tool
+        # should never fail here. The assert documents this invariant.
         name, tool = self._resolve_tool(call)
+        assert isinstance(tool.toolset, OutputToolset), f'Expected output tool, got {type(tool.toolset).__name__}'
         ctx = self._build_tool_context(call, tool, allow_partial=allow_partial)
 
         toolset = tool.toolset
-        assert isinstance(toolset, OutputToolset)
         processor = toolset.processors[name]
         output_context = processor.get_output_context('tool', tool_call=call, tool_def=tool.tool_def)
 
@@ -522,9 +524,11 @@ class ToolManager(Generic[AgentDepsT]):
         *,
         wrap_validation_errors: bool = True,
     ) -> Any:
-        """Execute output tool through output execute hooks (skipping tool hooks).
+        """Execute output tool through output process hooks (skipping tool hooks).
 
-        Output validators run AFTER all output hooks, consistent with text output.
+        Output validators run inside process hooks (inside wrap_output_process), ensuring
+        the complete output pipeline is wrapped. Validators see the global output retry
+        context (from self.ctx), not the per-tool context, matching the text output path.
 
         Raises:
             ToolRetryError: If execution or output validation fails.
@@ -533,6 +537,7 @@ class ToolManager(Generic[AgentDepsT]):
         assert validated.args_valid
         assert validated.tool is not None
         assert validated.validated_args is not None
+        assert self.ctx is not None
 
         name = validated.call.tool_name
         toolset = validated.tool.toolset
@@ -542,12 +547,21 @@ class ToolManager(Generic[AgentDepsT]):
         processor = toolset.processors[name]
         output_context = processor.get_output_context('tool', tool_call=validated.call, tool_def=tool.tool_def)
 
+        # Use the global output retry context for validators, matching the text output path.
+        validator_ctx = replace(validated.ctx, retry=self.ctx.retry, max_retries=self.ctx.max_retries)
+
         async def do_process(output: Any) -> Any:
             try:
-                return await processor.call(output, validated.ctx, wrap_validation_errors=False)
+                result = await processor.call(output, validated.ctx, wrap_validation_errors=False)
             except ModelRetry as e:
                 # Wrap as ToolRetryError; retry tracking is done by the outer handler
                 raise self._wrap_error_as_retry(name, validated.call, e) from e
+            # Output validators run inside do_process so wrap_output_process wraps the
+            # complete pipeline. Validators use wrap_validation_errors=False — the outer
+            # run_output_process_hooks handles wrapping ModelRetry as ToolRetryError.
+            for validator in toolset.output_validators:
+                result = await validator.validate(result, validator_ctx, wrap_validation_errors=False)
+            return result
 
         cap = self.root_capability
         assert cap is not None, 'execute_output_tool_call requires root_capability'
@@ -565,19 +579,6 @@ class ToolManager(Generic[AgentDepsT]):
             self._check_max_retries(name, tool.max_retries, cause)
             self.failed_tools.add(name)
             raise
-
-        # Output validators run AFTER all output hooks (consistent with text output).
-        # Use the global output retry context (from self.ctx) rather than the per-tool
-        # context (validated.ctx), matching the text output path's behavior.
-        try:
-            assert self.ctx is not None
-            validator_ctx = replace(validated.ctx, retry=self.ctx.retry, max_retries=self.ctx.max_retries)
-            for validator in toolset.output_validators:
-                result = await validator.validate(result, validator_ctx, wrap_validation_errors=False)
-        except ModelRetry as e:
-            self._check_max_retries(name, tool.max_retries, e)
-            self.failed_tools.add(name)
-            raise self._wrap_error_as_retry(name, validated.call, e) from e
 
         return result
 

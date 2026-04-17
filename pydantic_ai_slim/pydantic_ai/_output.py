@@ -233,8 +233,12 @@ async def run_image_process_hooks(
     capability: AbstractCapability[AgentDepsT],
     run_context: RunContext[AgentDepsT],
     wrap_validation_errors: bool = True,
+    output_validators: Sequence[OutputValidator[AgentDepsT, Any]] = (),
 ) -> Any:
-    """Run output process hooks for image output (no validate hooks — nothing to parse)."""
+    """Run output process hooks for image output (no validate hooks — nothing to parse).
+
+    Output validators run inside process hooks, consistent with text/structured output.
+    """
     output_context = OutputContext(
         mode='image',
         output_type=_messages.BinaryImage,
@@ -243,7 +247,10 @@ async def run_image_process_hooks(
     )
 
     async def do_process(output: Any) -> Any:
-        return output
+        result = output
+        for validator in output_validators:
+            result = await validator.validate(result, run_context, wrap_validation_errors=False)
+        return result
 
     return await run_output_process_hooks(
         capability,
@@ -264,23 +271,37 @@ async def run_output_with_hooks(
     output_mode: OutputMode,
     allow_partial: bool = False,
     wrap_validation_errors: bool = True,
+    output_validators: Sequence[OutputValidator[AgentDepsT, Any]] = (),
 ) -> OutputDataT:
     """Process output text through the processor with capability output hooks.
 
     Validate hooks only fire for structured output (BaseObjectOutputProcessor) where
     real parsing occurs. Process hooks fire for all output types.
 
-    Output validators (@agent.output_validator) are NOT run here — the caller is responsible.
+    Output validators (`@agent.output_validator`) run inside process hooks when a capability
+    is present, ensuring `wrap_output_process` wraps the complete output pipeline.
     """
     if capability is None:
-        return await processor.process(
+        result = await processor.process(
             text, run_context=run_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
         )
+        for validator in output_validators:
+            result = await validator.validate(result, run_context, wrap_validation_errors=wrap_validation_errors)
+        return result
 
     output_context = processor.get_output_context(output_mode)
-    do_validate, do_process = _build_output_handlers(
+    do_validate, base_do_process = _build_output_handlers(
         processor, run_context=run_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
     )
+
+    # Wrap output validators into do_process so they run inside wrap_output_process.
+    # Validators use wrap_validation_errors=False — the outer run_output_process_hooks
+    # handles wrapping ModelRetry as ToolRetryError when appropriate.
+    async def do_process(output: Any) -> Any:
+        result = await base_do_process(output)
+        for validator in output_validators:
+            result = await validator.validate(result, run_context, wrap_validation_errors=False)
+        return result
 
     if isinstance(processor, BaseObjectOutputProcessor):
         # Structured output: fire validate hooks (real parsing) then process hooks

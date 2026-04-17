@@ -1222,9 +1222,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             run_context=run_context,
             capability=ctx.deps.root_capability,
             output_mode=ctx.deps.output_schema.mode,
+            output_validators=ctx.deps.output_validators,
         )
 
-        result_data = await _run_output_validators(ctx, result_data, run_context)
         return self._handle_final_result(ctx, result.FinalResult(result_data), [])
 
     async def _handle_image_response(
@@ -1234,10 +1234,12 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
         run_context = _build_output_run_context(ctx)
         result_data = await _output.run_image_process_hooks(
-            image, capability=ctx.deps.root_capability, run_context=run_context
+            image,
+            capability=ctx.deps.root_capability,
+            run_context=run_context,
+            output_validators=ctx.deps.output_validators,
         )
 
-        result_data = await _run_output_validators(ctx, result_data, run_context)
         return self._handle_final_result(ctx, result.FinalResult(result_data), [])
 
     def _handle_final_result(

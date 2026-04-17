@@ -232,7 +232,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                         text = ''
 
                 run_ctx = replace(self._run_ctx, partial_output=allow_partial)
-                result_data = await run_output_with_hooks(
+                return await run_output_with_hooks(
                     text_processor,
                     text=text,
                     run_context=run_ctx,
@@ -240,10 +240,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     output_mode=self._output_schema.mode,
                     allow_partial=allow_partial,
                     wrap_validation_errors=False,
+                    output_validators=self._output_validators,
                 )
-                for validator in self._output_validators:
-                    result_data = await validator.validate(result_data, run_ctx)
-                return result_data
             else:
                 raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
                     'Invalid response, unable to process text output'
@@ -256,21 +254,22 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             raise
 
     async def _validate_image_output(self, image: _messages.BinaryImage, *, allow_partial: bool) -> OutputDataT:
-        """Run process hooks and output validators for image output."""
+        """Run process hooks (including output validators) for image output."""
         run_ctx = replace(self._run_ctx, partial_output=allow_partial)
         capability = self._root_capability
         if capability is not None:
-            result_data: OutputDataT = cast(
+            return cast(
                 OutputDataT,
                 await run_image_process_hooks(
-                    image, capability=capability, run_context=run_ctx, wrap_validation_errors=False
+                    image,
+                    capability=capability,
+                    run_context=run_ctx,
+                    wrap_validation_errors=False,
+                    output_validators=self._output_validators,
                 ),
             )
         else:  # pragma: no cover — agents always have root_capability
-            result_data = cast(OutputDataT, image)
-        for validator in self._output_validators:
-            result_data = await validator.validate(result_data, run_ctx, wrap_validation_errors=False)
-        return result_data
+            return cast(OutputDataT, image)
 
     async def _stream_response_text(
         self, *, delta: bool = False, debounce_by: float | None = 0.1
