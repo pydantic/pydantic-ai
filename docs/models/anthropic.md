@@ -42,6 +42,11 @@ agent = Agent(model)
 ...
 ```
 
+!!! note "Claude Opus 4.7 migration"
+    Anthropic's [Claude Opus 4.7 migration guide](https://platform.claude.com/docs/en/about-claude/models/migration-guide) recommends removing `temperature`, `top_p`, and `top_k` from Opus 4.7 requests. Pydantic AI drops those keys automatically for `claude-opus-4-7`, including `extra_body` overrides.
+
+    The same guide also recommends re-evaluating `max_tokens` and any token-count assumptions when migrating from Opus 4.6, since Opus 4.7 uses updated tokenization. If you rely on `count_tokens()` or `count_tokens_before_request`, verify your thresholds against the new model.
+
 ## `provider` argument
 
 You can provide a custom `Provider` via the `provider` argument:

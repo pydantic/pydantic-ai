@@ -3123,7 +3123,7 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
         ]
     )
 
-    assert result.new_messages() == result.all_messages()[-2:]
+    assert result.new_messages() == result.all_messages()[-1:]
 
 
 def test_run_with_history_ending_on_model_response_with_tool_calls_and_no_user_prompt():
@@ -9050,11 +9050,6 @@ async def test_message_history():
             pass
         assert run.new_messages() == snapshot(
             [
-                ModelRequest(
-                    parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                ),
                 ModelResponse(
                     parts=[TextPart(content='ok here is text')],
                     usage=RequestUsage(input_tokens=51, output_tokens=4),
@@ -9064,7 +9059,7 @@ async def test_message_history():
                 ),
             ]
         )
-        assert run.new_messages_json().startswith(b'[{"parts":[{"content":"Hello",')
+        assert run.new_messages_json().startswith(b'[{"parts":[{"content":"ok here is text",')
         assert run.all_messages() == snapshot(
             [
                 ModelRequest(

@@ -521,23 +521,18 @@ def test_model_json_schema_with_capabilities():
                 },
                 'KnownModelName': {
                     'enum': [
-                        'anthropic:claude-3-5-haiku-20241022',
-                        'anthropic:claude-3-5-haiku-latest',
-                        'anthropic:claude-3-7-sonnet-20250219',
-                        'anthropic:claude-3-7-sonnet-latest',
                         'anthropic:claude-3-haiku-20240307',
-                        'anthropic:claude-3-opus-20240229',
-                        'anthropic:claude-3-opus-latest',
-                        'anthropic:claude-4-opus-20250514',
-                        'anthropic:claude-4-sonnet-20250514',
                         'anthropic:claude-haiku-4-5-20251001',
+                        'anthropic:claude-mythos-preview',
                         'anthropic:claude-haiku-4-5',
                         'anthropic:claude-opus-4-0',
+                        'anthropic:claude-opus-4-1',
                         'anthropic:claude-opus-4-1-20250805',
                         'anthropic:claude-opus-4-20250514',
                         'anthropic:claude-opus-4-5-20251101',
                         'anthropic:claude-opus-4-5',
                         'anthropic:claude-opus-4-6',
+                        'anthropic:claude-opus-4-7',
                         'anthropic:claude-sonnet-4-0',
                         'anthropic:claude-sonnet-4-20250514',
                         'anthropic:claude-sonnet-4-5-20250929',
@@ -615,16 +610,17 @@ def test_model_json_schema_with_capabilities():
                         'deepseek:deepseek-chat',
                         'deepseek:deepseek-reasoner',
                         'gateway/anthropic:claude-3-haiku-20240307',
-                        'gateway/anthropic:claude-4-opus-20250514',
-                        'gateway/anthropic:claude-4-sonnet-20250514',
                         'gateway/anthropic:claude-haiku-4-5-20251001',
+                        'gateway/anthropic:claude-mythos-preview',
                         'gateway/anthropic:claude-haiku-4-5',
                         'gateway/anthropic:claude-opus-4-0',
+                        'gateway/anthropic:claude-opus-4-1',
                         'gateway/anthropic:claude-opus-4-1-20250805',
                         'gateway/anthropic:claude-opus-4-20250514',
                         'gateway/anthropic:claude-opus-4-5-20251101',
                         'gateway/anthropic:claude-opus-4-5',
                         'gateway/anthropic:claude-opus-4-6',
+                        'gateway/anthropic:claude-opus-4-7',
                         'gateway/anthropic:claude-sonnet-4-0',
                         'gateway/anthropic:claude-sonnet-4-20250514',
                         'gateway/anthropic:claude-sonnet-4-5-20250929',
@@ -8605,12 +8601,91 @@ class TestCompaction:
         )
 
     def test_openai_compaction_should_compact_no_config(self):
-        """OpenAICompaction._should_compact returns False when nothing is configured."""
+        """Bare `OpenAICompaction()` is stateful mode and never triggers the before_model_request hook."""
         pytest.importorskip('openai')
         from pydantic_ai.models.openai import OpenAICompaction
 
         cap = OpenAICompaction()
+        assert cap.stateless is False
         assert not cap._should_compact([ModelRequest(parts=[UserPromptPart(content='hi')])])  # pyright: ignore[reportPrivateUsage]
+
+    def test_openai_compaction_mode_inference(self):
+        """`stateless` is inferred from which mode-specific fields are passed."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        assert OpenAICompaction().stateless is False
+        assert OpenAICompaction(token_threshold=1000).stateless is False
+        assert OpenAICompaction(message_count_threshold=5).stateless is True
+        assert OpenAICompaction(trigger=lambda _msgs: True).stateless is True
+
+    def test_openai_compaction_stateful_model_settings(self):
+        """Stateful mode returns `openai_context_management` via get_model_settings."""
+        pytest.importorskip('openai')
+        from types import SimpleNamespace
+        from typing import cast
+
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        def _resolve(cap: OpenAICompaction[None], model_settings: dict[str, Any] | None = None) -> dict[str, Any]:
+            resolver = cap.get_model_settings()
+            assert resolver is not None
+            ctx = SimpleNamespace(model_settings=model_settings)
+            return cast(dict[str, Any], resolver(cast(Any, ctx)))
+
+        assert _resolve(OpenAICompaction()) == {'openai_context_management': [{'type': 'compaction'}]}
+        assert _resolve(OpenAICompaction(token_threshold=50_000)) == {
+            'openai_context_management': [{'type': 'compaction', 'compact_threshold': 50_000}]
+        }
+        # If the user already configured `openai_context_management` directly, we defer
+        # to them entirely and don't append our own entry. OpenAI's context_management
+        # list only meaningfully supports one `compaction` entry, so mixing the capability
+        # with manual config would produce ambiguous/conflicting state.
+        assert (
+            _resolve(
+                OpenAICompaction(token_threshold=50_000),
+                model_settings={'openai_context_management': [{'type': 'compaction', 'compact_threshold': 200_000}]},
+            )
+            == {}
+        )
+        # When user has other model settings but no `openai_context_management`,
+        # the capability's compaction entry is injected normally.
+        assert _resolve(
+            OpenAICompaction(token_threshold=50_000),
+            model_settings={'temperature': 0.5},
+        ) == {'openai_context_management': [{'type': 'compaction', 'compact_threshold': 50_000}]}
+        # Stateless mode does not inject model settings
+        assert OpenAICompaction(message_count_threshold=5).get_model_settings() is None
+
+    def test_openai_compaction_rejects_mixed_fields(self):
+        """Mixing stateful-only and stateless-only fields raises UserError."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        with pytest.raises(UserError, match='`token_threshold` is only valid for stateful compaction'):
+            OpenAICompaction(stateless=True, token_threshold=1000, message_count_threshold=5)
+
+        with pytest.raises(UserError, match='only valid for stateless compaction'):
+            OpenAICompaction(stateless=False, message_count_threshold=5)
+
+        with pytest.raises(UserError, match='only valid for stateless compaction'):
+            OpenAICompaction(stateless=False, trigger=lambda _msgs: True)
+
+    def test_openai_compaction_stateless_requires_trigger(self):
+        """`stateless=True` without message_count_threshold or trigger raises UserError."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        with pytest.raises(UserError, match='requires `message_count_threshold` or `trigger`'):
+            OpenAICompaction(stateless=True)
+
+    def test_openai_compaction_instructions_deprecated(self):
+        """Passing `instructions` emits a DeprecationWarning because OpenAI semantics differ from Anthropic."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        with pytest.warns(DeprecationWarning, match='OpenAICompaction\\(instructions='):
+            OpenAICompaction(message_count_threshold=5, instructions='Summarize briefly')
 
     def test_openai_compaction_serialization_name(self):
         """OpenAICompaction has the correct serialization name."""
