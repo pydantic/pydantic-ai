@@ -116,7 +116,7 @@ See the dedicated [Hooks](hooks.md) page for the full API: decorator and constru
 
 ### Provider-adaptive tools
 
-[`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], [`XSearch`][pydantic_ai.capabilities.XSearch], and [`MCP`][pydantic_ai.capabilities.MCP] provide model-agnostic access to common tool types. When the model supports the tool natively (as a [builtin tool](builtin-tools.md)), it's used directly. When it doesn't, a local function tool handles it so your agent works across providers without code changes.
+[`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], [`XSearch`][pydantic_ai.capabilities.XSearch], and [`MCP`][pydantic_ai.capabilities.MCP] provide model-agnostic access to common tool types. When the model supports the tool natively (as a [builtin tool](builtin-tools.md)), it's used directly. When it doesn't, a local function tool handles it instead - so your agent works across providers without code changes.
 
 Each accepts `builtin` and `local` keyword arguments to control which side is used. [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] and [`XSearch`][pydantic_ai.capabilities.XSearch] also accept `fallback_model` to enable their default subagent fallbacks:
 
