@@ -274,6 +274,139 @@ async def test_request_meta_none_by_default(run_context: RunContext[int]):
         assert result == snapshot({})
 
 
+async def test_request_meta_in_list_tools():
+    server = MCPServerStdio(
+        'python',
+        ['-m', 'tests.mcp_server'],
+        request_meta={'custom_key': 'custom_val'},
+        cache_tools=False,
+    )
+    async with server:
+        original_list_tools = server._client.list_tools  # pyright: ignore[reportPrivateUsage]
+        captured_params: list[Any] = []
+
+        async def spy_list_tools(**kwargs: Any) -> Any:
+            captured_params.append(kwargs.get('params'))
+            return await original_list_tools(**kwargs)
+
+        with patch.object(
+            server._client,  # pyright: ignore[reportPrivateUsage]
+            'list_tools',
+            side_effect=spy_list_tools,
+        ):
+            tools = await server.list_tools()
+            assert len(tools) > 0
+            assert len(captured_params) == 1
+            params = captured_params[0]
+            assert params is not None
+            assert params.meta.custom_key == 'custom_val'
+
+
+async def test_request_meta_in_list_resources():
+    server = MCPServerStdio(
+        'python',
+        ['-m', 'tests.mcp_server'],
+        request_meta={'custom_key': 'custom_val'},
+        cache_resources=False,
+    )
+    async with server:
+        original_list_resources = server._client.list_resources  # pyright: ignore[reportPrivateUsage]
+        captured_params: list[Any] = []
+
+        async def spy_list_resources(**kwargs: Any) -> Any:
+            captured_params.append(kwargs.get('params'))
+            return await original_list_resources(**kwargs)
+
+        with patch.object(
+            server._client,  # pyright: ignore[reportPrivateUsage]
+            'list_resources',
+            side_effect=spy_list_resources,
+        ):
+            resources = await server.list_resources()
+            assert len(resources) > 0
+            assert len(captured_params) == 1
+            params = captured_params[0]
+            assert params is not None
+            assert params.meta.custom_key == 'custom_val'
+
+
+async def test_request_meta_in_list_resource_templates():
+    server = MCPServerStdio(
+        'python',
+        ['-m', 'tests.mcp_server'],
+        request_meta={'custom_key': 'custom_val'},
+    )
+    async with server:
+        original_list_templates = server._client.list_resource_templates  # pyright: ignore[reportPrivateUsage]
+        captured_params: list[Any] = []
+
+        async def spy_list_templates(**kwargs: Any) -> Any:
+            captured_params.append(kwargs.get('params'))
+            return await original_list_templates(**kwargs)
+
+        with patch.object(
+            server._client,  # pyright: ignore[reportPrivateUsage]
+            'list_resource_templates',
+            side_effect=spy_list_templates,
+        ):
+            templates = await server.list_resource_templates()
+            assert len(templates) > 0
+            assert len(captured_params) == 1
+            params = captured_params[0]
+            assert params is not None
+            assert params.meta.custom_key == 'custom_val'
+
+
+async def test_request_meta_in_read_resource():
+    server = MCPServerStdio(
+        'python',
+        ['-m', 'tests.mcp_server'],
+        request_meta={'custom_key': 'custom_val'},
+    )
+    async with server:
+        original_send_request = server._client.send_request  # pyright: ignore[reportPrivateUsage]
+        captured_requests: list[Any] = []
+
+        async def spy_send_request(request: Any, *args: Any, **kwargs: Any) -> Any:
+            captured_requests.append(request)
+            return await original_send_request(request, *args, **kwargs)
+
+        with patch.object(
+            server._client,  # pyright: ignore[reportPrivateUsage]
+            'send_request',
+            side_effect=spy_send_request,
+        ):
+            result = await server.read_resource('resource://product_name.txt')
+            assert isinstance(result, str)
+            assert len(captured_requests) == 1
+            request_params = captured_requests[0].root.params
+            assert request_params.meta.custom_key == 'custom_val'
+
+
+async def test_request_meta_not_sent_when_none():
+    server = MCPServerStdio(
+        'python',
+        ['-m', 'tests.mcp_server'],
+        cache_tools=False,
+    )
+    async with server:
+        original_list_tools = server._client.list_tools  # pyright: ignore[reportPrivateUsage]
+        captured_params: list[Any] = []
+
+        async def spy_list_tools(**kwargs: Any) -> Any:
+            captured_params.append(kwargs.get('params'))
+            return await original_list_tools(**kwargs)
+
+        with patch.object(
+            server._client,  # pyright: ignore[reportPrivateUsage]
+            'list_tools',
+            side_effect=spy_list_tools,
+        ):
+            await server.list_tools()
+            assert len(captured_params) == 1
+            assert captured_params[0] is None
+
+
 async def test_server_instructions_disabled_by_default(run_context: RunContext[int]):
     """Test that server instructions are not returned by default."""
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
