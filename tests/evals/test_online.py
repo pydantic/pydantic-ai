@@ -2142,6 +2142,7 @@ def test_extract_args_without_logfire_raises(monkeypatch: pytest.MonkeyPatch):
             return x
 
 
+@needs_logfire
 def test_extract_args_unknown_parameter_raises():
     """Naming an unknown parameter in `extract_args` fails at decoration time."""
     with pytest.raises(ValueError, match='not in'):
