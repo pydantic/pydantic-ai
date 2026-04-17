@@ -8,7 +8,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Literal, cast, overload
 
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
@@ -169,6 +169,16 @@ except ImportError as _import_error:
 
 _NON_AUTOMATIC_CACHING_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
 
+_ANTHROPIC_SAMPLING_PARAMS = ('temperature', 'top_p', 'top_k')
+_STR_OBJECT_DICT = TypeAdapter(dict[str, object])
+
+
+def _as_str_object_dict(value: object) -> dict[str, object] | None:
+    try:
+        return _STR_OBJECT_DICT.validate_python(value)
+    except ValidationError:
+        return None
+
 
 @contextmanager
 def _map_api_errors(model_name: str) -> Iterator[None]:
@@ -183,13 +193,12 @@ def _map_api_errors(model_name: str) -> Iterator[None]:
 
 
 LatestAnthropicModelNames = ModelParam
-"""Latest Anthropic models."""
+"""Anthropic model names from the installed SDK."""
 
-AnthropicModelName = str | LatestAnthropicModelNames
+AnthropicModelName = LatestAnthropicModelNames
 """Possible Anthropic model names.
 
-Since Anthropic supports a variety of date-stamped models, we explicitly list the latest models but
-allow any name in the type hints.
+The installed Anthropic SDK exposes the current literal set and still allows arbitrary string model names.
 See [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/models) for a full list.
 """
 
@@ -256,7 +265,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     for more information.
     """
 
-    anthropic_effort: Literal['low', 'medium', 'high', 'max'] | None
+    anthropic_effort: Literal['low', 'medium', 'high', 'xhigh', 'max'] | None
     """The effort level for the model to use when generating a response.
 
     See [the Anthropic docs](https://docs.anthropic.com/en/docs/build-with-claude/effort) for more information.
@@ -427,15 +436,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
-        settings = merge_model_settings(self.settings, model_settings)
+        settings: ModelSettings = {**(merge_model_settings(self.settings, model_settings) or {})}
+        profile = AnthropicModelProfile.from_profile(self.profile)
+        self._validate_thinking_settings(settings, profile)
+        self._drop_unsupported_sampling_settings(settings, profile)
 
         # Determine if thinking is effectively enabled (check both provider-specific and unified fields)
         thinking_enabled = False
-        if settings:
-            if anthropic_thinking := settings.get('anthropic_thinking'):
-                thinking_enabled = anthropic_thinking.get('type') in ('enabled', 'adaptive')
-            elif settings.get('thinking'):
-                thinking_enabled = True
+        if anthropic_thinking := settings.get('anthropic_thinking'):
+            thinking_enabled = anthropic_thinking.get('type') in ('enabled', 'adaptive')
+        elif settings.get('thinking'):
+            thinking_enabled = True
 
         if model_request_parameters.output_tools and thinking_enabled:
             output_mode = 'native' if self.profile.supports_json_schema_output else 'prompted'
@@ -458,7 +469,56 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             model_request_parameters = replace(
                 model_request_parameters, output_object=replace(model_request_parameters.output_object, strict=True)
             )
-        return super().prepare_request(model_settings, model_request_parameters)
+
+        prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
+        if prepared_settings is not None:
+            filtered_settings: ModelSettings = {**prepared_settings}
+            self._drop_unsupported_sampling_settings(filtered_settings, profile, warn=False)
+            prepared_settings = filtered_settings or None
+        return prepared_settings, model_request_parameters
+
+    @staticmethod
+    def _validate_thinking_settings(model_settings: ModelSettings, profile: AnthropicModelProfile) -> None:
+        if (
+            profile.anthropic_disallows_budget_thinking
+            and (anthropic_thinking := model_settings.get('anthropic_thinking'))
+            and anthropic_thinking.get('type') == 'enabled'
+        ):
+            raise UserError(
+                "Claude Opus 4.7 does not support `anthropic_thinking={'type': 'enabled', 'budget_tokens': ...}`. "
+                "Use `anthropic_thinking={'type': 'adaptive'}` and `anthropic_effort=...` instead."
+            )
+
+    @staticmethod
+    def _drop_unsupported_sampling_settings(
+        model_settings: ModelSettings, profile: AnthropicModelProfile, *, warn: bool = True
+    ) -> None:
+        if not profile.anthropic_disallows_sampling_settings:
+            return
+
+        dropped_from_settings = [setting for setting in _ANTHROPIC_SAMPLING_PARAMS if setting in model_settings]
+        dropped_from_extra_body: list[str] = []
+        if (extra_body := _as_str_object_dict(model_settings.get('extra_body'))) is not None:
+            dropped_from_extra_body = [setting for setting in _ANTHROPIC_SAMPLING_PARAMS if setting in extra_body]
+            if dropped_from_extra_body:
+                model_settings['extra_body'] = {
+                    key: value for key, value in extra_body.items() if key not in _ANTHROPIC_SAMPLING_PARAMS
+                }
+
+        if dropped := [
+            setting
+            for setting in _ANTHROPIC_SAMPLING_PARAMS
+            if setting in dropped_from_settings or setting in dropped_from_extra_body
+        ]:
+            if warn:
+                warnings.warn(
+                    f'Sampling parameters {dropped} are not supported by Claude Opus 4.7. These settings will be ignored.',
+                    UserWarning,
+                    stacklevel=2,
+                )
+
+        for setting in _ANTHROPIC_SAMPLING_PARAMS:
+            model_settings.pop(setting, None)
 
     def _translate_thinking(
         self,
@@ -1226,6 +1286,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             warnings.warn(
                 '`anthropic_cache_messages` is deprecated, use `anthropic_cache` instead',
                 DeprecationWarning,
+                stacklevel=2,
             )
             auto_cache = cache_messages
 
@@ -1447,7 +1508,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 'low': 'low',
                 'medium': 'medium',
                 'high': 'high',
-                'xhigh': 'max',  # Opus 4.6 only; other models ignore unsupported values
+                'xhigh': 'xhigh' if profile.anthropic_supports_xhigh_effort else 'max',
             }
             effort = effort_map.get(model_request_parameters.thinking, model_request_parameters.thinking)
 
@@ -1821,6 +1882,8 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
         raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
     elif item.name in ('tool_search_tool_regex', 'tool_search_tool_bm25'):  # pragma: no cover
         # NOTE this is being implemented in https://github.com/pydantic/pydantic-ai/pull/3550
+        raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
+    elif item.name == 'advisor':  # pragma: no cover
         raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
     else:
         assert_never(item.name)
