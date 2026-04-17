@@ -135,12 +135,14 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     `'server'` (default): the agent's configured `system_prompt` is authoritative.
     Any `SystemPromptPart` sent by the frontend is stripped with a warning (since a
     malicious client could otherwise inject arbitrary instructions via crafted API
-    requests), and the agent's own system prompt is injected on every request.
+    requests), and the agent's own system prompt is injected at the head of the
+    first request.
 
-    `'client'`: the frontend owns the system prompt. Frontend `SystemPromptPart`s
-    are preserved as-is, and the agent's configured `system_prompt` is never
-    injected — the caller is fully responsible for sending it on every turn if
-    desired.
+    `'client'`: frontend `SystemPromptPart`s are preserved as-is. If the frontend
+    sends none, the agent's configured `system_prompt` is used as a fallback (via
+    the general auto-injection that applies to any agent run with a history missing
+    sys_parts). To have the frontend strictly own the system prompt, configure the
+    agent without a `system_prompt`.
     """
 
     @classmethod
