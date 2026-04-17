@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 import json
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
@@ -658,7 +658,13 @@ class ToolManager(Generic[AgentDepsT]):
         requests: DeferredToolRequests,
         results: DeferredToolResults,
     ) -> tuple[
-        list[tuple[_messages.ToolCallPart, _messages.ToolReturnPart | _messages.RetryPromptPart]],
+        list[
+            tuple[
+                _messages.ToolCallPart,
+                _messages.ToolReturnPart | _messages.RetryPromptPart,
+                str | Sequence[_messages.UserContent] | None,
+            ]
+        ],
         DeferredToolRequests | None,
     ]:
         """Execute resolved deferred tool calls and compute remaining unresolved requests.
@@ -675,8 +681,15 @@ class ToolManager(Generic[AgentDepsT]):
         """
         all_deferred_calls = [*requests.approvals, *requests.calls]
         resolved_ids = set(results.approvals) | set(results.calls)
-        executed: list[tuple[_messages.ToolCallPart, _messages.ToolReturnPart | _messages.RetryPromptPart]] = []
+        executed: list[
+            tuple[
+                _messages.ToolCallPart,
+                _messages.ToolReturnPart | _messages.RetryPromptPart,
+                str | Sequence[_messages.UserContent] | None,
+            ]
+        ] = []
         re_deferred_ids: set[str] = set()
+        re_deferred_metadata: dict[str, dict[str, Any]] = {}
 
         for call in all_deferred_calls:
             if call.tool_call_id not in resolved_ids:
@@ -692,16 +705,24 @@ class ToolManager(Generic[AgentDepsT]):
             elif call.tool_call_id in results.calls:
                 call_result = results.calls[call.tool_call_id]
                 # External call results are used directly as the tool return value
+                if isinstance(call_result, _messages.ToolReturn):
+                    content = call_result.return_value
+                    result_metadata = call_result.metadata
+                    user_content = call_result.content or None
+                else:
+                    content = call_result
+                    result_metadata = None
+                    user_content = None
                 executed.append(
                     (
                         call,
                         _messages.ToolReturnPart(
                             tool_name=call.tool_name,
-                            content=call_result
-                            if not isinstance(call_result, _messages.ToolReturn)
-                            else call_result.return_value,
+                            content=content,
                             tool_call_id=call.tool_call_id,
+                            metadata=result_metadata,
                         ),
+                        user_content,
                     )
                 )
                 continue
@@ -709,14 +730,17 @@ class ToolManager(Generic[AgentDepsT]):
                 continue  # pragma: no cover
 
             # Handle approval results
-            result_part = await self._execute_approval_result(call, deferred_result, results.metadata)
-            if result_part is None:
-                # Tool re-raised deferral
+            approval_outcome = await self._execute_approval_result(call, deferred_result, results.metadata)
+            if isinstance(approval_outcome, (CallDeferred, ApprovalRequired)):
+                # Tool re-raised deferral — track it with its new metadata
                 re_deferred_ids.add(call.tool_call_id)
+                if approval_outcome.metadata:
+                    re_deferred_metadata[call.tool_call_id] = approval_outcome.metadata
             else:
-                executed.append((call, result_part))
+                result_part, user_content = approval_outcome
+                executed.append((call, result_part, user_content))
 
-        # Compute remaining: unresolved calls + re-deferred calls
+        # Compute remaining: unresolved calls + re-deferred calls (with metadata)
         remaining = requests.remaining(results)
         if re_deferred_ids:
             re_deferred_calls = [c for c in all_deferred_calls if c.tool_call_id in re_deferred_ids]
@@ -727,6 +751,7 @@ class ToolManager(Generic[AgentDepsT]):
                     remaining.approvals.append(call)
                 else:
                     remaining.calls.append(call)
+            remaining.metadata.update(re_deferred_metadata)
         return executed, remaining
 
     async def _execute_approval_result(
@@ -734,15 +759,22 @@ class ToolManager(Generic[AgentDepsT]):
         call: ToolCallPart,
         deferred_result: ToolApproved | ToolDenied,
         metadata: dict[str, dict[str, Any]],
-    ) -> _messages.ToolReturnPart | _messages.RetryPromptPart | None:
-        """Execute a single approval result, returning the result part or None if re-deferred."""
+    ) -> (
+        tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None]
+        | CallDeferred
+        | ApprovalRequired
+    ):
+        """Execute a single approval result.
+
+        Returns (result_part, user_content) on success, or the re-raised deferral exception.
+        """
         if isinstance(deferred_result, ToolDenied):
             return _messages.ToolReturnPart(
                 tool_name=call.tool_name,
                 content=deferred_result.message,
                 tool_call_id=call.tool_call_id,
                 outcome='denied',
-            )
+            ), None
 
         validate_call = call
         if deferred_result.override_args is not None:
@@ -752,23 +784,25 @@ class ToolManager(Generic[AgentDepsT]):
             validated = await self.validate_tool_call(validate_call, approved=True, metadata=call_metadata)
             tool_result = await self.execute_tool_call(validated)
         except ToolRetryError as e:
-            return e.tool_retry
-        except (CallDeferred, ApprovalRequired):
-            return None
+            return e.tool_retry, None
+        except (CallDeferred, ApprovalRequired) as exc:
+            return exc
 
         if isinstance(tool_result, _messages.ToolReturn):
             content = tool_result.return_value
             result_metadata = tool_result.metadata
+            user_content = tool_result.content or None
         else:
             content = tool_result
             result_metadata = None
+            user_content = None
 
         return _messages.ToolReturnPart(
             tool_name=call.tool_name,
             content=content,
             tool_call_id=call.tool_call_id,
             metadata=result_metadata,
-        )
+        ), user_content
 
     async def _resolve_single_deferred(
         self,
@@ -796,7 +830,7 @@ class ToolManager(Generic[AgentDepsT]):
         if remaining:
             raise exc
         if executed:
-            _call_part, result_part = executed[0]
+            _call_part, result_part, _user_content = executed[0]
             if isinstance(result_part, _messages.RetryPromptPart):
                 raise ToolRetryError(result_part)
             return result_part.content

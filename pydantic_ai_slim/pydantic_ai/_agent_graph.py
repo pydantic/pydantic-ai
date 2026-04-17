@@ -1549,9 +1549,11 @@ async def process_tool_calls(  # noqa: C901
             executed, deferred_tool_requests = await tool_manager.execute_deferred_tool_results(
                 deferred_tool_requests, handler_results
             )
-            for _call_part, result_part in executed:
+            for _call_part, result_part, user_content in executed:
                 output_parts.append(result_part)
-                yield _messages.FunctionToolResultEvent(result_part)
+                if user_content:
+                    output_parts.append(_messages.UserPromptPart(content=user_content))
+                yield _messages.FunctionToolResultEvent(result_part, content=user_content)
 
         if deferred_tool_requests is not None:
             if not ctx.deps.output_schema.allows_deferred_tools:
