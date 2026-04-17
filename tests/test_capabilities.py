@@ -9194,4 +9194,160 @@ async def test_deferred_tool_handler_unresolved_no_output_type_error():
         await agent.run('Hello')
 
 
+async def test_deferred_tool_handler_external_call():
+    """HandleDeferredToolCalls capability resolves an externally-executed tool."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('my_tool', {'x': 3}, tool_call_id='call1')])
+        return ModelResponse(parts=[TextPart('Got it.')])
+
+    from pydantic_ai.exceptions import CallDeferred
+    from pydantic_ai.messages import ToolReturn
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        # Simulate external execution: return a ToolReturn with metadata
+        return DeferredToolResults(
+            calls={
+                call.tool_call_id: ToolReturn(return_value='external result', metadata={'source': 'ext'})
+                for call in requests.calls
+            }
+        )
+
+    agent = Agent(
+        FunctionModel(llm),
+        capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
+    )
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        raise CallDeferred
+
+    result = await agent.run('Hello')
+    assert result.output == 'Got it.'
+
+
+async def test_deferred_tool_handler_via_handle_call():
+    """handle_call(resolve_deferred=True) resolves deferred tools inline via ToolManager."""
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('outer_tool', {}, tool_call_id='outer1')])
+        return ModelResponse(parts=[TextPart('All done.')])
+
+    agent = Agent(
+        FunctionModel(llm),
+        capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
+    )
+
+    @agent.tool
+    async def outer_tool(ctx: RunContext[None]) -> str:
+        """A tool that internally calls another tool via ToolManager.handle_call."""
+        assert ctx.tool_manager is not None
+        inner_call = ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner1')
+        result = await ctx.tool_manager.handle_call(inner_call)
+        return f'inner returned: {result}'
+
+    @agent.tool
+    def inner_tool(ctx: RunContext[None]) -> str:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return 'approved inner result'
+
+    result = await agent.run('Hello')
+    assert result.output == 'All done.'
+
+
+async def test_deferred_tool_handler_via_handle_call_no_handler():
+    """handle_call(resolve_deferred=True) re-raises when no handler is available."""
+    from pydantic_ai.toolsets import FunctionToolset
+
+    # inner_tool is only available via ToolManager, not as a top-level agent tool
+    inner_toolset = FunctionToolset()
+
+    @inner_toolset.tool
+    def inner_tool(ctx: RunContext[None]) -> str:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return 'approved inner result'  # pragma: no cover
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('outer_tool', {}, tool_call_id='outer1')])
+        return ModelResponse(parts=[TextPart('OK')])
+
+    agent = Agent(FunctionModel(llm), toolsets=[inner_toolset])
+
+    @agent.tool
+    async def outer_tool(ctx: RunContext[None]) -> str:
+        """A tool that internally calls another tool via ToolManager.handle_call."""
+        assert ctx.tool_manager is not None
+        inner_call = ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner1')
+        try:
+            result = await ctx.tool_manager.handle_call(inner_call)
+            return f'inner returned: {result}'  # pragma: no cover
+        except ApprovalRequired:
+            return 'inner needs approval'
+
+    result = await agent.run('Hello')
+    assert result.output == 'OK'
+
+
+async def test_deferred_tool_handler_build_results_helper():
+    """DeferredToolRequests.build_results() creates a DeferredToolResults."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return requests.build_results(approvals={call.tool_call_id: True for call in requests.approvals})
+
+    agent = Agent(
+        FunctionModel(llm),
+        capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
+    )
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None]) -> str:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return 'done'
+
+    result = await agent.run('Hello')
+    assert result.output == 'Done.'
+
+
+async def test_deferred_tool_handler_wrapper_capability():
+    """HandleDeferredToolCalls works through WrapperCapability delegation."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
+
+    # PrefixTools wraps HandleDeferredToolCalls — tests WrapperCapability delegation
+    inner = HandleDeferredToolCalls(handler=handle_deferred)
+    agent = Agent(
+        FunctionModel(llm),
+        capabilities=[inner.prefix_tools('ns')],
+    )
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None]) -> str:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return 'done'
+
+    result = await agent.run('Hello')
+    assert result.output == 'Done.'
+
+
 # endregion
