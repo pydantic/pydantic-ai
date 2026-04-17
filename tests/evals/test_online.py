@@ -256,12 +256,19 @@ async def test_legacy_sink_without_target_kwarg_is_wrapped_with_deprecation_warn
     assert set(calls[0]) == {'results', 'failures', 'context', 'span_reference'}
 
 
-@pytest.mark.anyio
 async def test_legacy_sink_warning_fires_once_per_class():
     """The back-compat shim warns the first time it wraps a given class, not every time.
 
+    Exercises the compat shim directly rather than the full dispatch pipeline,
+    so parallel tests touching the module-level `_warned_legacy_sink_ids` set
+    can't flake this assertion via `id()` reuse.
+
     TODO(v2): delete this test alongside the shim in pydantic_evals/_online.py.
     """
+    from pydantic_evals._online import (
+        _ensure_target_compat,  # pyright: ignore[reportPrivateUsage]
+        _warned_legacy_sink_ids,  # pyright: ignore[reportPrivateUsage]
+    )
 
     class OnceLegacySink:
         async def submit(
@@ -274,24 +281,15 @@ async def test_legacy_sink_warning_fires_once_per_class():
         ) -> None:
             pass
 
-    @dataclass
-    class E(Evaluator):
-        def evaluate(self, ctx: EvaluatorContext) -> bool:
-            return True
+    # Defensive: drop any stale id(cls) collision from an earlier GC'd class.
+    _warned_legacy_sink_ids.discard(id(OnceLegacySink))
 
-    config = OnlineEvalConfig(default_sink=cast(Any, OnceLegacySink()), emit_otel_events=False)
+    sink = cast(Any, OnceLegacySink())
 
-    @config.evaluate(E())
-    async def run(x: int) -> int:
-        return x
-
-    # First call warns; second call reuses the already-wrapped class and must not re-warn.
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always', DeprecationWarning)
-        await run(1)
-        await wait_for_evaluations()
-        await run(2)
-        await wait_for_evaluations()
+        _ensure_target_compat(sink)
+        _ensure_target_compat(sink)
 
     legacy_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
     assert len(legacy_warnings) == 1
