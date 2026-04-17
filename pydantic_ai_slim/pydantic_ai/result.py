@@ -346,7 +346,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     async def _events_iter(
         self, base_iter: AsyncIterator[ModelResponseStreamEvent]
     ) -> AsyncIterator[ModelResponseStreamEvent]:
-        # TODO: Verify _anext_lock doesn't deadlock with group_by_temporal's background reader.
+        # Serialize access to the shared base iterator. An early break from
+        # stream_text() can leave a pending `anext()` task in group_by_temporal
+        # while cleanup/drain starts iterating the same stream.
         while True:
             async with self._anext_lock:
                 try:
