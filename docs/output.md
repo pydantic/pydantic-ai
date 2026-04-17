@@ -910,6 +910,8 @@ async def main():
 
 _(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
 
+If you `break` out of `stream_text()` and then leave the surrounding `async with` block, the stream is cleaned up as the context exits. Use `cancel()` when you want to stop generation immediately instead of only stopping local consumption.
+
 #### Cancelling `run_stream_events`
 
 [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] returns a `StreamEventsResult` that should be used as an async context manager. Call `cancel()` on the stream to stop it:
@@ -935,6 +937,8 @@ async def main():
 2. `cancel()` closes the underlying generator, which triggers task cancellation and connection cleanup.
 
 _(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
+
+Breaking out of the loop only stops local iteration; the stream is cleaned up when the surrounding `async with` exits. Call `cancel()` when you want to stop generation immediately instead of waiting for context exit.
 
 #### Cancelling with `iter`
 

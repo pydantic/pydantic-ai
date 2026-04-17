@@ -152,8 +152,11 @@ async def test_stream_text_enforces_output_token_limit_mid_stream() -> None:
     # `UsageLimitExceeded` would not raise during `stream_text()` even when the output
     # token limit was exceeded mid-stream.
     async def stream_function(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
-        for chunk in ['one', 'two', 'three', 'four', 'five']:
-            yield chunk
+        yield 'one'
+        yield 'two'
+        yield 'three'
+        yield 'four'
+        yield 'five'
 
     agent = Agent(FunctionModel(stream_function=stream_function))
 

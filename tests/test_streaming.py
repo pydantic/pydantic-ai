@@ -6,6 +6,7 @@ import json
 import re
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import replace
 from datetime import timezone
@@ -4331,6 +4332,50 @@ async def test_run_stream_events_external_task_cancellation():
         await task
 
 
+async def test_run_stream_events_managed_cancellation_waits_for_cleanup():
+    # Test for https://github.com/pydantic/pydantic-ai/issues/5132.
+    cleanup_finished = asyncio.Event()
+    first_event_seen = asyncio.Event()
+
+    class SlowCleanupTestModel(TestModel):
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: models.ModelSettings | None,
+            model_request_parameters: models.ModelRequestParameters,
+            run_context: RunContext[None] | None = None,
+        ) -> AsyncIterator[models.StreamedResponse]:
+            async with super().request_stream(
+                messages,
+                model_settings,
+                model_request_parameters,
+                run_context,
+            ) as stream:
+                try:
+                    yield stream
+                finally:
+                    await asyncio.sleep(0.2)
+                    cleanup_finished.set()
+
+    agent = Agent(SlowCleanupTestModel(custom_output_text='hello'))
+
+    async def consume() -> None:
+        async with agent.run_stream_events('Hello') as stream:
+            async for _event in stream:
+                first_event_seen.set()
+                await asyncio.sleep(10)
+
+    task = asyncio.create_task(consume())
+    await first_event_seen.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert cleanup_finished.is_set()
+
+
 async def test_incomplete_tool_call_filtered_from_history():
     """When a cancelled stream leaves an interrupted response with truncated tool call args,
     _clean_message_history filters it out before sending to the model."""
@@ -4434,7 +4479,9 @@ async def test_partial_incomplete_tool_call_filtered_from_history():
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())]),
-            ModelResponse(parts=[TextPart(content='Let me call the tool')], timestamp=IsDatetime(), state='interrupted'),
+            ModelResponse(
+                parts=[TextPart(content='Let me call the tool')], timestamp=IsDatetime(), state='interrupted'
+            ),
             ModelRequest(
                 parts=[UserPromptPart(content='Continue', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
