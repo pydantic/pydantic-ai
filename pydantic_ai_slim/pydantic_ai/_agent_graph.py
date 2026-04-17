@@ -169,10 +169,24 @@ def is_agent_node(
 
 
 @dataclasses.dataclass
+class _ReinjectSystemPromptsState:
+    """Mutable state tracking whether system prompts should be reinjected.
+
+    Stored in a `ContextVar` by reference so that consuming the flag (mutating `active`
+    to `False`) is visible across all task-local context copies that share the reference,
+    preventing nested agent runs (e.g. from tools) from inheriting an already-consumed flag.
+    """
+
+    active: bool
+
+
+@dataclasses.dataclass
 class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that handles the user prompt and instructions."""
 
-    _reinject_system_prompts_var: ClassVar[ContextVar[bool]] = ContextVar('_reinject_system_prompts', default=False)
+    _reinject_system_prompts_var: ClassVar[ContextVar[_ReinjectSystemPromptsState | None]] = ContextVar(
+        '_reinject_system_prompts', default=None
+    )
 
     user_prompt: str | Sequence[_messages.UserContent] | None
 
@@ -196,12 +210,16 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     @staticmethod
     @contextmanager
     def reinject_system_prompts() -> Iterator[None]:
-        """Force the agent's configured system prompt to be injected on every request.
+        """Force the agent's configured system prompt to be injected on the next agent run.
 
         Used by [`UIAdapter`][pydantic_ai.ui.UIAdapter] when `manage_system_prompt='server'`
         so the server-owned prompt is always applied, regardless of what the frontend sent.
+
+        The flag is consumed on first use so nested agent runs (e.g. from tools) inside
+        the same context don't inherit it and reinject their own system prompt on top of
+        their own history.
         """
-        token = UserPromptNode._reinject_system_prompts_var.set(True)
+        token = UserPromptNode._reinject_system_prompts_var.set(_ReinjectSystemPromptsState(active=True))
         try:
             yield
         finally:
@@ -269,6 +287,18 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                         max_retries=ctx.deps.max_result_retries,
                     )
                     ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
+                    # Apply reinject (if pending) into the first historical ModelRequest before
+                    # the potential early returns below — otherwise a server-mode conversation
+                    # resuming from pending tool calls would send the stripped history back to
+                    # the model without the agent's system prompt.
+                    early_state = UserPromptNode._reinject_system_prompts_var.get()
+                    if early_state is not None and early_state.active:
+                        early_state.active = False
+                        early_sys_parts = await self._sys_parts(run_context)
+                        if early_sys_parts:
+                            first_mr = next((m for m in messages if isinstance(m, _messages.ModelRequest)), None)
+                            if first_mr is not None:
+                                first_mr.parts = [*early_sys_parts, *first_mr.parts]
                     if last_message.tool_calls:
                         # Pending tool calls must be processed before any new ModelRequest, regardless
                         # of instructions.  Instructions will be applied by ModelRequestNode.run() on
@@ -297,7 +327,17 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 parts.append(_messages.UserPromptPart(self.user_prompt))
             next_message = _messages.ModelRequest(parts=parts)
 
-        if (not messages and not is_resuming_without_prompt) or UserPromptNode._reinject_system_prompts_var.get():
+        reinject = False
+        reinject_state = UserPromptNode._reinject_system_prompts_var.get()
+        if reinject_state is not None and reinject_state.active:
+            reinject = True
+            # Mark the shared state consumed so nested agent runs (e.g. from tools) don't
+            # inherit the flag and reinject their own system prompt into their own history.
+            # Mutating the referenced object (rather than `set()`ing a new value) makes the
+            # change visible across all task-local context copies that share the reference.
+            reinject_state.active = False
+
+        if (not messages and not is_resuming_without_prompt) or reinject:
             sys_parts = await self._sys_parts(run_context)
             if sys_parts:
                 # Keep system parts at the head of the first request in the conversation
