@@ -50,9 +50,6 @@ if TYPE_CHECKING:
     from .agent.abstract import AbstractAgent
     from .models.instrumented import InstrumentationSettings
 
-_MAX_DEFERRED_RESOLUTION_ROUNDS = 5
-"""Maximum number of times the deferred tool resolution loop will retry when re-execution raises new deferrals."""
-
 __all__ = (
     'GraphAgentState',
     'GraphAgentDeps',
@@ -1545,35 +1542,16 @@ async def process_tool_calls(  # noqa: C901
             metadata=deferred_metadata,
         )
 
-        # Let capability handlers resolve deferred calls inline.
-        # Loop to handle cases where re-execution raises new deferrals that the
-        # same handler chain can resolve (e.g. a capability that registers
-        # approval-required tools and also handles them).
-        for _round in range(_MAX_DEFERRED_RESOLUTION_ROUNDS):
-            assert deferred_tool_requests is not None
-            handler_results = await tool_manager.resolve_deferred_tool_calls(deferred_tool_requests)
-            if handler_results is None:
-                break
-
+        # Let capability handlers resolve deferred calls inline (one shot).
+        # If re-execution raises new deferrals, they go into remaining.
+        handler_results = await tool_manager.resolve_deferred_tool_calls(deferred_tool_requests)
+        if handler_results is not None:
             executed, deferred_tool_requests = await tool_manager.execute_deferred_tool_results(
                 deferred_tool_requests, handler_results
             )
             for _call_part, result_part in executed:
                 output_parts.append(result_part)
                 yield _messages.FunctionToolResultEvent(result_part)
-
-            if deferred_tool_requests is None:
-                break
-        else:
-            # Hit max resolution rounds — log a warning and treat remaining as unresolved
-            import warnings
-
-            warnings.warn(
-                f'Deferred tool resolution loop hit maximum of {_MAX_DEFERRED_RESOLUTION_ROUNDS} rounds '
-                f'with {len(deferred_tool_requests.approvals) + len(deferred_tool_requests.calls)} '
-                f'calls still unresolved. This may indicate a handler that keeps re-deferring calls.',
-                stacklevel=2,
-            )
 
         if deferred_tool_requests is not None:
             if not ctx.deps.output_schema.allows_deferred_tools:
