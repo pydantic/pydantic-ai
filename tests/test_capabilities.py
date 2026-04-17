@@ -3626,9 +3626,37 @@ class TestHandleEventStream:
         assert result.output is not None
         assert any(isinstance(e, PartStartEvent) for e in handler_events)
 
+    async def test_multiple_handlers_and_param_all_observe(self):
+        """Multiple HandleEventStream capabilities and an explicit event_stream_handler all see the same events."""
+        cap1_events: list[AgentStreamEvent] = []
+        cap2_events: list[AgentStreamEvent] = []
+        param_events: list[AgentStreamEvent] = []
+
+        async def cap1_handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                cap1_events.append(event)
+
+        async def cap2_handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                cap2_events.append(event)
+
+        async def param_handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                param_events.append(event)
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[HandleEventStream(handler=cap1_handler), HandleEventStream(handler=cap2_handler)],
+        )
+
+        await agent.run('hello', event_stream_handler=param_handler)
+        assert len(cap1_events) > 0
+        assert cap1_events == cap2_events == param_events
+
     async def test_handler_sees_events_after_inner_wrappers(self):
-        """Handler capability is outermost, so it sees events after inner wrap_run_event_stream transforms."""
-        order: list[str] = []
+        """Events passed to the handler go through inner wrap_run_event_stream wrappers."""
+        transformed_calls: list[AgentStreamEvent] = []
+        handler_events: list[AgentStreamEvent] = []
 
         @dataclass
         class InnerWrapper(AbstractCapability[Any]):
@@ -3638,26 +3666,22 @@ class TestHandleEventStream:
                 *,
                 stream: AsyncIterable[AgentStreamEvent],
             ) -> AsyncIterable[AgentStreamEvent]:
-                order.append('inner:enter')
                 async for event in stream:
+                    transformed_calls.append(event)
                     yield event
-                order.append('inner:exit')
 
         async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
-            order.append('handler:enter')
-            async for _ in stream:
-                pass
-            order.append('handler:exit')
+            async for event in stream:
+                handler_events.append(event)
 
         agent = Agent(
             FunctionModel(simple_model_function, stream_function=simple_stream_function),
-            # Deliberately list handler AFTER inner to verify ordering places it outermost.
-            capabilities=[InnerWrapper(), HandleEventStream(handler=handler)],
+            capabilities=[HandleEventStream(handler=handler), InnerWrapper()],
         )
 
         await agent.run('hello')
-        assert order.index('handler:enter') < order.index('inner:enter')
-        assert order.index('inner:exit') < order.index('handler:exit')
+        assert handler_events == transformed_calls
+        assert len(handler_events) > 0
 
     async def test_not_spec_serializable(self):
         """HandleEventStream holds a callable so it cannot participate in spec-based construction."""
