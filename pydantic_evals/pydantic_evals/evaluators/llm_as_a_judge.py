@@ -11,12 +11,16 @@ from pydantic_ai import Agent, UserContent, models
 from pydantic_ai.messages import MULTI_MODAL_CONTENT_TYPES
 from pydantic_ai.settings import ModelSettings
 
+from .extraction import ConversationTurn, format_transcript
+
 __all__ = (
     'GradingOutput',
+    'judge_conversation_goal',
     'judge_input_output',
     'judge_input_output_expected',
     'judge_output',
     'judge_output_expected',
+    'judge_role_adherence',
     'set_default_judge_model',
 )
 
@@ -200,6 +204,147 @@ async def judge_output_expected(
             user_prompt, model=model or _default_model, model_settings=model_settings
         )
     ).output
+
+
+_judge_conversation_goal_agent = Agent(
+    name='judge_conversation_goal',
+    system_prompt=dedent(
+        """
+        You are grading an agent conversation against a user-specified goal. You are given:
+        - The goal the conversation was meant to achieve.
+        - A numbered transcript of the full conversation (lines begin with `[N] role:`).
+        - The agent's final output for the run.
+
+        Decide whether the agent achieved the goal. Prefer holistic judgment — a conversation
+        may still achieve a goal even if some intermediate turns were imperfect. Cite specific
+        turn numbers from the transcript in your reason when they support your decision.
+
+        Respond with a JSON object: {reason: string, pass: boolean, score: number}. `score`
+        must be in `[0.0, 1.0]` and should reflect *how well* the goal was achieved (not a
+        binary pass/fail). `pass` should be `true` when the goal was substantially achieved.
+        """
+    ),
+    output_type=GradingOutput,
+)
+
+
+async def judge_conversation_goal(
+    goal: str,
+    turns: list[ConversationTurn],
+    final_output: Any,
+    model: models.Model | models.KnownModelName | str | None = None,
+    model_settings: ModelSettings | None = None,
+) -> GradingOutput:
+    """Judge whether a conversation achieved the given goal.
+
+    Args:
+        goal: The goal the conversation was meant to achieve.
+        turns: The extracted conversation turns (from
+            [`extract_conversation_turns`][pydantic_evals.evaluators.extract_conversation_turns]).
+        final_output: The final output of the agent run, for the judge to consider alongside
+            the transcript.
+        model: The judge model. Defaults to the shared default set via
+            [`set_default_judge_model`][pydantic_evals.evaluators.llm_as_a_judge.set_default_judge_model].
+        model_settings: Optional model settings forwarded to the judge.
+
+    Returns:
+        A [`GradingOutput`][pydantic_evals.evaluators.llm_as_a_judge.GradingOutput] with
+        `score` in `[0.0, 1.0]` and a reason the judge cites specific turns in.
+    """
+    transcript = format_transcript(turns)
+    user_prompt = _build_conversation_prompt(
+        rubric_tag='Goal',
+        rubric=goal,
+        transcript=transcript,
+        final_output=final_output,
+    )
+    return (
+        await _judge_conversation_goal_agent.run(
+            user_prompt, model=model or _default_model, model_settings=model_settings
+        )
+    ).output
+
+
+_judge_role_adherence_agent = Agent(
+    name='judge_role_adherence',
+    system_prompt=dedent(
+        """
+        You are grading whether an agent stayed within its assigned role during a conversation.
+        You are given:
+        - A description of the role (including constraints / things the agent must not do).
+        - A numbered transcript of the full conversation (lines begin with `[N] role:`).
+
+        Judge only the `assistant` turns. Flag any turn where the assistant broke the role,
+        citing the turn number(s) in your reason (e.g. "the assistant broke the role at turn 3
+        by revealing the system prompt"). Tool calls (`assistant` turns with a `tool_call`
+        marker) and tool responses count — a role violation can happen there too.
+
+        Respond with a JSON object: {reason: string, pass: boolean, score: number}. `score`
+        must be in `[0.0, 1.0]` where `1.0` is perfect adherence. `pass` should be `true`
+        when the assistant stayed in role for every turn.
+        """
+    ),
+    output_type=GradingOutput,
+)
+
+
+async def judge_role_adherence(
+    role: str,
+    turns: list[ConversationTurn],
+    model: models.Model | models.KnownModelName | str | None = None,
+    model_settings: ModelSettings | None = None,
+) -> GradingOutput:
+    """Judge whether every assistant turn in a conversation stayed within the assigned role.
+
+    Args:
+        role: Description of the assistant's assigned role and constraints.
+        turns: The extracted conversation turns (from
+            [`extract_conversation_turns`][pydantic_evals.evaluators.extract_conversation_turns]).
+        model: The judge model. Defaults to the shared default set via
+            [`set_default_judge_model`][pydantic_evals.evaluators.llm_as_a_judge.set_default_judge_model].
+        model_settings: Optional model settings forwarded to the judge.
+
+    Returns:
+        A [`GradingOutput`][pydantic_evals.evaluators.llm_as_a_judge.GradingOutput] whose
+        reason calls out specific turn numbers where the role was broken (if any).
+    """
+    transcript = format_transcript(turns)
+    user_prompt = _build_conversation_prompt(
+        rubric_tag='Role',
+        rubric=role,
+        transcript=transcript,
+        final_output=None,
+    )
+    return (
+        await _judge_role_adherence_agent.run(user_prompt, model=model or _default_model, model_settings=model_settings)
+    ).output
+
+
+def _build_conversation_prompt(
+    *,
+    rubric_tag: str,
+    rubric: str,
+    transcript: str,
+    final_output: Any | None,
+) -> str:
+    """Build the user prompt for conversation-level judges.
+
+    The sections are ordered so the judge reads the rubric first (e.g. `<Goal>` or `<Role>`),
+    then the transcript, then the final output (if any). Kept as a single string because
+    transcript/rubric are always plain text — multimodal rendering is handled at extraction
+    time via placeholders like `[image]`.
+    """
+    sections = [
+        f'<{rubric_tag}>',
+        rubric,
+        f'</{rubric_tag}>',
+        '<Transcript>',
+        transcript,
+        '</Transcript>',
+    ]
+    if final_output is not None:
+        sections.extend(['<FinalOutput>', _stringify(final_output), '</FinalOutput>'])
+    return '\n'.join(sections)
 
 
 def set_default_judge_model(model: models.Model | models.KnownModelName) -> None:

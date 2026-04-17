@@ -439,6 +439,8 @@ including how to write custom report evaluators that produce `ScalarResult` and 
 | [`MaxDuration`][pydantic_evals.evaluators.MaxDuration] | Performance threshold | `bool` | Free | Instant |
 | [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] | Subjective quality | `bool` and/or `float` | $$ | Slow |
 | [`HasMatchingSpan`][pydantic_evals.evaluators.HasMatchingSpan] | Behavioral check | `bool` | Free | Fast |
+| [`ConversationGoalAchievement`][pydantic_evals.evaluators.ConversationGoalAchievement] | Multi-turn goal achievement | `bool` + `float` | $$ | Slow |
+| [`RoleAdherence`][pydantic_evals.evaluators.RoleAdherence] | Multi-turn role adherence | `bool` + `float` | $$ | Slow |
 
 ### Report-Level Evaluators
 

@@ -13,6 +13,7 @@ from pydantic_ai.settings import ModelSettings
 
 from ..otel.span_tree import SpanQuery
 from .context import EvaluatorContext
+from .conversation import ConversationGoalAchievement, RoleAdherence
 from .evaluator import EvaluationReason, EvaluationScalar, Evaluator, EvaluatorOutput
 
 __all__ = (
@@ -288,6 +289,8 @@ DEFAULT_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...] = (
     MaxDuration,
     LLMJudge,
     HasMatchingSpan,
+    ConversationGoalAchievement,
+    RoleAdherence,
 )
 
 
