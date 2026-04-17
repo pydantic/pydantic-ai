@@ -1177,7 +1177,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         if run_capability is not effective_capability:
             source_cap = run_capability
-        elif override_cap is not None or (resolved is not None and resolved.capability is not None):
+        elif override_cap is not None or extra_capabilities:
             source_cap = effective_capability
         else:
             source_cap = None

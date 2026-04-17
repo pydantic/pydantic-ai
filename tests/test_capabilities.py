@@ -1782,6 +1782,26 @@ async def test_capability_returning_toolset_func():
     assert tool_returns[0].content.startswith('Hello, ')
 
 
+async def test_runtime_capability_contributions_applied():
+    """Run-time `capabilities=` contributions (tools, instructions, etc.) must be applied.
+
+    Regression guard: the `source_cap` selection previously only checked for `override()`
+    or spec capabilities, so tool contributions from a capability passed only via
+    `Agent.run(capabilities=[...])` were silently dropped.
+    """
+    agent = Agent(TestModel())
+    result = await agent.run('Greet Alice', capabilities=[ToolsetFuncCapability()])
+
+    tool_calls = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelResponse)
+        for part in msg.parts
+        if isinstance(part, ToolCallPart)
+    ]
+    assert [c.tool_name for c in tool_calls] == ['greet']
+
+
 async def test_capability_returning_toolset_func_combined():
     """Test that a ToolsetFunc capability works alongside other capabilities via CombinedCapability."""
     agent = Agent(
