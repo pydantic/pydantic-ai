@@ -923,6 +923,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -944,6 +945,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -965,6 +967,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -1047,6 +1050,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1156,9 +1160,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         override_cap = self._override_root_capability.get()
         base_capability = override_cap.value if override_cap is not None else self._root_capability
 
-        # Merge spec capability additively with base capability
+        # Merge spec and run-time capabilities additively with the base capability
+        extra_capabilities: list[AbstractCapability[AgentDepsT]] = []
         if resolved is not None and resolved.capability is not None:
-            effective_capability = CombinedCapability([base_capability, resolved.capability])
+            extra_capabilities.append(resolved.capability)
+        if capabilities:
+            extra_capabilities.extend(capabilities)
+        if extra_capabilities:
+            effective_capability = CombinedCapability([base_capability, *extra_capabilities])
         else:
             effective_capability = base_capability
 
@@ -1826,6 +1835,33 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             self._instructions.append(func)
             return func
+
+    async def system_prompts(
+        self,
+        *,
+        deps: AgentDepsT = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        prompt: str | Sequence[_messages.UserContent] | None = None,
+        usage: _usage.RunUsage | None = None,
+        model_settings: ModelSettings | None = None,
+    ) -> list[_messages.SystemPromptPart]:
+        """Resolve the agent's configured system prompts into `SystemPromptPart`s.
+
+        See [`AbstractAgent.system_prompts`][pydantic_ai.agent.AbstractAgent.system_prompts].
+        """
+        run_context = RunContext[AgentDepsT](
+            deps=deps,
+            agent=self,
+            model=self._get_model(None),
+            usage=usage or _usage.RunUsage(),
+            prompt=prompt,
+            messages=list(message_history or []),
+            model_settings=model_settings,
+            run_step=1,
+        )
+        return await _system_prompt.resolve_system_prompts(
+            self._system_prompts, self._system_prompt_functions, run_context
+        )
 
     @overload
     def system_prompt(

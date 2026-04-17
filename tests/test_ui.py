@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai.capabilities import ReinjectSystemPrompt
 from pydantic_ai.messages import (
     BinaryImage,
     BuiltinToolCallPart,
@@ -782,11 +783,9 @@ def test_dummy_adapter_dump_messages():
     assert result == messages
 
 
-async def test_system_prompt_auto_injected_into_history_without_sys_parts():
-    """When `message_history` is passed to an agent with a configured `system_prompt` but has no
-    `SystemPromptPart`s, the agent's sys_parts are auto-injected at the head of the first
-    `ModelRequest`. This covers conversations reconstructed from persistence / UI frontends that
-    dropped the original sys_parts, so the agent always behaves as configured.
+async def test_reinject_system_prompt_capability_injects_when_history_missing():
+    """The `ReinjectSystemPrompt` capability prepends the agent's configured system prompt
+    to the first `ModelRequest` when no `SystemPromptPart` is present in the history.
     """
     agent = Agent(model=TestModel(), system_prompt='You are a helpful assistant')
 
@@ -795,7 +794,11 @@ async def test_system_prompt_auto_injected_into_history_without_sys_parts():
         ModelResponse(parts=[TextPart(content='First response')]),
     ]
 
-    result = await agent.run('Second message', message_history=history)
+    result = await agent.run(
+        'Second message',
+        message_history=history,
+        capabilities=[ReinjectSystemPrompt()],
+    )
 
     first_request = result.all_messages()[0]
     assert isinstance(first_request, ModelRequest)
@@ -807,10 +810,10 @@ async def test_system_prompt_auto_injected_into_history_without_sys_parts():
     )
 
 
-async def test_system_prompt_not_re_injected_when_already_present_in_history():
-    """If any `SystemPromptPart` is already in the history (e.g. from a prior agent), it is preserved
-    and the agent's configured `system_prompt` is not added alongside — multi-agent handoff keeps
-    the original system prompt authoritative.
+async def test_reinject_system_prompt_capability_preserves_existing():
+    """The `ReinjectSystemPrompt` capability is a no-op if any `SystemPromptPart` is already
+    in the history (e.g. from a prior agent). Multi-agent handoff keeps the original system
+    prompt authoritative.
     """
     agent = Agent(model=TestModel(), system_prompt='Second agent')
 
@@ -824,7 +827,11 @@ async def test_system_prompt_not_re_injected_when_already_present_in_history():
         ModelResponse(parts=[TextPart(content='Hello')]),
     ]
 
-    result = await agent.run('Follow up', message_history=history)
+    result = await agent.run(
+        'Follow up',
+        message_history=history,
+        capabilities=[ReinjectSystemPrompt()],
+    )
 
     first_request = result.all_messages()[0]
     assert isinstance(first_request, ModelRequest)
@@ -832,10 +839,10 @@ async def test_system_prompt_not_re_injected_when_already_present_in_history():
     assert [p.content for p in sys_parts] == ['First agent']
 
 
-async def test_system_prompt_auto_injected_with_pending_tool_calls_in_history():
-    """History ending with pending tool calls early-returns `CallToolsNode` before the usual
-    request-building path — auto-inject must still apply so the subsequent model request (with
-    tool results) includes the agent's system prompt.
+async def test_reinject_system_prompt_capability_with_pending_tool_calls():
+    """History ending with pending tool calls early-returns in `UserPromptNode`, but the
+    capability's `before_model_request` hook still runs on the subsequent model request (after
+    tool results are collected), so the system prompt ends up in the first request.
     """
 
     def respond(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
@@ -852,7 +859,7 @@ async def test_system_prompt_auto_injected_with_pending_tool_calls_in_history():
         ModelResponse(parts=[ToolCallPart(tool_name='do_something', args={'x': 1}, tool_call_id='call_1')]),
     ]
 
-    result = await agent.run(message_history=history)
+    result = await agent.run(message_history=history, capabilities=[ReinjectSystemPrompt()])
 
     first_request = result.all_messages()[0]
     assert isinstance(first_request, ModelRequest)

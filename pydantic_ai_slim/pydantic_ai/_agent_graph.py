@@ -253,10 +253,6 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                         max_retries=ctx.deps.max_result_retries,
                     )
                     ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
-                    # Ensure the agent's system prompts are present before any early return below,
-                    # otherwise a conversation resuming from pending tool calls would send a
-                    # history without sys_parts back to the model on the subsequent request.
-                    await self._ensure_system_prompt_present(messages, run_context)
                     if last_message.tool_calls:
                         # Pending tool calls must be processed before any new ModelRequest, regardless
                         # of instructions.  Instructions will be applied by ModelRequestNode.run() on
@@ -281,15 +277,13 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             await self._reevaluate_dynamic_prompts([next_message], run_context)
         else:
             parts: list[_messages.ModelRequestPart] = []
+            if not messages:
+                parts.extend(await self._sys_parts(run_context))
+
             if self.user_prompt is not None:
                 parts.append(_messages.UserPromptPart(self.user_prompt))
-            next_message = _messages.ModelRequest(parts=parts)
 
-        # Ensure the agent's system prompts are at the head of the first request in the
-        # conversation. Does nothing if a `SystemPromptPart` is already present anywhere
-        # (e.g. preserved from a prior run, or handed off from another agent), so that
-        # multi-agent histories and user-provided sys_parts remain authoritative.
-        await self._ensure_system_prompt_present([*messages, next_message], run_context)
+            next_message = _messages.ModelRequest(parts=parts)
 
         return ModelRequestNode[DepsT, NodeRunEndT](
             request=next_message, is_resuming_without_prompt=is_resuming_without_prompt
@@ -381,45 +375,11 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                     if reevaluated_message_parts != msg.parts:
                         msg.parts = reevaluated_message_parts
 
-    async def _ensure_system_prompt_present(
-        self,
-        messages: Sequence[_messages.ModelMessage | None],
-        run_context: RunContext[DepsT],
-    ) -> None:
-        """Inject the agent's configured system prompts at the head of the first `ModelRequest`, if missing.
-
-        If any `SystemPromptPart` already exists in any of the provided messages, nothing is done —
-        a user-provided or other-agent system prompt is always preserved. This is what establishes
-        the invariant that sys_parts live at the head of the first `ModelRequest` in a conversation.
-        """
-        first_request: _messages.ModelRequest | None = None
-        for msg in messages:
-            if not isinstance(msg, _messages.ModelRequest):
-                continue
-            if any(isinstance(p, _messages.SystemPromptPart) for p in msg.parts):
-                return
-            if first_request is None:
-                first_request = msg
-        if first_request is None:
-            return
-        sys_parts = await self._sys_parts(run_context)
-        if sys_parts:
-            first_request.parts = [*sys_parts, *first_request.parts]
-
-    async def _sys_parts(self, run_context: RunContext[DepsT]) -> list[_messages.ModelRequestPart]:
-        """Build the initial messages for the conversation."""
-        messages: list[_messages.ModelRequestPart] = [_messages.SystemPromptPart(p) for p in self.system_prompts]
-        for sys_prompt_runner in self.system_prompt_functions:
-            prompt = await sys_prompt_runner.run(run_context)
-            if sys_prompt_runner.dynamic:
-                # To enable dynamic system prompt refs in future runs, use a placeholder string
-                messages.append(
-                    _messages.SystemPromptPart(prompt or '', dynamic_ref=sys_prompt_runner.function.__qualname__)
-                )
-            elif prompt:
-                # omit empty system prompts
-                messages.append(_messages.SystemPromptPart(prompt))
-        return messages
+    async def _sys_parts(self, run_context: RunContext[DepsT]) -> list[_messages.SystemPromptPart]:
+        """Build the initial system-prompt messages for the conversation."""
+        return await _system_prompt.resolve_system_prompts(
+            self.system_prompts, self.system_prompt_functions, run_context
+        )
 
     __repr__ = dataclasses_no_defaults_repr
 

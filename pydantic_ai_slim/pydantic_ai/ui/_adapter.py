@@ -24,6 +24,7 @@ from pydantic_ai import DeferredToolRequests, DeferredToolResults, _instructions
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.agent.abstract import AgentMetadata
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
+from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
 from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.output import OutputDataT, OutputSpec
@@ -135,14 +136,16 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     `'server'` (default): the agent's configured `system_prompt` is authoritative.
     Any `SystemPromptPart` sent by the frontend is stripped with a warning (since a
     malicious client could otherwise inject arbitrary instructions via crafted API
-    requests), and the agent's own system prompt is injected at the head of the
-    first request.
+    requests), and the agent's own system prompt is reinjected at the head of the
+    first request via the
+    [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability.
 
-    `'client'`: frontend `SystemPromptPart`s are preserved as-is. If the frontend
-    sends none, the agent's configured `system_prompt` is used as a fallback (via
-    the general auto-injection that applies whenever the history doesn't already
-    include a system prompt). To have the frontend strictly own the system prompt,
-    configure the agent without a `system_prompt`.
+    `'client'`: the frontend owns the system prompt. Frontend `SystemPromptPart`s
+    are preserved as-is, and the agent's configured `system_prompt` is not injected
+    — the caller is fully responsible for sending it on every turn if desired. To
+    opt into the same fallback-to-configured behavior as server mode, add the
+    [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability
+    to your agent.
     """
 
     @classmethod
@@ -326,6 +329,10 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 stacklevel=2,
             )
 
+        capabilities: list[AbstractCapability[AgentDepsT]] = []
+        if self.manage_system_prompt == 'server':
+            capabilities.append(ReinjectSystemPrompt())
+
         return self.agent.run_stream_events(
             output_type=output_type,
             message_history=message_history,
@@ -340,6 +347,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             infer_name=infer_name,
             toolsets=toolsets,
             builtin_tools=builtin_tools,
+            capabilities=capabilities,
         )
 
     def run_stream(
