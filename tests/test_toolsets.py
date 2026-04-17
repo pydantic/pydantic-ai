@@ -890,7 +890,7 @@ async def test_function_toolset_get_tools_uses_tool_manager_default_max_retries(
     @toolset.tool_plain(prepare=capture_prepare)
     def my_tool(x: int) -> int:
         """A tool."""
-        return x
+        return x  # pragma: no cover
 
     ctx = build_run_context(None, max_retries=5)
     ctx.tool_manager = ToolManager[None](toolset, default_max_retries=1)
