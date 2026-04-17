@@ -150,6 +150,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         self,
         *,
         deps: AgentDepsT = None,
+        model: models.Model | models.KnownModelName | str | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         prompt: str | Sequence[_messages.UserContent] | None = None,
         usage: _usage.RunUsage | None = None,
@@ -165,6 +166,15 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
         Dynamic runners produce parts with `dynamic_ref` set so they can continue to be
         re-evaluated by the standard agent graph path on subsequent turns.
+
+        Args:
+            deps: Optional dependencies for dynamic system prompt functions.
+            model: Optional model to use for `RunContext.model`. Falls back to the
+                agent's configured model; required only if the agent has no model set.
+            message_history: Optional message history to expose as `RunContext.messages`.
+            prompt: Optional user prompt to expose as `RunContext.prompt`.
+            usage: Optional usage to expose as `RunContext.usage`.
+            model_settings: Optional settings to expose as `RunContext.model_settings`.
         """
         return []  # pragma: no cover — concrete subclasses override this
 

@@ -810,6 +810,37 @@ async def test_reinject_system_prompt_capability_injects_when_history_missing():
     )
 
 
+async def test_reinject_system_prompt_capability_agent_without_model():
+    """Regression guard: agent constructed without a model gets its model passed via `run(model=...)`.
+
+    `ReinjectSystemPrompt.before_model_request` must resolve the system prompt using the
+    run-time model from `RunContext`, not re-fetch from the agent (which would raise `UserError`).
+    This is the default UIAdapter path for agents that delegate model choice to the server.
+    """
+    agent = Agent(system_prompt='You are a helpful assistant')
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='First message')]),
+        ModelResponse(parts=[TextPart(content='First response')]),
+    ]
+
+    result = await agent.run(
+        'Second message',
+        model=TestModel(),
+        message_history=history,
+        capabilities=[ReinjectSystemPrompt()],
+    )
+
+    first_request = result.all_messages()[0]
+    assert isinstance(first_request, ModelRequest)
+    assert first_request.parts == snapshot(
+        [
+            SystemPromptPart(content='You are a helpful assistant', timestamp=IsDatetime()),
+            UserPromptPart(content='First message', timestamp=IsDatetime()),
+        ]
+    )
+
+
 async def test_reinject_system_prompt_capability_preserves_existing():
     """The `ReinjectSystemPrompt` capability is a no-op if any `SystemPromptPart` is already
     in the history (e.g. from a prior agent). Multi-agent handoff keeps the original system

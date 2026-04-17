@@ -1840,6 +1840,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self,
         *,
         deps: AgentDepsT = None,
+        model: models.Model | models.KnownModelName | str | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         prompt: str | Sequence[_messages.UserContent] | None = None,
         usage: _usage.RunUsage | None = None,
@@ -1852,7 +1853,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         run_context = RunContext[AgentDepsT](
             deps=deps,
             agent=self,
-            model=self._get_model(None),
+            model=self._get_model(model),
             usage=usage or _usage.RunUsage(),
             prompt=prompt,
             messages=list(message_history or []),

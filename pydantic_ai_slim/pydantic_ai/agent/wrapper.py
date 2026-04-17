@@ -89,6 +89,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         self,
         *,
         deps: AgentDepsT = None,
+        model: models.Model | models.KnownModelName | str | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         prompt: str | Sequence[_messages.UserContent] | None = None,
         usage: _usage.RunUsage | None = None,
@@ -96,6 +97,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
     ) -> list[_messages.SystemPromptPart]:
         return await self.wrapped.system_prompts(
             deps=deps,
+            model=model,
             message_history=message_history,
             prompt=prompt,
             usage=usage,
