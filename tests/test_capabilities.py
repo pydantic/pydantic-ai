@@ -2325,6 +2325,11 @@ async def tool_calling_stream_function(
     yield 'no tools available'  # pragma: no cover
 
 
+# Defined at module scope so pydantic-ai can resolve the annotation under `from __future__ import annotations`.
+class SingleBaseModelArg(BaseModel):
+    label: str = 'default'
+
+
 def tool_calling_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     """A model that calls a tool on first request, then returns text."""
     # Check if there's already a tool return in messages (i.e., tool was called)
@@ -2998,6 +3003,52 @@ class TestToolExecuteHooks:
 
         await agent.run('call tool')
         assert cap.caught_error == 'tool failed'
+
+    async def test_hooks_receive_dict_args_for_single_base_model_tool(self):
+        """Validate and execute hooks receive dict-shaped args when the tool has a single BaseModel parameter.
+
+        The JSON schema sent to the model unwraps the BaseModel, so the model generates its fields at the
+        top level. Pydantic's validator returns a BaseModel instance directly, but the framework wraps it
+        as `{param_name: model}` so hooks and `call_tool` always see a dict.
+        """
+        captured_args: list[tuple[str, dict[str, Any]]] = []
+
+        @dataclass
+        class CapturingCap(AbstractCapability[Any]):
+            async def after_tool_validate(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+            ) -> dict[str, Any]:
+                captured_args.append(('validate', args))
+                return args
+
+            async def wrap_tool_execute(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                handler: Any,
+            ) -> Any:
+                captured_args.append(('execute', args))
+                return await handler(args)
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[CapturingCap()])
+
+        @agent.tool_plain
+        def my_tool(payload: SingleBaseModelArg) -> str:
+            return f'got {payload.label}'
+
+        await agent.run('call the tool')
+        assert captured_args == [
+            ('validate', {'payload': SingleBaseModelArg()}),
+            ('execute', {'payload': SingleBaseModelArg()}),
+        ]
 
     async def test_tool_hooks_skip_output_tools(self):
         """Tool hooks don't fire for internal output tools (#5111).
