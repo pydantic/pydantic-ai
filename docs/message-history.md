@@ -143,7 +143,7 @@ To use existing messages in a run, pass them to the `message_history` parameter 
 [`Agent.run`][pydantic_ai.agent.AbstractAgent.run], [`Agent.run_sync`][pydantic_ai.agent.AbstractAgent.run_sync] or
 [`Agent.run_stream`][pydantic_ai.agent.AbstractAgent.run_stream].
 
-The agent's configured [`system_prompt`](agent.md#system-prompts) is automatically included at the head of the first `ModelRequest` in the conversation: if `message_history` is empty or its first request has no `SystemPromptPart`, the agent's sys_parts are injected; if a `SystemPromptPart` is already present (for example, preserved from a prior run or handed off from another agent), it is kept as-is and the agent's own `system_prompt` is not added alongside.
+The agent's configured [`system_prompt`](agent.md#system-prompts) is automatically included at the head of the first `ModelRequest` in the conversation: if no `SystemPromptPart` is present in any request in the `message_history`, the agent's sys_parts are injected; if a `SystemPromptPart` is already present anywhere (for example, preserved from a prior run or handed off from another agent), it is kept as-is and the agent's own `system_prompt` is not added alongside.
 
 ```python {title="Reusing messages in a conversation" hl_lines="9 13"}
 from pydantic_ai import Agent
