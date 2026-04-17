@@ -698,25 +698,6 @@ async def test_emit_otel_events_false_disables_emission(capfire: CaptureLogfire)
 
 
 @pytest.mark.anyio
-@needs_logfire
-async def test_otel_extra_attributes_applied(capfire: CaptureLogfire):
-    """`otel_extra_attributes` are attached to every emitted event."""
-    config = OnlineEvalConfig(otel_extra_attributes={'team': 'platform'})
-
-    @config.evaluate(AlwaysTrue())
-    async def my_func(x: int) -> int:
-        return x
-
-    await my_func(42)
-    await wait_for_evaluations()
-
-    finished = capfire.log_exporter.get_finished_logs()
-    assert len(finished) == 1
-    attrs = dict(finished[0].log_record.attributes or {})
-    assert attrs['team'] == 'platform'
-
-
-@pytest.mark.anyio
 async def test_configure_updates_default_config():
     """configure() updates the global DEFAULT_CONFIG."""
     original_enabled = DEFAULT_CONFIG.enabled
@@ -725,7 +706,6 @@ async def test_configure_updates_default_config():
 
     original_on_max = DEFAULT_CONFIG.on_max_concurrency
     original_emit = DEFAULT_CONFIG.emit_otel_events
-    original_extra = DEFAULT_CONFIG.otel_extra_attributes
 
     try:
         configure(enabled=False, default_sample_rate=0.5)
@@ -739,19 +719,15 @@ async def test_configure_updates_default_config():
         configure(on_max_concurrency=handler)
         assert DEFAULT_CONFIG.on_max_concurrency is handler
 
-        configure(emit_otel_events=False, otel_extra_attributes={'env': 'test'})
+        configure(emit_otel_events=False)
         assert DEFAULT_CONFIG.emit_otel_events is False
-        assert DEFAULT_CONFIG.otel_extra_attributes == {'env': 'test'}
 
-        configure(otel_extra_attributes=None)
-        assert DEFAULT_CONFIG.otel_extra_attributes is None
     finally:
         DEFAULT_CONFIG.enabled = original_enabled
         DEFAULT_CONFIG.default_sink = original_sink
         DEFAULT_CONFIG.default_sample_rate = original_rate
         DEFAULT_CONFIG.on_max_concurrency = original_on_max
         DEFAULT_CONFIG.emit_otel_events = original_emit
-        DEFAULT_CONFIG.otel_extra_attributes = original_extra
 
 
 @pytest.mark.anyio

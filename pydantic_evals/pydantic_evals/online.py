@@ -423,13 +423,6 @@ class OnlineEvalConfig:
     sink alone, or in environments where OTel emission is undesirable. Custom
     sinks registered via `default_sink` still run regardless of this flag.
     """
-    otel_extra_attributes: dict[str, Any] | None = None
-    """Extra attributes to include on every emitted `gen_ai.evaluation.result` event.
-
-    Escape hatch for tagging events with static metadata (team name, deployment
-    environment, etc.) without writing a custom sink. Has no effect when
-    `emit_otel_events=False`.
-    """
     sampling_mode: SamplingMode = 'independent'
     """Controls how per-evaluator sample rates interact for a single call.
 
@@ -772,13 +765,12 @@ def configure(
     on_sampling_error: OnSamplingErrorCallback | None | Unset = UNSET,
     on_error: OnErrorCallback | None | Unset = UNSET,
     emit_otel_events: bool | Unset = UNSET,
-    otel_extra_attributes: dict[str, Any] | None | Unset = UNSET,
 ) -> None:
     """Configure the global default `OnlineEvalConfig`.
 
     Only provided values are updated; unset arguments are ignored.
     Pass `None` explicitly to clear `default_sink`, `metadata`, `on_max_concurrency`,
-    `on_sampling_error`, `on_error`, or `otel_extra_attributes`.
+    `on_sampling_error`, or `on_error`.
 
     Args:
         default_sink: Default sink(s) for evaluators. Pass `None` to clear.
@@ -790,8 +782,6 @@ def configure(
         on_sampling_error: Default handler for sample_rate exceptions. Pass `None` to clear.
         on_error: Default handler for pipeline exceptions. Pass `None` to clear.
         emit_otel_events: Whether to emit `gen_ai.evaluation.result` OTel events.
-        otel_extra_attributes: Extra attributes included on every emitted OTel event.
-            Pass `None` to clear.
     """
     if not isinstance(default_sink, Unset):
         DEFAULT_CONFIG.default_sink = default_sink
@@ -811,8 +801,6 @@ def configure(
         DEFAULT_CONFIG.on_error = on_error
     if not isinstance(emit_otel_events, Unset):
         DEFAULT_CONFIG.emit_otel_events = emit_otel_events
-    if not isinstance(otel_extra_attributes, Unset):
-        DEFAULT_CONFIG.otel_extra_attributes = otel_extra_attributes
 
 
 async def wait_for_evaluations(*, timeout: float = 30.0) -> None:

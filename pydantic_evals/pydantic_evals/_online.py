@@ -67,7 +67,6 @@ class OnlineEvalConfigLike(Protocol):
     sampling_mode: SamplingMode
     enabled: bool
     emit_otel_events: bool
-    otel_extra_attributes: dict[str, Any] | None
     metadata: dict[str, Any] | None
     on_max_concurrency: OnMaxConcurrencyCallback | None
     on_sampling_error: OnSamplingErrorCallback | None
@@ -370,7 +369,6 @@ async def _dispatch_single_evaluator(
     target: str,
     sinks: list[EvaluationSink],
     emit_events: bool,
-    otel_extra_attributes: dict[str, Any] | None,
     on_max_concurrency: OnMaxConcurrencyCallback | None,
     on_error: OnErrorCallback | None,
 ) -> None:
@@ -406,7 +404,6 @@ async def _dispatch_single_evaluator(
                     failures=failures,
                     span_reference=span_reference,
                     target=target,
-                    extra_attributes=otel_extra_attributes,
                 )
             except Exception as exc:  # pragma: no cover - defensive
                 await _call_on_error(on_error, exc, context, evaluator, 'sink')
@@ -456,7 +453,6 @@ async def dispatch_evaluators(
                     target,
                     sinks,
                     emit_events=config.emit_otel_events,
-                    otel_extra_attributes=config.otel_extra_attributes,
                     on_max_concurrency=on_max_concurrency,
                     on_error=on_error,
                 )

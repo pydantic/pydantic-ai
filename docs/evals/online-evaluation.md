@@ -107,7 +107,7 @@ async def run_agent(prompt: str) -> str: ...
 
 The target name is supplied to sinks on every `submit()` call as a plain `str` — a single sink instance handles any number of decorated functions or agents.
 
-For agent capabilities, the target name is taken from the agent's own `name` attribute (see [Agent Integration](#agent-integration)); to categorize or route on agent-ness, add metadata on the config (`metadata={'kind': 'agent'}`) or attach static attributes to every event via `otel_extra_attributes`.
+For agent capabilities, the target name is taken from the agent's own `name` attribute (see [Agent Integration](#agent-integration)); to categorize or route on agent-ness, add metadata on the config (e.g., `metadata={'kind': 'agent'}`).
 
 ## Evaluator Versioning
 
@@ -282,14 +282,6 @@ To disable the default emission (e.g. in a test harness that only wants to asser
 from pydantic_evals.online import OnlineEvalConfig
 
 config = OnlineEvalConfig(emit_otel_events=False)
-```
-
-To tag every emitted event with static metadata — team name, rollout label, etc. — use `otel_extra_attributes`. (Deployment-level attributes like `env` or `service.name` belong on the OTel [Resource](https://opentelemetry.io/docs/concepts/resources/), not here.)
-
-```python
-from pydantic_evals.online import OnlineEvalConfig
-
-config = OnlineEvalConfig(otel_extra_attributes={'team': 'platform'})
 ```
 
 ## Sampling
