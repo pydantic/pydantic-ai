@@ -140,9 +140,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
     `'client'`: frontend `SystemPromptPart`s are preserved as-is. If the frontend
     sends none, the agent's configured `system_prompt` is used as a fallback (via
-    the general auto-injection that applies to any agent run with a history missing
-    sys_parts). To have the frontend strictly own the system prompt, configure the
-    agent without a `system_prompt`.
+    the general auto-injection that applies whenever the history doesn't already
+    include a system prompt). To have the frontend strictly own the system prompt,
+    configure the agent without a `system_prompt`.
     """
 
     @classmethod

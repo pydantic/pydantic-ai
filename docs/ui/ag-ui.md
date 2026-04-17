@@ -291,7 +291,7 @@ The rest of this section only matters if you use `system_prompt`. If you only us
 For `system_prompt`, you choose who owns it with the `manage_system_prompt` parameter on [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] (and [`handle_ag_ui_request`][pydantic_ai.ag_ui.handle_ag_ui_request] / [`run_ag_ui`][pydantic_ai.ag_ui.run_ag_ui]):
 
 - `'server'` (default): the agent's configured `system_prompt` is authoritative. Any `SystemMessage` sent by the frontend is stripped with a warning (a malicious client could otherwise inject arbitrary instructions via crafted API requests), and the agent's own system prompt is injected at the head of the first request.
-- `'client'`: frontend `SystemMessage`s are preserved as-is. If the frontend sends none, the agent's configured `system_prompt` is used as a fallback (via the general [auto-injection](../message-history.md#using-messages-as-input-for-further-agent-runs) that applies to any agent run with a history missing sys_parts). To have the frontend strictly own the system prompt, configure the agent without a `system_prompt`.
+- `'client'`: frontend `SystemMessage`s are preserved as-is. If the frontend sends none, the agent's configured `system_prompt` is used as a fallback (via the general [auto-injection](../message-history.md#using-messages-as-input-for-further-agent-runs) that applies whenever the history doesn't already include a system prompt). To have the frontend strictly own the system prompt, configure the agent without a `system_prompt`.
 
 ```python {title="ag_ui_client_managed_system_prompt.py"}
 from fastapi import FastAPI
