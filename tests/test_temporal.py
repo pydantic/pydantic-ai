@@ -50,6 +50,7 @@ from pydantic_ai import (
     WebSearchUserLocation,
 )
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
+from pydantic_ai.capabilities import HandleEventStream
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import UploadedFile
@@ -279,6 +280,14 @@ async def event_stream_handler(
         logfire.info('event', event=event)
 
 
+async def capability_event_observer(
+    _ctx: RunContext[Deps],
+    stream: AsyncIterable[AgentStreamEvent],
+) -> None:
+    async for _ in stream:
+        pass
+
+
 async def get_country(ctx: RunContext[Deps]) -> str:
     return ctx.deps.country
 
@@ -315,6 +324,7 @@ complex_agent = Agent(
         ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
     ],
     tools=[get_weather],
+    capabilities=[HandleEventStream(handler=capability_event_observer)],
     event_stream_handler=event_stream_handler,
     name='complex_agent',
 )

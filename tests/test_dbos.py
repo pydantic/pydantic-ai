@@ -74,6 +74,7 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
 
 from pydantic_ai import ExternalToolset, FunctionToolset
+from pydantic_ai.capabilities import HandleEventStream
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 
 from ._inline_snapshot import snapshot
@@ -179,6 +180,14 @@ async def event_stream_handler(
         logfire.info('event', event=event)
 
 
+async def capability_event_observer(
+    _ctx: RunContext[Deps],
+    stream: AsyncIterable[AgentStreamEvent],
+) -> None:
+    async for _ in stream:
+        pass
+
+
 # This doesn't need to be a step
 async def get_country(ctx: RunContext[Deps]) -> str:
     return ctx.deps.country
@@ -224,6 +233,7 @@ complex_agent = Agent(
         ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
     ],
     tools=[get_weather],
+    capabilities=[HandleEventStream(handler=capability_event_observer)],
     event_stream_handler=event_stream_handler,
     instrument=True,  # Enable instrumentation for testing
     name='complex_agent',
