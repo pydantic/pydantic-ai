@@ -9350,4 +9350,85 @@ async def test_deferred_tool_handler_wrapper_capability():
     assert result.output == 'Done.'
 
 
+async def test_deferred_tool_handler_external_call_plain_value():
+    """HandleDeferredToolCalls resolves an external call with a plain value (not ToolReturn)."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
+        return ModelResponse(parts=[TextPart('Got it.')])
+
+    from pydantic_ai.exceptions import CallDeferred
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(calls={call.tool_call_id: 'plain string result' for call in requests.calls})
+
+    agent = Agent(FunctionModel(llm), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
+
+    @agent.tool_plain
+    def my_tool() -> str:
+        raise CallDeferred
+
+    result = await agent.run('Hello')
+    assert result.output == 'Got it.'
+
+
+async def test_deferred_tool_handler_re_deferred_with_metadata():
+    """When an approved tool re-raises ApprovalRequired, it stays unresolved with metadata."""
+
+    call_count = 0
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
+
+    agent = Agent(
+        FunctionModel(llm),
+        output_type=[str, DeferredToolRequests],
+        capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
+    )
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None]) -> str:
+        nonlocal call_count
+        call_count += 1
+        # Always requires approval — even when approved, raises again with metadata
+        raise ApprovalRequired(metadata={'attempt': call_count})
+
+    result = await agent.run('Hello')
+    # Tool re-raised after approval → goes to remaining → becomes output
+    assert isinstance(result.output, DeferredToolRequests)
+    assert len(result.output.approvals) == 1
+    assert result.output.metadata.get('call1') == {'attempt': 2}
+
+
+async def test_deferred_tool_handler_denied_via_batch():
+    """Batch path deny through execute_deferred_tool_results."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
+        return ModelResponse(parts=[TextPart('Understood.')])
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(
+            approvals={call.tool_call_id: ToolDenied('Policy denied.') for call in requests.approvals}
+        )
+
+    agent = Agent(FunctionModel(llm), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None]) -> str:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return 'done'  # pragma: no cover
+
+    result = await agent.run('Hello')
+    assert result.output == 'Understood.'
+
+
 # endregion
