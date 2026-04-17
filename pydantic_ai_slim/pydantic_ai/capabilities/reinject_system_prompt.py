@@ -61,10 +61,6 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
             _prepend_to_first_request(messages, sys_parts)
         return request_context
 
-    @classmethod
-    def get_serialization_name(cls) -> str | None:
-        return 'reinject_system_prompt'
-
 
 def _has_system_prompt(messages: list[ModelMessage]) -> bool:
     for msg in messages:
