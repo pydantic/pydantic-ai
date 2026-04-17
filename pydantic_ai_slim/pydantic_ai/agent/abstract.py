@@ -1112,8 +1112,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             raise
 
         finally:
-            # This would get triggered directly if someone broke out of the loop without cancelling the task
-            # running run_stream_events in which case we would still want to cancel this out
+            # We do not support trio but catching via anyio anyway
             cancelled_exc = anyio.get_cancelled_exc_class()
             if not task.done() and not _task_cancel_sent:
                 task.cancel()
