@@ -12,7 +12,7 @@ from functools import partial
 from inspect import Parameter, signature
 from typing import TYPE_CHECKING, Any, Concatenate, Literal, cast, get_args, get_origin
 
-from pydantic import ConfigDict, TypeAdapter
+from pydantic import ConfigDict, TypeAdapter, ValidationError
 from pydantic._internal import _decorators, _generate_schema
 from pydantic._internal._config import ConfigWrapper
 from pydantic.errors import PydanticSchemaGenerationError, PydanticUserError
@@ -299,8 +299,13 @@ def _build_schema(
             # so the model generates its fields at the top level rather than inside a redundant wrapper.
             # The validator output is wrapped to `{name: value}` so validated args are always a dict
             # keyed by parameter name — matching the contract that hooks and `call_tool` rely on.
+            # Use a wrap validator so we also accept the already-wrapped `{name: value}` shape,
+            # which is what Temporal (and any other caller) passes when re-validating previously
+            # validated args after serialization round-trip.
             return (
-                core_schema.no_info_after_validator_function(partial(_wrap_single_arg, name=name), td_field['schema']),
+                core_schema.no_info_wrap_validator_function(
+                    partial(_validate_single_arg, name=name), td_field['schema']
+                ),
                 name,
             )
 
@@ -314,8 +319,20 @@ def _build_schema(
     return td_schema, None
 
 
-def _wrap_single_arg(value: Any, *, name: str) -> dict[str, Any]:
-    return {name: value}
+def _validate_single_arg(
+    value: Any,
+    handler: core_schema.ValidatorFunctionWrapHandler,
+    *,
+    name: str,
+) -> dict[str, Any]:
+    try:
+        return {name: handler(value)}
+    except ValidationError:
+        # Fall back to unwrapping the `{name: value}` shape produced by a previous validation pass
+        # (e.g. after Temporal serialization/deserialization of already-validated args).
+        if isinstance(value, dict) and list(cast(dict[Any, Any], value)) == [name]:
+            return {name: handler(value[name])}
+        raise
 
 
 def _extract_return_schema_type(return_annotation: Any, function: Callable[..., Any]) -> Any:

@@ -3755,6 +3755,27 @@ def test_args_validator_single_base_model_arg():
     assert isinstance(validator_calls[0], MyArgs)
 
 
+def test_single_base_model_arg_validator_accepts_wrapped_input():
+    """The single-BaseModel-arg validator also accepts already-wrapped `{name: value}` input.
+
+    This shape arises when previously-validated args are serialized out (e.g. through Temporal's
+    activity boundary) and then re-validated with the same schema.
+    """
+
+    class Payload(BaseModel):
+        city: str
+
+    def my_tool(argument: Payload) -> str:  # pragma: no cover
+        return argument.city
+
+    tool = Tool(my_tool)
+    validator = tool.function_schema.validator
+
+    raw = validator.validate_python({'city': 'Mexico City'})
+    wrapped = validator.validate_python({'argument': {'city': 'Mexico City'}})
+    assert raw == wrapped == {'argument': Payload(city='Mexico City')}
+
+
 def test_tool_ctx_agent():
     """ctx.agent gives tools access to the running agent's properties."""
     agent = Agent('test', name='my_agent', output_type=int)
