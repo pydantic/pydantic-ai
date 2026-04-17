@@ -3683,6 +3683,48 @@ class TestHandleEventStream:
         assert handler_events == transformed_calls
         assert len(handler_events) > 0
 
+    async def test_transformer_handler_replaces_stream(self):
+        """An async-generator handler transforms the stream seen by downstream wrappers and the param handler."""
+        downstream_events: list[AgentStreamEvent] = []
+
+        async def transformer(
+            _ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]
+        ) -> AsyncIterator[AgentStreamEvent]:
+            async for event in stream:
+                if isinstance(event, PartStartEvent):
+                    # Drop PartStart events — downstream should never see them.
+                    continue
+                yield event
+
+        async def param_handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                downstream_events.append(event)
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[HandleEventStream(handler=transformer)],
+        )
+
+        await agent.run('hello', event_stream_handler=param_handler)
+        assert len(downstream_events) > 0
+        assert not any(isinstance(e, PartStartEvent) for e in downstream_events)
+
+    async def test_transformer_param_handler(self):
+        """The top-level event_stream_handler param also accepts the transformer form."""
+        got_events: list[AgentStreamEvent] = []
+
+        async def transformer(
+            _ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]
+        ) -> AsyncIterator[AgentStreamEvent]:
+            async for event in stream:
+                got_events.append(event)
+                yield event
+
+        agent = Agent(FunctionModel(simple_model_function, stream_function=simple_stream_function))
+
+        await agent.run('hello', event_stream_handler=transformer)
+        assert any(isinstance(e, PartStartEvent) for e in got_events)
+
     async def test_not_spec_serializable(self):
         """HandleEventStream holds a callable so it cannot participate in spec-based construction."""
         assert HandleEventStream.get_serialization_name() is None

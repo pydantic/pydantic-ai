@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterable
+import inspect
+from collections.abc import AsyncIterable, Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import anyio
 
@@ -21,9 +22,16 @@ class HandleEventStream(AbstractCapability[AgentDepsT]):
 
     The handler receives the stream of [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s
     emitted during model streaming and tool execution for each `ModelRequestNode` and
-    `CallToolsNode`. Events are also passed through to the rest of the capability chain,
-    so multiple `HandleEventStream` capabilities (and the top-level `event_stream_handler`
-    argument) can observe the same stream without interfering with each other.
+    `CallToolsNode`. The handler can be either of the two forms supported by
+    [`EventStreamHandler`][pydantic_ai.agent.EventStreamHandler]:
+
+    - **Observer**: an `async def` returning `None`. Events are forwarded to the handler
+      while also being passed through unchanged to the rest of the capability chain, so
+      multiple observers (and the top-level `event_stream_handler` argument) can all see
+      the same stream without interfering.
+    - **Transformer**: an async generator yielding [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s.
+      The events it yields replace the inner stream for downstream wrappers and consumers,
+      so it can modify, drop, or add events.
 
     When this capability is registered, [`agent.run()`][pydantic_ai.Agent.run] automatically
     enables streaming so the handler fires without requiring an explicit `event_stream_handler`
@@ -38,11 +46,20 @@ class HandleEventStream(AbstractCapability[AgentDepsT]):
         *,
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
+        if inspect.isasyncgenfunction(self.handler):
+            async for event in self.handler(ctx, stream):
+                yield event
+            return
+
+        observer = cast(
+            'Callable[[RunContext[AgentDepsT], AsyncIterable[AgentStreamEvent]], Awaitable[None]]',
+            self.handler,
+        )
         send_stream, receive_stream = anyio.create_memory_object_stream[AgentStreamEvent]()
 
         async def run_handler() -> None:
             async with receive_stream:
-                await self.handler(ctx, receive_stream)
+                await observer(ctx, receive_stream)
 
         async with anyio.create_task_group() as tg:
             tg.start_soon(run_handler)
