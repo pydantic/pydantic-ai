@@ -63,6 +63,7 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     TextPart,
     ToolCallPart,
+    ToolReturn,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -3048,6 +3049,58 @@ class TestToolExecuteHooks:
             ('validate', {'payload': SingleBaseModelArg()}),
             ('execute', {'payload': SingleBaseModelArg()}),
         ]
+
+    async def test_tool_hooks_skip_output_tools(self):
+        """Tool hooks don't fire for internal output tools (#5111).
+
+        Output tools deliver structured output to the user via `result.output`; they're not
+        user-facing tool calls. Firing hooks on them lets e.g. `after_tool_execute` return a
+        `ToolReturn` that leaks through to `result.output` instead of the typed value.
+        """
+
+        class MyOutput(BaseModel):
+            answer: str
+
+        hooks = Hooks()
+
+        @hooks.on.after_tool_execute
+        async def wrap_result(
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: dict[str, Any],
+            result: Any,
+        ) -> ToolReturn:
+            return ToolReturn(return_value=result, content='extra context')
+
+        cap = LoggingCapability()
+        agent = Agent(
+            TestModel(custom_output_args={'answer': 'hi'}),
+            output_type=MyOutput,
+            capabilities=[cap, hooks],
+        )
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'
+
+        result = await agent.run('call tool and answer')
+
+        # Function tool still fires every tool hook.
+        assert 'before_tool_validate:my_tool' in cap.log
+        assert 'after_tool_validate:my_tool' in cap.log
+        assert 'wrap_tool_validate:my_tool:before' in cap.log
+        assert 'wrap_tool_validate:my_tool:after' in cap.log
+        assert 'before_tool_execute:my_tool' in cap.log
+        assert 'after_tool_execute:my_tool' in cap.log
+        assert 'wrap_tool_execute:my_tool:before' in cap.log
+        assert 'wrap_tool_execute:my_tool:after' in cap.log
+        # Output tool does not appear in any hook log entry.
+        assert all('final_result' not in entry for entry in cap.log)
+        # Regression for #5111: the ToolReturn from `after_tool_execute` would have corrupted
+        # `result.output` if output tool hooks still fired.
+        assert result.output == MyOutput(answer='hi')
 
 
 class TestCompositionOrder:
