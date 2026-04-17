@@ -257,7 +257,9 @@ class ToolManager(Generic[AgentDepsT]):
             validated = await self._validate_tool_args(call, tool, ctx, allow_partial=allow_partial, args_override=args)
             return validated
 
-        if cap is not None:
+        # Output tools are internal — they don't fire user-facing tool hooks, matching how
+        # `WrapperToolset` and `prepare_tools` exclude them.
+        if cap is not None and tool.tool_def.kind != 'output':
             tool_def = tool.tool_def
 
             # before_tool_validate
@@ -300,7 +302,9 @@ class ToolManager(Generic[AgentDepsT]):
             modified_validated = replace(validated, validated_args=args)
             return await self._raw_execute(modified_validated, usage=usage)
 
-        if cap is not None:
+        # Output tools are internal — they don't fire user-facing tool hooks, matching how
+        # `WrapperToolset` and `prepare_tools` exclude them.
+        if cap is not None and validated.tool.tool_def.kind != 'output':
             tool_def = validated.tool.tool_def
 
             try:
@@ -562,10 +566,14 @@ class ToolManager(Generic[AgentDepsT]):
             self.failed_tools.add(name)
             raise
 
-        # Output validators run AFTER all output hooks (consistent with text output)
+        # Output validators run AFTER all output hooks (consistent with text output).
+        # Use the global output retry context (from self.ctx) rather than the per-tool
+        # context (validated.ctx), matching the text output path's behavior.
         try:
+            assert self.ctx is not None
+            validator_ctx = replace(validated.ctx, retry=self.ctx.retry, max_retries=self.ctx.max_retries)
             for validator in toolset.output_validators:
-                result = await validator.validate(result, validated.ctx, wrap_validation_errors=False)
+                result = await validator.validate(result, validator_ctx, wrap_validation_errors=False)
         except ModelRetry as e:
             self._check_max_retries(name, tool.max_retries, e)
             self.failed_tools.add(name)

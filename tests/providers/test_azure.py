@@ -18,7 +18,7 @@ from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from openai import AsyncAzureOpenAI
+    from openai import AsyncAzureOpenAI, AsyncOpenAI
 
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.azure import AzureProvider
@@ -192,3 +192,45 @@ async def test_azure_document_url_input_not_supported(allow_model_requests: None
         match="Azure's Chat Completions API does not support document input.*OpenAIResponsesModel",
     ):
         await agent.run(['Summarize this document', DocumentUrl(url='https://example.com/test.pdf')])
+
+
+def test_azure_provider_foundry_serverless_endpoint():
+    provider = AzureProvider(
+        azure_endpoint='https://gpt-oss-120b.eastus2.models.ai.azure.com',
+        api_key='test-key-123',
+    )
+    assert provider.name == 'azure'
+    # Serverless model endpoints reject the `api-version` query parameter, so we
+    # must use plain AsyncOpenAI rather than AsyncAzureOpenAI.
+    assert type(provider.client) is AsyncOpenAI
+    assert provider.base_url == 'https://gpt-oss-120b.eastus2.models.ai.azure.com/v1/'
+
+
+def test_azure_provider_v1_endpoint_rejects_api_version():
+    with pytest.raises(UserError, match='`api_version` must not be set'):
+        AzureProvider(
+            azure_endpoint='https://gpt-oss-120b.eastus2.models.ai.azure.com',
+            api_version='2024-12-01-preview',
+            api_key='test-key-123',
+        )
+
+
+def test_azure_provider_openai_v1_ga_endpoint():
+    # https://learn.microsoft.com/en-us/azure/ai-foundry/openai/api-version-lifecycle
+    provider = AzureProvider(
+        azure_endpoint='https://project-id.openai.azure.com/openai/v1/',
+        api_key='test-key-123',
+    )
+    assert type(provider.client) is AsyncOpenAI
+    assert provider.base_url == 'https://project-id.openai.azure.com/openai/v1/'
+
+
+def test_azure_provider_foundry_serverless_with_openai_model():
+    model = OpenAIChatModel(
+        model_name='gpt-oss-120b',
+        provider=AzureProvider(
+            azure_endpoint='https://gpt-oss-120b.eastus2.models.ai.azure.com',
+            api_key='test-key-123',
+        ),
+    )
+    assert type(model.client) is AsyncOpenAI

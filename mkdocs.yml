@@ -40,6 +40,7 @@ nav:
           - models/groq.md
           - models/huggingface.md
           - models/mistral.md
+          - models/ollama.md
           - models/openrouter.md
           - models/outlines.md
       - Tools & Toolsets:
@@ -64,6 +65,10 @@ nav:
       - Web Chat UI: web.md
       - Embeddings: embeddings.md
       - Testing: testing.md
+
+  - Pydantic AI Harness:
+      - Overview: harness/overview.md
+      - Code Mode: harness/code-mode.md
 
   - Pydantic Evals:
       - Overview: evals.md
@@ -106,6 +111,7 @@ nav:
           - Temporal: durable_execution/temporal.md
           - DBOS: durable_execution/dbos.md
           - Prefect: durable_execution/prefect.md
+          - Restate: durable_execution/restate.md
       - UI Event Streams:
           - Overview: ui/overview.md
           - AG-UI: ui/ag-ui.md
@@ -169,6 +175,7 @@ nav:
           - api/models/instrumented.md
           - api/models/mcp-sampling.md
           - api/models/mistral.md
+          - api/models/ollama.md
           - api/models/openai.md
           - api/models/openrouter.md
           - api/models/outlines.md
