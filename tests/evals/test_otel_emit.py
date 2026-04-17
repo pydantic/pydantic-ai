@@ -61,6 +61,7 @@ def test_emits_event_with_parent_span(capfire: CaptureLogfire):
     attrs = dict(record.attributes or {})
 
     assert record.event_name == 'gen_ai.evaluation.result'
+    assert record.body == 'Correctness: pass'
     assert attrs['gen_ai.evaluation.name'] == 'Correctness'
     assert attrs['gen_ai.evaluation.score.value'] == 1.0
     assert attrs['gen_ai.evaluation.score.label'] == 'pass'
@@ -221,3 +222,54 @@ def test_non_scalar_value_yields_no_score_attrs(capfire: CaptureLogfire):
     attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
     assert 'gen_ai.evaluation.score.value' not in attrs
     assert 'gen_ai.evaluation.score.label' not in attrs
+
+
+def test_body_formatting_for_score_types(capfire: CaptureLogfire):
+    """The log body is a short human-readable summary shown in the live trace view."""
+    emit_otel_events(
+        results=[
+            _result('Passed', True),
+            _result('Failed', False),
+            _result('Score', 0.73),
+            _result('Whole', 5),
+            _result('Tone', 'neutral'),
+        ],
+        failures=[],
+        span_reference=None,
+        target=_target('f'),
+    )
+
+    bodies = [r.log_record.body for r in capfire.log_exporter.get_finished_logs()]
+    assert bodies == [
+        'Passed: pass',
+        'Failed: fail',
+        'Score: 0.73',
+        'Whole: 5',
+        'Tone: neutral',
+    ]
+
+
+def test_failure_body(capfire: CaptureLogfire):
+    """Failure body includes the error message when present, name alone otherwise."""
+    emit_otel_events(
+        results=[],
+        failures=[
+            EvaluatorFailure(
+                name='Judge',
+                error_message='ValueError: bad input',
+                error_stacktrace='tb',
+                source=_spec('Judge'),
+            ),
+            EvaluatorFailure(
+                name='Silent',
+                error_message='',
+                error_stacktrace='tb',
+                source=_spec('Silent'),
+            ),
+        ],
+        span_reference=None,
+        target=_target('f'),
+    )
+
+    bodies = [r.log_record.body for r in capfire.log_exporter.get_finished_logs()]
+    assert bodies == ['Judge failed: ValueError: bad input', 'Silent failed']

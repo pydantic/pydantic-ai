@@ -31,13 +31,14 @@ import functools
 import inspect
 import threading
 import time
-from collections.abc import Awaitable, Callable, Iterator, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, runtime_checkable
 
 import anyio
-from typing_extensions import ParamSpec, TypeVar
+from opentelemetry import trace
+from typing_extensions import LiteralString, ParamSpec, TypeVar
 
 from . import _online as _online_internal, _task_run
 from ._utils import UNSET, Unset, logfire_span
@@ -46,6 +47,13 @@ from .evaluators.context import EvaluatorContext
 from .evaluators.evaluator import EvaluationResult, Evaluator, EvaluatorFailure
 from .otel._context_subtree import context_subtree
 from .otel.span_tree import SpanTree
+
+try:
+    import logfire as _logfire  # pyright: ignore[reportUnusedImport]  # noqa: F401
+
+    _LOGFIRE_INSTALLED = True
+except ImportError:  # pragma: lax no cover
+    _LOGFIRE_INSTALLED = False  # pyright: ignore[reportConstantRedefinition]
 
 __all__ = (
     'CallbackSink',
@@ -380,6 +388,84 @@ def _capture_inputs(sig: inspect.Signature, args: tuple[Any, ...], kwargs: dict[
     return dict(bound.arguments)
 
 
+_ExtractedArgs = Literal[False, True] | tuple[str, ...]
+"""Resolved `extract_args` setting: ``False`` = record none, ``True`` = record all,
+or a tuple of explicit argument names to record."""
+
+
+def _resolve_extract_args(
+    func: Callable[..., Any],
+    sig: inspect.Signature,
+    extract_args: bool | Iterable[str],
+) -> _ExtractedArgs:
+    """Normalise `extract_args` and validate any explicit argument names."""
+    if extract_args is False or extract_args is True:
+        return extract_args
+    if isinstance(extract_args, str):
+        names: tuple[str, ...] = (extract_args,)
+    else:
+        names = tuple(extract_args)
+    if not names:
+        return False
+    unknown = [name for name in names if name not in sig.parameters]
+    if unknown:
+        raise ValueError(f'extract_args references parameters not in {func.__qualname__}: {sorted(unknown)}')
+    return names
+
+
+def _select_recorded_inputs(
+    inputs: dict[str, Any],
+    extract_args: _ExtractedArgs,
+) -> dict[str, Any] | None:
+    """Return the subset of inputs to record on the span, or ``None`` if disabled."""
+    if extract_args is False:
+        return None
+    if extract_args is True:
+        return inputs
+    return {name: inputs[name] for name in extract_args if name in inputs}
+
+
+def _default_call_span_name(func: Callable[..., Any]) -> str:
+    """Build a default span name/msg_template following `@logfire.instrument`'s convention."""
+    qualname = getattr(func, '__qualname__', getattr(func, '__name__', repr(func)))
+    module = inspect.getmodule(func)
+    module_name = getattr(module, '__name__', None)
+    if module_name:
+        return f'Calling {module_name}.{qualname}'
+    return f'Calling {qualname}'  # pragma: no cover
+
+
+@contextmanager
+def _open_call_span(
+    msg_template: str,
+    span_name: str | None,
+    recorded_inputs: dict[str, Any] | None,
+) -> Iterator[Any]:
+    """Open the span that represents the decorated function call.
+
+    When logfire is installed, uses `logfire.span` so argument and return
+    attributes get JSON-schema serialization. Otherwise falls back to a raw
+    OTel span via the configured tracer provider — preserving span parenting
+    for evaluator events even when logfire is not available.
+    """
+    if _LOGFIRE_INSTALLED:
+        attrs = recorded_inputs or {}
+        with logfire_span(msg_template, _span_name=span_name, **attrs) as span:
+            yield span
+    else:
+        tracer = trace.get_tracer('pydantic-evals')
+        with tracer.start_as_current_span(span_name or msg_template) as span:
+            yield span
+
+
+def _record_return(span: Any, result: Any) -> None:
+    """Record the function return value on the span."""
+    # `set_attribute` on a logfire `LogfireSpan` handles JSON-schema serialisation
+    # of complex types; `record_return` is rejected at decoration time when
+    # logfire is not installed, so we only hit this path with a real logfire span.
+    span.set_attribute('return', result)
+
+
 def _build_sampling_context(
     evaluator: Evaluator,
     inputs: Any,
@@ -464,8 +550,16 @@ class OnlineEvalConfig:
         self,
         *evaluators: Evaluator | OnlineEvaluator,
         target: str | None = None,
+        msg_template: LiteralString | None = None,
+        span_name: str | None = None,
+        extract_args: bool | Iterable[str] = False,
+        record_return: bool = False,
     ) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]:
         """Decorator to attach online evaluators to a function.
+
+        Each decorated call opens a dedicated span representing the function
+        invocation — evaluator events are parented to this span, and the span
+        itself appears in the user's configured OTel/logfire traces.
 
         Bare `Evaluator` instances are auto-wrapped in `OnlineEvaluator` at decoration time
         (so concurrency semaphores are shared across calls). Their `sample_rate` defaults to
@@ -502,32 +596,75 @@ class OnlineEvalConfig:
             target: Name of the thing being evaluated. Written to sinks and emitted
                 OTel events as `gen_ai.evaluation.target`. Defaults to the decorated
                 function's `__name__` when omitted.
+            msg_template: Template for the call span's message. Defaults to
+                ``"Calling {module}.{qualname}"`` like `@logfire.instrument`.
+                When logfire is installed, `{arg=}`-style placeholders in the
+                template are formatted against the function's arguments.
+            span_name: Override for the call span's name. Defaults to `msg_template`.
+            extract_args: Whether to record function arguments as span attributes.
+                `False` (default) records nothing; `True` records all bound arguments;
+                an iterable of names records only those arguments. Requires logfire
+                to be installed so arguments are serialised with their JSON schema —
+                raises `RuntimeError` at decoration time otherwise.
+            record_return: Whether to record the function's return value as a `return`
+                span attribute. Requires logfire for the same reason as `extract_args`.
 
         Returns:
             A decorator that wraps the function with online evaluation.
         """
         online_evals = [e if isinstance(e, OnlineEvaluator) else OnlineEvaluator(evaluator=e) for e in evaluators]
 
+        if (extract_args or record_return) and not _LOGFIRE_INSTALLED:
+            raise RuntimeError(
+                'extract_args and record_return require logfire to be installed for argument and '
+                'return-value serialization. Install `pydantic-evals[logfire]` (or disable both '
+                'options) to use them.'
+            )
+
+        # These options are intentionally decorator-only for now so they stay close to
+        # `@logfire.instrument`'s shape; we can lift them to `OnlineEvalConfig` as
+        # defaults if users ask for it.
+
         def decorator(func: Callable[_P, _R]) -> Callable[_P, _R]:
             resolved_target = target if target is not None else func.__name__
+            sig = inspect.signature(func)
+            resolved_extract_args = _resolve_extract_args(func, sig, extract_args)
+            resolved_msg_template = msg_template if msg_template is not None else _default_call_span_name(func)
+            call_span = _CallSpanSpec(
+                msg_template=resolved_msg_template,
+                span_name=span_name,
+                extract_args=resolved_extract_args,
+                record_return=record_return,
+            )
             if inspect.iscoroutinefunction(func):
                 # ParamSpec can't distinguish async from sync return types — _wrap_async returns
                 # Callable[_P, Awaitable[_R]] but the decorator signature expects Callable[_P, _R]
-                return _wrap_async(func, online_evals, self, resolved_target)  # pyright: ignore[reportReturnType]
+                return _wrap_async(func, sig, online_evals, self, resolved_target, call_span)  # pyright: ignore[reportReturnType]
             else:
-                return _wrap_sync(func, online_evals, self, resolved_target)
+                return _wrap_sync(func, sig, online_evals, self, resolved_target, call_span)
 
         return decorator
 
 
+@dataclass(kw_only=True, frozen=True)
+class _CallSpanSpec:
+    """Resolved configuration for the span that wraps a decorated call."""
+
+    msg_template: str
+    span_name: str | None
+    extract_args: _ExtractedArgs
+    record_return: bool
+
+
 def _wrap_async(
     func: Callable[_P, Awaitable[_R]],
+    sig: inspect.Signature,
     online_evals: list[OnlineEvaluator],
     config: OnlineEvalConfig,
     target: str,
+    call_span: _CallSpanSpec,
 ) -> Callable[_P, Awaitable[_R]]:
     """Wrap an async function with online evaluation."""
-    sig = inspect.signature(func)
 
     @functools.wraps(func)
     async def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
@@ -549,17 +686,21 @@ def _wrap_async(
         if not sampled:
             return await func(*args, **kwargs)
 
+        recorded_inputs = _select_recorded_inputs(inputs, call_span.extract_args)
+
         # Run the function with span tree capture and attribute/metric tracking
         task_run = _task_run.TaskRun()
         token = _task_run.CURRENT_TASK_RUN.set(task_run)
         try:
             with (
-                logfire_span('evaluate {func_name}', func_name=func.__qualname__) as span,
+                _open_call_span(call_span.msg_template, call_span.span_name, recorded_inputs) as span,
                 context_subtree() as span_tree,
             ):
                 t0 = time.perf_counter()
                 result = await func(*args, **kwargs)
                 duration = time.perf_counter() - t0
+                if call_span.record_return:
+                    _record_return(span, result)
         finally:
             _task_run.CURRENT_TASK_RUN.reset(token)
 
@@ -596,12 +737,13 @@ def _wrap_async(
 
 def _wrap_sync(
     func: Callable[_P, _R],
+    sig: inspect.Signature,
     online_evals: list[OnlineEvaluator],
     config: OnlineEvalConfig,
     target: str,
+    call_span: _CallSpanSpec,
 ) -> Callable[_P, _R]:
     """Wrap a sync function with online evaluation."""
-    sig = inspect.signature(func)
 
     @functools.wraps(func)
     def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
@@ -623,17 +765,21 @@ def _wrap_sync(
         if not sampled:
             return func(*args, **kwargs)
 
+        recorded_inputs = _select_recorded_inputs(inputs, call_span.extract_args)
+
         # Run the function with span tree capture and attribute/metric tracking
         task_run = _task_run.TaskRun()
         token = _task_run.CURRENT_TASK_RUN.set(task_run)
         try:
             with (
-                logfire_span('evaluate {func_name}', func_name=func.__qualname__) as span,
+                _open_call_span(call_span.msg_template, call_span.span_name, recorded_inputs) as span,
                 context_subtree() as span_tree,
             ):
                 t0 = time.perf_counter()
                 result = func(*args, **kwargs)
                 duration = time.perf_counter() - t0
+                if call_span.record_return:
+                    _record_return(span, result)
         finally:
             _task_run.CURRENT_TASK_RUN.reset(token)
 
@@ -718,6 +864,10 @@ Module-level functions like `evaluate()` and `configure()` delegate to this inst
 def evaluate(
     *evaluators: Evaluator | OnlineEvaluator,
     target: str | None = None,
+    msg_template: LiteralString | None = None,
+    span_name: str | None = None,
+    extract_args: bool | Iterable[str] = False,
+    record_return: bool = False,
 ) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]:
     """Decorator to attach online evaluators to a function using the global default config.
 
@@ -728,6 +878,15 @@ def evaluate(
         target: Name of the thing being evaluated. Written to sinks and emitted
             OTel events as `gen_ai.evaluation.target`. Defaults to the decorated
             function's `__name__` when omitted.
+        msg_template: Template for the call span's message. Defaults to
+            ``"Calling {module}.{qualname}"`` like `@logfire.instrument`.
+        span_name: Override for the call span's name. Defaults to `msg_template`.
+        extract_args: Whether to record function arguments as span attributes.
+            `False` (default) records nothing; `True` records all bound arguments;
+            an iterable of names records only those arguments. Requires logfire
+            to be installed — raises `RuntimeError` at decoration time otherwise.
+        record_return: Whether to record the function's return value as a `return`
+            span attribute. Requires logfire for the same reason as `extract_args`.
 
     Returns:
         A decorator that wraps the function with online evaluation.
@@ -751,7 +910,14 @@ def evaluate(
         return x
     ```
     """
-    return DEFAULT_CONFIG.evaluate(*evaluators, target=target)
+    return DEFAULT_CONFIG.evaluate(
+        *evaluators,
+        target=target,
+        msg_template=msg_template,
+        span_name=span_name,
+        extract_args=extract_args,
+        record_return=record_return,
+    )
 
 
 def configure(

@@ -124,7 +124,7 @@ def _emit_result(
     if result.reason is not None:
         attrs[_ATTR_EXPLANATION] = result.reason
     attrs[_ATTR_EVALUATOR_SOURCE] = _serialize_evaluator_source(result.source)
-    _get_logger().emit(LogRecord(event_name=_EVENT_NAME, attributes=attrs))
+    _get_logger().emit(LogRecord(event_name=_EVENT_NAME, body=_format_result_body(result), attributes=attrs))
 
 
 def _emit_failure(
@@ -138,7 +138,7 @@ def _emit_failure(
     if failure.error_message:
         attrs[_ATTR_EXPLANATION] = failure.error_message
     attrs[_ATTR_EVALUATOR_SOURCE] = _serialize_evaluator_source(failure.source)
-    _get_logger().emit(LogRecord(event_name=_EVENT_NAME, attributes=attrs))
+    _get_logger().emit(LogRecord(event_name=_EVENT_NAME, body=_format_failure_body(failure), attributes=attrs))
 
 
 def _base_attrs(
@@ -174,6 +174,35 @@ def _build_parent_context(span_reference: Any | None) -> Context | None:
         trace_flags=TraceFlags(TraceFlags.SAMPLED),
     )
     return trace.set_span_in_context(NonRecordingSpan(span_ctx))
+
+
+def _format_result_body(result: EvaluationResult) -> str:
+    """Build the human-readable log body for a successful evaluation.
+
+    The body is shown inline in the Logfire live trace view, so it should be
+    short and dense. Keep it to ``"<evaluator>: <score>"`` — attributes carry
+    the structured detail, and long ``reason`` strings live on
+    ``gen_ai.evaluation.explanation``.
+    """
+    return f'{result.name}: {_format_score(result.value)}'
+
+
+def _format_failure_body(failure: EvaluatorFailure) -> str:
+    """Build the human-readable log body for an evaluator failure."""
+    if failure.error_message:
+        return f'{failure.name} failed: {failure.error_message}'
+    return f'{failure.name} failed'
+
+
+def _format_score(value: Any) -> str:
+    """Render a `EvaluationScalar` for display in the log body."""
+    if isinstance(value, bool):
+        return 'pass' if value else 'fail'
+    if isinstance(value, float):
+        # `g` drops trailing zeros but falls back to scientific notation for
+        # very large/small values; that's fine for a short status string.
+        return format(value, 'g')
+    return str(value)
 
 
 def _set_score_attrs(attrs: dict[str, Any], value: Any) -> None:

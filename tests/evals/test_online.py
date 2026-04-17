@@ -1993,3 +1993,182 @@ async def test_metadata_not_shared_between_contexts():
     assert collected_contexts[1].metadata == {'service': 'test', 'injected': True}
     # But config metadata should be untouched — the copies are independent
     assert config.metadata == {'service': 'test'}
+
+
+# --- Call span / instrument-style recording ---------------------------------
+
+
+@needs_logfire
+@pytest.mark.anyio
+async def test_call_span_default_name_and_no_args(capfire: CaptureLogfire):
+    """Each decorated call opens a span named after the function; args/return are not recorded by default."""
+    config = OnlineEvalConfig(emit_otel_events=False)
+
+    @config.evaluate(AlwaysTrue())
+    async def my_func(x: int) -> int:
+        return x
+
+    await my_func(42)
+    await wait_for_evaluations()
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    call_spans = [s for s in spans if 'my_func' in s['name']]
+    assert len(call_spans) == 1
+    attrs = call_spans[0]['attributes']
+    assert 'x' not in attrs
+    assert 'return' not in attrs
+
+
+@needs_logfire
+@pytest.mark.anyio
+async def test_call_span_extract_args_true_records_all(capfire: CaptureLogfire):
+    """`extract_args=True` records every bound argument."""
+    config = OnlineEvalConfig(emit_otel_events=False)
+
+    @config.evaluate(AlwaysTrue(), extract_args=True)
+    async def my_func(x: int, label: str = 'default') -> int:
+        return x
+
+    await my_func(42, label='hello')
+    await wait_for_evaluations()
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    call_spans = [s for s in spans if 'my_func' in s['name']]
+    assert len(call_spans) == 1
+    attrs = call_spans[0]['attributes']
+    assert attrs['x'] == 42
+    assert attrs['label'] == 'hello'
+
+
+@needs_logfire
+@pytest.mark.anyio
+async def test_call_span_extract_args_subset(capfire: CaptureLogfire):
+    """Passing a list to `extract_args` records only the named arguments."""
+    config = OnlineEvalConfig(emit_otel_events=False)
+
+    @config.evaluate(AlwaysTrue(), extract_args=['x'])
+    async def my_func(x: int, secret: str) -> int:
+        return x
+
+    await my_func(42, secret='shh')
+    await wait_for_evaluations()
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    call_spans = [s for s in spans if 'my_func' in s['name']]
+    assert len(call_spans) == 1
+    attrs = call_spans[0]['attributes']
+    assert attrs['x'] == 42
+    assert 'secret' not in attrs
+
+
+@needs_logfire
+@pytest.mark.anyio
+async def test_call_span_record_return(capfire: CaptureLogfire):
+    """`record_return=True` records the function's return value on the span."""
+    config = OnlineEvalConfig(emit_otel_events=False)
+
+    @config.evaluate(AlwaysTrue(), record_return=True)
+    async def my_func(x: int) -> int:
+        return x * 2
+
+    await my_func(21)
+    await wait_for_evaluations()
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    call_spans = [s for s in spans if 'my_func' in s['name']]
+    assert len(call_spans) == 1
+    assert call_spans[0]['attributes']['return'] == 42
+
+
+@needs_logfire
+@pytest.mark.anyio
+async def test_call_span_msg_template_and_span_name(capfire: CaptureLogfire):
+    """`msg_template`/`span_name` override the default span name."""
+    config = OnlineEvalConfig(emit_otel_events=False)
+
+    @config.evaluate(AlwaysTrue(), msg_template='running my task', span_name='task.run')
+    async def my_func(x: int) -> int:
+        return x
+
+    await my_func(1)
+    await wait_for_evaluations()
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    names = [s['name'] for s in spans]
+    assert 'task.run' in names
+
+
+@needs_logfire
+@pytest.mark.anyio
+async def test_evaluation_events_parented_to_call_span(capfire: CaptureLogfire):
+    """Emitted `gen_ai.evaluation.result` events parent to the decorated call's span."""
+    config = OnlineEvalConfig()  # default emit_otel_events=True
+
+    @config.evaluate(AlwaysTrue())
+    async def my_func(x: int) -> int:
+        return x
+
+    await my_func(1)
+    await wait_for_evaluations()
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    call_spans = [s for s in spans if 'my_func' in s['name']]
+    assert len(call_spans) == 1
+    call_span_id = call_spans[0]['context']['span_id']
+
+    finished = capfire.log_exporter.get_finished_logs()
+    assert len(finished) == 1
+    # Event's span_context points back to the decorated call's span id,
+    # so the evaluator event appears nested under the function call in traces.
+    assert finished[0].log_record.span_id == call_span_id
+
+
+def test_extract_args_without_logfire_raises(monkeypatch: pytest.MonkeyPatch):
+    """Opting into arg/return recording without logfire installed raises at decoration time."""
+    from pydantic_evals import online as online_module
+
+    monkeypatch.setattr(online_module, '_LOGFIRE_INSTALLED', False)
+
+    with pytest.raises(RuntimeError, match='logfire'):
+
+        @online_module.evaluate(AlwaysTrue(), extract_args=True)
+        async def f(x: int) -> int:
+            return x
+
+    with pytest.raises(RuntimeError, match='logfire'):
+
+        @online_module.evaluate(AlwaysTrue(), record_return=True)
+        async def g(x: int) -> int:
+            return x
+
+
+def test_extract_args_unknown_parameter_raises():
+    """Naming an unknown parameter in `extract_args` fails at decoration time."""
+    with pytest.raises(ValueError, match='not in'):
+
+        @evaluate(AlwaysTrue(), extract_args=['nonexistent'])
+        async def f(x: int) -> int:
+            return x
+
+
+@pytest.mark.anyio
+async def test_sync_call_span_with_extract_args(capfire: CaptureLogfire):
+    """Sync decorated functions also open a span and honour `extract_args`."""
+    if not logfire_import_successful():
+        pytest.skip('logfire not installed')
+
+    config = OnlineEvalConfig(emit_otel_events=False)
+
+    @config.evaluate(AlwaysTrue(), extract_args=True, record_return=True)
+    def my_func(x: int) -> int:
+        return x * 2
+
+    assert my_func(21) == 42
+    await wait_for_evaluations()
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    call_spans = [s for s in spans if 'my_func' in s['name']]
+    assert len(call_spans) == 1
+    attrs = call_spans[0]['attributes']
+    assert attrs['x'] == 21
+    assert attrs['return'] == 42
