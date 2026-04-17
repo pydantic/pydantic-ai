@@ -30,13 +30,19 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.usage import RequestUsage
 
-from ...conftest import IsDatetime, IsNow, IsStr
+from ...conftest import IsDatetime, IsNow, IsStr, try_import
 from ...parts_from_messages import part_types_from_messages
 
+with try_import() as imports_successful:
+    from pydantic_ai.models.google import GoogleModel
+
 if TYPE_CHECKING:
-    from .conftest import GoogleModelFactory
+    from collections.abc import Callable
+
+    GoogleModelFactory = Callable[..., GoogleModel]
 
 pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.filterwarnings(
@@ -391,6 +397,7 @@ print(f"Tomorrow: {tomorrow.strftime('%A, %B %d, %Y')}")
 async def test_receive_history_from_another_provider(
     allow_model_requests: None, anthropic_api_key: str, gemini_api_key: str
 ):
+    pytest.importorskip('anthropic', reason='anthropic not installed')
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
