@@ -301,7 +301,7 @@ from starlette.responses import Response
 from pydantic_ai import Agent
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-agent = Agent('openai:gpt-5.2', instructions='Be fun!')
+agent = Agent('openai:gpt-5.2', system_prompt='Be fun!')
 
 app = FastAPI()
 

@@ -166,7 +166,7 @@ from starlette.responses import Response
 from pydantic_ai import Agent
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
-agent = Agent('openai:gpt-5.2', instructions='Be fun!')
+agent = Agent('openai:gpt-5.2', system_prompt='Be fun!')
 
 app = FastAPI()
 
