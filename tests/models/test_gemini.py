@@ -2118,7 +2118,7 @@ async def test_stream_cancel(get_gemini_client: GetGeminiClient):
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 run_id=IsStr(),
-                interrupted=True,
+                state='interrupted',
             ),
         ]
     )

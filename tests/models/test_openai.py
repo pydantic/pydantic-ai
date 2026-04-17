@@ -4358,7 +4358,7 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
                 'finish_reason': 'content_filter',
                 'run_id': IsStr(),
                 'metadata': None,
-                'interrupted': None,
+                'state': 'complete',
             }
         ]
     )
@@ -4926,7 +4926,7 @@ async def test_stream_cancel(allow_model_requests: None):
                 provider_details={'timestamp': IsDatetime()},
                 provider_response_id='123',
                 run_id=IsStr(),
-                interrupted=True,
+                state='interrupted',
             ),
         ]
     )

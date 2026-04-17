@@ -118,6 +118,9 @@ FinishReason: TypeAlias = Literal[
 ]
 """Reason the model finished generating the response, normalized to OpenTelemetry values."""
 
+ModelResponseState: TypeAlias = Literal['complete', 'interrupted']
+"""Lifecycle state of a model response."""
+
 ForceDownloadMode: TypeAlias = bool | Literal['allow-local']
 """Type for the force_download parameter on FileUrl subclasses.
 
@@ -1836,12 +1839,8 @@ class ModelResponse:
     metadata: dict[str, Any] | None = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
-    interrupted: bool | None = None
-    """Flag set when the response was interrupted due to cancellation.
-
-    Uses ``None`` (not ``False``) as the default so that existing serialized
-    ``ModelResponse`` objects from before this field was added round-trip cleanly.
-    """
+    state: ModelResponseState = 'complete'
+    """Lifecycle state of the response."""
 
     @property
     def text(self) -> str | None:

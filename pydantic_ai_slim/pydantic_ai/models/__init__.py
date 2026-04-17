@@ -1195,7 +1195,7 @@ class StreamedResponse(ABC):
             provider_response_id=self.provider_response_id,
             provider_details=self.provider_details,
             finish_reason=self.finish_reason,
-            interrupted=self._cancelled or None,
+            state='interrupted' if self._cancelled else 'complete',
         )
 
     # TODO (v2): Make this a property

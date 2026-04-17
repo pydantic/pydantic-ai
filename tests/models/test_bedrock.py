@@ -511,7 +511,7 @@ async def test_stream_cancel(allow_model_requests: None, bedrock_provider: Bedro
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 run_id=IsStr(),
-                interrupted=True,
+                state='interrupted',
             ),
         ]
     )

@@ -675,7 +675,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
     async def cancel(self) -> None:
         """Cancel the stream, stopping token generation and closing the underlying connection.
 
-        The interrupted response is recorded in the message history so that
+        The interrupted response state is recorded in the message history so that
         `all_messages()` includes it.
         """
         if self._stream_response is not None:  # pragma: no branch

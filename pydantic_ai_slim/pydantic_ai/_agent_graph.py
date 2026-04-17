@@ -1993,7 +1993,7 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
             else:
                 clean_messages.append(message)
         elif isinstance(message, _messages.ModelResponse):  # pragma: no branch
-            if message.interrupted:
+            if message.state == 'interrupted':
                 filtered = _filter_interrupted_response(message, processed_tool_call_ids)
                 if filtered is None:
                     continue

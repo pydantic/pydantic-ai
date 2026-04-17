@@ -10251,7 +10251,7 @@ async def test_stream_cancel(allow_model_requests: None):
                 provider_details={'timestamp': IsDatetime()},
                 provider_response_id='resp_001',
                 run_id=IsStr(),
-                interrupted=True,
+                state='interrupted',
             ),
         ]
     )

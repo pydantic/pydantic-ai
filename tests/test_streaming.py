@@ -4175,8 +4175,8 @@ async def test_run_stream_cancel():
         await result.cancel()
         assert result.cancelled
 
-    # StreamedResponse.get() sets interrupted=True when _cancelled is True
-    assert result.response.interrupted is True
+    # StreamedResponse.get() sets state='interrupted' when _cancelled is True
+    assert result.response.state == 'interrupted'
 
 
 async def test_run_stream_cancel_all_messages_includes_interrupted_response():
@@ -4190,7 +4190,7 @@ async def test_run_stream_cancel_all_messages_includes_interrupted_response():
         await result.cancel()
 
     assert result.cancelled
-    assert result.response.interrupted is True
+    assert result.response.state == 'interrupted'
     # The interrupted ModelResponse must appear in all_messages()
     msgs = result.all_messages()
     assert msgs == snapshot(
@@ -4207,7 +4207,7 @@ async def test_run_stream_cancel_all_messages_includes_interrupted_response():
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
-                interrupted=True,
+                state='interrupted',
             ),
         ]
     )
@@ -4229,7 +4229,7 @@ async def test_run_stream_cancel_guard_suppresses_transport_error():
                 # _stream_cancel_guard suppression branch.
 
     assert result.cancelled
-    assert result.response.interrupted is True
+    assert result.response.state == 'interrupted'
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -4244,7 +4244,7 @@ async def test_run_stream_cancel_guard_suppresses_transport_error():
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
-                interrupted=True,
+                state='interrupted',
             ),
         ]
     )
@@ -4347,7 +4347,7 @@ async def test_incomplete_tool_call_filtered_from_history():
         ModelRequest(parts=[UserPromptPart(content='Hello')]),
         ModelResponse(
             parts=[ToolCallPart(tool_name='my_tool', args='{"x": ', tool_call_id='call_1')],
-            interrupted=True,
+            state='interrupted',
         ),
     ]
 
@@ -4424,7 +4424,7 @@ async def test_partial_incomplete_tool_call_filtered_from_history():
                 TextPart(content='Let me call the tool'),
                 ToolCallPart(tool_name='my_tool', args='{"x": ', tool_call_id='call_1'),
             ],
-            interrupted=True,
+            state='interrupted',
         ),
     ]
 
@@ -4434,7 +4434,7 @@ async def test_partial_incomplete_tool_call_filtered_from_history():
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())]),
-            ModelResponse(parts=[TextPart(content='Let me call the tool')], timestamp=IsDatetime(), interrupted=True),
+            ModelResponse(parts=[TextPart(content='Let me call the tool')], timestamp=IsDatetime(), state='interrupted'),
             ModelRequest(
                 parts=[UserPromptPart(content='Continue', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),

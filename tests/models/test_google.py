@@ -325,7 +325,7 @@ async def test_stream_cancel(allow_model_requests: None, gemini_api_key: str):
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com',
                 provider_response_id=IsStr(),
-                interrupted=True,
+                state='interrupted',
                 run_id=IsStr(),
             ),
         ]
@@ -1150,7 +1150,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                 'finish_reason': 'content_filter',
                 'run_id': IsStr(),
                 'metadata': None,
-                'interrupted': None,
+                'state': 'complete',
             }
         ]
     )

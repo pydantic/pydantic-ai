@@ -9554,7 +9554,7 @@ async def test_stream_cancel(allow_model_requests: None):
                 provider_url='https://api.anthropic.com',
                 provider_response_id='msg_cancel',
                 run_id=IsStr(),
-                interrupted=True,
+                state='interrupted',
             ),
         ]
     )
