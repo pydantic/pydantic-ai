@@ -1075,6 +1075,39 @@ async def test_tool_search_toolset_custom_search_fn_is_used():
     assert calls == ['anything']
 
 
+async def test_tool_search_toolset_custom_search_fn_filters_unknown_names():
+    """Names returned by ``search_fn`` that aren't in the deferred set are discarded."""
+
+    def custom_search(query: str, tools: Sequence[ToolDefinition]) -> list[str]:
+        return ['stock_price', 'not_a_real_tool', 'crypto_price']
+
+    toolset = _create_function_toolset()
+    searchable = ToolSearchToolset(wrapped=toolset, search_fn=custom_search)
+    ctx = _build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'anything'}, ctx, tools[_SEARCH_TOOLS_NAME])
+    assert isinstance(result, ToolReturn)
+    assert result.metadata == {'discovered_tools': ['stock_price', 'crypto_price']}
+
+
+async def test_tool_search_toolset_custom_search_fn_no_matches():
+    """Custom search function returning no names produces the 'no matches' message."""
+
+    def custom_search(query: str, tools: Sequence[ToolDefinition]) -> list[str]:
+        return []
+
+    toolset = _create_function_toolset()
+    searchable = ToolSearchToolset(wrapped=toolset, search_fn=custom_search)
+    ctx = _build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'anything'}, ctx, tools[_SEARCH_TOOLS_NAME])
+    assert isinstance(result, ToolReturn)
+    assert result.return_value == 'No matching tools found. The tools you need may not be available.'
+    assert result.metadata == {'discovered_tools': []}
+
+
 async def test_tool_search_capability_strategy_callable_skips_builtin():
     """A callable strategy runs locally — no ToolSearchTool builtin is registered."""
 
