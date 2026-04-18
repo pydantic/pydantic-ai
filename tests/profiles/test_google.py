@@ -10,6 +10,7 @@ from __future__ import annotations as _annotations
 
 from typing import Literal
 
+import pytest
 from pydantic import BaseModel
 
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, GoogleModelProfile, google_model_profile
@@ -198,6 +199,12 @@ def test_model_profile_gemini_3():
     profile = google_model_profile('gemini-3.0-pro')
     assert profile is not None
     assert isinstance(profile, GoogleModelProfile)
+    assert profile.google_supports_tool_combination is True
+
+
+def test_deprecated_native_output_with_builtin_tools_alias():
+    with pytest.warns(DeprecationWarning, match='google_supports_tool_combination'):
+        profile = GoogleModelProfile(google_supports_native_output_with_builtin_tools=True)
     assert profile.google_supports_tool_combination is True
 
 
