@@ -210,11 +210,11 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             parts = msg.parts
             if isinstance(msg, ModelRequest):
                 for part in parts:
-                    if isinstance(part, ToolReturnPart):
+                    if isinstance(part, ToolReturnPart) and part.tool_name == _SEARCH_TOOLS_NAME:
                         self._collect_discovered_from_metadata(part.metadata, discovered)
             elif isinstance(msg, ModelResponse):
                 for part in parts:
-                    if isinstance(part, BuiltinToolReturnPart) and part.tool_name == 'tool_search':
+                    if isinstance(part, BuiltinToolReturnPart) and part.tool_name == _TOOL_SEARCH_BUILTIN_ID:
                         self._collect_discovered_from_metadata(part.metadata, discovered)
         return discovered
 
