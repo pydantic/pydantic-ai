@@ -2199,51 +2199,6 @@ async def test_evaluator_span_nested_under_call_span(capfire: CaptureLogfire):
     assert evaluator_spans[0]['parent']['span_id'] == call_spans[0]['context']['span_id']
 
 
-@needs_logfire
-@pytest.mark.anyio
-async def test_evaluator_span_carries_score_attributes(capfire: CaptureLogfire):
-    """Single-result evaluators expose their score on the evaluator span."""
-    config = OnlineEvalConfig(emit_otel_events=False)
-
-    @config.evaluate(AlwaysTrue())
-    async def my_func(x: int) -> int:
-        return x
-
-    await my_func(1)
-    await wait_for_evaluations()
-
-    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
-    eval_spans = [s for s in spans if s['name'] == 'Calling evaluator: {evaluator_name}']
-    assert len(eval_spans) == 1
-    attrs = eval_spans[0]['attributes']
-    assert attrs['gen_ai.evaluation.name'] == 'AlwaysTrue'
-    assert attrs['gen_ai.evaluation.score.value'] == 1.0
-    assert attrs['gen_ai.evaluation.score.label'] == 'pass'
-    assert 'gen_ai.evaluation.evaluator_source' in attrs
-
-
-@needs_logfire
-@pytest.mark.anyio
-async def test_evaluator_span_multi_result_summary(capfire: CaptureLogfire):
-    """Multi-result evaluators record a count and the result names on the span."""
-    config = OnlineEvalConfig(emit_otel_events=False)
-
-    @config.evaluate(MultiResultEvaluator())
-    async def my_func(x: int) -> int:
-        return x
-
-    await my_func(1)
-    await wait_for_evaluations()
-
-    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
-    eval_spans = [s for s in spans if s['name'] == 'Calling evaluator: {evaluator_name}']
-    assert len(eval_spans) == 1
-    attrs = eval_spans[0]['attributes']
-    assert attrs['gen_ai.evaluation.result_count'] == 3
-    assert set(attrs['gen_ai.evaluation.names']) == {'accuracy', 'score', 'label'}
-    assert 'gen_ai.evaluation.score.value' not in attrs
-
-
 # --- Baggage propagation ---------------------------------------------------
 
 

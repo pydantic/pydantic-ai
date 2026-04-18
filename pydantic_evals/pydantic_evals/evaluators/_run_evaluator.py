@@ -69,7 +69,7 @@ async def run_evaluator(
     source = evaluator.as_spec()
 
     try:
-        with logfire_span('Calling evaluator: {evaluator_name}', evaluator_name=evaluator_name) as span:
+        with logfire_span('Calling evaluator: {evaluator_name}', evaluator_name=evaluator_name):
             raw_results = await evaluate(ctx)
 
             try:
@@ -92,8 +92,6 @@ async def run_evaluator(
                         evaluator_version=evaluator_version,
                     )
                 )
-
-            _set_span_result_attributes(span, details, source, evaluator_version)
     except Exception as e:
         return EvaluatorFailure(
             name=evaluator_name,
@@ -104,41 +102,6 @@ async def run_evaluator(
         )
 
     return details
-
-
-def _set_span_result_attributes(
-    span: Any,
-    results: list[EvaluationResult],
-    source: Any,
-    evaluator_version: str | None,
-) -> None:
-    """Mirror the standard event attributes onto the evaluator span.
-
-    Keeps the span itself useful as an at-a-glance result view in addition to
-    the per-result OTel events emitted by online dispatch. For the common
-    single-result case we set the score/label/explanation directly; for
-    multi-result evaluators we only set what is unambiguous (count + names),
-    since each scalar attribute can only hold one value.
-    """
-    span.set_attribute('gen_ai.evaluation.evaluator_source', source.model_dump_json())
-    if evaluator_version is not None:
-        span.set_attribute('gen_ai.evaluation.evaluator_version', evaluator_version)
-    if len(results) == 1:
-        result = results[0]
-        span.set_attribute('gen_ai.evaluation.name', result.name)
-        value = result.value
-        if isinstance(value, bool):
-            span.set_attribute('gen_ai.evaluation.score.value', 1.0 if value else 0.0)
-            span.set_attribute('gen_ai.evaluation.score.label', 'pass' if value else 'fail')
-        elif isinstance(value, (int, float)):
-            span.set_attribute('gen_ai.evaluation.score.value', float(value))
-        elif isinstance(value, str):
-            span.set_attribute('gen_ai.evaluation.score.label', value)
-        if result.reason is not None:
-            span.set_attribute('gen_ai.evaluation.explanation', result.reason)
-    else:
-        span.set_attribute('gen_ai.evaluation.result_count', len(results))
-        span.set_attribute('gen_ai.evaluation.names', [r.name for r in results])
 
 
 _EVALUATOR_OUTPUT_ADAPTER = TypeAdapter[EvaluatorOutput](EvaluatorOutput)
