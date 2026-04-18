@@ -285,8 +285,10 @@ async def run_output_with_hooks(
         result = await processor.process(
             text, run_context=run_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
         )
-        for validator in output_validators:  # pragma: no branch
-            result = await validator.validate(result, run_context, wrap_validation_errors=wrap_validation_errors)
+        for validator in output_validators:
+            result = await validator.validate(
+                result, run_context, wrap_validation_errors=wrap_validation_errors
+            )  # pragma: no cover
         return result
 
     output_context = processor.get_output_context(output_mode)
