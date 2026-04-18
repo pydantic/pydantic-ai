@@ -3709,9 +3709,122 @@ class TestHandleEventStream:
         assert len(downstream_events) > 0
         assert not any(isinstance(e, PartStartEvent) for e in downstream_events)
 
+    async def test_callable_instance_processor(self):
+        """A callable-class processor (not a plain async-generator function) is detected via its return type."""
+        captured: list[AgentStreamEvent] = []
+
+        class Transformer:
+            async def __call__(
+                self, _ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]
+            ) -> AsyncIterator[AgentStreamEvent]:
+                async for event in stream:
+                    captured.append(event)
+                    yield event
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[HandleEventStream(handler=Transformer())],
+        )
+        await agent.run('hello')
+        assert any(isinstance(e, PartStartEvent) for e in captured)
+
+    async def test_observer_bailout_does_not_break_downstream(self):
+        """If an observer stops iterating early, downstream consumers still see all events."""
+        received_by_observer: list[AgentStreamEvent] = []
+        received_downstream: list[AgentStreamEvent] = []
+
+        async def bail_after_first(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                received_by_observer.append(event)
+                return
+
+        async def downstream(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                received_downstream.append(event)
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[HandleEventStream(handler=bail_after_first)],
+        )
+        await agent.run('hello', event_stream_handler=downstream)
+        assert len(received_by_observer) == 1
+        assert len(received_downstream) > 1
+
     async def test_not_spec_serializable(self):
         """HandleEventStream holds a callable so it cannot participate in spec-based construction."""
         assert HandleEventStream.get_serialization_name() is None
+
+
+class TestRunEventStreamThroughCapabilities:
+    """Tests for the `run_event_stream_through_capabilities` helper used by durable-exec models."""
+
+    @staticmethod
+    async def _events(count: int = 3) -> AsyncIterator[AgentStreamEvent]:
+        for i in range(count):
+            yield PartStartEvent(index=i, part=TextPart(content=f'event-{i}'))
+
+    @staticmethod
+    def _run_ctx() -> RunContext[None]:
+        return RunContext(deps=None, model=TestModel(), usage=RunUsage())
+
+    async def test_no_agent_and_no_handler_does_nothing(self):
+        from pydantic_ai.agent.abstract import run_event_stream_through_capabilities
+
+        consumed: list[AgentStreamEvent] = []
+
+        async def gen() -> AsyncIterator[AgentStreamEvent]:
+            async for e in self._events():
+                consumed.append(e)
+                yield e
+
+        await run_event_stream_through_capabilities(None, self._run_ctx(), gen(), handler=None)
+        # Without a handler or capability, the helper doesn't iterate — caller must drain.
+        assert consumed == []
+
+    async def test_handler_receives_events_with_no_capability(self):
+        from pydantic_ai.agent.abstract import run_event_stream_through_capabilities
+
+        received: list[AgentStreamEvent] = []
+
+        async def handler(_ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                received.append(event)
+
+        agent = Agent(TestModel())  # no capabilities
+        await run_event_stream_through_capabilities(agent, self._run_ctx(), self._events(), handler=handler)
+        assert len(received) == 3
+
+    async def test_capability_fires_without_handler(self):
+        from pydantic_ai.agent.abstract import run_event_stream_through_capabilities
+
+        seen: list[AgentStreamEvent] = []
+
+        async def observer(_ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                seen.append(event)
+
+        agent = Agent(TestModel(), capabilities=[HandleEventStream(handler=observer)])
+        await run_event_stream_through_capabilities(agent, self._run_ctx(), self._events(), handler=None)
+        assert len(seen) == 3
+
+    async def test_handler_and_capability_both_see_events(self):
+        from pydantic_ai.agent.abstract import run_event_stream_through_capabilities
+
+        cap_events: list[AgentStreamEvent] = []
+        handler_events: list[AgentStreamEvent] = []
+
+        async def cap_handler(_ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                cap_events.append(event)
+
+        async def handler(_ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                handler_events.append(event)
+
+        agent = Agent(TestModel(), capabilities=[HandleEventStream(handler=cap_handler)])
+        await run_event_stream_through_capabilities(agent, self._run_ctx(), self._events(), handler=handler)
+        assert cap_events == handler_events
+        assert len(cap_events) == 3
 
 
 class TestWrapRunShortCircuit:

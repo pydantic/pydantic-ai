@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import inspect
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, AsyncIterator, Coroutine
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import anyio
 
@@ -50,10 +49,18 @@ class HandleEventStream(AbstractCapability[AgentDepsT]):
         *,
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
-        if inspect.isasyncgenfunction(self.handler):
-            async for event in self.handler(ctx, stream):
+        # Probe the handler: the processor form returns an AsyncIterator directly, while
+        # the observer form returns an awaitable. Introspecting the return is robust for
+        # both plain functions and callable instances, unlike `inspect.isasyncgenfunction`.
+        probe = self.handler(ctx, stream)
+        if isinstance(probe, AsyncIterator):
+            async for event in probe:
                 yield event
             return
+
+        # Observer: the probe is a coroutine we haven't awaited. Close it (nothing has
+        # run yet) and re-invoke the handler with the teed receive stream.
+        cast('Coroutine[Any, Any, None]', probe).close()
 
         observer = cast('EventStreamHandlerFunc[AgentDepsT]', self.handler)
         send_stream, receive_stream = anyio.create_memory_object_stream[AgentStreamEvent]()
@@ -65,8 +72,14 @@ class HandleEventStream(AbstractCapability[AgentDepsT]):
         async with anyio.create_task_group() as tg:
             tg.start_soon(run_handler)
             async with send_stream:
+                handler_alive = True
                 async for event in stream:
-                    await send_stream.send(event)
+                    if handler_alive:
+                        try:
+                            await send_stream.send(event)
+                        except (anyio.BrokenResourceError, anyio.ClosedResourceError):
+                            # Handler bailed early; keep forwarding events downstream.
+                            handler_alive = False
                     yield event
 
     @classmethod
