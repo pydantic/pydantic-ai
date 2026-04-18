@@ -11,12 +11,12 @@ from typing_extensions import NotRequired, Self, TypedDict
 
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai._utils import get_traceparent
-from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import PromptedOutput, TextOutput
-from pydantic_ai.tools import RunContext
+from pydantic_ai.tools import DeferredToolRequests, RunContext
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.wrapper import WrapperToolset
@@ -237,6 +237,8 @@ def test_logfire(
                 'model_name': 'test',
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
                 'final_result': '{"my_ret":"1"}',
@@ -293,6 +295,8 @@ def test_logfire(
                 'model_name': 'test',
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
                 'gen_ai.usage.input_tokens': 103,
@@ -513,7 +517,10 @@ def test_logfire(
                                 'kind': 'function',
                                 'metadata': None,
                                 'timeout': None,
+                                'defer_loading': False,
                                 'prefer_builtin': None,
+                                'return_schema': None,
+                                'include_return_schema': None,
                             }
                         ],
                         'builtin_tools': [],
@@ -523,6 +530,7 @@ def test_logfire(
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
                         'thinking': None,
                     }
                 )
@@ -530,6 +538,8 @@ def test_logfire(
             'gen_ai.tool.definitions': '[{"type": "function", "name": "my_ret", "parameters": {"additionalProperties": false, "properties": {"x": {"type": "integer"}}, "required": ["x"], "type": "object"}}]',
             'logfire.json_schema': IsJson(),
             'logfire.span_type': 'span',
+            'gen_ai.agent.name': 'my_agent',
+            'gen_ai.agent.call.id': IsStr(),
             'logfire.msg': 'chat test',
             'gen_ai.response.model': 'test',
             'gen_ai.usage.input_tokens': 51,
@@ -597,6 +607,8 @@ def test_instructions_with_structured_output(
                 'model_name': 'test',
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
                 'gen_ai.usage.input_tokens': 51,
@@ -716,6 +728,8 @@ def test_instructions_with_structured_output(
                 'model_name': 'test',
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
                 'final_result': '{"content": "a"}',
@@ -807,6 +821,8 @@ def test_instructions_with_structured_output_exclude_content(get_logfire_summary
             'model_name': 'test',
             'agent_name': 'my_agent',
             'gen_ai.agent.name': 'my_agent',
+            'gen_ai.agent.call.id': IsStr(),
+            'gen_ai.operation.name': 'invoke_agent',
             'logfire.msg': 'my_agent run',
             'logfire.span_type': 'span',
             'gen_ai.usage.input_tokens': 51,
@@ -925,6 +941,8 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
             'model_name': 'test',
             'agent_name': 'my_agent',
             'gen_ai.agent.name': 'my_agent',
+            'gen_ai.agent.call.id': IsStr(),
+            'gen_ai.operation.name': 'invoke_agent',
             'logfire.msg': 'my_agent run',
             'logfire.span_type': 'span',
             'gen_ai.usage.input_tokens': 51,
@@ -999,12 +1017,18 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                                 'kind': 'output',
                                 'metadata': None,
                                 'timeout': None,
+                                'defer_loading': False,
                                 'prefer_builtin': None,
+                                'return_schema': None,
+                                'include_return_schema': None,
                             }
                         ],
                         'prompted_output_template': None,
                         'allow_text_output': False,
                         'allow_image_output': False,
+                        'instruction_parts': [
+                            {'content': 'Here are some instructions', 'dynamic': False, 'part_kind': 'instruction'}
+                        ],
                         'thinking': None,
                     }
                 )
@@ -1012,6 +1036,8 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
             'gen_ai.tool.definitions': '[{"type": "function", "name": "final_result", "description": "The final response which ends this conversation", "parameters": {"properties": {"content": {"type": "string"}}, "required": ["content"], "title": "MyOutput", "type": "object"}}]',
             'logfire.span_type': 'span',
             'logfire.msg': 'chat test',
+            'gen_ai.agent.name': 'my_agent',
+            'gen_ai.agent.call.id': IsStr(),
             'gen_ai.input.messages': IsJson(snapshot([{'role': 'user', 'parts': [{'type': 'text'}]}])),
             'gen_ai.output.messages': IsJson(
                 snapshot(
@@ -1102,11 +1128,14 @@ async def test_aggregated_usage_attribute_names(capfire: CaptureLogfire) -> None
             'model_name': 'function:model_function:',
             'agent_name': 'agent',
             'gen_ai.agent.name': 'agent',
+            'gen_ai.agent.call.id': IsStr(),
+            'gen_ai.operation.name': 'invoke_agent',
             'logfire.msg': 'agent run',
             'logfire.span_type': 'span',
             'final_result': 'Hello!',
             'gen_ai.aggregated_usage.input_tokens': 10,
             'gen_ai.aggregated_usage.output_tokens': 5,
+            'gen_ai.aggregated_usage.cache_read.input_tokens': 2,
             'gen_ai.aggregated_usage.details.cache_read_tokens': 2,
             'pydantic_ai.all_messages': [
                 {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]},
@@ -1164,10 +1193,13 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
                         'thinking': None,
                     },
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat test',
+                    'gen_ai.agent.name': 'agent',
+                    'gen_ai.agent.call.id': IsStr(),
                     'gen_ai.usage.input_tokens': 51,
                     'gen_ai.usage.output_tokens': 4,
                     'gen_ai.response.model': 'test',
@@ -1208,6 +1240,8 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                     'model_name': 'test',
                     'agent_name': 'agent',
                     'gen_ai.agent.name': 'agent',
+                    'gen_ai.agent.call.id': IsStr(),
+                    'gen_ai.operation.name': 'invoke_agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
                     'gen_ai.usage.input_tokens': 51,
@@ -1315,6 +1349,8 @@ def test_include_tool_args_span_attributes(
                         )
                     ),
                     'logfire.span_type': 'span',
+                    'gen_ai.agent.name': 'my_agent',
+                    'gen_ai.agent.call.id': IsStr(),
                     'tool_response': """\
 Tool error
 
@@ -1344,6 +1380,8 @@ Fix the errors and try again.\
                             }
                         )
                     ),
+                    'gen_ai.agent.name': 'my_agent',
+                    'gen_ai.agent.call.id': IsStr(),
                     'logfire.span_type': 'span',
                 }
             )
@@ -1366,6 +1404,8 @@ Fix the errors and try again.\
                         )
                     ),
                     'logfire.span_type': 'span',
+                    'gen_ai.agent.name': 'my_agent',
+                    'gen_ai.agent.call.id': IsStr(),
                     'logfire.level_num': 17,
                 }
             )
@@ -1387,6 +1427,8 @@ Fix the errors and try again.\
                         )
                     ),
                     'logfire.span_type': 'span',
+                    'gen_ai.agent.name': 'my_agent',
+                    'gen_ai.agent.call.id': IsStr(),
                 }
             )
 
@@ -1468,6 +1510,8 @@ def test_logfire_output_function_v2_v3(
                     )
                 ),
                 'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
                 'tool_response': '{"temperature": 28.7, "description": "sunny"}',
             }
         )
@@ -1515,6 +1559,8 @@ def test_logfire_output_function_v2_v3(
                     )
                 ),
                 'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
                 'gen_ai.tool.call.result': '{"temperature": 28.7, "description": "sunny"}',
             }
         )
@@ -1568,6 +1614,8 @@ def test_output_type_function_logfire_attributes(
                     )
                 ),
                 'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
                 'tool_response': '{"temperature": 28.7, "description": "sunny"}',
             }
         )
@@ -1579,6 +1627,8 @@ def test_output_type_function_logfire_attributes(
                 'logfire.msg': 'running output function: final_result',
                 'logfire.json_schema': '{"type": "object", "properties": {"gen_ai.tool.name": {}, "gen_ai.tool.call.id": {}}}',
                 'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
             }
         )
 
@@ -1632,6 +1682,8 @@ def test_output_type_function_with_run_context_logfire_attributes(
                     )
                 ),
                 'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
                 'tool_response': '{"temperature": 28.7, "description": "sunny"}',
             }
         )
@@ -1643,6 +1695,8 @@ def test_output_type_function_with_run_context_logfire_attributes(
                 'logfire.msg': 'running output function: final_result',
                 'logfire.json_schema': '{"type": "object", "properties": {"gen_ai.tool.name": {}, "gen_ai.tool.call.id": {}}}',
                 'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
             }
         )
 
@@ -1704,6 +1758,8 @@ def test_output_type_function_with_retry_logfire_attributes(
                         )
                     ),
                     'logfire.span_type': 'span',
+                    'gen_ai.agent.name': 'my_agent',
+                    'gen_ai.agent.call.id': IsStr(),
                     'logfire.level_num': 17,
                 },
                 {
@@ -1725,6 +1781,8 @@ def test_output_type_function_with_retry_logfire_attributes(
                         )
                     ),
                     'logfire.span_type': 'span',
+                    'gen_ai.agent.name': 'my_agent',
+                    'gen_ai.agent.call.id': IsStr(),
                     'tool_response': '{"temperature": 28.7, "description": "sunny"}',
                 },
             ]
@@ -1740,6 +1798,8 @@ def test_output_type_function_with_retry_logfire_attributes(
                         snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
                     ),
                     'logfire.span_type': 'span',
+                    'gen_ai.agent.name': 'my_agent',
+                    'gen_ai.agent.call.id': IsStr(),
                     'logfire.level_num': 17,
                 },
                 {
@@ -1750,6 +1810,8 @@ def test_output_type_function_with_retry_logfire_attributes(
                         snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
                     ),
                     'logfire.span_type': 'span',
+                    'gen_ai.agent.name': 'my_agent',
+                    'gen_ai.agent.call.id': IsStr(),
                 },
             ]
         )
@@ -1802,6 +1864,8 @@ def test_output_type_function_with_custom_tool_name_logfire_attributes(
                     )
                 ),
                 'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
                 'tool_response': '{"temperature": 28.7, "description": "sunny"}',
             }
         )
@@ -1815,6 +1879,8 @@ def test_output_type_function_with_custom_tool_name_logfire_attributes(
                     snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
                 ),
                 'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
             }
         )
 
@@ -1873,6 +1939,8 @@ def test_output_type_bound_instance_method_logfire_attributes(
                     )
                 ),
                 'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
                 'tool_response': '{"temperature": 28.7, "description": "sunny"}',
             }
         )
@@ -1886,6 +1954,8 @@ def test_output_type_bound_instance_method_logfire_attributes(
                     snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
                 ),
                 'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
             }
         )
 
@@ -1945,6 +2015,8 @@ def test_output_type_bound_instance_method_with_run_context_logfire_attributes(
                     )
                 ),
                 'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
                 'tool_response': '{"temperature": 28.7, "description": "sunny"}',
             }
         )
@@ -1958,6 +2030,8 @@ def test_output_type_bound_instance_method_with_run_context_logfire_attributes(
                     snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
                 ),
                 'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
             }
         )
 
@@ -2012,6 +2086,8 @@ def test_output_type_async_function_logfire_attributes(
                     )
                 ),
                 'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
                 'tool_response': '{"temperature": 28.7, "description": "sunny"}',
             }
         )
@@ -2025,6 +2101,8 @@ def test_output_type_async_function_logfire_attributes(
                     snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
                 ),
                 'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
             }
         )
 
@@ -2082,6 +2160,8 @@ def test_text_output_function_logfire_attributes(
                     )
                 ),
                 'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
                 'tool_response': 'HELLO WORLD',
             }
         )
@@ -2092,6 +2172,8 @@ def test_text_output_function_logfire_attributes(
                 'logfire.msg': 'running output function: upcase_text',
                 'logfire.json_schema': IsJson(snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}}})),
                 'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
             }
         )
 
@@ -2154,6 +2236,8 @@ def test_prompted_output_function_logfire_attributes(
                     )
                 ),
                 'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'agent',
+                'gen_ai.agent.call.id': IsStr(),
                 'tool_response': 'HELLO WORLD',
             }
         )
@@ -2164,6 +2248,8 @@ def test_prompted_output_function_logfire_attributes(
                 'logfire.msg': 'running output function: upcase_text',
                 'logfire.json_schema': IsJson(snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}}})),
                 'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'agent',
+                'gen_ai.agent.call.id': IsStr(),
             }
         )
 
@@ -2226,6 +2312,8 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
                         )
                     ),
                     'logfire.span_type': 'span',
+                    'gen_ai.agent.name': 'my_agent',
+                    'gen_ai.agent.call.id': IsStr(),
                     'logfire.level_num': 17,
                 },
                 {
@@ -2245,6 +2333,8 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
                         )
                     ),
                     'logfire.span_type': 'span',
+                    'gen_ai.agent.name': 'my_agent',
+                    'gen_ai.agent.call.id': IsStr(),
                     'tool_response': '{"temperature": 28.7, "description": "sunny"}',
                 },
             ]
@@ -2257,6 +2347,8 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
                     'logfire.msg': 'running output function: get_weather_with_retry',
                     'logfire.json_schema': IsJson(snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}}})),
                     'logfire.span_type': 'span',
+                    'gen_ai.agent.name': 'my_agent',
+                    'gen_ai.agent.call.id': IsStr(),
                     'logfire.level_num': 17,
                 },
                 {
@@ -2264,6 +2356,8 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
                     'logfire.msg': 'running output function: get_weather_with_retry',
                     'logfire.json_schema': IsJson(snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}}})),
                     'logfire.span_type': 'span',
+                    'gen_ai.agent.name': 'my_agent',
+                    'gen_ai.agent.call.id': IsStr(),
                 },
             ]
         )
@@ -2298,6 +2392,8 @@ def test_static_function_instructions_in_agent_run_span(
                 'model_name': 'test',
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
                 'gen_ai.usage.input_tokens': 51,
@@ -2417,6 +2513,8 @@ def test_static_function_instructions_in_agent_run_span(
                 'model_name': 'test',
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
                 'final_result': '{"content": "a"}',
@@ -2505,7 +2603,7 @@ def test_dynamic_function_instructions_in_agent_run_span(
 
     @my_agent.instructions
     def instructions(ctx: RunContext[None]):
-        return f'This is step {ctx.run_step + 1}'
+        return f'This is step {ctx.run_step}'
 
     @my_agent.tool_plain
     def my_tool() -> str:
@@ -2522,6 +2620,8 @@ def test_dynamic_function_instructions_in_agent_run_span(
                 'model_name': 'test',
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
                 'gen_ai.usage.input_tokens': 107,
@@ -2669,6 +2769,8 @@ def test_dynamic_function_instructions_in_agent_run_span(
                 'model_name': 'test',
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
                 'final_result': '{"content": "a"}',
@@ -2805,6 +2907,8 @@ def test_function_instructions_with_history_in_agent_run_span(
                 'model_name': 'test',
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
                 'gen_ai.usage.input_tokens': 52,
@@ -2950,6 +3054,8 @@ def test_function_instructions_with_history_in_agent_run_span(
                 'model_name': 'test',
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
                 'final_result': '{"content": "a"}',
@@ -3058,6 +3164,8 @@ async def test_run_stream(
                 'model_name': 'test',
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
                 'final_result': 'success (no tool calls)',
@@ -3154,6 +3262,8 @@ async def test_run_stream(
                 'model_name': 'test',
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
+                'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
                 'final_result': 'success (no tool calls)',
@@ -3196,6 +3306,325 @@ async def test_run_stream(
                 ]
             )
         )
+
+
+def _get_tool_span(capfire: CaptureLogfire) -> dict[str, Any]:
+    """Get the completed tool span from exported spans."""
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    tool_span = next(
+        s for s in spans if s['attributes'].get('logfire.span_type') == 'span' and 'tool' in s['name'].lower()
+    )
+    return tool_span
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_deferral_call_deferred_v2(capfire: CaptureLogfire) -> None:
+    """Test that CallDeferred on v2 marks span as ERROR with deferral attributes."""
+    agent = Agent(
+        TestModel(),
+        output_type=[str, DeferredToolRequests],
+        instrument=InstrumentationSettings(version=2),
+    )
+
+    @agent.tool_plain
+    def my_tool(x: int) -> int:
+        raise CallDeferred(metadata={'task_id': 'task-123'})
+
+    agent.run_sync('Hello')
+
+    assert _get_tool_span(capfire) == snapshot(
+        {
+            'name': 'running tool',
+            'context': {'trace_id': 1, 'span_id': 5, 'is_remote': False},
+            'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+            'start_time': 4000000000,
+            'end_time': 6000000000,
+            'attributes': {
+                'gen_ai.tool.name': 'my_tool',
+                'gen_ai.tool.call.id': 'pyd_ai_tool_call_id__my_tool',
+                'tool_arguments': {'x': 0},
+                'logfire.msg': 'running tool: my_tool',
+                'logfire.json_schema': {
+                    'type': 'object',
+                    'properties': {
+                        'tool_arguments': {'type': 'object'},
+                        'tool_response': {'type': 'object'},
+                        'gen_ai.tool.name': {},
+                        'gen_ai.tool.call.id': {},
+                    },
+                },
+                'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'agent',
+                'gen_ai.agent.call.id': IsStr(),
+                'pydantic_ai.tool.deferral.name': 'CallDeferred',
+                'pydantic_ai.tool.deferral.metadata': {'task_id': 'task-123'},
+                'logfire.level_num': 17,
+            },
+            'events': [
+                {
+                    'name': 'exception',
+                    'timestamp': 5000000000,
+                    'attributes': {
+                        'exception.type': 'pydantic_ai.exceptions.CallDeferred',
+                        'exception.message': '',
+                        'exception.stacktrace': 'pydantic_ai.exceptions.CallDeferred',
+                        'exception.escaped': 'True',
+                    },
+                }
+            ],
+        }
+    )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_deferral_approval_required_v2(capfire: CaptureLogfire) -> None:
+    """Test that ApprovalRequired on v2 marks span as ERROR with deferral attributes."""
+    agent = Agent(
+        TestModel(),
+        output_type=[str, DeferredToolRequests],
+        instrument=InstrumentationSettings(version=2),
+    )
+
+    @agent.tool_plain
+    def my_tool(x: int) -> int:
+        raise ApprovalRequired(metadata={'task_id': 'task-123'})
+
+    agent.run_sync('Hello')
+
+    assert _get_tool_span(capfire) == snapshot(
+        {
+            'name': 'running tool',
+            'context': {'trace_id': 1, 'span_id': 5, 'is_remote': False},
+            'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+            'start_time': 4000000000,
+            'end_time': 6000000000,
+            'attributes': {
+                'gen_ai.tool.name': 'my_tool',
+                'gen_ai.tool.call.id': 'pyd_ai_tool_call_id__my_tool',
+                'tool_arguments': {'x': 0},
+                'logfire.msg': 'running tool: my_tool',
+                'logfire.json_schema': {
+                    'type': 'object',
+                    'properties': {
+                        'tool_arguments': {'type': 'object'},
+                        'tool_response': {'type': 'object'},
+                        'gen_ai.tool.name': {},
+                        'gen_ai.tool.call.id': {},
+                    },
+                },
+                'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'agent',
+                'gen_ai.agent.call.id': IsStr(),
+                'pydantic_ai.tool.deferral.name': 'ApprovalRequired',
+                'pydantic_ai.tool.deferral.metadata': {'task_id': 'task-123'},
+                'logfire.level_num': 17,
+            },
+            'events': [
+                {
+                    'name': 'exception',
+                    'timestamp': 5000000000,
+                    'attributes': {
+                        'exception.type': 'pydantic_ai.exceptions.ApprovalRequired',
+                        'exception.message': '',
+                        'exception.stacktrace': 'pydantic_ai.exceptions.ApprovalRequired',
+                        'exception.escaped': 'True',
+                    },
+                }
+            ],
+        }
+    )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_deferral_call_deferred_v5(capfire: CaptureLogfire) -> None:
+    """Test that CallDeferred on v5 leaves span as UNSET with deferral attributes."""
+    agent = Agent(
+        TestModel(),
+        output_type=[str, DeferredToolRequests],
+        instrument=InstrumentationSettings(version=5),
+    )
+
+    @agent.tool_plain
+    def my_tool(x: int) -> int:
+        raise CallDeferred(metadata={'task_id': 'task-123'})
+
+    agent.run_sync('Hello')
+
+    assert _get_tool_span(capfire) == snapshot(
+        {
+            'name': 'execute_tool my_tool',
+            'context': {'trace_id': 1, 'span_id': 5, 'is_remote': False},
+            'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+            'start_time': 4000000000,
+            'end_time': 5000000000,
+            'attributes': {
+                'gen_ai.tool.name': 'my_tool',
+                'gen_ai.tool.call.id': 'pyd_ai_tool_call_id__my_tool',
+                'gen_ai.tool.call.arguments': {'x': 0},
+                'logfire.msg': 'running tool: my_tool',
+                'logfire.json_schema': {
+                    'type': 'object',
+                    'properties': {
+                        'gen_ai.tool.call.arguments': {'type': 'object'},
+                        'gen_ai.tool.call.result': {'type': 'object'},
+                        'gen_ai.tool.name': {},
+                        'gen_ai.tool.call.id': {},
+                    },
+                },
+                'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'agent',
+                'gen_ai.agent.call.id': IsStr(),
+                'pydantic_ai.tool.deferral.name': 'CallDeferred',
+                'pydantic_ai.tool.deferral.metadata': {'task_id': 'task-123'},
+            },
+        }
+    )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_deferral_approval_required_v5(capfire: CaptureLogfire) -> None:
+    """Test that ApprovalRequired on v5 leaves span as UNSET with deferral attributes."""
+    agent = Agent(
+        TestModel(),
+        output_type=[str, DeferredToolRequests],
+        instrument=InstrumentationSettings(version=5),
+    )
+
+    @agent.tool_plain
+    def my_tool(x: int) -> int:
+        raise ApprovalRequired(metadata={'task_id': 'task-123'})
+
+    agent.run_sync('Hello')
+
+    assert _get_tool_span(capfire) == snapshot(
+        {
+            'name': 'execute_tool my_tool',
+            'context': {'trace_id': 1, 'span_id': 5, 'is_remote': False},
+            'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+            'start_time': 4000000000,
+            'end_time': 5000000000,
+            'attributes': {
+                'gen_ai.tool.name': 'my_tool',
+                'gen_ai.tool.call.id': 'pyd_ai_tool_call_id__my_tool',
+                'gen_ai.tool.call.arguments': {'x': 0},
+                'logfire.msg': 'running tool: my_tool',
+                'logfire.json_schema': {
+                    'type': 'object',
+                    'properties': {
+                        'gen_ai.tool.call.arguments': {'type': 'object'},
+                        'gen_ai.tool.call.result': {'type': 'object'},
+                        'gen_ai.tool.name': {},
+                        'gen_ai.tool.call.id': {},
+                    },
+                },
+                'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'agent',
+                'gen_ai.agent.call.id': IsStr(),
+                'pydantic_ai.tool.deferral.name': 'ApprovalRequired',
+                'pydantic_ai.tool.deferral.metadata': {'task_id': 'task-123'},
+            },
+        }
+    )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_deferral_no_metadata(capfire: CaptureLogfire) -> None:
+    """Test that deferral without metadata doesn't set the metadata attribute."""
+    agent = Agent(
+        TestModel(),
+        output_type=[str, DeferredToolRequests],
+        instrument=InstrumentationSettings(version=5),
+    )
+
+    @agent.tool_plain
+    def my_tool(x: int) -> int:
+        raise CallDeferred()
+
+    agent.run_sync('Hello')
+
+    tool_span = _get_tool_span(capfire)
+
+    assert tool_span == snapshot(
+        {
+            'name': 'execute_tool my_tool',
+            'context': {'trace_id': 1, 'span_id': 5, 'is_remote': False},
+            'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+            'start_time': 4000000000,
+            'end_time': 5000000000,
+            'attributes': {
+                'gen_ai.tool.name': 'my_tool',
+                'gen_ai.tool.call.id': 'pyd_ai_tool_call_id__my_tool',
+                'gen_ai.tool.call.arguments': {'x': 0},
+                'logfire.msg': 'running tool: my_tool',
+                'logfire.json_schema': {
+                    'type': 'object',
+                    'properties': {
+                        'gen_ai.tool.call.arguments': {'type': 'object'},
+                        'gen_ai.tool.call.result': {'type': 'object'},
+                        'gen_ai.tool.name': {},
+                        'gen_ai.tool.call.id': {},
+                    },
+                },
+                'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'agent',
+                'gen_ai.agent.call.id': IsStr(),
+                'pydantic_ai.tool.deferral.name': 'CallDeferred',
+            },
+        }
+    )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_deferral_non_serializable_metadata(capfire: CaptureLogfire) -> None:
+    """Test that non-JSON-serializable metadata falls back to repr() representation."""
+
+    class CustomObj:
+        def __repr__(self) -> str:
+            return '<CustomObj>'
+
+    agent = Agent(
+        TestModel(),
+        output_type=[str, DeferredToolRequests],
+        instrument=InstrumentationSettings(version=5),
+    )
+
+    @agent.tool_plain
+    def my_tool(x: int) -> int:
+        raise CallDeferred(metadata={'obj': CustomObj()})
+
+    agent.run_sync('Hello')
+
+    tool_span = _get_tool_span(capfire)
+
+    assert tool_span == snapshot(
+        {
+            'name': 'execute_tool my_tool',
+            'context': {'trace_id': 1, 'span_id': 5, 'is_remote': False},
+            'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+            'start_time': 4000000000,
+            'end_time': 5000000000,
+            'attributes': {
+                'gen_ai.tool.name': 'my_tool',
+                'gen_ai.tool.call.id': 'pyd_ai_tool_call_id__my_tool',
+                'gen_ai.tool.call.arguments': {'x': 0},
+                'logfire.msg': 'running tool: my_tool',
+                'logfire.json_schema': {
+                    'type': 'object',
+                    'properties': {
+                        'gen_ai.tool.call.arguments': {'type': 'object'},
+                        'gen_ai.tool.call.result': {'type': 'object'},
+                        'gen_ai.tool.name': {},
+                        'gen_ai.tool.call.id': {},
+                    },
+                },
+                'logfire.span_type': 'span',
+                'gen_ai.agent.name': 'agent',
+                'gen_ai.agent.call.id': IsStr(),
+                'pydantic_ai.tool.deferral.name': 'CallDeferred',
+                'pydantic_ai.tool.deferral.metadata': "{'obj': <CustomObj>}",
+            },
+        }
+    )
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')

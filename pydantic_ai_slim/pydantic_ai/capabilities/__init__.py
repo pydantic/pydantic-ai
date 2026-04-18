@@ -3,6 +3,9 @@ from typing import Any
 from .abstract import (
     AbstractCapability,
     AgentNode,
+    CapabilityOrdering,
+    CapabilityPosition,
+    CapabilityRef,
     NodeResult,
     RawToolArgs,
     ValidatedToolArgs,
@@ -12,15 +15,19 @@ from .abstract import (
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
 )
-from .builtin_or_local import BuiltinOrLocalTool, BuiltinTool
+from .builtin_or_local import BuiltinOrLocalTool
+from .builtin_tool import BuiltinTool
 from .combined import CombinedCapability
 from .history_processor import HistoryProcessor
 from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
+from .include_return_schemas import IncludeToolReturnSchemas
 from .mcp import MCP
 from .prefix_tools import PrefixTools
 from .prepare_tools import PrepareTools
+from .set_tool_metadata import SetToolMetadata
 from .thinking import Thinking
+from .thread_executor import ThreadExecutor
 from .toolset import Toolset
 from .web_fetch import WebFetch
 from .web_search import WebSearch
@@ -32,9 +39,11 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         BuiltinTool,
         HistoryProcessor,
         ImageGeneration,
+        IncludeToolReturnSchemas,
         MCP,
         PrefixTools,
         PrepareTools,
+        SetToolMetadata,
         Thinking,
         Toolset,
         WebFetch,
@@ -44,9 +53,15 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
 }
 """Registry of all capability types that have a serialization name, mapping name to class."""
 
+# Note: OpenAICompaction and AnthropicCompaction have serialization names but can't be
+# registered here due to circular imports. Use custom_capability_types in AgentSpec instead.
+
 __all__ = [
     'AbstractCapability',
     'AgentNode',
+    'CapabilityOrdering',
+    'CapabilityPosition',
+    'CapabilityRef',
     'NodeResult',
     'RawToolArgs',
     'ValidatedToolArgs',
@@ -60,10 +75,13 @@ __all__ = [
     'CAPABILITY_TYPES',
     'ImageGeneration',
     'HistoryProcessor',
+    'IncludeToolReturnSchemas',
     'MCP',
     'PrefixTools',
     'PrepareTools',
+    'SetToolMetadata',
     'Thinking',
+    'ThreadExecutor',
     'Toolset',
     'WebFetch',
     'WebSearch',

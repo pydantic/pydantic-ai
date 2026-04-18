@@ -34,6 +34,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from .abstract import (
     AbstractCapability,
     AgentNode,
+    CapabilityOrdering,
     NodeResult,
     RawToolArgs,
     ValidatedToolArgs,
@@ -267,7 +268,7 @@ def _tool_bare_or_parameterized(
 class _HookRegistration(Generic[AgentDepsT]):
     """Decorator namespace for registering hooks on a :class:`Hooks` instance.
 
-    Accessed via ``hooks.on``. Each method corresponds to a lifecycle hook and
+    Accessed via `hooks.on`. Each method corresponds to a lifecycle hook and
     can be used as a bare decorator or a parameterized decorator::
 
         @hooks.on.before_model_request
@@ -355,7 +356,7 @@ class _HookRegistration(Generic[AgentDepsT]):
     # --- Event stream ---
 
     def run_event_stream(self, func: WrapRunEventStreamHookFunc, /) -> WrapRunEventStreamHookFunc:
-        """Register a ``wrap_run_event_stream`` hook. Timeout not supported for stream wrappers."""
+        """Register a `wrap_run_event_stream` hook. Timeout not supported for stream wrappers."""
         self._r.setdefault('wrap_run_event_stream', []).append(_HookEntry(func))
         return func
 
@@ -554,7 +555,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
 
     For extension developers building reusable capabilities, subclass
     :class:`AbstractCapability` directly. For application code that needs
-    a few hooks without the ceremony of a subclass, use ``Hooks``.
+    a few hooks without the ceremony of a subclass, use `Hooks`.
 
     Example using decorators::
 
@@ -609,7 +610,10 @@ class Hooks(AbstractCapability[AgentDepsT]):
         after_tool_execute: AfterToolExecuteHookFunc | None = None,
         tool_execute: WrapToolExecuteHookFunc | None = None,
         tool_execute_error: OnToolExecuteErrorHookFunc | None = None,
+        # Ordering
+        ordering: CapabilityOrdering | None = None,
     ):
+        self._ordering = ordering
         self._registry = {}
         # Map constructor kwarg names to internal registry keys (AbstractCapability method names)
         _kwargs: dict[str, Any] = {
@@ -652,6 +656,13 @@ class Hooks(AbstractCapability[AgentDepsT]):
     @property
     def has_wrap_node_run(self) -> bool:
         return bool(self._get('wrap_node_run'))
+
+    @property
+    def has_wrap_run_event_stream(self) -> bool:
+        return bool(self._get('wrap_run_event_stream') or self._get('_on_event'))
+
+    def get_ordering(self) -> CapabilityOrdering | None:
+        return self._ordering
 
     @classmethod
     def get_serialization_name(cls) -> str | None:

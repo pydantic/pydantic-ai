@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, TypeAlias
 
 from typing_extensions import Self
 
 from .._run_context import AgentDepsT, RunContext
+from ..messages import InstructionPart
 from .abstract import AbstractToolset, ToolsetTool
 
 ToolsetFunc: TypeAlias = Callable[
@@ -84,10 +85,13 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
         if new_toolset is self._toolset:
             return self
 
-        # Manage the transition in-place
-        if self._toolset is not None:
-            await self._toolset.__aexit__(None, None, None)
-        self._toolset = new_toolset
+        # Manage the transition: exit old toolset, enter new one.
+        # Use try/finally so self._toolset is updated even if __aexit__ raises.
+        try:
+            if self._toolset is not None:
+                await self._toolset.__aexit__(None, None, None)
+        finally:
+            self._toolset = new_toolset
         if self._toolset is not None:
             await self._toolset.__aenter__()
         return self
@@ -110,6 +114,13 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
         if self._toolset is None:
             return {}
         return await self._toolset.get_tools(ctx)
+
+    async def get_instructions(
+        self, ctx: RunContext[AgentDepsT]
+    ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
+        if self._toolset is None:
+            return None
+        return await self._toolset.get_instructions(ctx)
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]

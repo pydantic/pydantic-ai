@@ -1,0 +1,177 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '139'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: Hello!
+        role: user
+      instructions: You are a helpful assistant.
+      model: gpt-4o-mini
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1316'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '796'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1775143614
+      created_at: 1775143614
+      error: null
+      frequency_penalty: 0.0
+      id: resp_003fc8e4b6fd7dfe0069ce8abe05e881958bcc4d1d03119a67
+      incomplete_details: null
+      instructions: You are a helpful assistant.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-mini-2024-07-18
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: Hello! How can I assist you today?
+          type: output_text
+        id: msg_003fc8e4b6fd7dfe0069ce8abe8d5c8195ac1debe45607e16d
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 19
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 10
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 29
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '120'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=rozDF38dfSqL8ok3BtXLvi8.i0eJJr3YX3n3RGTYQ_o-1775143613.628675-1.0.1.1-39YW2Adm.GJ1VJbZy20_ZS9uxBiQDSxZEOX1jaeL69IYUL3KDwVyHWQaGsYBoyCumPY6bghkjahi.7sGq_oIAzw_9Shc.35GbWiaVfGiHE7jzPHBEG9W57q3TfAPXuZh
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input: []
+      model: gpt-4o-mini
+      previous_response_id: resp_003fc8e4b6fd7dfe0069ce8abe05e881958bcc4d1d03119a67
+    uri: https://api.openai.com/v1/responses/compact
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '4667'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '12700'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      created_at: 1775143627
+      id: resp_003fc8e4b6fd7dfe0169ce8abef2548195a61810af5db23643
+      object: response.compaction
+      output:
+      - content:
+        - text: Hello!
+          type: input_text
+        id: msg_003fc8e4b6fd7dfe0069ce8abe0aa48195af1e6ba53094f637
+        role: user
+        status: completed
+        type: message
+      - encrypted_content: gAAAAABpzorL2ENX_hWCgnrgTs4EQuyA5tBWP_qOD4ZKcbqB4Kqh7o0fMKVGctdtLzYZBddAi-9Obeb-6WxlhUINqdaw33C1e_1ilsUWohv0dijLTFCvtWe9v4tyfPC2zcEKsKcypKgiJRn0OKv_slhEbVCyU_n-nwywMvqv2gN5Hzq8xxPw3XA6xgZfpP7ULVUVda0EIyyvqdRlguUhRKJDPL2XNCi1z7WiXDn6Laq3rSJAx9M0phBcCrV5xH-3f3VxfGLGBbrAkg4r8QHDf0zzSVQr9brISZn-7fmuR8teDk3EF_cu_z2Es-yBg68GRRHD9VcuQnDNrCBKs5hVdZB0nfWU_UjV3LsEuBMjZN6vxp4E0JmfitMieEY4fpnuJpy1oV4fWmhNf6EB7Hvfse1I9Y1U29nrHo72pJHuUygdfmD5KNznX43goUNf7FaXeSaOT-gynIfhRkzS_pDs7Nhk4WgLqmedz2ky1aNtPRGor4_0XktCNcSYKS6GqmT4Y1c2pEN7wY_s84Ls100emqH4KsmXtW2RP3Mw0qPSiVY56hgNxJT-E2xDKPTPPbqWdYO4nSXAKcb2kIJ_1Zm2j-z5xJhaDkMjWPYoVexjtA7wBcI46kx4Nk9Q10l6grfbmlKuq_RYGebGXRPRlur-dsMekMomp3XzP674HMhymc0NbCVT6sK5Wlg5tM6Mboz7QRJ64OTCD0LlyhgimOEpx06MT1S9IswRD_ibeJE9DsTMOGwKbuPfJgZf3Tcbt6_GwzyCPqWoznQBvZNarUhOiJlxeySmLqm55bBlbWc-ZcGAlI1o-Eoq-tM0RfHuxLTFq2cDm6fs5WlhmPtn4Y95TMD0R7hgS9ww5rLWcEpUMx9gtGBvlEY8NdH8H_PonYoVTaqqr4AaXoEw9c7aXDZnbTvm9y53-UZHgr1_iXDqfxAWZcd1b_MxgxRuWrF-AAkxBEh5Gnrj4JaaH5-tYs2p08BMYOw6W1pS4BP04NwCjI_QfQH7bexnt9fQo-ydML6Mr6jLCtlBKMnkqRZFiYNPF8--JkG5Mcx2cAECDpMftcUSdmnlruDiq8rZqYNthUn9H4qdlau_ujd8_LiGGaemPBuwcPhcMLcqgrPv36zk3eHaEMKBZ0PBvSCFJ5ZUiRoJDq4m4FjdBDj3fEMEvgqkx-pKgpXoJXxjeO-QZSGihFcRixKheDBHjS8sXpUqQkb9WOpeQZHpyaFuRHAKDS-Rfa0iZe5-uV8nPpKfZN74y7weYNo-H6VRZniQI2OodJnS46NIk_EWfYTlgjCKloZyJ2KCOLB8GvgyUrVNhg8QCPApNWuO0NUdB0dB6IMUJi0S7GlE16E_LaZHQ-VEB_wh25MBy_1Fz4J7cJKnqxuBFZiTawpt6aUD0997tYvss-HuNQAkqk7ghqcaBIRx44RHdzQHidDNteKjpP3jMIuyLsvw_aWpbbYArCVw-PHu17dirk1XwLxfj1lmJojnq427l_e2FT2UN4Uxkk2KY-6RiL7GSNFu5qwMoU8xMh-iSz2cvXRZ_4DGlBLmpcm0SzZrtdqBaDpQQcTrxzhDJmqXsvevsXjGnr0Nziy92RtmpZ6KfdsPaRCkfiB0oegZS7aSdleWXZtuGy53hLxTkYgYVGwPj9ce8Ylzn2PBpsvJjXH-H6UHY46i9sFRh1Y7emGRHFe-OrgA_egEBs-Eo10lD5F52oRTjPGvLkklT54hkaqzcaN7uql_aRnfp3Wj27vIOa-ojeU6yT7fODcYcgqeYX_0ywtfPDH3Po_g0TpBYc1_yevxmouqRlg22-SsQnaNZpvUgfxR1ygDLfFPz6Vxm-iNJuL13kMF6Za-NJr62-CZrO2_7NIO0m49De-FFtqlrzXp_qDXTW2z4u856hZPrIVFkPlMT1wSoXndn_YfqPmkvjQ8--qAZh4Iubc2EPEIYGT3TfFK5nZzUkpQQ4auO12ZFWXC2QBGpfRlG-kwvSLFbOy_mtDS_57LLAaI0eMp3k0FkDjxFiE5ja3bqXy4g8bMQ_iwDQL8tsyz5RW_YEeB23KVFODmb2K_094ZGTMF_soFPLiyQJ4vR4B7bQ0pyEvoxL3lOH5ipq0b3aTQ0u3vwGIPvDYtuyulI2_xzunb5gmmO01V7TU11_sIfUXED0z4OklKBLgri8jj0hsm8zcbDAghlTCqseHWmKdJuVd9yTf-QwGSuZLebrFFMYFBEEdIw6h_u7wyyXO3XP4KDhTfsDeXVdPQh7KRxGDFGYiYZl-j-01GISTm3V_-z-wJD2CI9gIGM5d0tz-HyBTVwRLp2AyV9ciR0qlxnoSrAwjp64eVC9sj0VBuEpFmBIw34P60MmoN8aYaBE6-9EreG8JVNky96vgO9LY2PE4cfSckhV88MuiViLk3bLr3VILY-AGnsXXc1Dn3s60T9MCQLN4hdD8T39RD45VyM4lSh-cX5BODsD-LEonqaBiYIybrg9qINaygPyb8S8BZq_8b91TS1aF7TptAGKR1tths3VSt6LlKIHcqv4Jua--ujusrStE9hGkZ_56Hb0NC1GN0JOyL5HR4EEga0YqvrDOThtnRcKqZgGc8QMULGdilXGbJqKabzHVvB7pKvoLUKBZ8-M3Pk_GbHZSPvEdLWy-Fj6eDkHhV1ET24GkGfuwDx3x-Dv3GAOZW4gO-0E_uARYP8H1Y8edoTasFeBp0tyMRZFZ1k_QmFFN6HPggfZ7WwolvJSH--N7Ys8pjSqyYMqlt9lPsLRknuzxPWXfwcMdKYEvBIiCLHqFXGdw3Pa_EMA3OWWcY28D3qzMzX8rJhVrA04NfQdBYEEiowQzG-9beSbEZqoI6jDaUqOL9HDIH8hxw_w8ysvKFYiJQT5HXOPHWHxaDz-dzIVUTz9D9xBbvxUL3ZDF_f6gUc7bcU_EDVWKtNncdUO6sYdRuj0PrQYKBdr-bqNI9oSmWfYD5KBaC-HST9a1OiAaDCV1PwXPU9grIx7IqT58oW_pLKIqF_aEV99enh4j6NDTcCXBpFrdoosSvoSxUch8jXcQrAdLctb2VbG2hFLijxuFqwunfgBxqEwvxdCrotoobP0u3F87-yEgDJNLnTfMeUXUKjpuy-VhE8zgwmEEQBCSAaU_-5WPRe0M_hOxg1tBZeQkGBI1gkvCBpvxUJ_4VNAQhHPY2vy3LbfvhtbML2BSeIAj-AuEJy8EksfwrWiamj7SgFfMMm0yHUYz4xgdL4QjiklritE4jxKGUNG2zgFNJ5o9bVHYjceiUDCg0cq2DiRMIXUMs_BwWFWS25E9jbrpt41QXTEiHTzDGAwEOJoXEp3NLlS8c18CSb1B4XBuX5LLSMu5zPeIqlKam8RkaofWZcOOOmissT3yKiQZraGmA9Yn-JIWj09dKusxZDrAznpVTvpoi8Xh1V3zg6XQApbtPJj9OgSkFUfWiSmtEp8Ie4mKF199sm5vRReqvVqmR8l1dSYxBYjugstHHR6qd8jcuoifrOQa8uyuFg4agkNXmns569gfKQ494guU04Aujl4We31oTUEPEj83jlzIHlAXiXjMwZ2vTmqC4gM01q-TQ_SMbzUzRsg1Z_bZr0PYDzfmh-l5NEzNZ-xD2leuPNJXtJR1eR0loWQb7wp_QCWpaCax43wACNPVhkhGCle8P3SYiqEoSXXcywy6PO-N6Snfqrc6I5BllLIEJPDT4aB-bAbqSAqyuuZTW1kTijJxRKDS2UzHwIUfdrLrlqW8h1ttGVS44TFpcJyKBQaBvs9HcHIe_VqjN7vFzXlhksSz8l6FAwZDS-v_lPajeKnh9edC_QEhY1boBWArpdlxQLbsfWQMFFWNgIgY6k9Lo5Q24LqEUTBXo-HoQ1al0WmTXGOegTSbFU4D5dmmPA912XEyYdR6d4088HvcJ0lvf39TEhiBbL1rKG7fLHqNbz7C54B3bBnEU33MsVQTzlPzUyl3U5MRxHX7329_oo1oa6n8OsqzomkbbnXUqUZhk1JN6hfJHml6Nk73WjYqgzZp-hAsrLCxGCohyBno7he2xmmq5Iz8DbJvKQrZFdPwccnYkN3H5Kw==
+        id: cmp_003fc8e4b6fd7dfe0169ce8abf65288195b9c6518ab292e870
+        type: compaction
+      usage:
+        input_tokens: 115
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 342
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 457
+    status:
+      code: 200
+      message: OK
+version: 1
