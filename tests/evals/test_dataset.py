@@ -1788,11 +1788,11 @@ async def test_evaluate_async_logfire(
                 },
             ),
             (
-                'evaluator: {evaluator_name}',
+                'Calling evaluator: {evaluator_name}',
                 {
                     'evaluator_name': 'SimpleEvaluator',
-                    'logfire.msg_template': 'evaluator: {evaluator_name}',
-                    'logfire.msg': 'evaluator: SimpleEvaluator',
+                    'logfire.msg_template': 'Calling evaluator: {evaluator_name}',
+                    'logfire.msg': 'Calling evaluator: SimpleEvaluator',
                     'logfire.json_schema': {
                         'type': 'object',
                         'properties': {
@@ -1809,11 +1809,11 @@ async def test_evaluate_async_logfire(
                 },
             ),
             (
-                'evaluator: {evaluator_name}',
+                'Calling evaluator: {evaluator_name}',
                 {
                     'evaluator_name': 'SimpleEvaluator',
-                    'logfire.msg_template': 'evaluator: {evaluator_name}',
-                    'logfire.msg': 'evaluator: SimpleEvaluator',
+                    'logfire.msg_template': 'Calling evaluator: {evaluator_name}',
+                    'logfire.msg': 'Calling evaluator: SimpleEvaluator',
                     'logfire.json_schema': {
                         'type': 'object',
                         'properties': {

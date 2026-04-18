@@ -68,7 +68,7 @@ def test_emits_event_with_parent_span(capfire: CaptureLogfire):
     attrs = dict(record.attributes or {})
 
     assert record.event_name == 'gen_ai.evaluation.result'
-    assert record.body == 'evaluation: Correctness=pass'
+    assert record.body == 'evaluation: Correctness=True'
     assert attrs['gen_ai.evaluation.name'] == 'Correctness'
     assert attrs['gen_ai.evaluation.score.value'] == 1.0
     assert attrs['gen_ai.evaluation.score.label'] == 'pass'
@@ -237,11 +237,11 @@ def test_body_formatting_for_score_types(capfire: CaptureLogfire):
 
     bodies = [r.log_record.body for r in capfire.log_exporter.get_finished_logs()]
     assert bodies == [
-        'evaluation: Passed=pass',
-        'evaluation: Failed=fail',
+        'evaluation: Passed=True',
+        'evaluation: Failed=False',
         'evaluation: Score=0.73',
         'evaluation: Whole=5',
-        'evaluation: Tone=neutral',
+        "evaluation: Tone='neutral'",
     ]
 
 

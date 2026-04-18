@@ -191,9 +191,7 @@ def _format_result_body(result: EvaluationResult) -> str:
     """Build the human-readable log body for a successful evaluation.
 
     The body is shown inline in the Logfire live trace view, so it should be
-    short and dense. Format mirrors a simple ``key=value`` expression, with
-    bools rendered as ``pass``/``fail`` to stay consistent with the
-    ``gen_ai.evaluation.score.label`` attribute.
+    short and dense. Format mirrors a simple `key=value` expression.
     """
     return f'evaluation: {result.name}={_format_score(result.value)}'
 
@@ -206,13 +204,19 @@ def _format_failure_body(failure: EvaluatorFailure) -> str:
 
 
 def _format_score(value: Any) -> str:
-    """Render a `EvaluationScalar` for display in the log body."""
+    """Render a `EvaluationScalar` for display in the log body.
+
+    Bools render as the literal `True`/`False`, strings are quoted so they
+    read like a value expression, numerics stay bare.
+    """
     if isinstance(value, bool):
-        return 'pass' if value else 'fail'
+        return 'True' if value else 'False'
     if isinstance(value, float):
         # `g` drops trailing zeros but falls back to scientific notation for
         # very large/small values; that's fine for a short status string.
         return format(value, 'g')
+    if isinstance(value, str):
+        return repr(value)
     return str(value)
 
 

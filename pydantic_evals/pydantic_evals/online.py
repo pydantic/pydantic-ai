@@ -389,7 +389,7 @@ def _capture_inputs(sig: inspect.Signature, args: tuple[Any, ...], kwargs: dict[
 
 
 _ExtractedArgs = Literal[False, True] | tuple[str, ...]
-"""Resolved `extract_args` setting: ``False`` = record none, ``True`` = record all,
+"""Resolved `extract_args` setting: `False` = record none, `True` = record all,
 or a tuple of explicit argument names to record."""
 
 
@@ -417,7 +417,7 @@ def _select_recorded_inputs(
     inputs: dict[str, Any],
     extract_args: _ExtractedArgs,
 ) -> dict[str, Any] | None:
-    """Return the subset of inputs to record on the span, or ``None`` if disabled."""
+    """Return the subset of inputs to record on the span, or `None` if disabled."""
     if extract_args is False:
         return None
     if extract_args is True:
@@ -608,7 +608,7 @@ class OnlineEvalConfig:
                 OTel events as `gen_ai.evaluation.target`. Defaults to the decorated
                 function's `__name__` when omitted.
             msg_template: Template for the call span's message. Defaults to
-                ``"Calling {module}.{qualname}"`` like `@logfire.instrument`.
+                `"Calling {module}.{qualname}"` like `@logfire.instrument`.
                 When logfire is installed, `{arg=}`-style placeholders in the
                 template are formatted against the function's arguments.
             span_name: Override for the call span's name. Defaults to `msg_template`.
@@ -890,7 +890,7 @@ def evaluate(
             OTel events as `gen_ai.evaluation.target`. Defaults to the decorated
             function's `__name__` when omitted.
         msg_template: Template for the call span's message. Defaults to
-            ``"Calling {module}.{qualname}"`` like `@logfire.instrument`.
+            `"Calling {module}.{qualname}"` like `@logfire.instrument`.
         span_name: Override for the call span's name. Defaults to `msg_template`.
         extract_args: Whether to record function arguments as span attributes.
             `False` (default) records nothing; `True` records all bound arguments;

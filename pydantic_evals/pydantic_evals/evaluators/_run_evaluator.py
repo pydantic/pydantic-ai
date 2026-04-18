@@ -69,7 +69,7 @@ async def run_evaluator(
     source = evaluator.as_spec()
 
     try:
-        with logfire_span('evaluator: {evaluator_name}', evaluator_name=evaluator_name) as span:
+        with logfire_span('Calling evaluator: {evaluator_name}', evaluator_name=evaluator_name) as span:
             raw_results = await evaluate(ctx)
 
             try:

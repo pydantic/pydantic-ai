@@ -2193,7 +2193,7 @@ async def test_evaluator_span_nested_under_call_span(capfire: CaptureLogfire):
 
     spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
     call_spans = [s for s in spans if 'my_func' in s['name']]
-    evaluator_spans = [s for s in spans if s['name'] == 'evaluator: {evaluator_name}']
+    evaluator_spans = [s for s in spans if s['name'] == 'Calling evaluator: {evaluator_name}']
     assert len(call_spans) == 1
     assert len(evaluator_spans) == 1
     assert evaluator_spans[0]['parent']['span_id'] == call_spans[0]['context']['span_id']
@@ -2213,7 +2213,7 @@ async def test_evaluator_span_carries_score_attributes(capfire: CaptureLogfire):
     await wait_for_evaluations()
 
     spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
-    eval_spans = [s for s in spans if s['name'] == 'evaluator: {evaluator_name}']
+    eval_spans = [s for s in spans if s['name'] == 'Calling evaluator: {evaluator_name}']
     assert len(eval_spans) == 1
     attrs = eval_spans[0]['attributes']
     assert attrs['gen_ai.evaluation.name'] == 'AlwaysTrue'
@@ -2236,7 +2236,7 @@ async def test_evaluator_span_multi_result_summary(capfire: CaptureLogfire):
     await wait_for_evaluations()
 
     spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
-    eval_spans = [s for s in spans if s['name'] == 'evaluator: {evaluator_name}']
+    eval_spans = [s for s in spans if s['name'] == 'Calling evaluator: {evaluator_name}']
     assert len(eval_spans) == 1
     attrs = eval_spans[0]['attributes']
     assert attrs['gen_ai.evaluation.result_count'] == 3
