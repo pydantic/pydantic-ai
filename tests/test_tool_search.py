@@ -1266,6 +1266,24 @@ async def test_openai_native_tool_search_round_trip(allow_model_requests: None):
     assert empty_return.content == {'status': 'in_progress', 'discovered_tools': []}
     assert empty_return.metadata is None
 
+    # Non-function tools in the output don't have a `name` attribute and are skipped.
+    from openai.types.responses.file_search_tool import FileSearchTool
+
+    mixed_output = ResponseToolSearchOutputItem(
+        id='tso_mix',
+        call_id='call_mix',
+        execution='server',
+        status='completed',
+        tools=[
+            FunctionTool(name='real', description='', parameters={}, strict=False, type='function'),
+            # FileSearchTool doesn't have a `name` — the loop's `isinstance` guard skips it.
+            FileSearchTool(type='file_search', vector_store_ids=['vs_1']),
+        ],
+        type='tool_search_output',
+    )
+    mixed = _build_tool_search_return_part('call_mix', 'completed', mixed_output, 'openai')
+    assert mixed.metadata == {'discovered_tools': ['real']}
+
     # End-to-end: run an agent with a deferred tool, let the mock emit a tool search
     # call + output followed by a regular function call, then verify the history round-trips.
     tool_call = ResponseFunctionToolCall(

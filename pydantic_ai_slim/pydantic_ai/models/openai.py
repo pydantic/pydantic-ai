@@ -3035,7 +3035,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     elif isinstance(chunk.item, responses.ResponseToolSearchOutputItem):
                         call_id = chunk.item.call_id or chunk.item.id
                         return_part = _build_tool_search_return_part(
-                            call_id, chunk.item.status, chunk.item, self.provider_name
+                            call_id, chunk.item.status or 'completed', chunk.item, self.provider_name
                         )
                         yield self._parts_manager.handle_part(
                             vendor_part_id=f'{chunk.item.id}-return', part=return_part
@@ -3697,7 +3697,7 @@ def _map_tool_search_call(
 
 def _build_tool_search_return_part(
     call_id: str,
-    status: str | None,
+    status: str,
     output_item: responses.ResponseToolSearchOutputItem | None,
     provider_name: str,
 ) -> BuiltinToolReturnPart:
@@ -3710,13 +3710,10 @@ def _build_tool_search_return_part(
         for t in output_item.tools:
             if isinstance(name := getattr(t, 'name', None), str):
                 tool_names.append(name)
-    content: dict[str, Any] = {'discovered_tools': tool_names}
-    if status is not None:
-        content['status'] = status
     return BuiltinToolReturnPart(
         provider_name=provider_name,
         tool_name=ToolSearchTool.kind,
-        content=content,
+        content={'status': status, 'discovered_tools': tool_names},
         tool_call_id=call_id,
         metadata={'discovered_tools': tool_names} if tool_names else None,
     )
