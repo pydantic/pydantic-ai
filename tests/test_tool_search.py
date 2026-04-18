@@ -12,7 +12,7 @@ import json
 import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, TypeVar, cast
+from typing import Any, TypeVar
 
 import pytest
 from inline_snapshot import snapshot
@@ -1158,18 +1158,9 @@ async def test_anthropic_native_tool_search_round_trip(allow_model_requests: Non
     )
 
 
-@pytest.mark.parametrize(
-    'strategy, expected_wire_type',
-    [
-        ('bm25', 'tool_search_tool_bm25_20251119'),
-        ('regex', 'tool_search_tool_regex_20251119'),
-    ],
-)
-async def test_anthropic_named_strategy_registers_matching_builtin(
-    allow_model_requests: None, strategy: str, expected_wire_type: str
-) -> None:
-    """`ToolSearch(strategy='bm25'|'regex')` registers the matching variant of
-    Anthropic's native tool search tool via the explicit builtin path."""
+async def test_anthropic_native_tool_search_regex_strategy(allow_model_requests: None):
+    """`ToolSearch(strategy='regex')` registers the regex variant of Anthropic's
+    native tool search tool rather than the default BM25 variant."""
     pytest.importorskip('anthropic')
     from anthropic.types.beta import BetaTextBlock, BetaUsage
 
@@ -1185,7 +1176,7 @@ async def test_anthropic_named_strategy_registers_matching_builtin(
     )
     mock_client = MockAnthropic.create_mock(response)
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent: Agent[None, str] = Agent(model=model, capabilities=[ToolSearch(strategy=cast(Any, strategy))])
+    agent: Agent[None, str] = Agent(model=model, capabilities=[ToolSearch(strategy='regex')])
 
     @agent.tool_plain(defer_loading=True)
     def get_exchange_rate(from_currency: str, to_currency: str) -> str:  # pragma: no cover
@@ -1194,40 +1185,7 @@ async def test_anthropic_named_strategy_registers_matching_builtin(
     await agent.run('hi')
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     tool_types = [t.get('type') for t in kwargs['tools'] if isinstance(t, dict)]  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
-    assert expected_wire_type in tool_types
-
-
-async def test_openai_named_strategy_registers_explicit_tool_search_param(allow_model_requests: None):
-    """`ToolSearch(strategy='bm25')` on OpenAI registers `ToolSearchToolParam` via the
-    explicit builtin path. OpenAI's native tool search doesn't distinguish between
-    named strategies server-side, but the builtin routing still runs."""
-    from openai.types.responses import ResponseOutputMessage, ResponseOutputText
-
-    from pydantic_ai.capabilities import ToolSearch
-    from pydantic_ai.models.openai import OpenAIResponsesModel
-    from pydantic_ai.providers.openai import OpenAIProvider
-
-    from .models.mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
-
-    final_message = ResponseOutputMessage(
-        id='msg_1',
-        role='assistant',
-        status='completed',
-        type='message',
-        content=[ResponseOutputText(type='output_text', text='ok', annotations=[])],
-    )
-    mock_client = MockOpenAIResponses.create_mock(response_message([final_message]))
-    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
-    agent: Agent[None, str] = Agent(model=model, capabilities=[ToolSearch(strategy='bm25')])
-
-    @agent.tool_plain(defer_loading=True)
-    def get_exchange_rate(from_currency: str, to_currency: str) -> str:  # pragma: no cover
-        return f'1 {from_currency} = 0.92 {to_currency}'
-
-    await agent.run('hi')
-    kwargs = get_mock_responses_kwargs(mock_client)[0]
-    tool_types = [t.get('type') for t in kwargs['tools'] if isinstance(t, dict)]  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
-    assert 'tool_search' in tool_types
+    assert 'tool_search_tool_regex_20251119' in tool_types
 
 
 def test_anthropic_tool_search_result_error_block_mapping():

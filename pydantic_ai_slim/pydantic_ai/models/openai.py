@@ -2066,7 +2066,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> list[responses.ToolParam]:
         tools: list[responses.ToolParam] = []
         has_image_generating_tool = False
-        has_tool_search_builtin = any(isinstance(t, ToolSearchTool) for t in model_request_parameters.builtin_tools)
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):
                 web_search_tool = responses.WebSearchToolParam(
@@ -2140,14 +2139,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 raise UserError(  # pragma: no cover
                     f'`{tool.__class__.__name__}` is not supported by `OpenAIResponsesModel`. If it should be, please file an issue.'
                 )
-
-        # Auto-add the default native tool search tool when deferred corpus tools are
-        # present and the user hasn't explicitly registered a `ToolSearchTool` — keeps
-        # the agent's `builtin_tools` slim for the default `ToolSearch()` case.
-        if not has_tool_search_builtin and any(
-            t.managed_by_builtin == ToolSearchTool.kind for t in model_request_parameters.function_tools
-        ):
-            tools.append(ToolSearchToolParam(type='tool_search'))
 
         if model_request_parameters.allow_image_output and not has_image_generating_tool:
             tools.append({'type': 'image_generation'})
