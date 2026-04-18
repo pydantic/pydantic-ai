@@ -3767,19 +3767,14 @@ class TestRunEventStreamThroughCapabilities:
     def _run_ctx() -> RunContext[None]:
         return RunContext(deps=None, model=TestModel(), usage=RunUsage())
 
-    async def test_no_agent_and_no_handler_does_nothing(self):
+    async def test_no_agent_and_no_handler(self):
+        """Caller-side: the helper iterates the raw stream so events are still consumed."""
         from pydantic_ai.agent.abstract import run_event_stream_through_capabilities
 
-        consumed: list[AgentStreamEvent] = []
-
-        async def gen() -> AsyncIterator[AgentStreamEvent]:
-            async for e in self._events():
-                consumed.append(e)
-                yield e
-
-        await run_event_stream_through_capabilities(None, self._run_ctx(), gen(), handler=None)
-        # Without a handler or capability, the helper doesn't iterate — caller must drain.
-        assert consumed == []
+        stream = self._events()
+        await run_event_stream_through_capabilities(None, self._run_ctx(), stream, handler=None)
+        # Stream should be fully iterated by the helper.
+        assert [event async for event in stream] == []
 
     async def test_handler_receives_events_with_no_capability(self):
         from pydantic_ai.agent.abstract import run_event_stream_through_capabilities

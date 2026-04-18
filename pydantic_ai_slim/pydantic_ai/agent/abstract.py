@@ -30,7 +30,6 @@ from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
 from .._template import TemplateStr
 from ..builtin_tools import AbstractBuiltinTool
-from ..models.wrapper import CompletedStreamedResponse
 from ..output import OutputDataT, OutputSpec
 from ..result import AgentStream, FinalResult, StreamedRunResult
 from ..run import AgentRun, AgentRunResult, AgentRunResultEvent
@@ -93,22 +92,19 @@ async def run_event_stream_through_capabilities(
     Runs [`wrap_run_event_stream`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream]
     on the root capability (when any capability overrides it) so capabilities observe or
     transform the events, then invokes `handler` on the resulting stream. If `handler` is
-    `None` but capabilities need to see events, the wrapped stream is still iterated to
-    drive them. When neither applies the caller is expected to consume `stream` itself.
+    `None`, the stream is iterated so any capability wrappers still see events.
 
     Used by the durable-execution model wrappers, which stream events inside an activity
     or step where [`agent.run()`][pydantic_ai.Agent.run]'s outer loop doesn't get a chance
     to fire the capability chain.
     """
-    wrapped = stream
-    root_capability = agent.root_capability if agent is not None else None
-    if root_capability is not None and root_capability.has_wrap_run_event_stream:
-        wrapped = root_capability.wrap_run_event_stream(ctx, stream=stream)
+    if agent is not None and agent.root_capability.has_wrap_run_event_stream:
+        stream = agent.root_capability.wrap_run_event_stream(ctx, stream=stream)
 
     if handler is not None:
-        await handler(ctx, wrapped)
-    elif wrapped is not stream:
-        async for _ in wrapped:
+        await handler(ctx, stream)
+    else:
+        async for _ in stream:
             pass
 
 
@@ -365,21 +361,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
                     if self.is_model_request_node(n) or self.is_call_tools_node(n):
                         async with n.stream(agent_run.ctx) as stream:
-                            # `CompletedStreamedResponse` — used by durable-exec wrappers
-                            # that already consumed events (and ran the capability chain)
-                            # inside an activity/step — has no events left, so skip the
-                            # redundant wrap_run_event_stream invocation here to avoid
-                            # firing the handler twice.
-                            if not isinstance(stream, CompletedStreamedResponse):
-                                run_ctx = _agent_graph.build_run_context(agent_run.ctx)
-                                wrapped = agent_run.ctx.deps.root_capability.wrap_run_event_stream(
-                                    run_ctx, stream=stream
-                                )
-                                if _handler is not None:
-                                    await _handler(run_ctx, wrapped)
-                                else:
-                                    async for _ in wrapped:
-                                        pass
+                            run_ctx = _agent_graph.build_run_context(agent_run.ctx)
+                            wrapped = agent_run.ctx.deps.root_capability.wrap_run_event_stream(run_ctx, stream=stream)
+                            if _handler is not None:
+                                await _handler(run_ctx, wrapped)
+                            else:
+                                async for _ in wrapped:
+                                    pass
                     return await agent_run._advance_graph(n)  # pyright: ignore[reportPrivateUsage]
 
                 _stream_step = _stream_and_advance
