@@ -897,9 +897,9 @@ agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 
 ### Strale
 
-[`pydantic-ai-strale`](https://pypi.org/project/pydantic-ai-strale/) provides access to Strale's 250+ quality-scored capabilities for AI agents — company verification, IBAN/VAT validation, sanctions screening, and more across 27 countries. Every capability is independently tested with a published Strale Quality Score (SQS).
+If you'd like to use [Strale](https://strale.dev) capabilities (company verification, IBAN/VAT/SWIFT validation, sanctions screening) with Pydantic AI, you can use the [`StraleToolset`](https://pypi.org/project/pydantic-ai-strale/) from the `pydantic-ai-strale` package.
 
-You will need to install the `pydantic-ai-strale` package and set your Strale API key in the `STRALE_API_KEY` environment variable.
+You'll need to install `pydantic-ai-strale` and set the `STRALE_API_KEY` environment variable.
 
 ```python {test="skip" lint="skip"}
 import os
@@ -918,5 +918,3 @@ agent = Agent(
 result = agent.run_sync('Validate IBAN DE89370400440532013000')
 print(result.output)
 ```
-
-Free tier available — validate IBANs and emails without an API key via the [Strale MCP server](https://strale.dev/docs).
