@@ -1250,6 +1250,13 @@ Supported by:
                     'title': 'spec_PrefixTools',
                     'type': 'object',
                 },
+                'spec_ToolSearch': {
+                    'additionalProperties': False,
+                    'properties': {'ToolSearch': {'$ref': '#/$defs/spec_params_ToolSearch'}},
+                    'required': ['ToolSearch'],
+                    'title': 'spec_ToolSearch',
+                    'type': 'object',
+                },
                 'spec_WebFetch': {
                     'additionalProperties': False,
                     'properties': {'WebFetch': {'$ref': '#/$defs/spec_params_WebFetch'}},
@@ -1375,6 +1382,7 @@ Supported by:
                                 {'const': 'Thinking', 'type': 'string'},
                                 {'$ref': '#/$defs/short_spec_Thinking'},
                                 {'const': 'ToolSearch', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_ToolSearch'},
                                 {'const': 'WebFetch', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_WebFetch'},
                                 {'const': 'WebSearch', 'type': 'string'},
@@ -1384,6 +1392,26 @@ Supported by:
                     },
                     'required': ['prefix', 'capability'],
                     'title': 'spec_params_PrefixTools',
+                    'type': 'object',
+                },
+                'spec_params_ToolSearch': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'strategy': {
+                            'anyOf': [{'enum': ['bm25', 'regex'], 'type': 'string'}, {'type': 'null'}],
+                            'title': 'Strategy',
+                        },
+                        'max_results': {'title': 'Max Results', 'type': 'integer'},
+                        'tool_description': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'title': 'Tool Description',
+                        },
+                        'search_guidance': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'title': 'Search Guidance',
+                        },
+                    },
+                    'title': 'spec_params_ToolSearch',
                     'type': 'object',
                 },
                 'spec_params_WebFetch': {
@@ -1518,6 +1546,7 @@ Supported by:
                             {'const': 'Thinking', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_Thinking'},
                             {'const': 'ToolSearch', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_ToolSearch'},
                             {'const': 'WebFetch', 'type': 'string'},
                             {'$ref': '#/$defs/spec_WebFetch'},
                             {'const': 'WebSearch', 'type': 'string'},
