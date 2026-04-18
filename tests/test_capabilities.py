@@ -9431,4 +9431,93 @@ async def test_deferred_tool_handler_denied_via_batch():
     assert result.output == 'Understood.'
 
 
+def test_deferred_tool_handler_serialization_name():
+    """HandleDeferredToolCalls is not spec-constructible."""
+    assert HandleDeferredToolCalls.get_serialization_name() is None
+
+
+async def test_deferred_tool_handler_via_handle_call_with_resolve():
+    """handle_call(resolve_deferred=True) goes through _resolve_single_deferred happy path.
+
+    This exercises the per-call resolution path used by CodeMode-style callers.
+    """
+    from pydantic_ai.toolsets import FunctionToolset
+
+    inner_toolset = FunctionToolset()
+
+    @inner_toolset.tool
+    def inner_tool(ctx: RunContext[None]) -> str:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return 'approved result'
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('caller_tool', {}, tool_call_id='c1')])
+        return ModelResponse(parts=[TextPart('final')])
+
+    agent = Agent(
+        FunctionModel(llm),
+        toolsets=[inner_toolset],
+        capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
+    )
+
+    @agent.tool
+    async def caller_tool(ctx: RunContext[None]) -> str:
+        assert ctx.tool_manager is not None
+        # Call inner_tool via handle_call — exercises _resolve_single_deferred
+        result = await ctx.tool_manager.handle_call(
+            ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner_1'),
+        )
+        return f'got: {result}'
+
+    result = await agent.run('go')
+    assert result.output == 'final'
+
+
+async def test_deferred_tool_handler_via_handle_call_resolve_false():
+    """handle_call(resolve_deferred=False) lets exceptions propagate."""
+    from pydantic_ai.toolsets import FunctionToolset
+
+    inner_toolset = FunctionToolset()
+
+    @inner_toolset.tool
+    def inner_tool(ctx: RunContext[None]) -> str:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return 'result'  # pragma: no cover
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('caller_tool', {}, tool_call_id='c1')])
+        return ModelResponse(parts=[TextPart('final')])
+
+    agent = Agent(
+        FunctionModel(llm),
+        toolsets=[inner_toolset],
+        capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
+    )
+
+    @agent.tool
+    async def caller_tool(ctx: RunContext[None]) -> str:
+        assert ctx.tool_manager is not None
+        try:
+            await ctx.tool_manager.handle_call(
+                ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner_1'),
+                resolve_deferred=False,
+            )
+            return 'should not reach'  # pragma: no cover
+        except ApprovalRequired:
+            return 'caught approval'
+
+    result = await agent.run('go')
+    assert result.output == 'final'
+
+
 # endregion
