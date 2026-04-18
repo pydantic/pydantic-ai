@@ -4158,11 +4158,11 @@ async def test_adapter_dump_messages_with_builtin_tool_without_return():
                     {
                         'type': 'tool-web_search',
                         'tool_call_id': 'orphan_tool_id',
-                        'state': 'approval-requested',
+                        'state': 'input-available',
                         'input': {'query': 'orphan query'},
                         'provider_executed': True,
                         'call_provider_metadata': {'pydantic_ai': {'provider_name': 'openai'}},
-                        'approval': {'id': 'orphan_tool_id'},
+                        'approval': None,
                     }
                 ],
             },
@@ -4789,11 +4789,11 @@ async def test_adapter_dump_messages_with_invalid_json_args():
                     {
                         'type': 'tool-test',
                         'tool_call_id': 'call_1',
-                        'state': 'approval-requested',
+                        'state': 'input-available',
                         'provider_executed': False,
                         'input': {'INVALID_JSON': '{invalid json'},
                         'call_provider_metadata': None,
-                        'approval': {'id': 'call_1'},
+                        'approval': None,
                     }
                 ],
             }
@@ -4862,11 +4862,11 @@ async def test_adapter_dump_messages_tool_call_without_return():
                     {
                         'type': 'tool-get_weather',
                         'tool_call_id': 'tool_abc',
-                        'state': 'approval-requested',
+                        'state': 'input-available',
                         'provider_executed': False,
                         'input': {'city': 'New York'},
                         'call_provider_metadata': None,
-                        'approval': {'id': 'tool_abc'},
+                        'approval': None,
                     }
                 ],
             }
@@ -4875,7 +4875,7 @@ async def test_adapter_dump_messages_tool_call_without_return():
 
 
 async def test_adapter_dump_messages_deferred_tool_approval():
-    """Test that dump_messages automatically emits approval-requested for tool calls without results."""
+    """Test that dump_messages emits approval-requested for tool calls without results on v6."""
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Do something')]),
         ModelResponse(
@@ -4889,8 +4889,7 @@ async def test_adapter_dump_messages_deferred_tool_approval():
         ),
     ]
 
-    # Tool call without a result is automatically detected as deferred
-    ui_messages = VercelAIAdapter.dump_messages(messages)
+    ui_messages = VercelAIAdapter.dump_messages(messages, sdk_version=6)
     dicts = [msg.model_dump() for msg in ui_messages]
     tool_part = dicts[1]['parts'][0]
     assert tool_part == snapshot(
@@ -4912,6 +4911,27 @@ async def test_adapter_dump_messages_deferred_tool_approval():
     assert isinstance(tool_call_part, ToolCallPart)
     assert tool_call_part.tool_name == 'dangerous_action'
     assert tool_call_part.tool_call_id == 'deferred_tc1'
+
+
+async def test_adapter_dump_messages_deferred_tool_v5_fallback():
+    """Test that on v5 (default), deferred tool calls fall back to input-available."""
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='dangerous_action',
+                    args={'target': 'production'},
+                    tool_call_id='deferred_tc1',
+                ),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    dicts = [msg.model_dump() for msg in ui_messages]
+    tool_part = dicts[0]['parts'][0]
+    assert tool_part['state'] == 'input-available'
+    assert tool_part['approval'] is None
 
 
 async def test_adapter_dump_messages_deferred_tool_with_resolved_result():
@@ -4938,8 +4958,7 @@ async def test_adapter_dump_messages_deferred_tool_with_resolved_result():
         ),
     ]
 
-    # Tool call with a result is shown as completed
-    ui_messages = VercelAIAdapter.dump_messages(messages)
+    ui_messages = VercelAIAdapter.dump_messages(messages, sdk_version=6)
     dicts = [msg.model_dump() for msg in ui_messages]
     tool_part = dicts[1]['parts'][0]
     assert tool_part['state'] == 'output-available'
@@ -4947,7 +4966,7 @@ async def test_adapter_dump_messages_deferred_tool_with_resolved_result():
 
 
 async def test_adapter_dump_messages_deferred_builtin_tool():
-    """Test that builtin tool calls without results are automatically detected as deferred."""
+    """Test that on v6, builtin tool calls without results are detected as deferred."""
     messages: list[ModelMessage] = [
         ModelResponse(
             parts=[
@@ -4960,7 +4979,7 @@ async def test_adapter_dump_messages_deferred_builtin_tool():
         ),
     ]
 
-    ui_messages = VercelAIAdapter.dump_messages(messages)
+    ui_messages = VercelAIAdapter.dump_messages(messages, sdk_version=6)
     dicts = [msg.model_dump() for msg in ui_messages]
     tool_part = dicts[0]['parts'][0]
     assert tool_part['state'] == 'approval-requested'
@@ -4990,11 +5009,11 @@ async def test_adapter_dump_messages_assistant_starts_with_tool():
                     {
                         'type': 'tool-t',
                         'tool_call_id': 'tc1',
-                        'state': 'approval-requested',
+                        'state': 'input-available',
                         'provider_executed': False,
                         'input': {},
                         'call_provider_metadata': None,
-                        'approval': {'id': 'tc1'},
+                        'approval': None,
                     },
                     {
                         'type': 'text',
