@@ -166,6 +166,9 @@ _(This example is complete, it can be run "as is")_
 
 ## X Search Tool
 
+!!! tip
+    For a model-agnostic approach with a subagent fallback, see the [`XSearch`][pydantic_ai.capabilities.XSearch] [capability](capabilities.md#provider-adaptive-tools).
+
 The [`XSearchTool`][pydantic_ai.builtin_tools.XSearchTool] allows your agent to search X/Twitter for real-time posts and content. This tool is exclusive to xAI models. See the [xAI X Search documentation](https://docs.x.ai/developers/tools/x-search) for more details.
 
 ### Usage
