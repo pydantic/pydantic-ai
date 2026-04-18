@@ -688,8 +688,7 @@ class ToolManager(Generic[AgentDepsT]):
                 str | Sequence[_messages.UserContent] | None,
             ]
         ] = []
-        re_deferred_ids: set[str] = set()
-        re_deferred_metadata: dict[str, dict[str, Any]] = {}
+        re_deferred: dict[str, CallDeferred | ApprovalRequired] = {}
 
         for call in all_deferred_calls:
             if call.tool_call_id not in resolved_ids:
@@ -732,26 +731,26 @@ class ToolManager(Generic[AgentDepsT]):
             # Handle approval results
             approval_outcome = await self._execute_approval_result(call, deferred_result, results.metadata)
             if isinstance(approval_outcome, (CallDeferred, ApprovalRequired)):
-                # Tool re-raised deferral — track it with its new metadata
-                re_deferred_ids.add(call.tool_call_id)
-                if approval_outcome.metadata:
-                    re_deferred_metadata[call.tool_call_id] = approval_outcome.metadata
+                # Tool re-raised deferral — track the new exception for correct categorization
+                re_deferred[call.tool_call_id] = approval_outcome
             else:
                 result_part, user_content = approval_outcome
                 executed.append((call, result_part, user_content))
 
-        # Compute remaining: unresolved calls + re-deferred calls (with metadata)
+        # Compute remaining: unresolved calls + re-deferred calls (categorized by new exception type)
         remaining = requests.remaining(results)
-        if re_deferred_ids:
-            re_deferred_calls = [c for c in all_deferred_calls if c.tool_call_id in re_deferred_ids]
+        if re_deferred:
+            re_deferred_calls = [c for c in all_deferred_calls if c.tool_call_id in re_deferred]
             if remaining is None:
                 remaining = DeferredToolRequests()
             for call in re_deferred_calls:
-                if call in requests.approvals:
+                exc = re_deferred[call.tool_call_id]
+                if isinstance(exc, ApprovalRequired):
                     remaining.approvals.append(call)
                 else:
                     remaining.calls.append(call)
-            remaining.metadata.update(re_deferred_metadata)
+                if exc.metadata:
+                    remaining.metadata[call.tool_call_id] = exc.metadata
         return executed, remaining
 
     async def _execute_approval_result(
