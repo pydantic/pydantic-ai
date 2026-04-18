@@ -1520,6 +1520,20 @@ async def test_openai_native_tool_search_streaming(allow_model_requests: None):
     )
 
 
+async def test_agent_graph_without_builtin_tools(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Covers `_agent_graph`'s empty `ctx.deps.builtin_tools` branch.
+
+    Auto-inject always adds `ToolSearchTool`, so the only way to exercise the empty
+    branch is to disable auto-inject in the test.
+    """
+    import pydantic_ai.agent as agent_module
+
+    monkeypatch.setattr(agent_module, '_AUTO_INJECT_CAPABILITY_TYPES', ())
+    agent: Agent[None, str] = Agent('test')
+    result = await agent.run('hi')
+    assert isinstance(result.output, str)
+
+
 async def test_tool_search_toolset_discovers_from_builtin_return_part():
     """Discovery metadata on a `BuiltinToolReturnPart` from a native provider search
     is picked up so the local path recovers state on cross-provider handover."""
