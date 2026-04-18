@@ -5,16 +5,15 @@
 tool search (via the [`ToolSearchTool`][pydantic_ai.builtin_tools.ToolSearchTool] builtin),
 the wrapped tools are routed through one of two paths:
 
-* **Native path**: each deferred tool is exposed under a managed key
-  ``{name}~managed:tool_search`` with ``ToolDefinition.managed_by_builtin='tool_search'``.
-  The model adapter keeps these tools in the request (setting ``defer_loading=True`` on the
-  wire) and drops the local ``search_tools`` function via its ``prefer_builtin``.
-* **Local path**: the model adapter drops the managed entries via ``managed_by_builtin``,
-  keeps the local ``search_tools`` function tool, and only exposes already-discovered
-  deferred tools until more are discovered via search.
+* **Native path**: each deferred tool is exposed under its plain name with
+  ``ToolDefinition.managed_by_builtin='tool_search'``. The model adapter keeps these tools
+  in the request (setting ``defer_loading=True`` on the wire) and drops the local
+  ``search_tools`` function via its ``prefer_builtin``.
+* **Local path**: the local ``search_tools`` function tool is kept, and deferred tools are
+  only exposed under their plain name once discovered via search.
 
-Since toolsets return a flat ``dict[str, ToolsetTool]``, both representations are emitted
-with different keys but dispatch to the same underlying tool on call.
+Either way, the model calls the tool by its plain name and the toolset looks it up under
+that same key to dispatch to the wrapped toolset.
 """
 
 from __future__ import annotations
@@ -29,7 +28,7 @@ from pydantic import Field, TypeAdapter
 from typing_extensions import TypedDict
 
 from .._run_context import AgentDepsT, RunContext
-from ..builtin_tools import ToolSearchFunc
+from ..builtin_tools import ToolSearchFunc, ToolSearchTool
 from ..exceptions import ModelRetry, UserError
 from ..messages import BuiltinToolReturnPart, ModelRequest, ToolReturn, ToolReturnPart
 from ..tools import ToolDefinition
@@ -38,7 +37,6 @@ from .wrapper import WrapperToolset
 
 _SEARCH_TOOLS_NAME = 'search_tools'
 _TOOL_SEARCH_BUILTIN_ID = 'tool_search'
-_MANAGED_KEY_SUFFIX = f'~managed:{_TOOL_SEARCH_BUILTIN_ID}'
 
 _DISCOVERED_TOOLS_METADATA_KEY = 'discovered_tools'
 
@@ -140,29 +138,44 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             )
 
         discovered = self._parse_discovered_tools(ctx)
+        native = self._native_path_active(ctx)
 
         result: dict[str, ToolsetTool[AgentDepsT]] = dict(visible)
 
-        # Native path: expose every deferred tool under a managed key so the model adapter
-        # can emit it with provider-specific defer_loading on the wire. `managed_by_builtin`
-        # causes the non-native adapter to drop these — the local path uses the regular
-        # entries below.
+        # On the native path we expose every deferred tool under its plain name with
+        # `managed_by_builtin='tool_search'`, so the model adapter sends it with
+        # provider-specific `defer_loading=True` on the wire and the model can dispatch
+        # it by its plain name when called. On the local path we expose only the
+        # already-discovered deferred tools (without `managed_by_builtin`) — the rest
+        # stay hidden until the model calls `search_tools`. Definition order is
+        # preserved.
         for name, tool in deferred.items():
-            managed_def = replace(tool.tool_def, managed_by_builtin=_TOOL_SEARCH_BUILTIN_ID)
-            result[f'{name}{_MANAGED_KEY_SUFFIX}'] = replace(tool, tool_def=managed_def)
-
-        # Local path: only already-discovered deferred tools are visible under their real name
-        # until the model calls `search_tools` to discover more. Preserve definition order.
-        for name, tool in deferred.items():
-            if name in discovered:
+            if native:
+                managed_def = replace(tool.tool_def, managed_by_builtin=_TOOL_SEARCH_BUILTIN_ID)
+                result[name] = replace(tool, tool_def=managed_def)
+            elif name in discovered:
                 result[name] = tool
 
-        # If every deferred tool is already discovered, no need for the search function.
-        if not discovered.issuperset(deferred):
-            search_tool = self._build_search_tool(deferred, discovered)
-            result[_SEARCH_TOOLS_NAME] = search_tool
+        # On the native path the provider handles discovery; the local `search_tools`
+        # function would only add noise. On the local path, once every deferred tool is
+        # already discovered, there's nothing left to find.
+        if not native and not discovered.issuperset(deferred):
+            result[_SEARCH_TOOLS_NAME] = self._build_search_tool(deferred, discovered)
 
         return result
+
+    def _native_path_active(self, ctx: RunContext[AgentDepsT]) -> bool:
+        """Check whether the native provider tool search path is active for this run.
+
+        A custom ``search_fn`` always forces the local path — the capability deliberately
+        skips registering ``ToolSearchTool`` in that case. Otherwise we rely on the
+        model's profile advertising support for ``ToolSearchTool``; if it does, the
+        capability will have registered the builtin and the model adapter will keep our
+        managed entries in the request.
+        """
+        if self.search_fn is not None:
+            return False
+        return ToolSearchTool in ctx.model.profile.supported_builtin_tools
 
     def _build_search_tool(
         self,
@@ -231,9 +244,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     ) -> Any:
         if name == _SEARCH_TOOLS_NAME and isinstance(tool, _SearchTool):
             return await self._search_tools(tool_args, tool)
-        # Strip the `~managed:tool_search` suffix so the wrapped toolset receives the real name.
-        original_name = name.removesuffix(_MANAGED_KEY_SUFFIX)
-        return await self.wrapped.call_tool(original_name, tool_args, ctx, tool)
+        return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 
     @staticmethod
     def _search_terms(name: str, description: str | None) -> set[str]:
