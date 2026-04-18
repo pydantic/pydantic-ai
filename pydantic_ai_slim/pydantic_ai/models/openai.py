@@ -1812,7 +1812,6 @@ class OpenAIResponsesModel(Model):
         extra_headers.setdefault('User-Agent', get_user_agent())
         timeout = model_settings.get('timeout', NOT_GIVEN)
         return extra_headers, timeout
-        _drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
 
     @overload
     async def _responses_create(
@@ -1840,7 +1839,7 @@ class OpenAIResponsesModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ModelResponse:
         profile = OpenAIModelProfile.from_profile(self.profile)
-        _drop_sampling_params_for_reasoning(profile, model_settings)
+        _drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
         _drop_unsupported_params(profile, model_settings)
 
         include: list[responses.ResponseIncludable] = []
