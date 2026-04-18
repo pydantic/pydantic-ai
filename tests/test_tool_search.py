@@ -382,7 +382,7 @@ def _create_function_toolset() -> FunctionToolset[None]:
         return f'Time in {timezone}'
 
     @toolset.tool_plain(defer_loading=True)
-    def calculate_mortgage(principal: float, rate: float, years: int) -> str:  # pragma: no cover
+    def calculate_mortgage(principal: float, rate: float, years: int) -> str:
         """Calculate monthly mortgage payment for a loan."""
         return 'Mortgage calculated'
 
