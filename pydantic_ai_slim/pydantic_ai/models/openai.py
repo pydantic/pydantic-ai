@@ -2155,8 +2155,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             ),
         }
         if f.managed_by_builtin == ToolSearchTool.kind:
-            # Tools in the tool-search corpus are loaded on-demand by OpenAI's native
-            # search mechanism, not included in the initial system prompt.
+            # `defer_loading` on the wire controls OpenAI's native tool search caching.
+            # `ToolDefinition.defer_loading` is the local discovery flag — separate
+            # concern — so we gate on `managed_by_builtin` to know we're on the native
+            # path.
             tool_param['defer_loading'] = True
         return tool_param
 

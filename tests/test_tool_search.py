@@ -1153,6 +1153,59 @@ async def test_anthropic_native_tool_search_round_trip(allow_model_requests: Non
     )
 
 
+async def test_anthropic_native_tool_search_regex_strategy(allow_model_requests: None):
+    """`ToolSearch(strategy='regex')` registers the regex variant of Anthropic's
+    native tool search tool rather than the default BM25 variant."""
+    pytest.importorskip('anthropic')
+    from anthropic.types.beta import BetaTextBlock, BetaUsage
+
+    from pydantic_ai.capabilities import ToolSearch
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    from .models.test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
+
+    response = completion_message(
+        [BetaTextBlock(text='ok', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent: Agent[None, str] = Agent(model=model, capabilities=[ToolSearch(strategy='regex')])
+
+    @agent.tool_plain(defer_loading=True)
+    def get_exchange_rate(from_currency: str, to_currency: str) -> str:  # pragma: no cover
+        return f'1 {from_currency} = 0.92 {to_currency}'
+
+    await agent.run('hi')
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    tool_types = [t.get('type') for t in kwargs['tools'] if isinstance(t, dict)]  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+    assert 'tool_search_tool_regex_20251119' in tool_types
+
+
+def test_anthropic_tool_search_result_error_block_mapping():
+    """An error result block (no `tool_references`) produces a
+    `BuiltinToolReturnPart` without discovered tools in its metadata."""
+    pytest.importorskip('anthropic')
+    from anthropic.types.beta import BetaToolSearchToolResultBlock
+    from anthropic.types.beta.beta_tool_search_tool_result_error import BetaToolSearchToolResultError
+
+    from pydantic_ai.models.anthropic import _map_tool_search_tool_result_block  # pyright: ignore[reportPrivateUsage]
+
+    error_block = BetaToolSearchToolResultBlock(
+        tool_use_id='srv_err',
+        type='tool_search_tool_result',
+        content=BetaToolSearchToolResultError(
+            error_code='unavailable',
+            error_message='unavailable',
+            type='tool_search_tool_result_error',
+        ),
+    )
+    part = _map_tool_search_tool_result_block(error_block, 'anthropic')
+    assert part.tool_name == 'tool_search'
+    assert part.metadata is None
+
+
 @pytest.mark.filterwarnings(
     'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
 )

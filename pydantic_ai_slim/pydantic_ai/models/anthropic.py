@@ -1533,8 +1533,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if model_settings.get('anthropic_eager_input_streaming'):
             tool_param['eager_input_streaming'] = True
         if f.managed_by_builtin == ToolSearchTool.kind:
-            # Tools in the tool-search corpus are loaded on-demand by the provider's
-            # native search mechanism, not included in the initial system prompt.
+            # `defer_loading` on the wire controls Anthropic's native tool search
+            # caching. `ToolDefinition.defer_loading` is the local discovery flag and
+            # is unrelated to what the provider API sees — hence the separate check on
+            # `managed_by_builtin` here.
             tool_param['defer_loading'] = True
         return tool_param
 
