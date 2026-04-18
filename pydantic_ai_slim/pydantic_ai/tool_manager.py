@@ -833,4 +833,4 @@ class ToolManager(Generic[AgentDepsT]):
             if isinstance(result_part, _messages.RetryPromptPart):
                 raise ToolRetryError(result_part)
             return result_part.content
-        raise exc
+        raise exc  # pragma: no cover

@@ -9472,10 +9472,21 @@ async def test_deferred_tool_handler_via_handle_call_with_resolve():
         result = await ctx.tool_manager.handle_call(
             ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner_1'),
         )
+        # _resolve_single_deferred returns result_part.content
+        assert result == 'approved result'
         return f'got: {result}'
 
     result = await agent.run('go')
     assert result.output == 'final'
+    # Verify the inner tool was called (tool return visible in messages)
+    tool_returns = [
+        p
+        for m in result.all_messages()
+        for p in m.parts
+        if isinstance(p, ToolReturnPart) and p.tool_name == 'caller_tool'
+    ]
+    assert len(tool_returns) == 1
+    assert tool_returns[0].content == 'got: approved result'
 
 
 async def test_deferred_tool_handler_via_handle_call_resolve_false():
