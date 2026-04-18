@@ -1075,6 +1075,221 @@ async def test_tool_search_toolset_custom_search_fn_is_used():
     assert calls == ['anything']
 
 
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+)
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+)
+async def test_anthropic_native_tool_search_round_trip(allow_model_requests: None):
+    """End-to-end: Anthropic's native BM25 search populates `BuiltinToolCallPart`
+    and `BuiltinToolReturnPart`, resolves into a follow-up call of the discovered
+    tool, and round-trips through history without dropping the tool search blocks."""
+    pytest.importorskip('anthropic')
+    from anthropic.types.beta import (
+        BetaContentBlock,
+        BetaServerToolUseBlock,
+        BetaTextBlock,
+        BetaToolSearchToolResultBlock,
+        BetaToolUseBlock,
+        BetaUsage,
+    )
+    from anthropic.types.beta.beta_server_tool_use_block import BetaDirectCaller
+    from anthropic.types.beta.beta_tool_reference_block import BetaToolReferenceBlock
+    from anthropic.types.beta.beta_tool_search_tool_search_result_block import (
+        BetaToolSearchToolSearchResultBlock,
+    )
+
+    from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolReturnPart
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    from .models.test_anthropic import MockAnthropic, completion_message
+
+    search_call: BetaContentBlock = BetaServerToolUseBlock(
+        id='srv_1',
+        name='tool_search_tool_bm25',
+        input={'query': 'exchange rate'},
+        type='server_tool_use',
+        caller=BetaDirectCaller(type='direct'),
+    )
+    search_result: BetaContentBlock = BetaToolSearchToolResultBlock(
+        tool_use_id='srv_1',
+        type='tool_search_tool_result',
+        content=BetaToolSearchToolSearchResultBlock(
+            tool_references=[BetaToolReferenceBlock(tool_name='get_exchange_rate', type='tool_reference')],
+            type='tool_search_tool_search_result',
+        ),
+    )
+    tool_call: BetaContentBlock = BetaToolUseBlock(
+        id='call_1',
+        name='get_exchange_rate',
+        input={'from_currency': 'USD', 'to_currency': 'EUR'},
+        type='tool_use',
+    )
+
+    first = completion_message([search_call, search_result, tool_call], BetaUsage(input_tokens=5, output_tokens=10))
+    second = completion_message(
+        [BetaTextBlock(text='1 USD = 0.92 EUR.', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock([first, second])
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent: Agent[None, str] = Agent(model=model)
+
+    @agent.tool_plain(defer_loading=True)
+    def get_exchange_rate(from_currency: str, to_currency: str) -> str:
+        return f'1 {from_currency} = 0.92 {to_currency}'
+
+    result = await agent.run('What is the USD to EUR rate?')
+    parts_by_kind: list[type] = [type(p) for m in result.all_messages() for p in m.parts]
+    assert BuiltinToolCallPart in parts_by_kind
+    assert BuiltinToolReturnPart in parts_by_kind
+    # The model's follow-up tool call for the discovered tool is dispatched normally.
+    assert any(
+        isinstance(p, ToolCallPart) and p.tool_name == 'get_exchange_rate'
+        for m in result.all_messages()
+        for p in m.parts
+    )
+
+
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+)
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+)
+async def test_openai_native_tool_search_round_trip(allow_model_requests: None):
+    """End-to-end: OpenAI Responses native tool_search populates
+    `BuiltinToolCallPart` and `BuiltinToolReturnPart`; sending the resulting history
+    back round-trips the tool search parts via `_map_messages` and emits
+    `defer_loading: true` on the corpus function tool."""
+    from openai.types.responses import (
+        FunctionTool,
+        ResponseFunctionToolCall,
+        ResponseOutputMessage,
+        ResponseOutputText,
+        ResponseToolSearchCall,
+        ResponseToolSearchOutputItem,
+    )
+
+    from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolReturnPart
+    from pydantic_ai.models.openai import (
+        OpenAIResponsesModel,
+        _build_tool_search_return_part,  # pyright: ignore[reportPrivateUsage]
+        _map_tool_search_call,  # pyright: ignore[reportPrivateUsage]
+    )
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    from .models.mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
+
+    # Unit-level: `_map_tool_search_call` paired with output produces populated metadata.
+    call = ResponseToolSearchCall(
+        id='ts_1',
+        arguments={'query': 'exchange rate'},
+        call_id='call_1',
+        execution='server',
+        status='completed',
+        type='tool_search_call',
+    )
+    output = ResponseToolSearchOutputItem(
+        id='tso_1',
+        call_id='call_1',
+        execution='server',
+        status='completed',
+        tools=[
+            FunctionTool(name='get_exchange_rate', description='', parameters={}, strict=False, type='function'),
+        ],
+        type='tool_search_output',
+    )
+    call_part, return_part = _map_tool_search_call(call, output, 'openai')
+    assert isinstance(call_part, BuiltinToolCallPart)
+    assert call_part.tool_name == 'tool_search'
+    assert isinstance(return_part, BuiltinToolReturnPart)
+    assert return_part.metadata == {'discovered_tools': ['get_exchange_rate']}
+
+    # No output item → empty discovery (streaming start case).
+    empty_return = _build_tool_search_return_part('call_1', 'in_progress', None, 'openai')
+    assert empty_return.content == {'status': 'in_progress', 'discovered_tools': []}
+    assert empty_return.metadata is None
+
+    # End-to-end: run an agent with a deferred tool, let the mock emit a tool search
+    # call + output followed by a regular function call, then verify the history round-trips.
+    tool_call = ResponseFunctionToolCall(
+        id='fnc_1',
+        call_id='fnc_call_1',
+        name='get_exchange_rate',
+        arguments='{"from_currency": "USD", "to_currency": "EUR"}',
+        status='completed',
+        type='function_call',
+    )
+    final_message = ResponseOutputMessage(
+        id='msg_1',
+        role='assistant',
+        status='completed',
+        type='message',
+        content=[ResponseOutputText(type='output_text', text='1 USD = 0.92 EUR.', annotations=[])],
+    )
+    first = response_message([call, output, tool_call])
+    second = response_message([final_message])
+
+    mock_client = MockOpenAIResponses.create_mock([first, second])
+    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+    agent: Agent[None, str] = Agent(model=model)
+
+    @agent.tool_plain(defer_loading=True)
+    def get_exchange_rate(from_currency: str, to_currency: str) -> str:
+        return f'1 {from_currency} = 0.92 {to_currency}'
+
+    result = await agent.run('What is USD to EUR?')
+    assert any(
+        isinstance(p, BuiltinToolCallPart) and p.tool_name == 'tool_search'
+        for m in result.all_messages()
+        for p in m.parts
+    )
+    assert any(
+        isinstance(p, BuiltinToolReturnPart) and p.metadata == {'discovered_tools': ['get_exchange_rate']}
+        for m in result.all_messages()
+        for p in m.parts
+    )
+
+    # Second request replays the history — confirms `defer_loading: true` was set on
+    # the corpus tool AND that the native `tool_search_call` param was preserved.
+    kwargs = get_mock_responses_kwargs(mock_client)
+    second_tools = kwargs[1]['tools']
+    deferred_fn = next(t for t in second_tools if t.get('type') == 'function' and t.get('name') == 'get_exchange_rate')
+    assert deferred_fn.get('defer_loading') is True
+    second_input = kwargs[1]['input']
+    second_types = [item.get('type') for item in second_input if isinstance(item, dict)]  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+    assert 'tool_search_call' in second_types
+
+
+async def test_tool_search_toolset_discovers_from_builtin_return_part():
+    """Discovery metadata on a `BuiltinToolReturnPart` from a native provider search
+    is picked up so the local path recovers state on cross-provider handover."""
+    from pydantic_ai.messages import BuiltinToolReturnPart
+
+    toolset = _create_function_toolset()
+    searchable = ToolSearchToolset(wrapped=toolset)
+
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                BuiltinToolReturnPart(
+                    tool_name='tool_search',
+                    content={'discovered_tools': ['calculate_mortgage']},
+                    metadata={_DISCOVERED_TOOLS_METADATA_KEY: ['calculate_mortgage']},
+                )
+            ]
+        )
+    ]
+    ctx = _build_run_context(None, messages=messages)
+
+    tools = await searchable.get_tools(ctx)
+    assert 'calculate_mortgage' in tools
+    assert 'stock_price' not in tools
+
+
 async def test_tool_search_toolset_custom_search_fn_filters_unknown_names():
     """Names returned by ``search_fn`` that aren't in the deferred set are discarded."""
 

@@ -799,6 +799,12 @@ class Model(ABC, Generic[InterfaceClient]):
                 continue
             function_tools.append(t)
 
+        # When a managed tool is kept, drop any regular (non-managed) duplicate under the
+        # same name — the toolset can emit both representations so history replay picks up
+        # the regular one, but only the managed one should go on the wire.
+        managed_names = {t.name for t in function_tools if t.managed_by_builtin}
+        function_tools = [t for t in function_tools if t.managed_by_builtin or t.name not in managed_names]
+
         # Drop optional builtins whose managed corpus is empty after filtering —
         # they have nothing to do, so sending them would waste a tool slot.
         remaining_corpus_ids = {t.managed_by_builtin for t in function_tools if t.managed_by_builtin}
