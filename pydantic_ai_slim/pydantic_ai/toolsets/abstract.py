@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol
 
@@ -9,14 +9,18 @@ from pydantic_core import SchemaValidator
 from typing_extensions import Self
 
 from .._run_context import AgentDepsT, RunContext
+from ..messages import InstructionPart
 from ..tools import ToolDefinition, ToolsPrepareFunc
 
 if TYPE_CHECKING:
     from .approval_required import ApprovalRequiredToolset
+    from .deferred_loading import DeferredLoadingToolset
     from .filtered import FilteredToolset
+    from .include_return_schemas import IncludeReturnSchemasToolset
     from .prefixed import PrefixedToolset
     from .prepared import PreparedToolset
     from .renamed import RenamedToolset
+    from .set_metadata import SetMetadataToolset
 
 
 class SchemaValidatorProt(Protocol):
@@ -135,6 +139,27 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         """
         return None
 
+    async def get_instructions(
+        self, ctx: RunContext[AgentDepsT]
+    ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
+        r"""Return instructions for how to use this toolset's tools.
+
+        Override this method to provide instructions that help the agent understand
+        how to use the tools in this toolset effectively.
+
+        Simple implementations can return a plain `str`; advanced implementations can return
+        [`InstructionPart`][pydantic_ai.messages.InstructionPart] objects to indicate whether
+        each instruction block is static or dynamic for caching purposes.
+
+        Args:
+            ctx: The run context for this agent run.
+
+        Returns:
+            Instruction string, `InstructionPart`, list of either, or `None`.
+            Plain `str` values are treated as dynamic instructions by default.
+        """
+        return None
+
     @abstractmethod
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         """The tools that are available in this toolset."""
@@ -165,7 +190,7 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         return visitor(self)
 
     def filtered(
-        self, filter_func: Callable[[RunContext[AgentDepsT], ToolDefinition], bool]
+        self, filter_func: Callable[[RunContext[AgentDepsT], ToolDefinition], bool | Awaitable[bool]]
     ) -> FilteredToolset[AgentDepsT]:
         """Returns a new toolset that filters this toolset's tools using a filter function that takes the agent context and the tool definition.
 
@@ -215,3 +240,40 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         from .approval_required import ApprovalRequiredToolset
 
         return ApprovalRequiredToolset(self, approval_required_func)
+
+    def defer_loading(self, tool_names: Sequence[str] | None = None) -> DeferredLoadingToolset[AgentDepsT]:
+        """Returns a new toolset that marks tools for deferred loading, hiding them until discovered via tool search.
+
+        See [toolset docs](../toolsets.md#deferred-loading) for more information.
+
+        Args:
+            tool_names: Optional sequence of tool names to mark for deferred loading.
+                If `None`, all tools are marked for deferred loading.
+        """
+        from .deferred_loading import DeferredLoadingToolset
+
+        return DeferredLoadingToolset(self, tool_names=frozenset(tool_names) if tool_names is not None else None)
+
+    def include_return_schemas(self) -> IncludeReturnSchemasToolset[AgentDepsT]:
+        """Returns a new toolset that sets `include_return_schema=True` on all tools.
+
+        This causes the model to receive return type information for the tools
+        in this toolset. For models that natively support return schemas (e.g.
+        Google Gemini), the schema is passed as a structured field. For other
+        models, it is injected into the tool description as JSON text.
+
+        This is the toolset-level equivalent of the
+        [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas]
+        capability, which can be used to enable return schemas across all
+        toolsets or a subset matched by a
+        [`ToolSelector`][pydantic_ai.tools.ToolSelector].
+        """
+        from .include_return_schemas import IncludeReturnSchemasToolset
+
+        return IncludeReturnSchemasToolset(self)
+
+    def with_metadata(self, **metadata: Any) -> SetMetadataToolset[AgentDepsT]:
+        """Returns a new toolset that merges the given metadata onto all tools."""
+        from .set_metadata import SetMetadataToolset
+
+        return SetMetadataToolset(self, metadata)
