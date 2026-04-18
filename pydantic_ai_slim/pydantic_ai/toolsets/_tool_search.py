@@ -1,13 +1,34 @@
+"""Tool search toolset.
+
+`ToolSearchToolset` wraps another toolset to support discovery of tools marked with
+`defer_loading=True`. Depending on whether the running model supports native provider-side
+tool search (via the [`ToolSearchTool`][pydantic_ai.builtin_tools.ToolSearchTool] builtin),
+the wrapped tools are routed through one of two paths:
+
+* **Native path**: each deferred tool is exposed under a managed key
+  ``{name}~managed:tool_search`` with ``ToolDefinition.managed_by_builtin='tool_search'``.
+  The model adapter keeps these tools in the request (setting ``defer_loading=True`` on the
+  wire) and drops the local ``search_tools`` function via its ``prefer_builtin``.
+* **Local path**: the model adapter drops the managed entries via ``managed_by_builtin``,
+  keeps the local ``search_tools`` function tool, and only exposes already-discovered
+  deferred tools until more are discovered via search.
+
+Since toolsets return a flat ``dict[str, ToolsetTool]``, both representations are emitted
+with different keys but dispatch to the same underlying tool on call.
+"""
+
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
 from typing import Annotated, Any
 
 from pydantic import Field, TypeAdapter
 from typing_extensions import TypedDict
 
 from .._run_context import AgentDepsT, RunContext
+from ..builtin_tools import ToolSearchFunc
 from ..exceptions import ModelRetry, UserError
 from ..messages import ModelRequest, ToolReturn, ToolReturnPart
 from ..tools import ToolDefinition
@@ -15,30 +36,37 @@ from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
 
 _SEARCH_TOOLS_NAME = 'search_tools'
+_TOOL_SEARCH_BUILTIN_ID = 'tool_search'
+_MANAGED_KEY_SUFFIX = f'~managed:{_TOOL_SEARCH_BUILTIN_ID}'
 
 _DISCOVERED_TOOLS_METADATA_KEY = 'discovered_tools'
 
 _MAX_SEARCH_RESULTS = 10
 _SEARCH_TOKEN_RE = re.compile(r'[a-z0-9]+')
 
+_DEFAULT_TOOL_DESCRIPTION = (
+    'There are additional tools not yet visible to you.'
+    ' When you need a capability not provided by your current tools,'
+    ' search here by providing specific keywords to discover and activate relevant tools.'
+    ' Each keyword is matched independently against tool names and descriptions.'
+    ' If no tools are found, they do not exist — do not retry.'
+)
 
-class _SearchToolArgs(TypedDict):
-    keywords: Annotated[
-        str,
-        Field(
-            description=(
-                'Space-separated keywords to match against tool names and descriptions.'
-                ' Use specific words likely to appear in tool names or descriptions to narrow down relevant tools.'
-            )
-        ),
-    ]
+_DEFAULT_SEARCH_GUIDANCE = (
+    'Space-separated keywords to match against tool names and descriptions.'
+    ' Use specific words likely to appear in tool names or descriptions to narrow down relevant tools.'
+)
 
 
-# TypeAdapter doesn't support config= for TypedDict, so we fix the title on the generated schema
-# to avoid leaking the private class name '_SearchToolArgs' to the model.
-_search_tool_args_ta = TypeAdapter(_SearchToolArgs)
-_SEARCH_TOOL_SCHEMA = _search_tool_args_ta.json_schema()
-_SEARCH_TOOL_SCHEMA['title'] = 'SearchToolArgs'
+def _build_search_args_schema(search_guidance: str) -> tuple[dict[str, Any], TypeAdapter[Any]]:
+    class _SearchToolArgs(TypedDict):
+        keywords: Annotated[str, Field(description=search_guidance)]
+
+    ta = TypeAdapter(_SearchToolArgs)
+    schema = ta.json_schema()
+    # TypeAdapter doesn't support config= for TypedDict; rename away from the private class.
+    schema['title'] = 'SearchToolArgs'
+    return schema, ta
 
 
 @dataclass(kw_only=True)
@@ -57,12 +85,31 @@ class _SearchTool(ToolsetTool[AgentDepsT]):
 class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     """A toolset that enables tool discovery for large toolsets.
 
-    This toolset wraps another toolset and provides a `search_tools` tool that allows
-    the model to discover tools marked with `defer_loading=True`.
+    Wraps another toolset and exposes a ``search_tools`` function that lets the model
+    discover tools with ``defer_loading=True``. Tools with ``defer_loading=True`` are
+    not initially presented to the model — they become available after the model
+    discovers them via search.
 
-    Tools with `defer_loading=True` are not initially presented to the model.
-    Instead, they become available after the model discovers them via the search tool.
+    When the model supports the [`ToolSearchTool`][pydantic_ai.builtin_tools.ToolSearchTool]
+    builtin, discovery is handled by the provider and the deferred tools are sent to the API
+    with ``defer_loading=True`` on the wire.
     """
+
+    search_fn: ToolSearchFunc | None = None
+    """Optional custom search function. If ``None``, the default token-overlap algorithm is used.
+
+    Receives the raw query string and the deferred tool definitions, and returns the matching
+    tool names ordered by relevance.
+    """
+
+    max_results: int = _MAX_SEARCH_RESULTS
+    """Maximum number of matches returned from the default algorithm."""
+
+    tool_description: str | None = None
+    """Custom description for the ``search_tools`` function shown to the model."""
+
+    search_guidance: str | None = None
+    """Custom description for the ``keywords`` parameter shown to the model."""
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
@@ -85,8 +132,36 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
 
         discovered = self._parse_discovered_tools(ctx)
 
-        if discovered.issuperset(deferred):
-            return all_tools
+        result: dict[str, ToolsetTool[AgentDepsT]] = dict(visible)
+
+        # Native path: expose every deferred tool under a managed key so the model adapter
+        # can emit it with provider-specific defer_loading on the wire. `managed_by_builtin`
+        # causes the non-native adapter to drop these — the local path uses the regular
+        # entries below.
+        for name, tool in deferred.items():
+            managed_def = replace(tool.tool_def, managed_by_builtin=_TOOL_SEARCH_BUILTIN_ID)
+            result[f'{name}{_MANAGED_KEY_SUFFIX}'] = replace(tool, tool_def=managed_def)
+
+        # Local path: only already-discovered deferred tools are visible under their real name
+        # until the model calls `search_tools` to discover more. Preserve definition order.
+        for name, tool in deferred.items():
+            if name in discovered:
+                result[name] = tool
+
+        # If every deferred tool is already discovered, no need for the search function.
+        if not discovered.issuperset(deferred):
+            search_tool = self._build_search_tool(deferred, discovered)
+            result[_SEARCH_TOOLS_NAME] = search_tool
+
+        return result
+
+    def _build_search_tool(
+        self,
+        deferred: dict[str, ToolsetTool[AgentDepsT]],
+        discovered: set[str],
+    ) -> _SearchTool[AgentDepsT]:
+        search_guidance = self.search_guidance or _DEFAULT_SEARCH_GUIDANCE
+        schema, args_ta = _build_search_args_schema(search_guidance)
 
         search_index = [
             _SearchIndexEntry(
@@ -100,41 +175,31 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
 
         search_tool_def = ToolDefinition(
             name=_SEARCH_TOOLS_NAME,
-            description=(
-                'There are additional tools not yet visible to you.'
-                ' When you need a capability not provided by your current tools,'
-                ' search here by providing specific keywords to discover and activate relevant tools.'
-                ' Each keyword is matched independently against tool names and descriptions.'
-                ' If no tools are found, they do not exist — do not retry.'
-            ),
-            parameters_json_schema=_SEARCH_TOOL_SCHEMA,
+            description=self.tool_description or _DEFAULT_TOOL_DESCRIPTION,
+            parameters_json_schema=schema,
+            prefer_builtin=_TOOL_SEARCH_BUILTIN_ID,
         )
 
-        search_tool = _SearchTool(
+        return _SearchTool(
             toolset=self,
             tool_def=search_tool_def,
             max_retries=1,
-            args_validator=_search_tool_args_ta.validator,  # pyright: ignore[reportArgumentType]
+            args_validator=args_ta.validator,  # pyright: ignore[reportArgumentType]
             search_index=search_index,
         )
 
-        result: dict[str, ToolsetTool[AgentDepsT]] = {_SEARCH_TOOLS_NAME: search_tool}
-        result.update(visible)
-        for name, tool in deferred.items():
-            if name in discovered:
-                result[name] = tool
-
-        return result
-
     def _parse_discovered_tools(self, ctx: RunContext[AgentDepsT]) -> set[str]:
-        """Parse message history to find tools discovered via search_tools."""
+        """Scan message history for tool discovery metadata.
+
+        Produced by our own ``search_tools`` calls or by the provider's native tool
+        search (which writes the same metadata key).
+        """
         discovered: set[str] = set()
         for msg in ctx.messages:
             if isinstance(msg, ModelRequest):
                 for part in msg.parts:
                     if (
                         isinstance(part, ToolReturnPart)
-                        and part.tool_name == _SEARCH_TOOLS_NAME
                         and isinstance(metadata := part.metadata, dict)
                         and isinstance(tool_names := metadata.get(_DISCOVERED_TOOLS_METADATA_KEY), list)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
                     ):
@@ -146,7 +211,9 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     ) -> Any:
         if name == _SEARCH_TOOLS_NAME and isinstance(tool, _SearchTool):
             return await self._search_tools(tool_args, tool)
-        return await self.wrapped.call_tool(name, tool_args, ctx, tool)
+        # Strip the `~managed:tool_search` suffix so the wrapped toolset receives the real name.
+        original_name = name.removesuffix(_MANAGED_KEY_SUFFIX)
+        return await self.wrapped.call_tool(original_name, tool_args, ctx, tool)
 
     @staticmethod
     def _search_terms(name: str, description: str | None) -> set[str]:
@@ -156,18 +223,22 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         return search_terms
 
     async def _search_tools(self, tool_args: dict[str, Any], search_tool: _SearchTool[AgentDepsT]) -> ToolReturn:
-        """Search for tools ordered by token overlap with the query.
-
-        Tokenizes both the query and each tool's name/description on alphanumeric runs,
-        scores each tool by how many query tokens it contains, and returns all positive
-        matches ordered from highest to lowest score. This prefers more specific
-        matches such as `github_get_me` for "github profile" without matching
-        substrings inside words like `comment` for the query `me`.
-        """
+        """Run the configured search strategy over the deferred-but-not-yet-discovered tools."""
         keywords = tool_args['keywords']
         if not keywords:
             raise ModelRetry('Please provide search keywords.')
 
+        if self.search_fn is not None:
+            return self._run_search_fn(keywords, search_tool)
+        return self._run_default_search(keywords, search_tool)
+
+    def _run_default_search(self, keywords: str, search_tool: _SearchTool[AgentDepsT]) -> ToolReturn:
+        """Score each tool by how many query tokens appear in its name/description.
+
+        Tokenizes on alphanumeric runs for both the query and the indexed terms, so the
+        top hit for "github profile" is ``github_get_me`` (two matches) without matching
+        substrings inside longer words like ``comment`` for the query ``me``.
+        """
         terms = self._search_terms(keywords, None)
         if not terms:
             raise ModelRetry('Please provide search keywords.')
@@ -186,10 +257,37 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             )
 
         scored_matches.sort(key=lambda item: item[0], reverse=True)
-        matches = [match for _, match in scored_matches[:_MAX_SEARCH_RESULTS]]
+        matches = [match for _, match in scored_matches[: self.max_results]]
         tool_names = [match['name'] for match in matches]
 
         return ToolReturn(
             return_value=matches,
             metadata={_DISCOVERED_TOOLS_METADATA_KEY: tool_names},
+        )
+
+    def _run_search_fn(self, keywords: str, search_tool: _SearchTool[AgentDepsT]) -> ToolReturn:
+        """Invoke a user-provided strategy and normalize its return to the metadata shape."""
+        assert self.search_fn is not None
+
+        tool_defs_by_name = {entry.name: entry for entry in search_tool.search_index}
+        tool_defs: Sequence[ToolDefinition] = [
+            ToolDefinition(name=entry.name, description=entry.description) for entry in search_tool.search_index
+        ]
+
+        matched = list(self.search_fn(keywords, tool_defs))[: self.max_results]
+
+        matches: list[dict[str, str | None]] = []
+        for name in matched:
+            if entry := tool_defs_by_name.get(name):
+                matches.append({'name': entry.name, 'description': entry.description})
+
+        if not matches:
+            return ToolReturn(
+                return_value='No matching tools found. The tools you need may not be available.',
+                metadata={_DISCOVERED_TOOLS_METADATA_KEY: []},
+            )
+
+        return ToolReturn(
+            return_value=matches,
+            metadata={_DISCOVERED_TOOLS_METADATA_KEY: [m['name'] for m in matches]},
         )

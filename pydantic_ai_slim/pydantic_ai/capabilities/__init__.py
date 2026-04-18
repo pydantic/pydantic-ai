@@ -1,5 +1,6 @@
 from typing import Any
 
+from ._tool_search import ToolSearch
 from .abstract import (
     AbstractCapability,
     AgentNode,
@@ -45,6 +46,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         PrepareTools,
         SetToolMetadata,
         Thinking,
+        ToolSearch,
         Toolset,
         WebFetch,
         WebSearch,
@@ -82,6 +84,7 @@ __all__ = [
     'SetToolMetadata',
     'Thinking',
     'ThreadExecutor',
+    'ToolSearch',
     'Toolset',
     'WebFetch',
     'WebSearch',

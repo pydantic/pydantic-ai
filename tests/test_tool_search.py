@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
@@ -20,13 +21,16 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, FunctionToolset, ToolCallPart
 from pydantic_ai._run_context import RunContext
+from pydantic_ai.builtin_tools import ToolSearchTool
 from pydantic_ai.capabilities._ordering import collect_leaves
 from pydantic_ai.capabilities._tool_search import ToolSearch
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolReturn, ToolReturnPart
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tool_manager import ToolManager
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._tool_search import (
     _DISCOVERED_TOOLS_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     _SEARCH_TOOLS_NAME,  # pyright: ignore[reportPrivateUsage]
@@ -404,7 +408,16 @@ async def test_tool_search_toolset_filters_deferred_tools():
     tools = await searchable.get_tools(ctx)
     tool_names = list(tools.keys())
 
-    assert tool_names == snapshot(['search_tools', 'get_weather', 'get_time'])
+    assert tool_names == snapshot(
+        [
+            'get_weather',
+            'get_time',
+            'calculate_mortgage~managed:tool_search',
+            'stock_price~managed:tool_search',
+            'crypto_price~managed:tool_search',
+            'search_tools',
+        ]
+    )
 
 
 async def test_search_tool_def_description_and_schema():
@@ -690,7 +703,18 @@ async def test_tool_search_toolset_omits_search_tool_once_all_deferred_tools_are
     tools = await searchable.get_tools(ctx)
     tool_names = list(tools.keys())
 
-    assert tool_names == snapshot(['get_weather', 'get_time', 'calculate_mortgage', 'stock_price', 'crypto_price'])
+    assert tool_names == snapshot(
+        [
+            'get_weather',
+            'get_time',
+            'calculate_mortgage~managed:tool_search',
+            'stock_price~managed:tool_search',
+            'crypto_price~managed:tool_search',
+            'calculate_mortgage',
+            'stock_price',
+            'crypto_price',
+        ]
+    )
 
 
 async def test_tool_search_toolset_reserved_name_collision():
@@ -779,16 +803,21 @@ async def test_explicit_tool_search_not_duplicated():
     assert tool_search_count == 1
 
 
-def test_tool_search_excluded_from_capability_registry():
-    """ToolSearch is internal and should not appear in the serializable capability registry."""
+def test_tool_search_in_capability_registry():
+    """ToolSearch is a public, spec-constructible capability."""
     from pydantic_ai.capabilities import CAPABILITY_TYPES
 
-    assert ToolSearch.get_serialization_name() is None
-    assert not any(cls is ToolSearch for cls in CAPABILITY_TYPES.values())
+    assert ToolSearch.get_serialization_name() == 'ToolSearch'
+    assert CAPABILITY_TYPES['ToolSearch'] is ToolSearch
 
 
 async def test_tool_manager_with_tool_search_toolset():
-    """Test that ToolManager works correctly with ToolSearchToolset."""
+    """Test that ToolManager works correctly with ToolSearchToolset.
+
+    Deferred tools show up in ``tool_defs`` as managed-by-builtin entries (for the native
+    provider tool search path). The model-visible tool list is filtered by
+    ``Model.prepare_request`` based on whether the model supports the builtin.
+    """
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset)
     ctx = _build_run_context(None)
@@ -796,10 +825,13 @@ async def test_tool_manager_with_tool_search_toolset():
     tool_manager = ToolManager[None](searchable)
     run_step_toolset = await tool_manager.for_run_step(ctx)
 
-    tool_names = [t.name for t in run_step_toolset.tool_defs]
-    assert 'search_tools' in tool_names
-    assert 'get_weather' in tool_names
-    assert 'calculate_mortgage' not in tool_names
+    local_tool_names = [t.name for t in run_step_toolset.tool_defs if not t.managed_by_builtin]
+    assert 'search_tools' in local_tool_names
+    assert 'get_weather' in local_tool_names
+    assert 'calculate_mortgage' not in local_tool_names
+
+    managed_tool_names = {t.name for t in run_step_toolset.tool_defs if t.managed_by_builtin == 'tool_search'}
+    assert managed_tool_names == {'calculate_mortgage', 'stock_price', 'crypto_price'}
 
     result = await run_step_toolset.handle_call(ToolCallPart(tool_name='search_tools', args={'keywords': 'mortgage'}))
     assert 'calculate_mortgage' in str(result)
@@ -882,7 +914,9 @@ async def test_function_toolset_all_deferred():
     tools = await searchable.get_tools(ctx)
     tool_names = list(tools.keys())
 
-    assert tool_names == snapshot(['search_tools'])
+    assert tool_names == snapshot(
+        ['deferred_tool1~managed:tool_search', 'deferred_tool2~managed:tool_search', 'search_tools']
+    )
 
 
 async def test_tool_search_toolset_ignores_non_metadata_history():
@@ -982,3 +1016,143 @@ async def test_deferred_loading_toolset_marks_specific_tools():
     assert 'search_tools' in tools
     assert 'tool_a' in tools
     assert 'tool_b' not in tools
+
+
+async def test_tool_search_toolset_emits_managed_variants_for_native_path():
+    """Every deferred tool is exposed under a managed-by-builtin key so the model
+    adapter can forward it to the provider's native tool search with `defer_loading`."""
+    toolset = _create_function_toolset()
+    searchable = ToolSearchToolset(wrapped=toolset)
+    ctx = _build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+
+    managed = {name: tool.tool_def for name, tool in tools.items() if '~managed:' in name}
+    assert set(managed) == {
+        'calculate_mortgage~managed:tool_search',
+        'stock_price~managed:tool_search',
+        'crypto_price~managed:tool_search',
+    }
+    for tool_def in managed.values():
+        assert tool_def.managed_by_builtin == 'tool_search'
+        assert tool_def.defer_loading
+
+
+async def test_tool_search_toolset_call_tool_routes_managed_key_to_wrapped():
+    """Calls dispatched via a `~managed:` key unwrap to the real tool name."""
+    toolset = _create_function_toolset()
+    searchable = ToolSearchToolset(wrapped=toolset)
+    ctx = _build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+    managed_tool = tools['calculate_mortgage~managed:tool_search']
+    result = await searchable.call_tool(
+        'calculate_mortgage~managed:tool_search',
+        {'principal': 100.0, 'rate': 5.0, 'years': 30},
+        ctx,
+        managed_tool,
+    )
+    assert result == 'Mortgage calculated'
+
+
+async def test_tool_search_toolset_custom_search_fn_is_used():
+    """A custom ``search_fn`` replaces the default token-matching algorithm."""
+    calls: list[str] = []
+
+    def custom_search(query: str, tools: Sequence[ToolDefinition]) -> list[str]:
+        calls.append(query)
+        # Pick anything with 'price' in the name, regardless of query tokens.
+        return [t.name for t in tools if 'price' in t.name]
+
+    toolset = _create_function_toolset()
+    searchable = ToolSearchToolset(wrapped=toolset, search_fn=custom_search)
+    ctx = _build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'anything'}, ctx, tools[_SEARCH_TOOLS_NAME])
+    assert isinstance(result, ToolReturn)
+    assert result.metadata == {'discovered_tools': ['stock_price', 'crypto_price']}
+    assert calls == ['anything']
+
+
+async def test_tool_search_capability_strategy_callable_skips_builtin():
+    """A callable strategy runs locally — no ToolSearchTool builtin is registered."""
+
+    def noop(query: str, tools: Sequence[ToolDefinition]) -> list[str]:  # pragma: no cover
+        return []
+
+    cap = ToolSearch(strategy=noop)
+    assert list(cap.get_builtin_tools()) == []
+
+
+async def test_tool_search_capability_strategy_named_registers_builtin():
+    """Named strategies register a `ToolSearchTool` builtin so native search is used."""
+    cap = ToolSearch(strategy='regex')
+    builtins = list(cap.get_builtin_tools())
+    assert len(builtins) == 1
+    tool = builtins[0]
+    assert isinstance(tool, ToolSearchTool)
+    assert tool.strategy == 'regex'
+
+
+def test_managed_by_builtin_swaps_on_support():
+    """In `prepare_request`, `managed_by_builtin` tools are kept when the builtin
+    is supported and dropped otherwise — mirroring `prefer_builtin` in reverse."""
+    from pydantic_ai.models.test import TestModel
+    from pydantic_ai.tools import ToolDefinition
+
+    m = TestModel()
+    search_builtin = ToolSearchTool()
+    corpus_tool = ToolDefinition(name='deferred_tool', managed_by_builtin='tool_search')
+
+    # TestModel doesn't support ToolSearchTool — corpus drops, builtin drops silently (optional).
+    _, prepared = m.prepare_request(
+        None,
+        ModelRequestParameters(
+            function_tools=[corpus_tool],
+            builtin_tools=[search_builtin],
+        ),
+    )
+    assert prepared.builtin_tools == []
+    assert prepared.function_tools == []
+
+
+def test_managed_by_builtin_kept_on_supporting_model():
+    """On a supporting model, managed tools are kept so the adapter can emit them
+    with provider-specific wire-format tweaks."""
+    from pydantic_ai.models.test import TestModel
+    from pydantic_ai.tools import ToolDefinition
+
+    class ToolSearchTestModel(TestModel):
+        @classmethod
+        def supported_builtin_tools(cls):
+            return frozenset({ToolSearchTool})
+
+    m = ToolSearchTestModel()
+    corpus_tool = ToolDefinition(name='deferred_tool', managed_by_builtin='tool_search')
+    _, prepared = m.prepare_request(
+        None,
+        ModelRequestParameters(
+            function_tools=[corpus_tool],
+            builtin_tools=[ToolSearchTool()],
+        ),
+    )
+    assert [t.name for t in prepared.function_tools] == ['deferred_tool']
+    assert any(isinstance(t, ToolSearchTool) for t in prepared.builtin_tools)
+
+
+def test_optional_builtin_dropped_with_empty_corpus():
+    """An ``optional`` builtin is silently dropped when no managed corpus is in the request."""
+    from pydantic_ai.models.test import TestModel
+
+    class ToolSearchTestModel(TestModel):
+        @classmethod
+        def supported_builtin_tools(cls):
+            return frozenset({ToolSearchTool})
+
+    m = ToolSearchTestModel()
+    _, prepared = m.prepare_request(
+        None,
+        ModelRequestParameters(function_tools=[], builtin_tools=[ToolSearchTool()]),
+    )
+    assert prepared.builtin_tools == []

@@ -13,7 +13,7 @@ from typing_extensions import assert_never
 
 from .. import _utils
 from .._run_context import RunContext
-from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS, AbstractBuiltinTool
+from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS, AbstractBuiltinTool, ToolSearchTool
 from ..exceptions import UserError
 from ..messages import (
     BuiltinToolCallPart,
@@ -165,8 +165,13 @@ class TestModel(Model):
 
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
-        """TestModel supports all builtin tools for testing flexibility."""
-        return SUPPORTED_BUILTIN_TOOLS
+        """TestModel supports all builtin tools for testing flexibility.
+
+        ``ToolSearchTool`` is excluded because TestModel can't emulate provider-native
+        tool search. Auto-injected ``ToolSearch`` capabilities work transparently thanks
+        to the local ``search_tools`` fallback.
+        """
+        return SUPPORTED_BUILTIN_TOOLS - {ToolSearchTool}
 
     def gen_tool_args(self, tool_def: ToolDefinition) -> Any:
         return _JsonSchemaTestData(tool_def.parameters_json_schema, self.seed).generate()

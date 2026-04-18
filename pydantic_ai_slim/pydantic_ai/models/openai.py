@@ -33,6 +33,7 @@ from ..builtin_tools import (
     ImageAspectRatio,
     ImageGenerationTool,
     MCPServerTool,
+    ToolSearchTool,
     WebSearchTool,
 )
 from ..capabilities.abstract import AbstractCapability
@@ -116,6 +117,7 @@ try:
         ComputerToolParam,
         FileSearchToolParam,
         ResponseCompactionItem,
+        ToolSearchToolParam,
         WebSearchToolParam,
     )
     from openai.types.responses.response_compaction_item_param_param import ResponseCompactionItemParamParam
@@ -129,6 +131,7 @@ try:
         Summary as ReasoningSummary,
     )
     from openai.types.responses.response_status import ResponseStatus
+    from openai.types.responses.response_tool_search_call import ResponseToolSearchCall
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
 
@@ -1565,7 +1568,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """Return the set of builtin tool types this model can handle."""
-        return frozenset({WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool})
+        return frozenset(
+            {WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool, ToolSearchTool}
+        )
 
     async def compact_messages(
         self,
@@ -1711,6 +1716,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """Process a non-streamed response, and prepare a message to return."""
         items: list[ModelResponsePart] = []
         refusal_text: str | None = None
+        # Index tool_search_output items by call_id so we can pair them with the
+        # corresponding tool_search_call when we encounter it (they may come in either
+        # order).
+        tool_search_outputs: dict[str, responses.ResponseToolSearchOutputItem] = {
+            output_item.call_id: output_item
+            for output_item in response.output
+            if isinstance(output_item, responses.ResponseToolSearchOutputItem) and output_item.call_id is not None
+        }
         for item in response.output:
             if isinstance(item, responses.ResponseReasoningItem):
                 signature = item.encrypted_content
@@ -1784,6 +1797,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 call_part, return_part = _map_web_search_tool_call(item, self.system)
                 items.append(call_part)
                 items.append(return_part)
+            elif isinstance(item, responses.ResponseToolSearchCall):
+                output_item = tool_search_outputs.get(item.call_id) if item.call_id else None
+                call_part, return_part = _map_tool_search_call(item, output_item, self.system)
+                items.append(call_part)
+                items.append(return_part)
+            elif isinstance(item, responses.ResponseToolSearchOutputItem):
+                # The output item is paired with its call via `tool_search_outputs`; skip here.
+                pass
             elif isinstance(item, responses.response_output_item.ImageGenerationCall):
                 call_part, return_part, file_part = _map_image_generation_tool_call(item, self.system)
                 items.append(call_part)
@@ -2040,7 +2061,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
-    def _get_builtin_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.ToolParam]:
+    def _get_builtin_tools(  # noqa: C901
+        self, model_request_parameters: ModelRequestParameters
+    ) -> list[responses.ToolParam]:
         tools: list[responses.ToolParam] = []
         has_image_generating_tool = False
         for tool in model_request_parameters.builtin_tools:
@@ -2092,7 +2115,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     mcp_tool['server_url'] = tool.url
 
                 tools.append(mcp_tool)
-            elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
+            elif isinstance(tool, ImageGenerationTool):
                 has_image_generating_tool = True
                 size = _resolve_openai_image_generation_size(tool)
                 output_compression = tool.output_compression if tool.output_compression is not None else 100
@@ -2109,6 +2132,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         size=size,
                     )
                 )
+            elif isinstance(tool, ToolSearchTool):  # pragma: no branch
+                # OpenAI doesn't expose distinct named strategies — it decides server-side.
+                tools.append(ToolSearchToolParam(type='tool_search'))
             else:
                 raise UserError(  # pragma: no cover
                     f'`{tool.__class__.__name__}` is not supported by `OpenAIResponsesModel`. If it should be, please file an issue.'
@@ -2119,7 +2145,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return tools
 
     def _map_tool_definition(self, f: ToolDefinition) -> responses.FunctionToolParam:
-        return {
+        tool_param: responses.FunctionToolParam = {
             'name': f.name,
             'parameters': f.parameters_json_schema,
             'type': 'function',
@@ -2128,6 +2154,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 f.strict and OpenAIModelProfile.from_profile(self.profile).openai_supports_strict_tool_definition
             ),
         }
+        if f.managed_by_builtin == ToolSearchTool.kind:
+            # Tools in the tool-search corpus are loaded on-demand by OpenAI's native
+            # search mechanism, not included in the initial system prompt.
+            tool_param['defer_loading'] = True
+        return tool_param
 
     def _resolve_previous_response_id(
         self,
@@ -3599,6 +3630,44 @@ def _map_code_interpreter_tool_call(
             provider_name=provider_name,
         ),
         file_parts,
+    )
+
+
+def _map_tool_search_call(
+    item: ResponseToolSearchCall,
+    output_item: responses.ResponseToolSearchOutputItem | None,
+    provider_name: str,
+) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart]:
+    """Map OpenAI native tool search (server-executed) into builtin call/return parts.
+
+    Mirrors `_map_web_search_tool_call`: call and result are both server-side, so we
+    emit both parts in the same response. The ``discovered_tools`` metadata matches the
+    key written by our local `search_tools`, enabling cross-provider history recovery.
+    """
+    call_id = item.call_id or item.id
+    tool_names: list[str] = []
+    if output_item is not None:
+        for t in output_item.tools:
+            name = getattr(t, 'name', None)
+            if isinstance(name, str):
+                tool_names.append(name)
+    raw_args: object = item.arguments
+    args: dict[str, Any] | None = cast('dict[str, Any]', raw_args) if isinstance(raw_args, dict) else None
+    return (
+        BuiltinToolCallPart(
+            provider_name=provider_name,
+            tool_name=ToolSearchTool.kind,
+            args=args,
+            tool_call_id=call_id,
+            id=item.id,
+        ),
+        BuiltinToolReturnPart(
+            provider_name=provider_name,
+            tool_name=ToolSearchTool.kind,
+            content={'status': item.status, 'discovered_tools': tool_names},
+            tool_call_id=call_id,
+            metadata={'discovered_tools': tool_names} if tool_names else None,
+        ),
     )
 
 

@@ -1,14 +1,17 @@
 from __future__ import annotations as _annotations
 
 from abc import ABC
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated, Any, Literal, Union
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, TypeAlias, Union
 
 import pydantic
 from pydantic_core import core_schema
 from typing_extensions import TypedDict, deprecated
+
+if TYPE_CHECKING:
+    from ..tools import ToolDefinition
 
 __all__ = (
     'AbstractBuiltinTool',
@@ -22,6 +25,10 @@ __all__ = (
     'MemoryTool',
     'MCPServerTool',
     'FileSearchTool',
+    'ToolSearchTool',
+    'ToolSearchStrategy',
+    'ToolSearchNamedStrategy',
+    'ToolSearchFunc',
     'BUILTIN_TOOL_TYPES',
     'DEPRECATED_BUILTIN_TOOLS',
     'SUPPORTED_BUILTIN_TOOLS',
@@ -48,6 +55,16 @@ class AbstractBuiltinTool(ABC):
 
     kind: str = 'unknown_builtin_tool'
     """Built-in tool identifier, this should be available on all built-in tools as a discriminator."""
+
+    optional: ClassVar[bool] = False
+    """Whether the builtin is a best-effort upgrade rather than a hard requirement.
+
+    When ``True``, an instance on a model that doesn't support it is silently dropped
+    from the request instead of raising when no local fallback is provided. Set by
+    infrastructure capabilities (e.g.
+    [`ToolSearch`][pydantic_ai.capabilities.ToolSearch]) whose builtin enables a native
+    optimization rather than a user-visible feature.
+    """
 
     @property
     def unique_id(self) -> str:
@@ -560,6 +577,65 @@ class FileSearchTool(AbstractBuiltinTool):
 
     kind: str = 'file_search'
     """The kind of tool."""
+
+
+ToolSearchFunc: TypeAlias = Callable[[str, Sequence['ToolDefinition']], Sequence[str]]
+"""Custom search function for :class:`ToolSearchTool`.
+
+Takes the natural-language query and the deferred tool definitions to search through,
+and returns the matching tool names ordered by relevance.
+"""
+
+ToolSearchNamedStrategy: TypeAlias = Literal['bm25', 'regex']
+"""Named server-side tool search strategy supported by Anthropic."""
+
+ToolSearchStrategy: TypeAlias = Union[ToolSearchFunc, ToolSearchNamedStrategy]  # noqa: UP007
+"""Tool search strategy accepted by the
+[`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability.
+
+- ``None``: use the provider's default native search when supported, local fallback otherwise.
+- ``'bm25'`` / ``'regex'``: force the Anthropic native BM25 or regex strategy.
+- Callable ``(query, tools) -> names``: custom local search function.
+"""
+
+
+@dataclass(kw_only=True)
+class ToolSearchTool(AbstractBuiltinTool):
+    """A builtin tool that enables native provider tool search.
+
+    When supported, the provider handles tool discovery using its own search mechanism,
+    and tools marked as part of the search corpus (via ``managed_by_builtin='tool_search'``
+    on their [`ToolDefinition`][pydantic_ai.tools.ToolDefinition]) are sent with
+    ``defer_loading`` on the wire. The provider manages their visibility and only exposes
+    them once they've been discovered.
+
+    When not supported, the [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability's
+    local implementation handles discovery via its own ``search_tools`` function tool.
+
+    Supported by:
+
+    * Anthropic (bm25, regex) — Sonnet 4.0+, Opus 4.0+, Haiku 4.5+
+    * OpenAI Responses (server) — GPT-5.4+
+    """
+
+    strategy: ToolSearchNamedStrategy | None = None
+    """The native search strategy to use.
+
+    * ``None`` (default): use the provider's default native search. On Anthropic this is
+      ``bm25``; on OpenAI it is the server-executed ``tool_search`` tool.
+    * ``'bm25'`` / ``'regex'``: force a specific Anthropic native strategy. Raises on other
+      providers.
+
+    Custom callable strategies aren't carried on this builtin — they run locally via the
+    [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability.
+    """
+
+    kind: str = 'tool_search'
+    """The kind of tool."""
+
+    # Silently dropped on models that don't support native tool search — the capability's
+    # local `search_tools` function handles discovery instead.
+    optional: ClassVar[bool] = True
 
 
 def _tool_discriminator(tool_data: dict[str, Any] | AbstractBuiltinTool) -> str:

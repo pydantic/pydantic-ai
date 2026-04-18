@@ -755,37 +755,57 @@ class Model(ABC, Generic[InterfaceClient]):
             raise UserError('Image output is not supported by this model.')
 
         # Check builtin tools and handle fallback swap
-        if params.builtin_tools or any(t.prefer_builtin for t in params.function_tools):
-            supported_types = self.profile.supported_builtin_tools
-
-            supported_builtins = [t for t in params.builtin_tools if isinstance(t, tuple(supported_types))]
-            unsupported_builtins = [t for t in params.builtin_tools if not isinstance(t, tuple(supported_types))]
-
-            supported_ids = {t.unique_id for t in supported_builtins}
-            unsupported_ids = {t.unique_id for t in unsupported_builtins}
-            fallback_ids = {t.prefer_builtin for t in params.function_tools if t.prefer_builtin}
-
-            # Error only for unsupported builtins that have no local fallback
-            without_fallback = unsupported_ids - fallback_ids
-            if without_fallback:
-                unsupported_names = [type(t).__name__ for t in unsupported_builtins if t.unique_id in without_fallback]
-                supported_names = [t.__name__ for t in supported_types]
-                raise UserError(
-                    f'Builtin tool(s) {unsupported_names} not supported by this model. '
-                    f'Supported: {supported_names}. '
-                    f'To use these tools with this model, provide a local fallback via '
-                    f'BuiltinOrLocalTool(builtin=..., local=...) or the `local` parameter '
-                    f'of the capability (e.g. ImageGeneration(local=my_func)).'
-                )
-
-            # Remove local fallback tools whose preferred builtin IS supported (model handles natively)
-            # Remove unsupported builtins (their local fallbacks stay)
-            function_tools = [
-                t for t in params.function_tools if not t.prefer_builtin or t.prefer_builtin not in supported_ids
-            ]
-            params = replace(params, builtin_tools=supported_builtins, function_tools=function_tools)
+        if params.builtin_tools or any(t.prefer_builtin or t.managed_by_builtin for t in params.function_tools):
+            params = self._resolve_builtin_tool_swap(params)
 
         return model_settings, params
+
+    def _resolve_builtin_tool_swap(self, params: ModelRequestParameters) -> ModelRequestParameters:
+        """Swap builtin tools and function-tool fallbacks/corpus based on profile support.
+
+        - ``prefer_builtin``: a local fallback that is removed when the builtin IS supported.
+        - ``managed_by_builtin``: part of a corpus managed by the builtin — kept when
+          supported (adapter applies wire-format tweaks), dropped when not supported.
+        - Optional unsupported builtins (``type(t).optional``) with no corpus are silently
+          dropped instead of raising.
+        """
+        supported_types = self.profile.supported_builtin_tools
+
+        supported_builtins = [t for t in params.builtin_tools if isinstance(t, tuple(supported_types))]
+        unsupported_builtins = [t for t in params.builtin_tools if not isinstance(t, tuple(supported_types))]
+
+        supported_ids = {t.unique_id for t in supported_builtins}
+        unsupported_ids = {t.unique_id for t in unsupported_builtins}
+        optional_ids = {t.unique_id for t in unsupported_builtins if type(t).optional}
+        fallback_ids = {t.prefer_builtin for t in params.function_tools if t.prefer_builtin}
+
+        without_fallback = unsupported_ids - fallback_ids - optional_ids
+        if without_fallback:
+            unsupported_names = [type(t).__name__ for t in unsupported_builtins if t.unique_id in without_fallback]
+            supported_names = [t.__name__ for t in supported_types]
+            raise UserError(
+                f'Builtin tool(s) {unsupported_names} not supported by this model. '
+                f'Supported: {supported_names}. '
+                f'To use these tools with this model, provide a local fallback via '
+                f'BuiltinOrLocalTool(builtin=..., local=...) or the `local` parameter '
+                f'of the capability (e.g. ImageGeneration(local=my_func)).'
+            )
+
+        function_tools: list[ToolDefinition] = []
+        for t in params.function_tools:
+            if t.prefer_builtin and t.prefer_builtin in supported_ids:
+                continue
+            if t.managed_by_builtin and t.managed_by_builtin not in supported_ids:
+                continue
+            function_tools.append(t)
+
+        # Drop optional builtins whose managed corpus is empty after filtering —
+        # they have nothing to do, so sending them would waste a tool slot.
+        remaining_corpus_ids = {t.managed_by_builtin for t in function_tools if t.managed_by_builtin}
+        supported_builtins = [
+            t for t in supported_builtins if not type(t).optional or t.unique_id in remaining_corpus_ids
+        ]
+        return replace(params, builtin_tools=supported_builtins, function_tools=function_tools)
 
     @property
     @abstractmethod
