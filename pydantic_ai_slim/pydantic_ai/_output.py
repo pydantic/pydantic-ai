@@ -224,7 +224,7 @@ async def run_output_process_hooks(
     except ModelRetry as e:
         if wrap_validation_errors:
             raise _make_retry_prompt(e, run_context) from e
-        raise  # pragma: no cover — streaming partial validation; ModelRetry from hooks propagates as-is
+        raise
 
 
 async def run_image_process_hooks(
@@ -281,11 +281,11 @@ async def run_output_with_hooks(
     Output validators (`@agent.output_validator`) run inside process hooks when a capability
     is present, ensuring `wrap_output_process` wraps the complete output pipeline.
     """
-    if capability is None:  # pragma: no cover — agents always have root_capability
+    if capability is None:
         result = await processor.process(
             text, run_context=run_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
         )
-        for validator in output_validators:
+        for validator in output_validators:  # pragma: no branch
             result = await validator.validate(result, run_context, wrap_validation_errors=wrap_validation_errors)
         return result
 
