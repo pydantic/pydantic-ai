@@ -186,9 +186,13 @@ class TemporalModel(WrapperModel):
                 'A Temporal model cannot be used with `pydantic_ai.direct.model_request_stream()` as it requires a `run_context`. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
             )
 
-        # We can never get here without an `event_stream_handler`, as `TemporalAgent.run_stream` and `TemporalAgent.iter` raise an error saying to use `TemporalAgent.run` instead,
-        # and that only calls `request_stream` if `event_stream_handler` is set.
-        assert self.event_stream_handler is not None
+        # We can never get here without either an `event_stream_handler` or a capability that overrides
+        # `wrap_run_event_stream`: `TemporalAgent.run_stream` and `TemporalAgent.iter` raise an error saying
+        # to use `TemporalAgent.run` instead, and `TemporalAgent.run` only calls `request_stream` when one
+        # of those is set.
+        assert self.event_stream_handler is not None or (
+            self._agent is not None and self._agent.root_capability.has_wrap_run_event_stream
+        )
 
         self._validate_model_request_parameters(model_request_parameters)
 
