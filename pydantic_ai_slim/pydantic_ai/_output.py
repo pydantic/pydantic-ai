@@ -281,7 +281,7 @@ async def run_output_with_hooks(
     Output validators (`@agent.output_validator`) run inside process hooks when a capability
     is present, ensuring `wrap_output_process` wraps the complete output pipeline.
     """
-    if capability is None:
+    if capability is None:  # pragma: no cover — agents always have root_capability
         result = await processor.process(
             text, run_context=run_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
         )
