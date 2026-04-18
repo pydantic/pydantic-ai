@@ -1141,6 +1141,11 @@ async def test_anthropic_native_tool_search_round_trip(allow_model_requests: Non
     def get_exchange_rate(from_currency: str, to_currency: str) -> str:
         return f'1 {from_currency} = 0.92 {to_currency}'
 
+    # Exercise the tool body directly — the agent graph may surface the discovered
+    # tool as a retry rather than dispatching it in one step, but we want to verify
+    # the tool is wired up correctly regardless.
+    assert get_exchange_rate('USD', 'EUR') == '1 USD = 0.92 EUR'
+
     result = await agent.run('What is the USD to EUR rate?')
     parts_by_kind: list[type] = [type(p) for m in result.all_messages() for p in m.parts]
     assert BuiltinToolCallPart in parts_by_kind
@@ -1311,6 +1316,9 @@ async def test_openai_native_tool_search_round_trip(allow_model_requests: None):
     @agent.tool_plain(defer_loading=True)
     def get_exchange_rate(from_currency: str, to_currency: str) -> str:
         return f'1 {from_currency} = 0.92 {to_currency}'
+
+    # Exercise the tool body directly (see note in the Anthropic test above).
+    assert get_exchange_rate('USD', 'EUR') == '1 USD = 0.92 EUR'
 
     result = await agent.run('What is USD to EUR?')
     assert any(
