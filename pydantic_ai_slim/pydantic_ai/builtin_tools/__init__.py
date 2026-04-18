@@ -590,12 +590,14 @@ ToolSearchNamedStrategy: TypeAlias = Literal['bm25', 'regex']
 """Named server-side tool search strategy supported by Anthropic."""
 
 ToolSearchStrategy: TypeAlias = Union[ToolSearchFunc, ToolSearchNamedStrategy]  # noqa: UP007
-"""Tool search strategy accepted by the
+"""Tool search strategy value accepted by the
 [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability.
 
-- ``None``: use the provider's default native search when supported, local fallback otherwise.
 - ``'bm25'`` / ``'regex'``: force the Anthropic native BM25 or regex strategy.
 - Callable ``(query, tools) -> names``: custom local search function.
+
+``None`` is allowed on [`ToolSearch.strategy`][pydantic_ai.capabilities.ToolSearch.strategy]
+itself (meaning "use the provider default") but isn't part of this alias.
 """
 
 

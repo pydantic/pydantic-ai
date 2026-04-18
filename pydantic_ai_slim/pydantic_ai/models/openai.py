@@ -2382,6 +2382,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                     },
                                 )
                                 openai_messages.append(image_generation_item)
+                            elif item.tool_name == ToolSearchTool.kind and item.tool_call_id:
+                                openai_messages.append(
+                                    responses.response_input_item_param.ToolSearchCall(
+                                        id=item.id or item.tool_call_id,
+                                        call_id=item.tool_call_id,
+                                        arguments=item.args_as_dict() or {},
+                                        type='tool_search_call',
+                                        execution='server',
+                                        status='completed',
+                                    )
+                                )
                             elif (  # pragma: no branch
                                 item.tool_name.startswith(MCPServerTool.kind)
                                 and item.tool_call_id
@@ -2907,6 +2918,14 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         yield self._parts_manager.handle_part(
                             vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
                         )
+                    elif isinstance(chunk.item, responses.ResponseToolSearchCall):
+                        call_part, _ = _map_tool_search_call(chunk.item, None, self.provider_name)
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
+                        )
+                    elif isinstance(chunk.item, responses.ResponseToolSearchOutputItem):
+                        # The final return part is emitted in ResponseOutputItemDoneEvent; skip here.
+                        pass
                     elif isinstance(chunk.item, responses.ResponseFileSearchToolCall):
                         call_part, _ = _map_file_search_tool_call(chunk.item, self.provider_name)
                         yield self._parts_manager.handle_part(
@@ -2999,6 +3018,23 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         if maybe_event is not None:  # pragma: no branch
                             yield maybe_event
 
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=f'{chunk.item.id}-return', part=return_part
+                        )
+                    elif isinstance(chunk.item, responses.ResponseToolSearchCall):
+                        call_part, _ = _map_tool_search_call(chunk.item, None, self.provider_name)
+
+                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                            vendor_part_id=f'{chunk.item.id}-call',
+                            args=call_part.args,
+                        )
+                        if maybe_event is not None:  # pragma: no branch
+                            yield maybe_event
+                    elif isinstance(chunk.item, responses.ResponseToolSearchOutputItem):
+                        call_id = chunk.item.call_id or chunk.item.id
+                        return_part = _build_tool_search_return_part(
+                            call_id, chunk.item.status, chunk.item, self.provider_name
+                        )
                         yield self._parts_manager.handle_part(
                             vendor_part_id=f'{chunk.item.id}-return', part=return_part
                         )
@@ -3645,29 +3681,42 @@ def _map_tool_search_call(
     key written by our local `search_tools`, enabling cross-provider history recovery.
     """
     call_id = item.call_id or item.id
-    tool_names: list[str] = []
-    if output_item is not None:
-        for t in output_item.tools:
-            name = getattr(t, 'name', None)
-            if isinstance(name, str):
-                tool_names.append(name)
     raw_args: object = item.arguments
     args: dict[str, Any] | None = cast('dict[str, Any]', raw_args) if isinstance(raw_args, dict) else None
-    return (
-        BuiltinToolCallPart(
-            provider_name=provider_name,
-            tool_name=ToolSearchTool.kind,
-            args=args,
-            tool_call_id=call_id,
-            id=item.id,
-        ),
-        BuiltinToolReturnPart(
-            provider_name=provider_name,
-            tool_name=ToolSearchTool.kind,
-            content={'status': item.status, 'discovered_tools': tool_names},
-            tool_call_id=call_id,
-            metadata={'discovered_tools': tool_names} if tool_names else None,
-        ),
+    call_part = BuiltinToolCallPart(
+        provider_name=provider_name,
+        tool_name=ToolSearchTool.kind,
+        args=args,
+        tool_call_id=call_id,
+        id=item.id,
+    )
+    return call_part, _build_tool_search_return_part(call_id, item.status, output_item, provider_name)
+
+
+def _build_tool_search_return_part(
+    call_id: str,
+    status: str | None,
+    output_item: responses.ResponseToolSearchOutputItem | None,
+    provider_name: str,
+) -> BuiltinToolReturnPart:
+    """Build the builtin return part for an OpenAI tool search, with or without output."""
+    tool_names: list[str] = []
+    if output_item is not None:
+        # `output_item.tools` is `list[Tool]` — a union of OpenAI Responses tool variants.
+        # Function tools carry a `name` attribute, but not every variant does, so we
+        # duck-type the read.
+        for t in output_item.tools:
+            if isinstance(name := getattr(t, 'name', None), str):
+                tool_names.append(name)
+    content: dict[str, Any] = {'discovered_tools': tool_names}
+    if status is not None:
+        content['status'] = status
+    return BuiltinToolReturnPart(
+        provider_name=provider_name,
+        tool_name=ToolSearchTool.kind,
+        content=content,
+        tool_call_id=call_id,
+        metadata={'discovered_tools': tool_names} if tool_names else None,
     )
 
 

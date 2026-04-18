@@ -22,6 +22,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from functools import cache
 from typing import Annotated, Any
 
 from pydantic import Field, TypeAdapter
@@ -30,7 +31,7 @@ from typing_extensions import TypedDict
 from .._run_context import AgentDepsT, RunContext
 from ..builtin_tools import ToolSearchFunc
 from ..exceptions import ModelRetry, UserError
-from ..messages import ModelRequest, ToolReturn, ToolReturnPart
+from ..messages import BuiltinToolReturnPart, ModelRequest, ModelResponse, ToolReturn, ToolReturnPart
 from ..tools import ToolDefinition
 from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
@@ -58,7 +59,15 @@ _DEFAULT_SEARCH_GUIDANCE = (
 )
 
 
+@cache
 def _build_search_args_schema(search_guidance: str) -> tuple[dict[str, Any], TypeAdapter[Any]]:
+    """Build the `search_tools` parameter schema for the given guidance text.
+
+    Cached per-guidance: the default guidance is used for every agent step with deferred
+    tools, so we only pay for class and adapter construction once per distinct guidance
+    value.
+    """
+
     class _SearchToolArgs(TypedDict):
         keywords: Annotated[str, Field(description=search_guidance)]
 
@@ -191,20 +200,32 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     def _parse_discovered_tools(self, ctx: RunContext[AgentDepsT]) -> set[str]:
         """Scan message history for tool discovery metadata.
 
-        Produced by our own ``search_tools`` calls or by the provider's native tool
-        search (which writes the same metadata key).
+        Picks up metadata written by our local ``search_tools`` (on
+        ``ToolReturnPart`` in a ``ModelRequest``) and by the provider's native tool
+        search (on ``BuiltinToolReturnPart`` in a ``ModelResponse`` — each adapter
+        writes the ``discovered_tools`` key when mapping the provider's result block).
         """
         discovered: set[str] = set()
         for msg in ctx.messages:
+            parts = msg.parts
             if isinstance(msg, ModelRequest):
-                for part in msg.parts:
-                    if (
-                        isinstance(part, ToolReturnPart)
-                        and isinstance(metadata := part.metadata, dict)
-                        and isinstance(tool_names := metadata.get(_DISCOVERED_TOOLS_METADATA_KEY), list)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-                    ):
-                        discovered.update(item for item in tool_names if isinstance(item, str))  # pyright: ignore[reportUnknownVariableType]
+                for part in parts:
+                    if isinstance(part, ToolReturnPart):
+                        self._collect_discovered_from_metadata(part.metadata, discovered)
+            elif isinstance(msg, ModelResponse):
+                for part in parts:
+                    if isinstance(part, BuiltinToolReturnPart) and part.tool_name == 'tool_search':
+                        self._collect_discovered_from_metadata(part.metadata, discovered)
         return discovered
+
+    @staticmethod
+    def _collect_discovered_from_metadata(metadata: Any, discovered: set[str]) -> None:
+        if not isinstance(metadata, dict):
+            return
+        tool_names = metadata.get(_DISCOVERED_TOOLS_METADATA_KEY)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        if not isinstance(tool_names, list):
+            return
+        discovered.update(item for item in tool_names if isinstance(item, str))  # pyright: ignore[reportUnknownVariableType]
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]

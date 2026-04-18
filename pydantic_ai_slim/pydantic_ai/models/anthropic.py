@@ -145,6 +145,7 @@ try:
         BetaToolSearchToolBm25_20251119Param,
         BetaToolSearchToolRegex20251119Param,
         BetaToolSearchToolResultBlock,
+        BetaToolSearchToolResultBlockParam,
         BetaToolUnionParam,
         BetaToolUseBlock,
         BetaToolUseBlockParam,
@@ -1069,6 +1070,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     input=response_part.args_as_dict(),
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
+                            elif response_part.tool_name == ToolSearchTool.kind:
+                                # Default to bm25 on replay — the server side doesn't actually
+                                # validate the name here, and we don't track which variant the
+                                # original request used.
+                                server_tool_use_block_param = BetaServerToolUseBlockParam(
+                                    id=tool_use_id,
+                                    type='server_tool_use',
+                                    name='tool_search_tool_bm25',
+                                    input=response_part.args_as_dict(),
+                                )
+                                assistant_content_params.append(server_tool_use_block_param)
                             elif (
                                 response_part.tool_name.startswith(MCPServerTool.kind)
                                 and (server_id := response_part.tool_name.split(':', 1)[1])
@@ -1128,6 +1140,18 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                         ),
                                     )
                                 )
+                            elif response_part.tool_name == ToolSearchTool.kind and isinstance(
+                                response_part.content, dict
+                            ):
+                                # `BetaToolSearchToolResultBlockParam` isn't in the
+                                # `BetaContentBlockParam` union yet; cast through Any until
+                                # the SDK's union is widened.
+                                tool_search_result_block: Any = BetaToolSearchToolResultBlockParam(
+                                    tool_use_id=tool_use_id,
+                                    type='tool_search_tool_result',
+                                    content=cast(Any, response_part.content),  # pyright: ignore[reportUnknownMemberType]
+                                )
+                                assistant_content_params.append(tool_search_result_block)
                             elif response_part.tool_name.startswith(MCPServerTool.kind) and isinstance(
                                 response_part.content, dict
                             ):  # pragma: no branch

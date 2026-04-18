@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import cast
 
 from .._run_context import AgentDepsT
-from ..builtin_tools import AbstractBuiltinTool, ToolSearchFunc, ToolSearchStrategy, ToolSearchTool
+from ..builtin_tools import ToolSearchFunc, ToolSearchStrategy, ToolSearchTool
 from ..tools import AgentBuiltinTool
 from ..toolsets import AbstractToolset
 from ..toolsets._tool_search import ToolSearchToolset
@@ -86,9 +85,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         # deferred-tools-on-wire path.
         if callable(self.strategy):
             return []
-        strategy = self.strategy  # one of 'bm25', 'regex', or None
-        builtin = ToolSearchTool(strategy=strategy)
-        return [cast(AgentBuiltinTool[AgentDepsT], cast(AbstractBuiltinTool, builtin))]
+        return [ToolSearchTool(strategy=self.strategy)]
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         return ToolSearchToolset(
