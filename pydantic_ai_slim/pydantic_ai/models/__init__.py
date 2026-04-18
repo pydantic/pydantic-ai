@@ -764,11 +764,16 @@ class Model(ABC, Generic[InterfaceClient]):
         """Swap builtin tools and function-tool fallbacks/corpus based on profile support.
 
         - ``prefer_builtin``: a local fallback that is removed when the builtin IS supported.
-        - ``managed_by_builtin``: part of a corpus managed by the builtin — kept when
-          supported (adapter applies wire-format tweaks), dropped when not supported.
+        - ``managed_by_builtin``: part of a corpus managed by the builtin — kept when the
+          profile supports the builtin type (adapter applies wire-format tweaks), dropped
+          when not. This uses the profile directly rather than `params.builtin_tools`, so
+          corpus tools are kept even when the user hasn't explicitly registered the
+          builtin — the adapter injects a default native variant.
         - Optional unsupported builtins (``type(t).optional``) with no corpus are silently
           dropped instead of raising.
         """
+        from ..builtin_tools import BUILTIN_TOOL_TYPES
+
         supported_types = self.profile.supported_builtin_tools
 
         supported_builtins = [t for t in params.builtin_tools if isinstance(t, tuple(supported_types))]
@@ -778,6 +783,10 @@ class Model(ABC, Generic[InterfaceClient]):
         unsupported_ids = {t.unique_id for t in unsupported_builtins}
         optional_ids = {t.unique_id for t in unsupported_builtins if type(t).optional}
         fallback_ids = {t.prefer_builtin for t in params.function_tools if t.prefer_builtin}
+
+        # Builtins that the profile supports, by unique_id — includes builtins the user
+        # hasn't explicitly registered.
+        profile_supported_ids = {kind for kind, cls in BUILTIN_TOOL_TYPES.items() if cls in supported_types}
 
         without_fallback = unsupported_ids - fallback_ids - optional_ids
         if without_fallback:
@@ -795,7 +804,7 @@ class Model(ABC, Generic[InterfaceClient]):
         for t in params.function_tools:
             if t.prefer_builtin and t.prefer_builtin in supported_ids:
                 continue
-            if t.managed_by_builtin and t.managed_by_builtin not in supported_ids:
+            if t.managed_by_builtin and t.managed_by_builtin not in profile_supported_ids:
                 continue
             function_tools.append(t)
 

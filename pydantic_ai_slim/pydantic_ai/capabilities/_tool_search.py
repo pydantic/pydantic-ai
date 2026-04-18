@@ -4,13 +4,16 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import get_args
 
 from .._run_context import AgentDepsT
-from ..builtin_tools import ToolSearchFunc, ToolSearchStrategy, ToolSearchTool
+from ..builtin_tools import ToolSearchFunc, ToolSearchNamedStrategy, ToolSearchStrategy, ToolSearchTool
 from ..tools import AgentBuiltinTool
 from ..toolsets import AbstractToolset
 from ..toolsets._tool_search import ToolSearchToolset
 from .abstract import AbstractCapability, CapabilityOrdering
+
+_NAMED_STRATEGIES: frozenset[ToolSearchNamedStrategy] = frozenset(get_args(ToolSearchNamedStrategy))
 
 
 @dataclass
@@ -79,13 +82,15 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         return 'ToolSearch'
 
     def get_builtin_tools(self) -> Sequence[AgentBuiltinTool[AgentDepsT]]:
-        # Register ToolSearchTool as a builtin so model adapters can route to native search
-        # when supported. For callable strategies, we don't register the native variant —
-        # the capability stays local-only and `managed_by_builtin` filtering drops the
-        # deferred-tools-on-wire path.
-        if callable(self.strategy):
-            return []
-        return [ToolSearchTool(strategy=self.strategy)]
+        # Only register `ToolSearchTool` as a builtin when the user explicitly pins a
+        # named strategy — that's the signal that the strategy needs to propagate to the
+        # adapter (e.g. Anthropic's ``regex`` vs. default BM25 variant). For the default
+        # (``None``) strategy, the adapter detects managed-by-builtin tools and adds its
+        # own default native variant, so we keep the agent's builtin_tools slim.
+        strategy = self.strategy
+        if isinstance(strategy, str) and strategy in _NAMED_STRATEGIES:
+            return [ToolSearchTool(strategy=strategy)]
+        return []
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         return ToolSearchToolset(

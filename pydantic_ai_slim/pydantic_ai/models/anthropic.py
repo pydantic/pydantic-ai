@@ -818,6 +818,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> tuple[list[BetaToolUnionParam], list[BetaRequestMCPServerURLDefinitionParam], set[str]]:
         beta_features: set[str] = set()
         mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] = []
+        has_tool_search_builtin = any(isinstance(t, ToolSearchTool) for t in model_request_parameters.builtin_tools)
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):
                 user_location = (
@@ -892,6 +893,21 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 raise UserError(  # pragma: no cover
                     f'`{tool.__class__.__name__}` is not supported by `AnthropicModel`. If it should be, please file an issue.'
                 )
+
+        # Auto-add the default native tool search tool when deferred corpus tools are
+        # present and the user hasn't explicitly configured a strategy via
+        # `ToolSearch(strategy='bm25'|'regex')` — keeps the agent's `builtin_tools`
+        # slim for the default `ToolSearch()` case.
+        if not has_tool_search_builtin and any(
+            t.managed_by_builtin == ToolSearchTool.kind for t in model_request_parameters.function_tools
+        ):
+            tools.append(
+                BetaToolSearchToolBm25_20251119Param(
+                    type='tool_search_tool_bm25_20251119',
+                    name='tool_search_tool_bm25',
+                )
+            )
+
         return tools, mcp_servers, beta_features
 
     def _infer_tool_choice(
