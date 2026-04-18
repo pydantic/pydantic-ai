@@ -507,7 +507,9 @@ class OnlineEvalConfig:
 
     Set to `False` to disable — useful for tests that want to assert on a custom
     sink alone, or in environments where OTel emission is undesirable. Custom
-    sinks registered via `default_sink` still run regardless of this flag.
+    sinks registered via `default_sink` still run regardless of this flag. With
+    `emit_otel_events=False` AND no sinks configured, dispatch short-circuits
+    entirely (the evaluator never runs) since results would have nowhere to go.
     """
     include_baggage: bool = True
     """Whether to copy OTel baggage entries onto every emitted evaluation event.

@@ -2152,12 +2152,10 @@ def test_extract_args_unknown_parameter_raises():
             return x
 
 
+@needs_logfire
 @pytest.mark.anyio
 async def test_sync_call_span_with_extract_args(capfire: CaptureLogfire):
     """Sync decorated functions also open a span and honour `extract_args`."""
-    if not logfire_import_successful():
-        pytest.skip('logfire not installed')
-
     config = OnlineEvalConfig(emit_otel_events=False)
 
     @config.evaluate(AlwaysTrue(), extract_args=True, record_return=True)
@@ -2180,9 +2178,32 @@ async def test_sync_call_span_with_extract_args(capfire: CaptureLogfire):
 
 @needs_logfire
 @pytest.mark.anyio
+async def test_dispatch_skipped_when_emit_off_and_no_sinks(capfire: CaptureLogfire):
+    """Skip evaluator dispatch entirely when results would have nowhere to go."""
+    config = OnlineEvalConfig(emit_otel_events=False)  # no sinks either
+
+    @config.evaluate(AlwaysTrue())
+    async def my_func(x: int) -> int:
+        return x
+
+    await my_func(1)
+    await wait_for_evaluations()
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    # The call span is still created (it wraps the function), but the evaluator
+    # never runs because results would be discarded.
+    assert any('my_func' in s['name'] for s in spans)
+    assert not any(s['name'] == 'Calling evaluator: {evaluator_name}' for s in spans)
+    assert list(capfire.log_exporter.get_finished_logs()) == []
+
+
+@needs_logfire
+@pytest.mark.anyio
 async def test_evaluator_span_nested_under_call_span(capfire: CaptureLogfire):
     """The `evaluator: {name}` span created in `run_evaluator` parents to the call span."""
-    config = OnlineEvalConfig(emit_otel_events=False)
+    # Need a sink (or `emit_otel_events=True`) to keep dispatch active — see
+    # `dispatch_evaluators` skip-when-no-output short-circuit.
+    config = OnlineEvalConfig(default_sink=Collector(), emit_otel_events=False)
 
     @config.evaluate(AlwaysTrue())
     async def my_func(x: int) -> int:

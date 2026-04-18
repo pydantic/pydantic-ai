@@ -449,6 +449,11 @@ async def dispatch_evaluators(
             # unconditionally inside `_dispatch_single_evaluator` when
             # `config.emit_otel_events` is True.
             sinks = _resolve_sinks(online_eval.sink, config.default_sink)
+            # Skip evaluators whose results would have nowhere to go: both OTel
+            # emission disabled and no sinks attached. Avoids spending semaphore
+            # slots and evaluator work to produce results we'd immediately drop.
+            if not config.emit_otel_events and not sinks:
+                continue
             on_max_concurrency = (
                 online_eval.on_max_concurrency
                 if online_eval.on_max_concurrency is not None
