@@ -31,7 +31,7 @@ from typing_extensions import TypedDict
 from .._run_context import AgentDepsT, RunContext
 from ..builtin_tools import ToolSearchFunc
 from ..exceptions import ModelRetry, UserError
-from ..messages import BuiltinToolReturnPart, ModelRequest, ModelResponse, ToolReturn, ToolReturnPart
+from ..messages import BuiltinToolReturnPart, ModelRequest, ToolReturn, ToolReturnPart
 from ..tools import ToolDefinition
 from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
@@ -207,13 +207,12 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         """
         discovered: set[str] = set()
         for msg in ctx.messages:
-            parts = msg.parts
             if isinstance(msg, ModelRequest):
-                for part in parts:
+                for part in msg.parts:
                     if isinstance(part, ToolReturnPart) and part.tool_name == _SEARCH_TOOLS_NAME:
                         self._collect_discovered_from_metadata(part.metadata, discovered)
-            elif isinstance(msg, ModelResponse):
-                for part in parts:
+            else:  # ModelResponse — the only other variant of ModelMessage.
+                for part in msg.parts:
                     if isinstance(part, BuiltinToolReturnPart) and part.tool_name == _TOOL_SEARCH_BUILTIN_ID:
                         self._collect_discovered_from_metadata(part.metadata, discovered)
         return discovered
