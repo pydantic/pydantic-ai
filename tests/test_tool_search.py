@@ -1335,6 +1335,183 @@ async def test_openai_native_tool_search_round_trip(allow_model_requests: None):
     assert 'tool_search_call' in second_types
 
 
+async def test_anthropic_native_tool_search_streaming(allow_model_requests: None):
+    """Anthropic streaming: `BetaToolSearchToolResultBlock` goes through the part
+    manager on `content_block_start` and emits a `BuiltinToolReturnPart`."""
+    pytest.importorskip('anthropic')
+    from anthropic.types.beta import (
+        BetaMessage,
+        BetaMessageDeltaUsage,
+        BetaRawContentBlockStartEvent,
+        BetaRawContentBlockStopEvent,
+        BetaRawMessageDeltaEvent,
+        BetaRawMessageStartEvent,
+        BetaRawMessageStopEvent,
+        BetaToolSearchToolResultBlock,
+        BetaUsage,
+    )
+    from anthropic.types.beta.beta_raw_message_delta_event import Delta
+    from anthropic.types.beta.beta_tool_reference_block import BetaToolReferenceBlock
+    from anthropic.types.beta.beta_tool_search_tool_search_result_block import (
+        BetaToolSearchToolSearchResultBlock,
+    )
+
+    from pydantic_ai.messages import BuiltinToolReturnPart
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    from .models.test_anthropic import MockAnthropic
+
+    result_block = BetaToolSearchToolResultBlock(
+        tool_use_id='srv_1',
+        type='tool_search_tool_result',
+        content=BetaToolSearchToolSearchResultBlock(
+            tool_references=[BetaToolReferenceBlock(tool_name='get_exchange_rate', type='tool_reference')],
+            type='tool_search_tool_search_result',
+        ),
+    )
+    events = [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id='msg_1',
+                model='claude-sonnet-4-5',
+                role='assistant',
+                type='message',
+                content=[],
+                stop_reason=None,
+                usage=BetaUsage(input_tokens=5, output_tokens=0),
+            ),
+        ),
+        BetaRawContentBlockStartEvent(type='content_block_start', index=0, content_block=result_block),
+        BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
+        BetaRawMessageDeltaEvent(
+            type='message_delta',
+            delta=Delta(stop_reason='end_turn'),
+            usage=BetaMessageDeltaUsage(input_tokens=5, output_tokens=1),
+        ),
+        BetaRawMessageStopEvent(type='message_stop'),
+    ]
+    mock_client = MockAnthropic.create_stream_mock(events)
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    from pydantic_ai.models import ModelRequestParameters as _ModelRequestParameters
+
+    params = _ModelRequestParameters(function_tools=[], builtin_tools=[], allow_text_output=True)
+    async with model.request_stream([], None, params) as streamed:
+        async for _ in streamed:
+            pass
+        response = streamed.get()
+    return_parts = [p for p in response.parts if isinstance(p, BuiltinToolReturnPart)]
+    assert return_parts and return_parts[0].metadata == {'discovered_tools': ['get_exchange_rate']}
+
+
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+)
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+)
+async def test_openai_native_tool_search_streaming(allow_model_requests: None):
+    """OpenAI Responses streaming: `ResponseToolSearchCall` and
+    `ResponseToolSearchOutputItem` events produce `BuiltinToolCallPart` and
+    `BuiltinToolReturnPart` through the streaming part manager."""
+    from openai.types import responses as resp
+    from openai.types.responses import (
+        FunctionTool,
+        ResponseOutputMessage,
+        ResponseOutputText,
+        ResponseToolSearchCall,
+        ResponseToolSearchOutputItem,
+    )
+
+    from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolReturnPart
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    from .models.mock_openai import MockOpenAIResponses
+
+    base = resp.Response(
+        id='123',
+        model='gpt-5.4',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+    call = ResponseToolSearchCall(
+        id='ts_1',
+        arguments={'query': 'rate'},
+        call_id='call_1',
+        execution='server',
+        status='completed',
+        type='tool_search_call',
+    )
+    output = ResponseToolSearchOutputItem(
+        id='tso_1',
+        call_id='call_1',
+        execution='server',
+        status='completed',
+        tools=[FunctionTool(name='real_tool', description='', parameters={}, strict=False, type='function')],
+        type='tool_search_output',
+    )
+    final = ResponseOutputMessage(
+        id='msg_1',
+        role='assistant',
+        status='completed',
+        type='message',
+        content=[ResponseOutputText(type='output_text', text='done.', annotations=[])],
+    )
+
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base, type='response.created', sequence_number=0),
+        resp.ResponseInProgressEvent(response=base, type='response.in_progress', sequence_number=1),
+        resp.ResponseOutputItemAddedEvent(
+            item=call, output_index=0, type='response.output_item.added', sequence_number=2
+        ),
+        resp.ResponseOutputItemDoneEvent(
+            item=call, output_index=0, type='response.output_item.done', sequence_number=3
+        ),
+        resp.ResponseOutputItemAddedEvent(
+            item=output, output_index=1, type='response.output_item.added', sequence_number=4
+        ),
+        resp.ResponseOutputItemDoneEvent(
+            item=output, output_index=1, type='response.output_item.done', sequence_number=5
+        ),
+        resp.ResponseOutputItemAddedEvent(
+            item=final, output_index=2, type='response.output_item.added', sequence_number=6
+        ),
+        resp.ResponseOutputItemDoneEvent(
+            item=final, output_index=2, type='response.output_item.done', sequence_number=7
+        ),
+        resp.ResponseCompletedEvent(
+            response=base.model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=8,
+        ),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+
+    # Drive the stream directly via the model's `request_stream` so we exercise the
+    # streaming handler without needing the agent graph to accept the output.
+    from pydantic_ai.models import ModelRequestParameters as _ModelRequestParameters
+
+    params = _ModelRequestParameters(function_tools=[], builtin_tools=[], allow_text_output=True)
+    async with model.request_stream([], None, params) as streamed:
+        async for _ in streamed:
+            pass
+        response = streamed.get()
+    parts = response.parts
+    assert any(isinstance(p, BuiltinToolCallPart) and p.tool_name == 'tool_search' for p in parts)
+    assert any(
+        isinstance(p, BuiltinToolReturnPart) and p.metadata == {'discovered_tools': ['real_tool']} for p in parts
+    )
+
+
 async def test_tool_search_toolset_discovers_from_builtin_return_part():
     """Discovery metadata on a `BuiltinToolReturnPart` from a native provider search
     is picked up so the local path recovers state on cross-provider handover."""
