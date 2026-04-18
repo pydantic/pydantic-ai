@@ -722,12 +722,16 @@ async def test_configure_updates_default_config():
         configure(emit_otel_events=False)
         assert DEFAULT_CONFIG.emit_otel_events is False
 
+        configure(include_baggage=False)
+        assert DEFAULT_CONFIG.include_baggage is False
+
     finally:
         DEFAULT_CONFIG.enabled = original_enabled
         DEFAULT_CONFIG.default_sink = original_sink
         DEFAULT_CONFIG.default_sample_rate = original_rate
         DEFAULT_CONFIG.on_max_concurrency = original_on_max
         DEFAULT_CONFIG.emit_otel_events = original_emit
+        DEFAULT_CONFIG.include_baggage = True
 
 
 @pytest.mark.anyio
@@ -2132,13 +2136,13 @@ def test_extract_args_without_logfire_raises(monkeypatch: pytest.MonkeyPatch):
     with pytest.raises(RuntimeError, match='logfire'):
 
         @online_module.evaluate(AlwaysTrue(), extract_args=True)
-        async def f(x: int) -> int:
+        async def f(x: int) -> int:  # pragma: no cover - decorator raises before body runs
             return x
 
     with pytest.raises(RuntimeError, match='logfire'):
 
         @online_module.evaluate(AlwaysTrue(), record_return=True)
-        async def g(x: int) -> int:
+        async def g(x: int) -> int:  # pragma: no cover - decorator raises before body runs
             return x
 
 
@@ -2148,8 +2152,48 @@ def test_extract_args_unknown_parameter_raises():
     with pytest.raises(ValueError, match='not in'):
 
         @evaluate(AlwaysTrue(), extract_args=['nonexistent'])
-        async def f(x: int) -> int:
+        async def f(x: int) -> int:  # pragma: no cover - decorator raises before body runs
             return x
+
+
+@needs_logfire
+@pytest.mark.anyio
+async def test_extract_args_accepts_single_string(capfire: CaptureLogfire):
+    """A bare string is treated as a one-element list of arg names."""
+    config = OnlineEvalConfig(default_sink=Collector(), emit_otel_events=False)
+
+    @config.evaluate(AlwaysTrue(), extract_args='x')
+    async def my_func(x: int, secret: str) -> int:
+        return x
+
+    await my_func(7, secret='shh')
+    await wait_for_evaluations()
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    call_spans = [s for s in spans if 'my_func' in s['name']]
+    assert len(call_spans) == 1
+    attrs = call_spans[0]['attributes']
+    assert attrs['x'] == 7
+    assert 'secret' not in attrs
+
+
+@needs_logfire
+@pytest.mark.anyio
+async def test_extract_args_empty_iterable_records_nothing(capfire: CaptureLogfire):
+    """An empty iterable for `extract_args` is treated as `False`."""
+    config = OnlineEvalConfig(default_sink=Collector(), emit_otel_events=False)
+
+    @config.evaluate(AlwaysTrue(), extract_args=())
+    async def my_func(x: int) -> int:
+        return x
+
+    await my_func(1)
+    await wait_for_evaluations()
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    call_spans = [s for s in spans if 'my_func' in s['name']]
+    assert len(call_spans) == 1
+    assert 'x' not in call_spans[0]['attributes']
 
 
 @needs_logfire
