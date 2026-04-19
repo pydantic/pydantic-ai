@@ -1028,8 +1028,15 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
                         raise exceptions.ContentFilterError(message, body=body)
 
-                    # If the output type allows None, an empty response is a valid result.
-                    if is_empty and output_schema.allows_none:
+                    # If the output type allows None, an empty or thinking-only
+                    # response is a valid result.  Thinking-only responses are
+                    # produced by some reasoning-oriented models (e.g. Gemma 4
+                    # e4b) when they've completed the task via a tool call and
+                    # have nothing to add; forcing a retry only makes the model
+                    # produce unnecessary follow-up text.  Opt in by declaring
+                    # the agent with ``output_type=str | None`` (or any union
+                    # including ``None``).
+                    if (is_empty or is_thinking_only) and output_schema.allows_none:
                         run_context = _build_output_run_context(ctx)
                         try:
                             result_data = await _run_output_validators(ctx, cast(NodeRunEndT, None), run_context)

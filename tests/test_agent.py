@@ -9323,6 +9323,32 @@ async def test_agent_allows_none_output_after_tool():
     )
 
 
+async def test_agent_allows_none_output_thinking_only():
+    """Test that ``Agent(output_type=str | None)`` succeeds on a thinking-only
+    response — models like Gemma 4 e4b sometimes emit only ``ThinkingPart``
+    after a tool call when they have nothing to add, and forcing a retry
+    produces unnecessary follow-up text."""
+    call_count = 0
+
+    async def tool_then_thinking_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='noop', args={}, tool_call_id='123')])
+        return ModelResponse(parts=[ThinkingPart(content='Task complete — nothing more to add.')])
+
+    model = FunctionModel(function=tool_then_thinking_model)
+    agent = Agent(model, output_type=str | None)
+
+    @agent.tool_plain
+    def noop() -> str:
+        return 'done'
+
+    result = await agent.run('hello')
+    assert result.output is None
+    assert call_count == 2
+
+
 async def test_agent_allows_none_output_validator_called():
     """Test that output validators are called when returning None on empty response."""
 
