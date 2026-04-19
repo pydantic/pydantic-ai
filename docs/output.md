@@ -714,7 +714,7 @@ print(result.output)
 #> None
 ```
 
-When the model returns an empty response and `None` is an allowed output type, the agent will return `None` instead of retrying. [Output validator functions](#output-validator-functions) still run with `None` as the argument, so you can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject it if needed.
+When the model returns an empty response and `None` is an allowed output type, the agent will return `None` instead of retrying. A response containing only [thinking](thinking.md) content is treated the same way: some reasoning models emit only thinking after completing their work through a tool call, and retrying would just prompt unnecessary follow-up text. [Output validator functions](#output-validator-functions) still run with `None` as the argument, so you can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject it if needed.
 
 `output_type=str | None` is the canonical case: it's handled as regular text output, and the **only** way the model signals `None` is by returning an empty response — there's no output tool or structured schema involved. This mirrors how plain `str` is already treated specially as free-form text output rather than a structured tool call.
 
