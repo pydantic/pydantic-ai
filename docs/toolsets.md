@@ -903,6 +903,7 @@ You'll need to install `pydantic-ai-strale` and set the `STRALE_API_KEY` environ
 
 ```python {test="skip" lint="skip"}
 import os
+
 from pydantic_ai import Agent
 from pydantic_ai_strale import StraleToolset
 
