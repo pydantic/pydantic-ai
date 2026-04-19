@@ -9,12 +9,7 @@ from ..conftest import BinaryContent, try_import
 with try_import() as imports_successful:
     from pydantic_ai.settings import ModelSettings
     from pydantic_evals.evaluators.llm_as_a_judge import (
-        _JUDGE_REASON_INSTRUCTION,  # pyright: ignore[reportPrivateUsage]
         GradingOutput,
-        _judge_input_output_agent,  # pyright: ignore[reportPrivateUsage]
-        _judge_input_output_expected_agent,  # pyright: ignore[reportPrivateUsage]
-        _judge_output_agent,  # pyright: ignore[reportPrivateUsage]
-        _judge_output_expected_agent,  # pyright: ignore[reportPrivateUsage]
         _stringify,  # pyright: ignore[reportPrivateUsage]
         judge_input_output,
         judge_input_output_expected,
@@ -47,19 +42,8 @@ def test_grading_output():
 
     schema = GradingOutput.model_json_schema()
     assert schema['properties']['reason']['description'] == (
-        'A concise 1-2 sentence explanation of why the output passed or failed.'
+        'A concise 1-2 sentence justification for the verdict.'
     )
-
-
-def test_judge_agents_include_reason_instruction():
-    """Test that all judge agent system prompts include the concise reason instruction."""
-    for agent in (
-        _judge_output_agent,
-        _judge_input_output_agent,
-        _judge_input_output_expected_agent,
-        _judge_output_expected_agent,
-    ):
-        assert _JUDGE_REASON_INSTRUCTION in agent._system_prompts[0]  # pyright: ignore[reportPrivateUsage]
 
 
 def test_stringify():

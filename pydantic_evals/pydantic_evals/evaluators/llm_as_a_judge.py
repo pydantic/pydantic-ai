@@ -28,16 +28,16 @@ class GradingOutput(BaseModel, populate_by_name=True):
     """The output of a grading operation."""
 
     reason: str = Field(
-        description='A concise 1-2 sentence explanation of why the output passed or failed.',
+        description='A concise 1-2 sentence justification for the verdict.',
     )
     pass_: bool = Field(validation_alias='pass', serialization_alias='pass')
     score: float
 
 
 _JUDGE_REASON_INSTRUCTION = (
-    'The "reason" field must be a concise 1-2 sentence summary of your verdict. '
+    'The "reason" field must be a concise 1-2 sentence justification. '
     'Do not include your reasoning process, self-corrections, or re-checking in the reason. '
-    'State only the final conclusion.'
+    'State only the final justification.'
 )
 
 
