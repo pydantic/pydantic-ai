@@ -3788,8 +3788,7 @@ async def test_stream_text_early_break_cleanup(delta: bool, debounce_by: float |
     agent = Agent(FunctionModel(stream_function=sf))
 
     async with agent.run_stream('test') as result:
-        async for _text in result.stream_text(delta=delta, debounce_by=debounce_by):
-            break
+        await anext(result.stream_text(delta=delta, debounce_by=debounce_by))
 
     assert cleanup_called, 'stream function cleanup should have been called by aclosing propagation'
 
@@ -4288,8 +4287,7 @@ async def test_run_stream_events_break_cleanup():
     agent = Agent(TestModel())
 
     async with agent.run_stream_events('Hello') as stream:
-        async for _ in stream:
-            break
+        await anext(stream)
 
     # __aexit__ closed the generator (because _closed was False);
     # no task leak, no error.
@@ -4362,9 +4360,9 @@ async def test_run_stream_events_managed_cancellation_waits_for_cleanup():
 
     async def consume() -> None:
         async with agent.run_stream_events('Hello') as stream:
-            async for _event in stream:
-                first_event_seen.set()
-                await asyncio.sleep(10)
+            await anext(stream)
+            first_event_seen.set()
+            await asyncio.sleep(10)
 
     task = asyncio.create_task(consume())
     await first_event_seen.wait()

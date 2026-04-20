@@ -155,8 +155,6 @@ async def test_stream_text_enforces_output_token_limit_mid_stream() -> None:
         yield 'one'
         yield 'two'
         yield 'three'
-        yield 'four'
-        yield 'five'
 
     agent = Agent(FunctionModel(stream_function=stream_function))
 
@@ -166,7 +164,7 @@ async def test_stream_text_enforces_output_token_limit_mid_stream() -> None:
             async for text in result.stream_text(delta=True, debounce_by=None):
                 collected.append(text)
 
-    assert 0 < len(collected) < 5
+    assert 0 < len(collected) < 3
 
 
 def test_usage_so_far() -> None:
