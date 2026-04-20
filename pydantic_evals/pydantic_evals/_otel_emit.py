@@ -117,8 +117,21 @@ def _collect_extra_attributes(
 
 
 def build_parent_context(span_reference: Any | None) -> Context | None:
-    """Public: build an OTel context with a non-recording parent span, or None."""
-    return _build_parent_context(span_reference)
+    """Build an OTel context with a non-recording parent span, or None."""
+    if span_reference is None:
+        return None
+    try:
+        trace_id = int(span_reference.trace_id, 16)
+        span_id = int(span_reference.span_id, 16)
+    except (AttributeError, ValueError, TypeError):  # pragma: no cover
+        return None
+    span_ctx = SpanContext(
+        trace_id=trace_id,
+        span_id=span_id,
+        is_remote=False,
+        trace_flags=TraceFlags(TraceFlags.SAMPLED),
+    )
+    return trace.set_span_in_context(NonRecordingSpan(span_ctx))
 
 
 # --- emission helpers ---------------------------------------------------------
@@ -164,27 +177,6 @@ def _base_attrs(
     if evaluator_version is not None:
         attrs[_ATTR_EVALUATOR_VERSION] = evaluator_version
     return attrs
-
-
-# --- Module-level helpers -----------------------------------------------------
-
-
-def _build_parent_context(span_reference: Any | None) -> Context | None:
-    """Build an OTel context with a non-recording parent span, or None."""
-    if span_reference is None:
-        return None
-    try:
-        trace_id = int(span_reference.trace_id, 16)
-        span_id = int(span_reference.span_id, 16)
-    except (AttributeError, ValueError, TypeError):  # pragma: no cover
-        return None
-    span_ctx = SpanContext(
-        trace_id=trace_id,
-        span_id=span_id,
-        is_remote=False,
-        trace_flags=TraceFlags(TraceFlags.SAMPLED),
-    )
-    return trace.set_span_in_context(NonRecordingSpan(span_ctx))
 
 
 def _format_result_body(result: EvaluationResult) -> str:
