@@ -672,14 +672,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     def _get_container(
         self, messages: list[ModelMessage], model_settings: AnthropicModelSettings
-    ) -> BetaContainerParams | None:
+    ) -> BetaContainerParams | str | None:
         """Get container config for the API request."""
         if (container := model_settings.get('anthropic_container')) is not None:
             return None if container is False else container
         for m in reversed(messages):
             if isinstance(m, ModelResponse) and m.provider_name == self.system and m.provider_details:
                 if cid := m.provider_details.get('container_id'):
-                    return BetaContainerParams(id=cid)
+                    return cid
         return None
 
     async def _messages_count_tokens(
@@ -934,7 +934,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 current_request_index = i
 
         container = self._get_container(messages, model_settings)
-        reusing_container = container is not None and container.get('id') is not None
+        reusing_container = isinstance(container, str) or (container is not None and container.get('id') is not None)
 
         for i, m in enumerate(messages):
             if isinstance(m, ModelRequest):

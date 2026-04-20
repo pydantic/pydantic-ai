@@ -435,3 +435,19 @@ result = agent.run_sync(
 
 !!! note
     Compaction blocks returned by Anthropic contain readable text summaries. They are automatically round-tripped in subsequent requests when included in the message history.
+
+## Code Execution with Files
+
+Anthropic's [code execution tool](../builtin-tools.md#code-execution-tool) can read files you've uploaded via the [Anthropic Files API](https://platform.claude.com/docs/en/agents-and-tools/tool-use/code-execution-tool#upload-and-analyze-your-own-files). Pass the uploaded file IDs to [`CodeExecutionTool.file_ids`][pydantic_ai.builtin_tools.CodeExecutionTool.file_ids] and Pydantic AI will mount them into the sandbox before the first code execution call.
+
+```py {title="anthropic_code_execution_file_ids.py" test="skip"}
+from pydantic_ai import Agent, CodeExecutionTool
+
+# file_id obtained from client.beta.files.upload(...) via the Anthropic Files API
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    builtin_tools=[CodeExecutionTool(file_ids=['file_abc123'])],
+)
+```
+
+When you continue an agent run using the same message history, Pydantic AI reuses the existing container from the previous response and does not re-upload the files.
