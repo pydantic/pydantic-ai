@@ -127,7 +127,7 @@ class ToneCheck(Evaluator):
         return 'neutral'
 ```
 
-The version applies to all results the evaluator produces (so one evaluator class maps to one version, even when the evaluator returns a mapping of named results). Framework code reads the attribute via `getattr` — it's an optional convention on the base class, not a required field.
+The version applies to all results the evaluator produces (so one evaluator class maps to one version, even when the evaluator returns a mapping of named results).
 
 ## Core Concepts
 
