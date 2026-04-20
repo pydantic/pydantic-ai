@@ -252,7 +252,7 @@ class PrintSink:
 
 ### Default OTel event emission
 
-Every dispatched evaluator emits one `gen_ai.evaluation.result` OTel log event per [`EvaluationResult`][pydantic_evals.evaluators.EvaluationResult] or [`EvaluatorFailure`][pydantic_evals.evaluators.EvaluatorFailure], unconditionally — no sink registration required. Events are parented to the span that produced them (when a `span_reference` is available), so they appear nested under the original function call in the trace. If no OTel SDK is configured in the process, emission is a cheap no-op.
+Every dispatched evaluator emits one `gen_ai.evaluation.result` OTel log event per [`EvaluationResult`][pydantic_evals.evaluators.EvaluationResult] or [`EvaluatorFailure`][pydantic_evals.evaluators.EvaluatorFailure], unconditionally — no sink registration required. Events are parented to the span that produced them, so they appear nested under the original function call in the trace. If no OTel SDK is configured in the process, emission is a cheap no-op.
 
 The emission follows the [OpenTelemetry GenAI evaluation semconv](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-events/#event-gen_aievaluationresult). Key attributes:
 
