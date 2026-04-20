@@ -1,7 +1,5 @@
 from __future__ import annotations as _annotations
 
-from typing import Any, cast
-
 import pytest
 from inline_snapshot import snapshot
 
@@ -132,9 +130,7 @@ async def test_zai_prepare_request_thinking_enabled(zai_api_key: str):
     settings = ZaiModelSettings(zai_thinking=True)
     params = ModelRequestParameters()
     merged_settings, _ = model.prepare_request(settings, params)
-    assert merged_settings is not None
-    extra_body = cast(dict[str, Any], merged_settings.get('extra_body', {}))
-    assert extra_body.get('thinking') == {'type': 'enabled'}
+    assert merged_settings == snapshot({'extra_body': {'thinking': {'type': 'enabled'}}})
 
 
 async def test_zai_prepare_request_thinking_disabled(zai_api_key: str):
@@ -143,9 +139,7 @@ async def test_zai_prepare_request_thinking_disabled(zai_api_key: str):
     settings = ZaiModelSettings(zai_thinking=False)
     params = ModelRequestParameters()
     merged_settings, _ = model.prepare_request(settings, params)
-    assert merged_settings is not None
-    extra_body = cast(dict[str, Any], merged_settings.get('extra_body', {}))
-    assert extra_body.get('thinking') == {'type': 'disabled'}
+    assert merged_settings == snapshot({'extra_body': {'thinking': {'type': 'disabled'}}})
 
 
 async def test_zai_prepare_request_preserved_thinking(zai_api_key: str):
@@ -154,9 +148,7 @@ async def test_zai_prepare_request_preserved_thinking(zai_api_key: str):
     settings = ZaiModelSettings(zai_thinking=True, zai_clear_thinking=False)
     params = ModelRequestParameters()
     merged_settings, _ = model.prepare_request(settings, params)
-    assert merged_settings is not None
-    extra_body = cast(dict[str, Any], merged_settings.get('extra_body', {}))
-    assert extra_body.get('thinking') == {'type': 'enabled', 'clear_thinking': False}
+    assert merged_settings == snapshot({'extra_body': {'thinking': {'type': 'enabled', 'clear_thinking': False}}})
 
 
 async def test_zai_prepare_request_clear_thinking(zai_api_key: str):
@@ -165,9 +157,7 @@ async def test_zai_prepare_request_clear_thinking(zai_api_key: str):
     settings = ZaiModelSettings(zai_thinking=True, zai_clear_thinking=True)
     params = ModelRequestParameters()
     merged_settings, _ = model.prepare_request(settings, params)
-    assert merged_settings is not None
-    extra_body = cast(dict[str, Any], merged_settings.get('extra_body', {}))
-    assert extra_body.get('thinking') == {'type': 'enabled', 'clear_thinking': True}
+    assert merged_settings == snapshot({'extra_body': {'thinking': {'type': 'enabled', 'clear_thinking': True}}})
 
 
 async def test_zai_prepare_request_empty(zai_api_key: str):
@@ -176,8 +166,7 @@ async def test_zai_prepare_request_empty(zai_api_key: str):
     settings = ZaiModelSettings()
     params = ModelRequestParameters()
     merged_settings, _ = model.prepare_request(settings, params)
-    assert merged_settings is not None
-    assert merged_settings.get('extra_body') is None
+    assert merged_settings == snapshot({})
 
 
 async def test_zai_prepare_request_preserves_existing_extra_body(zai_api_key: str):
@@ -186,7 +175,4 @@ async def test_zai_prepare_request_preserves_existing_extra_body(zai_api_key: st
     settings = ZaiModelSettings(zai_thinking=True, extra_body={'custom_key': 'value'})
     params = ModelRequestParameters()
     merged_settings, _ = model.prepare_request(settings, params)
-    assert merged_settings is not None
-    extra_body = cast(dict[str, Any], merged_settings.get('extra_body', {}))
-    assert extra_body.get('thinking') == {'type': 'enabled'}
-    assert extra_body.get('custom_key') == 'value'
+    assert merged_settings == snapshot({'extra_body': {'custom_key': 'value', 'thinking': {'type': 'enabled'}}})

@@ -277,7 +277,7 @@ To enable thinking, use the [`ZaiModelSettings.zai_thinking`][pydantic_ai.models
 from pydantic_ai import Agent
 from pydantic_ai.models.zai import ZaiModel, ZaiModelSettings
 
-model = ZaiModel('glm-4.7')
+model = ZaiModel('glm-5')
 settings = ZaiModelSettings(zai_thinking=True, zai_clear_thinking=False)
 agent = Agent(model, model_settings=settings)
 ...

@@ -27,7 +27,7 @@ You can then use [`ZaiModel`][pydantic_ai.models.zai.ZaiModel] by name:
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('zai:glm-4.7')
+agent = Agent('zai:glm-5')
 ...
 ```
 
@@ -37,7 +37,7 @@ Or initialise the model directly with just the model name:
 from pydantic_ai import Agent
 from pydantic_ai.models.zai import ZaiModel
 
-model = ZaiModel('glm-4.7')
+model = ZaiModel('glm-5')
 agent = Agent(model)
 ...
 ```
@@ -51,7 +51,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.zai import ZaiModelSettings
 
 agent = Agent(
-    'zai:glm-4.7',
+    'zai:glm-5',
     model_settings=ZaiModelSettings(zai_thinking=True),
 )
 ...
@@ -66,7 +66,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.zai import ZaiModelSettings
 
 agent = Agent(
-    'zai:glm-4.7',
+    'zai:glm-5',
     model_settings=ZaiModelSettings(zai_thinking=True, zai_clear_thinking=False),
 )
 ...
@@ -78,34 +78,21 @@ See the [Z.AI thinking mode documentation](https://docs.z.ai/guides/capabilities
 
 ## `provider` argument
 
-You can provide a custom [`Provider`][pydantic_ai.providers.Provider] via the `provider` argument:
+You can provide a custom [`Provider`][pydantic_ai.providers.Provider] via the `provider` argument. In the simplest case, pass [`ZaiProvider`][pydantic_ai.providers.zai.ZaiProvider] with just an API key. If you also want to customize the underlying `httpx.AsyncClient`, pass it when constructing the provider:
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.zai import ZaiModel
 from pydantic_ai.providers.zai import ZaiProvider
-
-model = ZaiModel(
-    'glm-4.7', provider=ZaiProvider(api_key='your-api-key')
-)
-agent = Agent(model)
-...
-```
-
-You can also customize the [`ZaiProvider`][pydantic_ai.providers.zai.ZaiProvider] with a custom `httpx.AsyncClient`:
-
-```python
 from httpx import AsyncClient
-
-from pydantic_ai import Agent
-from pydantic_ai.models.zai import ZaiModel
-from pydantic_ai.providers.zai import ZaiProvider
 
 custom_http_client = AsyncClient(timeout=30)
 model = ZaiModel(
-    'glm-4.7',
+    'glm-5',
     provider=ZaiProvider(api_key='your-api-key', http_client=custom_http_client),
 )
 agent = Agent(model)
 ...
 ```
+
+If you do not need a custom HTTP client, omit the `http_client=custom_http_client` argument.
