@@ -81,7 +81,15 @@ __all__ = (
 
 
 OnErrorLocation = Literal['sink', 'on_max_concurrency']
-"""The location within the online evaluation pipeline where an error occurred."""
+"""The location within the online evaluation pipeline where an error occurred.
+
+- `'sink'` — something went wrong delivering results downstream. This is most often
+  an exception raised by a registered [`EvaluationSink.submit`][pydantic_evals.online.EvaluationSink.submit],
+  but it's also used as a catch-all for failures in the default OTel event emission
+  path (which is rare in practice; the OTel SDK rarely raises during `emit()`).
+- `'on_max_concurrency'` — the evaluator's `on_max_concurrency` callback itself raised
+  while being notified about a dropped evaluation.
+"""
 
 SamplingMode = Literal['independent', 'correlated']
 """Controls how per-evaluator sample rates interact across evaluators for a single call.
@@ -236,7 +244,9 @@ class OnlineEvaluator:
     """Called when an exception occurs in a sink or on_max_concurrency callback.
 
     Receives the exception, evaluator context, evaluator instance, and a location string
-    (`'sink'` or `'on_max_concurrency'`). Can be sync or async.
+    (see [`OnErrorLocation`][pydantic_evals.online.OnErrorLocation]). Can be sync or async.
+    `'sink'` covers both custom sink failures and the rarer default OTel event emission
+    failures — the value is intentionally broad.
     If `None`, uses the config's `on_error` default. If neither is set, exceptions are
     silently suppressed.
     """
@@ -486,7 +496,9 @@ class OnlineEvalConfig:
     """Default handler called when an exception occurs in a sink or on_max_concurrency callback.
 
     Receives the exception, evaluator context, evaluator instance, and a location string
-    (`'sink'` or `'on_max_concurrency'`). Can be sync or async.
+    (see [`OnErrorLocation`][pydantic_evals.online.OnErrorLocation]). Can be sync or async.
+    `'sink'` covers both custom sink failures and the rarer default OTel event emission
+    failures — the value is intentionally broad.
     If `None` (the default), exceptions are silently suppressed.
     Per-evaluator `OnlineEvaluator.on_error` overrides this default.
     """

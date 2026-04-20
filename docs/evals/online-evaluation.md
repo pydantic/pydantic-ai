@@ -868,7 +868,7 @@ config = OnlineEvalConfig(on_max_concurrency=warn_on_drop)
 There are two types of error handling:
 
 - **`on_sampling_error`**: Called synchronously when a `sample_rate` callable raises. Receives the exception and the [`Evaluator`][pydantic_evals.evaluators.Evaluator]. Must be sync (not async). If set, the evaluator is skipped. If not set, the exception **propagates to the caller**.
-- **`on_error`**: Called when an exception occurs in a `sink` or `on_max_concurrency` callback. Receives the exception, [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext], [`Evaluator`][pydantic_evals.evaluators.Evaluator], and a location string. Can be sync or async. If not set, exceptions are **silently suppressed**.
+- **`on_error`**: Called when an exception occurs in a `sink` or `on_max_concurrency` callback. Receives the exception, [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext], [`Evaluator`][pydantic_evals.evaluators.Evaluator], and a [`OnErrorLocation`][pydantic_evals.online.OnErrorLocation] string. Can be sync or async. If not set, exceptions are **silently suppressed**. The `'sink'` location is broad — it covers both custom sink failures and the rarer default OTel event emission failures, so handlers that branch on location should treat `'sink'` as "result delivery went wrong".
 
 Set these on [`OnlineEvalConfig`][pydantic_evals.online.OnlineEvalConfig] for global defaults, or on [`OnlineEvaluator`][pydantic_evals.online.OnlineEvaluator] to override per-evaluator:
 

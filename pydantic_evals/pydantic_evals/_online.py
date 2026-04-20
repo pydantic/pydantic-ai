@@ -446,6 +446,10 @@ async def _run_and_collect(
                     include_baggage=config.include_baggage,
                 )
             except Exception as exc:  # pragma: no cover - defensive
+                # Report OTel emission failures under the `'sink'` location: it's the
+                # catch-all for "something went wrong delivering results downstream",
+                # which default-sink users and OTel users can both reason about. See
+                # `OnErrorLocation` docstring in `online.py` for the contract.
                 await _call_on_error(on_error, exc, context, evaluator, 'sink')
 
         group.outcomes.append((online_eval, results, failures))
