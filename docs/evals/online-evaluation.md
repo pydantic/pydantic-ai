@@ -207,7 +207,7 @@ Each event has `event.name = 'gen_ai.evaluation.result'` and a short human-reada
 | `gen_ai.evaluation.score.value` | the result's scalar return value | Populated for `bool` (`True`→`1.0`, `False`→`0.0`) and numeric returns. Omitted for `str` returns. |
 | `gen_ai.evaluation.score.label` | the result's scalar return value | Populated for `bool` (`True`→`'pass'`, `False`→`'fail'`) and `str` returns (used directly as the label). Omitted for numeric returns. |
 | `gen_ai.evaluation.explanation` | `EvaluationResult.reason` (success) or `EvaluatorFailure.error_message` (failure) | Omitted when absent. Set this via `reason=...` when constructing an `EvaluationResult` inside a custom evaluator. |
-| `error.type` | fixed string, failure events only | `'pydantic_evals.EvaluatorFailure'` when the evaluator raised; absent on successful evaluations. |
+| `error.type` | `EvaluatorFailure.error_type` (failure events only) | The exception class name (e.g. `'ValueError'`) when the failure was built from a caught exception; falls back to `'pydantic_evals.EvaluatorFailure'` for `EvaluatorFailure` instances constructed without it. Absent on successful evaluations. |
 | `gen_ai.evaluation.target` | `@evaluate(target=...)` or agent `name` | See [Target](#target). |
 | `gen_ai.evaluation.evaluator.version` | `Evaluator.evaluator_version` class attribute | Omitted when the class doesn't set it. See [Evaluator Versioning](#evaluator-versioning). |
 | `gen_ai.evaluation.evaluator.source` | JSON-serialized [`EvaluatorSpec`][pydantic_evals.evaluators.evaluator.EvaluatorSpec] | Identifies the evaluator class and its constructor arguments, so downstream queries can group by evaluator identity without relying on `name` alone (two different `LLMJudge(rubric=...)` instances share a name but have different sources). |
@@ -234,7 +234,7 @@ config = OnlineEvalConfig(emit_otel_events=False)
 
 #### Evaluator Versioning
 
-Set `evaluator_version` as a class attribute on an [`Evaluator`][pydantic_evals.evaluators.Evaluator] subclass to stamp every result it emits with a version string — surfaced as `gen_ai.evaluation.evaluator_version` on emitted events and as `evaluator_version` on each [`EvaluationResult`][pydantic_evals.evaluators.EvaluationResult] and [`EvaluatorFailure`][pydantic_evals.evaluators.EvaluatorFailure]. This lets trend lines and dashboards filter out results produced by retired evaluator versions without deleting historical rows — useful when you change an LLM judge's prompt or rework a heuristic in a way that invalidates prior scores:
+Set `evaluator_version` as a class attribute on an [`Evaluator`][pydantic_evals.evaluators.Evaluator] subclass to stamp every result it emits with a version string — surfaced as `gen_ai.evaluation.evaluator.version` on emitted events and as `evaluator_version` on each [`EvaluationResult`][pydantic_evals.evaluators.EvaluationResult] and [`EvaluatorFailure`][pydantic_evals.evaluators.EvaluatorFailure]. This lets trend lines and dashboards filter out results produced by retired evaluator versions without deleting historical rows — useful when you change an LLM judge's prompt or rework a heuristic in a way that invalidates prior scores:
 
 ```python
 from dataclasses import dataclass
