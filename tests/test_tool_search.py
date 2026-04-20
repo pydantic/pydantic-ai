@@ -20,11 +20,13 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, FunctionToolset, ToolCallPart
 from pydantic_ai._run_context import RunContext
-from pydantic_ai._tool_manager import ToolManager
+from pydantic_ai.capabilities._ordering import collect_leaves
+from pydantic_ai.capabilities._tool_search import ToolSearch
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolReturn, ToolReturnPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
+from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.toolsets._tool_search import (
     _DISCOVERED_TOOLS_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     _SEARCH_TOOLS_NAME,  # pyright: ignore[reportPrivateUsage]
@@ -485,6 +487,96 @@ async def test_tool_search_toolset_search_matches_description():
     assert rv[0]['name'] == 'crypto_price'
 
 
+async def test_tool_search_toolset_prefers_specific_term_matches():
+    toolset: FunctionToolset[None] = FunctionToolset()
+
+    @toolset.tool_plain(defer_loading=True)
+    def github_get_me() -> str:  # pragma: no cover
+        """Get the authenticated GitHub profile."""
+        return 'me'
+
+    @toolset.tool_plain(defer_loading=True)
+    def github_create_gist() -> str:  # pragma: no cover
+        """Create a new GitHub gist."""
+        return 'gist'
+
+    searchable = ToolSearchToolset(wrapped=toolset)
+    ctx = _build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+    search_tool = tools[_SEARCH_TOOLS_NAME]
+
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'github profile'}, ctx, search_tool)
+    assert result == snapshot(
+        ToolReturn(
+            return_value=[
+                {'name': 'github_get_me', 'description': 'Get the authenticated GitHub profile.'},
+                {'name': 'github_create_gist', 'description': 'Create a new GitHub gist.'},
+            ],
+            metadata={'discovered_tools': ['github_get_me', 'github_create_gist']},
+        )
+    )
+
+
+async def test_tool_search_toolset_keeps_lower_scoring_matches_after_top_hits():
+    toolset: FunctionToolset[None] = FunctionToolset()
+
+    @toolset.tool_plain(defer_loading=True)
+    def stock_price() -> str:  # pragma: no cover
+        """Get the current stock price."""
+        return 'stock'
+
+    @toolset.tool_plain(defer_loading=True)
+    def crypto_price() -> str:  # pragma: no cover
+        """Get the current cryptocurrency price."""
+        return 'crypto'
+
+    searchable = ToolSearchToolset(wrapped=toolset)
+    ctx = _build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+    search_tool = tools[_SEARCH_TOOLS_NAME]
+
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'stock price'}, ctx, search_tool)
+    assert result == snapshot(
+        ToolReturn(
+            return_value=[
+                {'name': 'stock_price', 'description': 'Get the current stock price.'},
+                {'name': 'crypto_price', 'description': 'Get the current cryptocurrency price.'},
+            ],
+            metadata={'discovered_tools': ['stock_price', 'crypto_price']},
+        )
+    )
+
+
+async def test_tool_search_toolset_does_not_match_substrings_inside_words():
+    toolset: FunctionToolset[None] = FunctionToolset()
+
+    @toolset.tool_plain(defer_loading=True)
+    def github_get_me() -> str:  # pragma: no cover
+        """Get my GitHub profile."""
+        return 'me'
+
+    @toolset.tool_plain(defer_loading=True)
+    def github_add_comment_to_pending_review() -> str:  # pragma: no cover
+        """Add a pending review comment on GitHub."""
+        return 'comment'
+
+    searchable = ToolSearchToolset(wrapped=toolset)
+    ctx = _build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+    search_tool = tools[_SEARCH_TOOLS_NAME]
+
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'get me'}, ctx, search_tool)
+    assert result == snapshot(
+        ToolReturn(
+            return_value=[{'name': 'github_get_me', 'description': 'Get my GitHub profile.'}],
+            metadata={'discovered_tools': ['github_get_me']},
+        )
+    )
+
+
 async def test_tool_search_toolset_search_returns_no_matches():
     """Test that search returns empty list when no matches."""
     toolset = _create_function_toolset()
@@ -511,6 +603,20 @@ async def test_tool_search_toolset_search_empty_query():
 
     with pytest.raises(ModelRetry, match='Please provide search keywords.'):
         await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': ''}, ctx, search_tool)
+
+
+@pytest.mark.parametrize('keywords', ['   ', '---', '!!!', '...'])
+async def test_tool_search_toolset_search_non_tokenizable_query(keywords: str):
+    """Queries that tokenize to an empty set must retry, not match every tool."""
+    toolset = _create_function_toolset()
+    searchable = ToolSearchToolset(wrapped=toolset)
+    ctx = _build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+    search_tool = tools[_SEARCH_TOOLS_NAME]
+
+    with pytest.raises(ModelRetry, match='Please provide search keywords.'):
+        await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': keywords}, ctx, search_tool)
 
 
 async def test_tool_search_toolset_max_results():
@@ -564,6 +670,29 @@ async def test_tool_search_toolset_discovered_tools_available():
     assert 'stock_price' not in tool_names
 
 
+async def test_tool_search_toolset_omits_search_tool_once_all_deferred_tools_are_discovered():
+    toolset = _create_function_toolset()
+    searchable = ToolSearchToolset(wrapped=toolset)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name=_SEARCH_TOOLS_NAME,
+                    content={'message': 'Found all deferred tools.', 'tools': []},
+                    metadata={_DISCOVERED_TOOLS_METADATA_KEY: ['calculate_mortgage', 'stock_price', 'crypto_price']},
+                )
+            ]
+        )
+    ]
+    ctx = _build_run_context(None, messages=messages)
+
+    tools = await searchable.get_tools(ctx)
+    tool_names = list(tools.keys())
+
+    assert tool_names == snapshot(['get_weather', 'get_time', 'calculate_mortgage', 'stock_price', 'crypto_price'])
+
+
 async def test_tool_search_toolset_reserved_name_collision():
     """Test that `UserError` is raised if a tool is named 'search_tools' and deferred tools exist."""
     toolset: FunctionToolset[None] = FunctionToolset()
@@ -608,8 +737,8 @@ async def test_tool_search_toolset_no_deferred_tools_returns_all():
     assert tool_names == snapshot(['get_weather', 'get_time'])
 
 
-async def test_agent_always_wraps_in_tool_search_toolset():
-    """Test that agent always wraps toolset in ToolSearchToolset, with and without deferred tools."""
+async def test_agent_auto_injects_tool_search_capability():
+    """Test that agent auto-injects ToolSearch capability, with and without deferred tools."""
     agent_no_deferred = Agent('test')
 
     @agent_no_deferred.tool_plain
@@ -617,7 +746,8 @@ async def test_agent_always_wraps_in_tool_search_toolset():
         """Get the current weather for a city."""
         return f'Weather in {city}'
 
-    assert isinstance(agent_no_deferred._get_toolset(), ToolSearchToolset)  # pyright: ignore[reportPrivateUsage]
+    leaves = collect_leaves(agent_no_deferred.root_capability)
+    assert any(isinstance(leaf, ToolSearch) for leaf in leaves)
 
     agent_with_deferred = Agent('test')
 
@@ -631,7 +761,30 @@ async def test_agent_always_wraps_in_tool_search_toolset():
         """Calculate mortgage payment."""
         return 'Calculated'
 
-    assert isinstance(agent_with_deferred._get_toolset(), ToolSearchToolset)  # pyright: ignore[reportPrivateUsage]
+    leaves = collect_leaves(agent_with_deferred.root_capability)
+    assert any(isinstance(leaf, ToolSearch) for leaf in leaves)
+
+
+async def test_explicit_tool_search_not_duplicated():
+    """Passing ToolSearch explicitly doesn't result in a second auto-injected one."""
+    agent = Agent('test', capabilities=[ToolSearch()])
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:  # pragma: no cover
+        """Get the current weather for a city."""
+        return f'Weather in {city}'
+
+    leaves = collect_leaves(agent.root_capability)
+    tool_search_count = sum(1 for leaf in leaves if isinstance(leaf, ToolSearch))
+    assert tool_search_count == 1
+
+
+def test_tool_search_excluded_from_capability_registry():
+    """ToolSearch is internal and should not appear in the serializable capability registry."""
+    from pydantic_ai.capabilities import CAPABILITY_TYPES
+
+    assert ToolSearch.get_serialization_name() is None
+    assert not any(cls is ToolSearch for cls in CAPABILITY_TYPES.values())
 
 
 async def test_tool_manager_with_tool_search_toolset():

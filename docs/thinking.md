@@ -13,7 +13,7 @@ The simplest way to enable thinking across any supported provider is the `thinki
 ```python {title="unified_thinking.py"}
 from pydantic_ai import Agent
 
-agent = Agent('anthropic:claude-opus-4-6', model_settings={'thinking': 'high'})
+agent = Agent('anthropic:claude-opus-4-7', model_settings={'thinking': 'high'})
 ```
 
 Or using the [`Thinking`][pydantic_ai.capabilities.Thinking] capability:
@@ -22,7 +22,7 @@ Or using the [`Thinking`][pydantic_ai.capabilities.Thinking] capability:
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Thinking
 
-agent = Agent('anthropic:claude-opus-4-6', capabilities=[Thinking(effort='high')])
+agent = Agent('anthropic:claude-opus-4-7', capabilities=[Thinking(effort='high')])
 ```
 
 The `thinking` setting accepts:
@@ -39,7 +39,7 @@ The unified `thinking` setting maps to each provider's native format:
 
 | Provider | `thinking=True` | `thinking='high'` | Notes |
 |---|---|---|---|
-| Anthropic (Opus 4.6+) | `anthropic_thinking={'type': 'adaptive'}` | `{type: 'adaptive'}` + `effort='high'` | All truthy values → adaptive; effort via output_config |
+| Anthropic (Opus 4.6+) | `anthropic_thinking={'type': 'adaptive'}` | `{type: 'adaptive'}` + `effort='high'` | Claude Opus 4.7 also supports `effort='xhigh'` |
 | Anthropic (older) | `anthropic_thinking={'type': 'enabled', 'budget_tokens': 10000}` | `budget_tokens=16384` | Budget-based; `'low'` → 2048 tokens |
 | OpenAI | `reasoning_effort='medium'` | `reasoning_effort='high'` | |
 | Google (Gemini 3+) | `include_thoughts=True` | `thinking_level='HIGH'` | |
@@ -91,7 +91,7 @@ agent = Agent(model, model_settings=settings)
 To enable thinking, use the [`AnthropicModelSettings.anthropic_thinking`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_thinking] [model setting](agent.md#model-run-settings).
 
 !!! note
-    Extended thinking (`type: 'enabled'` with `budget_tokens`) is deprecated on `claude-opus-4-6`+. For those models, use [adaptive thinking](#adaptive-thinking-effort) instead.
+    Extended thinking (`type: 'enabled'` with `budget_tokens`) is deprecated on `claude-opus-4-6` and removed on `claude-opus-4-7`+. For those models, use [adaptive thinking](#adaptive-thinking--effort) instead.
 
 ```python {title="anthropic_thinking_part.py"}
 from pydantic_ai import Agent
@@ -124,13 +124,13 @@ agent = Agent(model, model_settings=settings)
 
 ### Adaptive Thinking & Effort
 
-Starting with `claude-opus-4-6`, Anthropic supports [adaptive thinking](https://docs.anthropic.com/en/docs/build-with-claude/adaptive-thinking), where the model dynamically decides when and how much to think based on the complexity of each request. This replaces extended thinking (`type: 'enabled'` with `budget_tokens`) which is deprecated on Opus 4.6. Adaptive thinking also automatically enables interleaved thinking.
+Starting with `claude-opus-4-6`, Anthropic supports [adaptive thinking](https://docs.anthropic.com/en/docs/build-with-claude/adaptive-thinking), where the model dynamically decides when and how much to think based on the complexity of each request. This replaces extended thinking (`type: 'enabled'` with `budget_tokens`) which is deprecated on Opus 4.6 and removed on Opus 4.7. Claude Opus 4.7 also adds the `xhigh` effort level. Adaptive thinking also automatically enables interleaved thinking.
 
 ```python {title="anthropic_adaptive_thinking.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 
-model = AnthropicModel('claude-opus-4-6')
+model = AnthropicModel('claude-opus-4-7')
 settings = AnthropicModelSettings(
     anthropic_thinking={'type': 'adaptive'},
     anthropic_effort='high',
