@@ -39,44 +39,9 @@ Wire up OTel export (e.g. `logfire.configure()`) elsewhere in your application s
 
 Each decorated call emits one `gen_ai.evaluation.result` OTel event per evaluator result, following the [OTel GenAI evaluation semconv](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-events/#event-gen_aievaluationresult). This mirrors how offline evaluation emits OTel spans via `logfire_span`: if any OTel SDK is configured in the process (via `logfire.configure()`, the OTel SDK directly, or a vendor instrumentation), events flow to your backend; if not, emission is a cheap no-op.
 
-To additionally handle results in Python code — for alerting, bespoke aggregation, in-memory test capture, or non-OTel destinations — register a [sink](#sinks). Sinks run *in addition to* OTel event emission:
+To additionally handle results in Python code — for alerting, bespoke aggregation, in-memory test capture, or non-OTel destinations — register a [sink](#sinks). Sinks run *in addition to* OTel event emission.
 
-```python
-import asyncio
-from dataclasses import dataclass
-
-from pydantic_evals.evaluators import Evaluator, EvaluatorContext
-from pydantic_evals.online import configure, evaluate, wait_for_evaluations
-
-results_log: list[str] = []
-configure(default_sink=lambda results, failures, ctx: results_log.extend(f'{r.name}={r.value}' for r in results))
-
-
-@dataclass
-class OutputNotEmpty(Evaluator):
-    def evaluate(self, ctx: EvaluatorContext) -> bool:
-        return bool(ctx.output)
-
-
-@evaluate(OutputNotEmpty())
-async def summarize(text: str) -> str:
-    return f'Summary of: {text}'
-
-
-async def main():
-    result = await summarize('Pydantic AI is a Python agent framework.')
-    print(result)
-    #> Summary of: Pydantic AI is a Python agent framework.
-
-    await wait_for_evaluations()
-    print(results_log)
-    #> ['OutputNotEmpty=True']
-
-
-asyncio.run(main())
-```
-
-This uses the module-level [`configure()`][pydantic_evals.online.configure] and [`evaluate()`][pydantic_evals.online.evaluate] functions, which delegate to a global [`OnlineEvalConfig`][pydantic_evals.online.OnlineEvalConfig]. For multiple configurations or isolated setups, create your own config instances (see [OnlineEvalConfig](#onlineevalconfig) below).
+The module-level [`configure()`][pydantic_evals.online.configure] and [`evaluate()`][pydantic_evals.online.evaluate] functions delegate to a global [`OnlineEvalConfig`][pydantic_evals.online.OnlineEvalConfig]. For multiple configurations or isolated setups, create your own config instances (see [OnlineEvalConfig](#onlineevalconfig) below).
 
 ## Target
 
