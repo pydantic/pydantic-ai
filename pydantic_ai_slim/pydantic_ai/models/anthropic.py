@@ -1817,7 +1817,11 @@ class AnthropicStreamedResponse(StreamedResponse):
                             vendor_part_id=event.index,
                             part=_map_web_search_tool_result_block(current_block, self.provider_name),
                         )
-                    elif isinstance(current_block, BetaCodeExecutionToolResultBlock):
+                    elif isinstance(current_block, BetaCodeExecutionToolResultBlock):  # pragma: no cover
+                        # Defensive: the unified `code_execution_20260120` tool we request emits
+                        # `bash_code_execution_tool_result` / `text_editor_code_execution_tool_result`,
+                        # never bare `code_execution_tool_result` — this branch only fires if the
+                        # deprecated `code_execution_20250522` shape resurfaces.
                         yield self._parts_manager.handle_part(
                             vendor_part_id=event.index,
                             part=_map_code_execution_tool_result_block(current_block, self.provider_name),

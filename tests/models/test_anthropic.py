@@ -7890,6 +7890,402 @@ async def test_anthropic_code_execution_tool_pass_history_back(env: TestEnv, all
     assert result2.output == 'The code execution returned the result: 4'
 
 
+async def test_anthropic_text_editor_code_execution_tool(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        builtin_tools=[CodeExecutionTool()],
+        instructions=(
+            'Use only the text editor `create` and `view` commands from the code execution sandbox. '
+            'Do not run any shell commands.'
+        ),
+    )
+
+    result = await agent.run(
+        'Use the text editor to create /tmp/hello.txt with the text: Hello, world! '
+        'Then use the text editor to view the file and tell me what it contains.'
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Use the text editor to create /tmp/hello.txt with the text: Hello, world! Then use the text editor to view the file and tell me what it contains.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='Use only the text editor `create` and `view` commands from the code execution sandbox. Do not run any shell commands.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="Sure! I'll do both steps simultaneously -- creating the file and viewing it at the same time!"
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='text_editor_code_execution',
+                        args={'command': 'create', 'file_text': 'Hello, world!', 'path': '/tmp/hello.txt'},
+                        tool_call_id='srvtoolu_01MQuAaMzvaquNAovWW5eJgW',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='text_editor_code_execution',
+                        args={'command': 'view', 'path': '/tmp/hello.txt'},
+                        tool_call_id='srvtoolu_01QEGXucYpkvkvF6i6Prs46W',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='text_editor_code_execution',
+                        content={'is_file_update': False, 'type': 'text_editor_code_execution_create_result'},
+                        tool_call_id='srvtoolu_01MQuAaMzvaquNAovWW5eJgW',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='text_editor_code_execution',
+                        content={
+                            'error_code': 'unavailable',
+                            'error_message': 'Tool response parsing error for view: Failed to parse tool response as JSON: unexpected character: line 1 column 1 (char 0)',
+                            'type': 'text_editor_code_execution_tool_result_error',
+                        },
+                        tool_call_id='srvtoolu_01QEGXucYpkvkvF6i6Prs46W',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(
+                        content='The file was created successfully! The `view` hit a snag running in parallel, so let me fetch it now.'
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='text_editor_code_execution',
+                        args={'command': 'view', 'path': '/tmp/hello.txt'},
+                        tool_call_id='srvtoolu_017mhGf2cjGCwQnNTyqFXuLS',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='text_editor_code_execution',
+                        content={
+                            'content': 'Hello, world!',
+                            'file_type': 'text',
+                            'num_lines': 1,
+                            'start_line': 1,
+                            'total_lines': 1,
+                            'type': 'text_editor_code_execution_view_result',
+                        },
+                        timestamp=IsDatetime(),
+                        tool_call_id='srvtoolu_017mhGf2cjGCwQnNTyqFXuLS',
+                        provider_name='anthropic',
+                    ),
+                    TextPart(
+                        content="""\
+Here's a summary of what happened:
+
+1. **Created** `/tmp/hello.txt` -- The file was successfully created with the specified text.
+2. **Viewed** `/tmp/hello.txt` -- The file contains exactly:
+
+> **Hello, world!**\
+"""
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=7599,
+                    output_tokens=351,
+                    details={
+                        'input_tokens': 7599,
+                        'output_tokens': 351,
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                    },
+                ),
+                model_name='claude-sonnet-4-6',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaEdTsPcpTGKorQbzuHiU'},
+                provider_response_id='msg_01LvCN3ma8pm9iHSZvWE6QzS',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_anthropic_text_editor_code_execution_tool_stream(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        builtin_tools=[CodeExecutionTool()],
+        instructions=(
+            'Use only the text editor `create` and `view` commands from the code execution sandbox. '
+            'Do not run any shell commands.'
+        ),
+    )
+
+    event_parts: list[Any] = []
+    async with agent.iter(
+        user_prompt=(
+            'Use the text editor to create /tmp/hello.txt with the text: Hello, world! '
+            'Then use the text editor to view the file and tell me what it contains.'
+        )
+    ) as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(index=0, part=TextPart(content='Sure')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(
+                index=0,
+                delta=TextPartDelta(
+                    content_delta="! I'll do both steps simultaneously — creating the file and viewing it at the same time!"
+                ),
+            ),
+            PartEndEvent(
+                index=0,
+                part=TextPart(
+                    content="Sure! I'll do both steps simultaneously — creating the file and viewing it at the same time!"
+                ),
+                next_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=1,
+                part=BuiltinToolCallPart(
+                    tool_name='text_editor_code_execution',
+                    tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz',
+                    provider_name='anthropic',
+                ),
+                previous_part_kind='text',
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz')
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='{"co', tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='mmand": "cre', tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='ate"', tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz'),
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta=', "pa', tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz')
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta='th": ', tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz')
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta='"/t', tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz')
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='mp/he', tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='llo.', tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='txt"', tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta=', "file_te', tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='xt": "Hello,', tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz'),
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta=' worl', tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz')
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta='d!"}', tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz')
+            ),
+            PartEndEvent(
+                index=1,
+                part=BuiltinToolCallPart(
+                    tool_name='text_editor_code_execution',
+                    args='{"command": "create", "path": "/tmp/hello.txt", "file_text": "Hello, world!"}',
+                    tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz',
+                    provider_name='anthropic',
+                ),
+                next_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=2,
+                part=BuiltinToolCallPart(
+                    tool_name='text_editor_code_execution',
+                    tool_call_id='srvtoolu_017BJJCwURZdkZu6BZTx1pKG',
+                    provider_name='anthropic',
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartDeltaEvent(
+                index=2, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_017BJJCwURZdkZu6BZTx1pKG')
+            ),
+            PartDeltaEvent(
+                index=2, delta=ToolCallPartDelta(args_delta='{"comma', tool_call_id='srvtoolu_017BJJCwURZdkZu6BZTx1pKG')
+            ),
+            PartDeltaEvent(
+                index=2, delta=ToolCallPartDelta(args_delta='nd": "', tool_call_id='srvtoolu_017BJJCwURZdkZu6BZTx1pKG')
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(args_delta='view"', tool_call_id='srvtoolu_017BJJCwURZdkZu6BZTx1pKG'),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(args_delta=', "path": "/', tool_call_id='srvtoolu_017BJJCwURZdkZu6BZTx1pKG'),
+            ),
+            PartDeltaEvent(
+                index=2, delta=ToolCallPartDelta(args_delta='tmp', tool_call_id='srvtoolu_017BJJCwURZdkZu6BZTx1pKG')
+            ),
+            PartDeltaEvent(
+                index=2, delta=ToolCallPartDelta(args_delta='/hello.', tool_call_id='srvtoolu_017BJJCwURZdkZu6BZTx1pKG')
+            ),
+            PartDeltaEvent(
+                index=2, delta=ToolCallPartDelta(args_delta='txt"}', tool_call_id='srvtoolu_017BJJCwURZdkZu6BZTx1pKG')
+            ),
+            PartEndEvent(
+                index=2,
+                part=BuiltinToolCallPart(
+                    tool_name='text_editor_code_execution',
+                    args='{"command": "view", "path": "/tmp/hello.txt"}',
+                    tool_call_id='srvtoolu_017BJJCwURZdkZu6BZTx1pKG',
+                    provider_name='anthropic',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=3,
+                part=BuiltinToolReturnPart(
+                    tool_name='text_editor_code_execution',
+                    content={'is_file_update': False, 'type': 'text_editor_code_execution_create_result'},
+                    tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=4,
+                part=BuiltinToolReturnPart(
+                    tool_name='text_editor_code_execution',
+                    content={
+                        'content': 'Hello, world!',
+                        'file_type': 'text',
+                        'num_lines': 1,
+                        'start_line': 1,
+                        'total_lines': 1,
+                        'type': 'text_editor_code_execution_view_result',
+                    },
+                    tool_call_id='srvtoolu_017BJJCwURZdkZu6BZTx1pKG',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                ),
+                previous_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=5,
+                part=TextPart(content='Both'),
+                previous_part_kind='builtin-tool-return',
+            ),
+            PartDeltaEvent(
+                index=5,
+                delta=TextPartDelta(
+                    content_delta="""\
+ steps are done! Here's a summary of what happened:
+
+1. **Created**\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=5,
+                delta=TextPartDelta(
+                    content_delta="""\
+ `/tmp/hello.txt` — The file was created successfully.
+2. **Viewed** `/tmp/hello.txt` —\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=5,
+                delta=TextPartDelta(
+                    content_delta="""\
+ The file contains exactly:
+
+> Hello, world!\
+"""
+                ),
+            ),
+            PartEndEvent(
+                index=5,
+                part=TextPart(
+                    content="""\
+Both steps are done! Here's a summary of what happened:
+
+1. **Created** `/tmp/hello.txt` — The file was created successfully.
+2. **Viewed** `/tmp/hello.txt` — The file contains exactly:
+
+> Hello, world!\
+"""
+                ),
+            ),
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                part=BuiltinToolCallPart(
+                    tool_name='text_editor_code_execution',
+                    args='{"command": "create", "path": "/tmp/hello.txt", "file_text": "Hello, world!"}',
+                    tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz',
+                    provider_name='anthropic',
+                )
+            ),
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                part=BuiltinToolCallPart(
+                    tool_name='text_editor_code_execution',
+                    args='{"command": "view", "path": "/tmp/hello.txt"}',
+                    tool_call_id='srvtoolu_017BJJCwURZdkZu6BZTx1pKG',
+                    provider_name='anthropic',
+                )
+            ),
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+                result=BuiltinToolReturnPart(
+                    tool_name='text_editor_code_execution',
+                    content={'is_file_update': False, 'type': 'text_editor_code_execution_create_result'},
+                    tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                )
+            ),
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+                result=BuiltinToolReturnPart(
+                    tool_name='text_editor_code_execution',
+                    content={
+                        'content': 'Hello, world!',
+                        'file_type': 'text',
+                        'num_lines': 1,
+                        'start_line': 1,
+                        'total_lines': 1,
+                        'type': 'text_editor_code_execution_view_result',
+                    },
+                    tool_call_id='srvtoolu_017BJJCwURZdkZu6BZTx1pKG',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                )
+            ),
+        ]
+    )
+
+
 async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool()])
