@@ -69,7 +69,13 @@ async def run_evaluator(
     source = evaluator.as_spec()
 
     try:
-        with logfire_span('Calling evaluator: {evaluator_name}', evaluator_name=evaluator_name):
+        # Keep `_span_name='evaluator: {evaluator_name}'` stable: existing logfire
+        # queries filter on the span name, so only the user-facing msg_template changes.
+        with logfire_span(
+            'Calling evaluator: {evaluator_name}',
+            evaluator_name=evaluator_name,
+            _span_name='evaluator: {evaluator_name}',
+        ):
             raw_results = await evaluate(ctx)
 
             try:

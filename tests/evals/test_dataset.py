@@ -1788,7 +1788,7 @@ async def test_evaluate_async_logfire(
                 },
             ),
             (
-                'Calling evaluator: {evaluator_name}',
+                'evaluator: {evaluator_name}',
                 {
                     'evaluator_name': 'SimpleEvaluator',
                     'logfire.msg_template': 'Calling evaluator: {evaluator_name}',
@@ -1801,7 +1801,7 @@ async def test_evaluate_async_logfire(
                 },
             ),
             (
-                'Calling evaluator: {evaluator_name}',
+                'evaluator: {evaluator_name}',
                 {
                     'evaluator_name': 'SimpleEvaluator',
                     'logfire.msg_template': 'Calling evaluator: {evaluator_name}',

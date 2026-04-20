@@ -2217,7 +2217,7 @@ async def test_dispatch_skipped_when_emit_off_and_no_sinks(capfire: CaptureLogfi
     # The call span is still created (it wraps the function), but the evaluator
     # never runs because results would be discarded.
     assert any('my_func' in s['name'] for s in spans)
-    assert not any(s['name'] == 'Calling evaluator: {evaluator_name}' for s in spans)
+    assert not any(s['name'] == 'evaluator: {evaluator_name}' for s in spans)
     assert list(capfire.log_exporter.get_finished_logs()) == []
 
 
@@ -2238,7 +2238,7 @@ async def test_evaluator_span_nested_under_call_span(capfire: CaptureLogfire):
 
     spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
     call_spans = [s for s in spans if 'my_func' in s['name']]
-    evaluator_spans = [s for s in spans if s['name'] == 'Calling evaluator: {evaluator_name}']
+    evaluator_spans = [s for s in spans if s['name'] == 'evaluator: {evaluator_name}']
     assert len(call_spans) == 1
     assert len(evaluator_spans) == 1
     assert evaluator_spans[0]['parent']['span_id'] == call_spans[0]['context']['span_id']
