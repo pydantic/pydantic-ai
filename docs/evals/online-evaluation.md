@@ -858,6 +858,66 @@ Key behaviors:
 - **If `on_error` itself raises**, the exception is silently suppressed to protect sibling evaluators.
 - **If no `on_error` is set**, exceptions are silently suppressed — this is the safe default.
 
+## Agent Integration
+
+The [`OnlineEvaluation`][pydantic_evals.online_capability.OnlineEvaluation] capability brings online evaluation to Pydantic AI agents. Instead of decorating a function, you add the capability to your agent:
+
+```python
+import asyncio
+from dataclasses import dataclass
+
+from pydantic_ai import Agent
+from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+from pydantic_evals.online import OnlineEvalConfig, wait_for_evaluations
+from pydantic_evals.online_capability import OnlineEvaluation
+
+results_log: list[str] = []
+
+
+@dataclass
+class OutputNotEmpty(Evaluator):
+    def evaluate(self, ctx: EvaluatorContext) -> bool:
+        return bool(ctx.output)
+
+
+agent = Agent(
+    'openai:gpt-5.2',
+    capabilities=[
+        OnlineEvaluation(
+            evaluators=[OutputNotEmpty()],
+            config=OnlineEvalConfig(
+                default_sink=lambda results, failures, context: results_log.extend(
+                    f'{result.name}={result.value}' for result in results
+                )
+            ),
+        ),
+    ],
+)
+
+
+async def main() -> list[str]:
+    results_log.clear()
+    await agent.run('What is the capital of the UK?')
+    await wait_for_evaluations()
+    return results_log
+
+
+print(asyncio.run(main()))
+#> ['OutputNotEmpty=True']
+```
+
+After each completed agent run, the capability:
+
+1. Samples evaluators based on their `sample_rate` configuration
+2. Builds an [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext] from the run result (output, prompt, token usage, duration, span tree)
+3. Dispatches evaluators asynchronously in the background
+4. Returns control to the caller without waiting for evaluators to finish
+
+The capability supports all the same features as the [`@evaluate()`][pydantic_evals.online.evaluate] decorator: sampling, per-evaluator sinks, concurrency control, and error handling. The `config` parameter is optional and defaults to the global [`DEFAULT_CONFIG`][pydantic_evals.online.DEFAULT_CONFIG].
+
+!!! note
+    [`OnlineEvaluation`][pydantic_evals.online_capability.OnlineEvaluation] wraps [`agent.run()`][pydantic_ai.Agent.run], [`agent.run_stream()`][pydantic_ai.Agent.run_stream], and [`agent.iter()`][pydantic_ai.Agent.iter] when the run reaches a final result. For streaming runs, evaluators are dispatched only after the final result is available and the surrounding context manager exits. The same delayed-dispatch behavior applies when driving an [`agent.iter()`][pydantic_ai.Agent.iter] run to completion, which is generally the preferred streaming API.
+
 ## API Reference
 
 The complete API for the `pydantic_evals.online` module is documented in the [API reference](../api/pydantic_evals/online.md).

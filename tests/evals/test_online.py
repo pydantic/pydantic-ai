@@ -1752,8 +1752,8 @@ async def test_attributes_and_metrics_empty_by_default():
 
 @pytest.mark.anyio
 async def test_online_eval_suppressed_inside_task_run():
-    """Online evaluation is suppressed when already inside a _CURRENT_TASK_RUN (e.g. Dataset.evaluate)."""
-    from pydantic_evals.dataset import _CURRENT_TASK_RUN, _TaskRun  # pyright: ignore[reportPrivateUsage]
+    """Online evaluation is suppressed when already inside `CURRENT_TASK_RUN`."""
+    from pydantic_evals._task_run import CURRENT_TASK_RUN, TaskRun
 
     collector = Collector()
     config = OnlineEvalConfig(default_sink=collector)
@@ -1762,14 +1762,14 @@ async def test_online_eval_suppressed_inside_task_run():
     async def my_func(x: int) -> int:
         return x
 
-    # Simulate being inside Dataset.evaluate by setting _CURRENT_TASK_RUN
-    outer_task_run = _TaskRun()
-    token = _CURRENT_TASK_RUN.set(outer_task_run)
+    # Simulate being inside Dataset.evaluate by setting CURRENT_TASK_RUN.
+    outer_task_run = TaskRun()
+    token = CURRENT_TASK_RUN.set(outer_task_run)
     try:
         result = await my_func(42)
         assert result == 42
     finally:
-        _CURRENT_TASK_RUN.reset(token)
+        CURRENT_TASK_RUN.reset(token)
 
     await wait_for_evaluations()
     # Online evaluation should have been suppressed

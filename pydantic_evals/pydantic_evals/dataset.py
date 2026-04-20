@@ -16,7 +16,6 @@ import traceback
 import warnings
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, nullcontext
-from contextvars import ContextVar
 from dataclasses import dataclass, field
 from inspect import iscoroutinefunction
 from pathlib import Path
@@ -35,6 +34,7 @@ from typing_extensions import Self, TypeVar
 from pydantic_ai._spec import build_registry, build_schema_types, load_from_registry
 from pydantic_evals._utils import get_event_loop
 
+from . import _task_run
 from ._utils import get_unwrapped_function_name, logfire_span, task_group_gather
 from ._warnings import PydanticEvalsDeprecationWarning
 from .evaluators import EvaluationResult, Evaluator
@@ -941,78 +941,6 @@ def _get_relative_path_reference(target: Path, source: Path, _prefix: str = '') 
         return _get_relative_path_reference(target, source.parent, _prefix=f'{_prefix}../')
 
 
-@dataclass
-class _TaskRun:
-    """Internal class to track metrics and attributes for a task run."""
-
-    attributes: dict[str, Any] = field(init=False, default_factory=dict[str, Any])
-    metrics: dict[str, int | float] = field(init=False, default_factory=dict[str, int | float])
-
-    def record_metric(self, name: str, value: int | float) -> None:
-        """Record a metric value.
-
-        Args:
-            name: The name of the metric.
-            value: The value of the metric.
-        """
-        self.metrics[name] = value
-
-    def increment_metric(self, name: str, amount: int | float) -> None:
-        """Increment a metric value.
-
-        Args:
-            name: The name of the metric.
-            amount: The amount to increment by.
-
-        Note:
-            If the current value is 0 and the increment amount is 0, no metric will be recorded.
-        """
-        current_value = self.metrics.get(name, 0)
-        incremented_value = current_value + amount
-        if current_value == 0 and incremented_value == 0:
-            return  # Avoid recording a metric that is always zero
-        self.record_metric(name, incremented_value)
-
-    def record_attribute(self, name: str, value: Any) -> None:
-        """Record an attribute value.
-
-        Args:
-            name: The name of the attribute.
-            value: The value of the attribute.
-        """
-        self.attributes[name] = value
-
-
-def _extract_span_tree_metrics(task_run: _TaskRun, span_tree: SpanTree) -> None:
-    """Extract standard metrics (requests, cost, token usage) from a span tree.
-
-    Iterates the span tree looking for LLM request spans (identified by the
-    ``gen_ai.request.model`` attribute) and extracts:
-
-    - ``requests``: count of ``gen_ai.operation.name == 'chat'`` spans
-    - ``cost``: sum of ``operation.cost`` values
-    - Token usage from ``gen_ai.usage.*`` and ``gen_ai.usage.details.*`` attributes
-    """
-    # Idea for making this more configurable: replace the following logic with a call to a user-provided function
-    #   of type Callable[[_TaskRun, SpanTree], None] or similar, (maybe no _TaskRun and just use the public APIs).
-    #   That way users can customize this logic. We'd default to a function that does the current thing but also
-    #   allow `None` to disable it entirely.
-    for node in span_tree:
-        if 'gen_ai.request.model' not in node.attributes:
-            continue  # we only want to count the below specifically for the individual LLM requests, not agent runs
-        for k, v in node.attributes.items():
-            if k == 'gen_ai.operation.name' and v == 'chat':
-                task_run.increment_metric('requests', 1)
-            elif not isinstance(v, int | float):
-                continue
-            elif k == 'operation.cost':
-                task_run.increment_metric('cost', v)
-            elif k.startswith('gen_ai.usage.details.'):
-                task_run.increment_metric(k.removeprefix('gen_ai.usage.details.'), v)
-            elif k.startswith('gen_ai.usage.'):
-                task_run.increment_metric(k.removeprefix('gen_ai.usage.'), v)
-
-
 async def _run_task(
     task: Callable[[InputsT], Awaitable[OutputT] | OutputT],
     case: Case[InputsT, OutputT, MetadataT],
@@ -1033,11 +961,11 @@ async def _run_task(
     """
 
     async def _run_once():
-        task_run_ = _TaskRun()
-        if _CURRENT_TASK_RUN.get() is not None:  # pragma: no cover
+        task_run_ = _task_run.TaskRun()
+        if _task_run.CURRENT_TASK_RUN.get() is not None:  # pragma: no cover
             raise RuntimeError('A task run has already been entered. Task runs should not be nested')
 
-        token = _CURRENT_TASK_RUN.set(task_run_)
+        token = _task_run.CURRENT_TASK_RUN.set(task_run_)
         try:
             with (
                 logfire_span('execute {task}', task=get_unwrapped_function_name(task)) as task_span,
@@ -1052,7 +980,7 @@ async def _run_task(
             duration_ = _get_span_duration(task_span, fallback_duration)
             return task_run_, task_output_, duration_, span_tree_
         finally:
-            _CURRENT_TASK_RUN.reset(token)
+            _task_run.CURRENT_TASK_RUN.reset(token)
 
     if retry:
         # import from pydantic_ai.retries to trigger more descriptive import error if tenacity is missing
@@ -1063,7 +991,7 @@ async def _run_task(
     task_run, task_output, duration, span_tree = await _run_once()
 
     if isinstance(span_tree, SpanTree):  # pragma: no branch
-        _extract_span_tree_metrics(task_run, span_tree)
+        _task_run.extract_span_tree_metrics(task_run, span_tree)
 
     return EvaluatorContext[InputsT, OutputT, MetadataT](
         name=case.name,
@@ -1322,9 +1250,6 @@ def _group_evaluator_outputs_by_type(
     return assertions, scores, labels
 
 
-_CURRENT_TASK_RUN = ContextVar['_TaskRun | None']('_CURRENT_TASK_RUN', default=None)
-
-
 def set_eval_attribute(name: str, value: Any) -> None:
     """Set an attribute on the current task run.
 
@@ -1332,7 +1257,7 @@ def set_eval_attribute(name: str, value: Any) -> None:
         name: The name of the attribute.
         value: The value of the attribute.
     """
-    current_case = _CURRENT_TASK_RUN.get()
+    current_case = _task_run.CURRENT_TASK_RUN.get()
     if current_case is not None:  # pragma: no branch
         current_case.record_attribute(name, value)
 
@@ -1344,7 +1269,7 @@ def increment_eval_metric(name: str, amount: int | float) -> None:
         name: The name of the metric.
         amount: The amount to increment by.
     """
-    current_case = _CURRENT_TASK_RUN.get()
+    current_case = _task_run.CURRENT_TASK_RUN.get()
     if current_case is not None:  # pragma: no branch
         current_case.increment_metric(name, amount)
 
