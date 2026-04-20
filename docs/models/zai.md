@@ -81,10 +81,11 @@ See the [Z.AI thinking mode documentation](https://docs.z.ai/guides/capabilities
 You can provide a custom [`Provider`][pydantic_ai.providers.Provider] via the `provider` argument. In the simplest case, pass [`ZaiProvider`][pydantic_ai.providers.zai.ZaiProvider] with just an API key. If you also want to customize the underlying `httpx.AsyncClient`, pass it when constructing the provider:
 
 ```python
+from httpx import AsyncClient
+
 from pydantic_ai import Agent
 from pydantic_ai.models.zai import ZaiModel
 from pydantic_ai.providers.zai import ZaiProvider
-from httpx import AsyncClient
 
 custom_http_client = AsyncClient(timeout=30)
 model = ZaiModel(
