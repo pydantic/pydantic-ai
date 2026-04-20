@@ -8336,7 +8336,7 @@ async def test_anthropic_text_editor_code_execution_tool_message_replay():
         for item in assistant_content
         if isinstance(item, dict) and item.get('type') == 'text_editor_code_execution_tool_result'
     )
-    assert result_block['tool_use_id'] == 'srvtoolu_text_editor_1'
+    assert result_block['tool_use_id'] == 'srvtoolu_text_editor_1'  # pyright: ignore[reportGeneralTypeIssues]
     assert result_block['content']['type'] == 'text_editor_code_execution_view_result'  # type: ignore[typeddict-item]
 
 
