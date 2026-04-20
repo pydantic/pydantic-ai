@@ -73,7 +73,37 @@ class SinkPayload:
 
 @runtime_checkable
 class EvaluationSink(Protocol):
-    async def submit(self, payload: SinkPayload) -> None: ...
+    """Protocol for **additional** evaluation result destinations.
+
+    By default, online evaluation emits `gen_ai.evaluation.result` OTel events
+    for every evaluator run — no sink registration required. Sinks are the
+    escape hatch for custom handling *in addition to* OTel emission: in-memory
+    test capture, fan-out to Slack/DB, non-OTel backends, alerting pipelines,
+    etc. See [`OnlineEvalConfig.default_sink`][pydantic_evals.online.OnlineEvalConfig.default_sink].
+
+    To disable the default OTel emission (e.g. in tests that only want to
+    assert on a custom sink), set
+    [`emit_otel_events=False`][pydantic_evals.online.OnlineEvalConfig.emit_otel_events]
+    on the config.
+    """
+
+    async def submit(self, payload: SinkPayload) -> None:
+        """Submit evaluation results to the sink.
+
+        The payload may include results from one or more evaluators that ran for
+        a given function call — when multiple evaluators share this sink, their
+        results are batched into a single `submit()` call. Each result carries
+        enough metadata (name, evaluator version, source) to be attributed
+        downstream; the exact batching behavior is an implementation detail and
+        may change.
+
+        Args:
+            payload: A [`SinkPayload`][pydantic_evals.online.SinkPayload] bundling
+                results, failures, context, span reference, and target. Sinks
+                should read only the fields they need; new fields may be added
+                in future releases.
+        """
+        ...
 
 
 class OnlineEvaluatorLike(Protocol):
@@ -100,7 +130,15 @@ class OnlineEvalConfigLike(Protocol):
     on_error: OnErrorCallback | None
 
 
-class _CallbackSink:
+class CallbackSink:
+    """An `EvaluationSink` that delegates to a user-provided callable.
+
+    The callback receives the results, failures, and context. Other fields on
+    the [`SinkPayload`][pydantic_evals.online.SinkPayload] (such as
+    `span_reference` and `target`) are not passed — use a custom
+    `EvaluationSink` implementation if you need them.
+    """
+
     def __init__(self, callback: SinkCallback) -> None:
         self.callback = callback
 
@@ -254,14 +292,14 @@ def _normalize_sinks(
     if isinstance(sink, EvaluationSink):
         return [_ensure_payload_compat(sink)]
     if callable(sink):
-        return [_CallbackSink(sink)]
+        return [CallbackSink(sink)]
     return [_normalize_single_sink(single_sink) for single_sink in sink]
 
 
 def _normalize_single_sink(sink: EvaluationSink | SinkCallback) -> EvaluationSink:
     if isinstance(sink, EvaluationSink):
         return _ensure_payload_compat(sink)
-    return _CallbackSink(sink)
+    return CallbackSink(sink)
 
 
 # ---------------------------------------------------------------------------

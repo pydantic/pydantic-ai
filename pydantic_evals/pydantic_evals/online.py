@@ -34,14 +34,14 @@ import time
 from collections.abc import Awaitable, Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol
 
 import anyio
 from opentelemetry import trace
 from typing_extensions import LiteralString, ParamSpec, TypeVar
 
 from . import _online as _online_internal, _task_run
-from ._online import SinkPayload
+from ._online import CallbackSink, EvaluationSink, SinkPayload
 from ._utils import UNSET, Unset, logfire_span
 from .evaluators._run_evaluator import run_evaluator
 from .evaluators.context import EvaluatorContext
@@ -181,59 +181,6 @@ SinkCallback = Callable[
 
 Auto-wrapped in `CallbackSink` when passed as a `sink` parameter.
 """
-
-
-@runtime_checkable
-class EvaluationSink(Protocol):
-    """Protocol for **additional** evaluation result destinations.
-
-    By default, online evaluation emits `gen_ai.evaluation.result` OTel events
-    for every evaluator run — no sink registration required. Sinks are the
-    escape hatch for custom handling *in addition to* OTel emission: in-memory
-    test capture, fan-out to Slack/DB, non-OTel backends, alerting pipelines,
-    etc. See [`OnlineEvalConfig.default_sink`][pydantic_evals.online.OnlineEvalConfig.default_sink].
-
-    To disable the default OTel emission (e.g. in tests that only want to
-    assert on a custom sink), set
-    [`emit_otel_events=False`][pydantic_evals.online.OnlineEvalConfig.emit_otel_events]
-    on the config.
-    """
-
-    async def submit(self, payload: SinkPayload) -> None:
-        """Submit evaluation results to the sink.
-
-        The payload may include results from one or more evaluators that ran for
-        a given function call — when multiple evaluators share this sink, their
-        results are batched into a single `submit()` call. Each result carries
-        enough metadata (name, evaluator version, source) to be attributed
-        downstream; the exact batching behavior is an implementation detail and
-        may change.
-
-        Args:
-            payload: A [`SinkPayload`][pydantic_evals.online.SinkPayload] bundling
-                results, failures, context, span reference, and target. Sinks
-                should read only the fields they need; new fields may be added
-                in future releases.
-        """
-        ...
-
-
-class CallbackSink:
-    """An `EvaluationSink` that delegates to a user-provided callable.
-
-    The callback receives the results, failures, and context. Other fields on
-    the [`SinkPayload`][pydantic_evals.online.SinkPayload] (such as
-    `span_reference` and `target`) are not passed — use a custom
-    `EvaluationSink` implementation if you need them.
-    """
-
-    def __init__(self, callback: SinkCallback) -> None:
-        self.callback = callback
-
-    async def submit(self, payload: SinkPayload) -> None:
-        result = self.callback(payload.results, payload.failures, payload.context)
-        if inspect.isawaitable(result):
-            await result
 
 
 @dataclass(kw_only=True)
