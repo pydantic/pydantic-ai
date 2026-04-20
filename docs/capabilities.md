@@ -119,7 +119,7 @@ See the dedicated [Hooks](hooks.md) page for the full API: decorator and constru
 
 | Capability | Local fallback | Notes |
 |---|---|---|
-| [`WebSearch`][pydantic_ai.capabilities.WebSearch] | Auto-detected (DuckDuckGo) | Works out of the box |
+| [`WebSearch`][pydantic_ai.capabilities.WebSearch] | Auto-detected (DuckDuckGo) | Requires the `duckduckgo` optional group (`pip install "pydantic-ai-slim[duckduckgo]"`) |
 | [`WebFetch`][pydantic_ai.capabilities.WebFetch] | Provide your own via `local=` | Default local fallback [coming soon](https://github.com/pydantic/pydantic-ai/pull/4906) |
 | [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | Provide your own via `local=` | e.g. a tool that calls an image generation API, or a subagent with a model that supports image gen |
 | [`MCP`][pydantic_ai.capabilities.MCP] | Direct connection to MCP server | Auto-detects transport from URL |
@@ -923,7 +923,7 @@ print(counter.count)
 When `for_run` returns a new instance, all `get_*()` methods (`get_toolset`, `get_instructions`, `get_model_settings`, etc.) are re-called on that new instance — not on the original. This is important for capabilities where per-run configuration depends on per-run state.
 
 !!! warning
-    Always return a **new instance** from `for_run` — do not mutate `self` and return `self`. The agent caches toolsets, instructions, and model settings resolved from the original instance, so mutations to `self` won't be reflected in the cached configuration.
+    Never mutate `self` inside `for_run`. If you need per-run state, return a **new instance**. If you don't, return `self` unchanged (the default) — the agent caches toolsets, instructions, and model settings resolved from the original instance, so mutations to `self` won't be reflected in the cached configuration.
 
 ### Composition and middleware semantics
 

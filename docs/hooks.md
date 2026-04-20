@@ -389,7 +389,7 @@ print(wrap_log)
 
 ## Hook ordering
 
-Within a single [`Hooks`][pydantic_ai.capabilities.Hooks] instance, all hooks — including `after_*` — fire in **registration order** (the order they were defined or passed to the constructor).
+Within a single [`Hooks`][pydantic_ai.capabilities.Hooks] instance, `before_*`, `after_*`, and `on_*_error` fire in **registration order** (the order they were defined or passed to the constructor). `wrap_*` nests as middleware, with the first-registered wrapper as the outermost layer.
 
 Across multiple capabilities, the [composition rules](capabilities.md#composition) apply: `before_*` fires in capability order, `after_*` fires in reverse capability order, and `wrap_*` nests as middleware.
 
