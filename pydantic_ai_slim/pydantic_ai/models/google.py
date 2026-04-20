@@ -4,7 +4,7 @@ import base64
 import re
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, cast, overload
 from uuid import uuid4
@@ -28,6 +28,7 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     CachePoint,
+    CompactionPart,
     FilePart,
     FileUrl,
     FinishReason,
@@ -112,7 +113,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-_FILE_SEARCH_QUERY_PATTERN = re.compile(r'file_search\.query\(query=(["\'])((?:\\.|(?!\1).)*?)\1\)')
+_FILE_SEARCH_QUERY_PATTERN = re.compile(r'file_search\.query\(query=(["\'])((?:\\.|(?!\1)[^\\])*)\1\)')
 
 
 LatestGoogleModelNames = Literal[
@@ -290,7 +291,7 @@ def _google_vertex_service_tier_headers(service_tier: GoogleServiceTier) -> dict
 
 
 @dataclass(init=False)
-class GoogleModel(Model):
+class GoogleModel(Model[Client]):
     """A model that uses Gemini via `generativelanguage.googleapis.com` API.
 
     This is implemented from scratch rather than using a dedicated SDK, good API documentation is
@@ -357,13 +358,14 @@ class GoogleModel(Model):
             self.profile
         ).google_supports_native_output_with_builtin_tools
         if model_request_parameters.builtin_tools and model_request_parameters.output_tools:
-            if model_request_parameters.output_mode == 'auto':
-                output_mode = 'native' if supports_native_output_with_builtin_tools else 'prompted'
-                model_request_parameters = replace(model_request_parameters, output_mode=output_mode)
-            else:
-                output_mode = 'NativeOutput' if supports_native_output_with_builtin_tools else 'PromptedOutput'
+            default_mode = 'native' if supports_native_output_with_builtin_tools else 'prompted'
+            model_request_parameters = model_request_parameters.with_default_output_mode(default_mode)
+            if model_request_parameters.output_mode not in ('native', 'prompted'):
+                suggested_output_type = (
+                    'NativeOutput' if supports_native_output_with_builtin_tools else 'PromptedOutput'
+                )
                 raise UserError(
-                    f'Google does not support output tools and built-in tools at the same time. Use `output_type={output_mode}(...)` instead.'
+                    f'Google does not support output tools and built-in tools at the same time. Use `output_type={suggested_output_type}(...)` instead.'
                 )
         return super().prepare_request(model_settings, model_request_parameters)
 
@@ -869,8 +871,9 @@ class GoogleModel(Model):
         if not contents or contents[0].get('role') == 'model':  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
             contents.insert(0, {'role': 'user', 'parts': [{'text': ''}]})
 
-        if instructions := self._get_instructions(messages, model_request_parameters):
-            system_parts.append({'text': instructions})
+        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
+            for part in instruction_parts:
+                system_parts.append({'text': part.content})
         system_instruction = ContentDict(role='user', parts=system_parts) if system_parts else None
 
         return system_instruction, contents
@@ -1355,6 +1358,9 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
             content = item.content
             inline_data_dict: BlobDict = {'data': content.data, 'mime_type': content.media_type}
             part['inline_data'] = inline_data_dict
+        elif isinstance(item, CompactionPart):  # pragma: no cover
+            # Compaction parts are not sent back to models that don't support compaction.
+            pass
         else:
             assert_never(item)
 
@@ -1401,7 +1407,7 @@ def _process_part(
         assert part.function_call.name is not None
         item = ToolCallPart(tool_name=part.function_call.name, args=part.function_call.args)
         if part.function_call.id is not None:
-            item.tool_call_id = part.function_call.id  # pragma: no cover
+            item.tool_call_id = part.function_call.id
     elif inline_data := part.inline_data:
         data = inline_data.data
         mime_type = inline_data.mime_type
@@ -1472,6 +1478,8 @@ def _function_declaration_from_tool(tool: ToolDefinition) -> FunctionDeclaration
         description=tool.description or '',
         parameters_json_schema=json_schema,
     )
+    if tool.return_schema:
+        f['response_json_schema'] = tool.return_schema
     return f
 
 
@@ -1522,7 +1530,7 @@ def _map_executable_code(executable_code: ExecutableCode, provider_name: str, to
     return BuiltinToolCallPart(
         provider_name=provider_name,
         tool_name=CodeExecutionTool.kind,
-        args=executable_code.model_dump(mode='json'),
+        args=executable_code.model_dump(mode='json', exclude_none=True),
         tool_call_id=tool_call_id,
     )
 
@@ -1533,7 +1541,7 @@ def _map_code_execution_result(
     return BuiltinToolReturnPart(
         provider_name=provider_name,
         tool_name=CodeExecutionTool.kind,
-        content=code_execution_result.model_dump(mode='json'),
+        content=code_execution_result.model_dump(mode='json', exclude_none=True),
         tool_call_id=tool_call_id,
     )
 

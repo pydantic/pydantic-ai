@@ -19,13 +19,13 @@ from ._output import (
     TextOutputSchema,
 )
 from ._run_context import AgentDepsT, RunContext
-from ._tool_manager import ToolManager
 from .messages import ModelResponseStreamEvent
 from .output import (
     DeferredToolRequests,
     OutputDataT,
     ToolOutput,
 )
+from .tool_manager import ToolManager
 from .usage import RunUsage, UsageLimits
 
 if TYPE_CHECKING:
@@ -216,7 +216,12 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     )
                 return cast(OutputDataT, deferred_tool_requests)
             elif self._output_schema.allows_image and message.images:
-                return cast(OutputDataT, message.images[0])
+                result_data = cast(OutputDataT, message.images[0])
+                for validator in self._output_validators:
+                    result_data = await validator.validate(
+                        result_data, replace(self._run_ctx, partial_output=allow_partial), wrap_validation_errors=False
+                    )
+                return result_data
             elif text_processor := self._output_schema.text_processor:
                 text = ''
                 for part in message.parts:
@@ -408,9 +413,9 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         )
 
     def new_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
-        """Return new messages associated with this run.
+        """Return the messages produced during this run.
 
-        Messages from older runs are excluded.
+        Messages provided via `message_history` and messages from older runs are excluded.
 
         Args:
             output_tool_return_content: The return content of the tool call to set in the last message.
@@ -666,9 +671,9 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         return self._streamed_run_result.all_messages_json(output_tool_return_content=output_tool_return_content)
 
     def new_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
-        """Return new messages associated with this run.
+        """Return the messages produced during this run.
 
-        Messages from older runs are excluded.
+        Messages provided via `message_history` and messages from older runs are excluded.
 
         Args:
             output_tool_return_content: The return content of the tool call to set in the last message.

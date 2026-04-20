@@ -11,6 +11,7 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
@@ -2261,7 +2262,12 @@ Fix the errors and try again.\
                 'toolName': 'unknown_tool',
             },
             {'type': 'tool-input-available', 'toolCallId': IsStr(), 'toolName': 'unknown_tool', 'input': {}},
-            {'type': 'error', 'errorText': 'Exceeded maximum retries (1) for output validation'},
+            {
+                'type': 'tool-output-error',
+                'toolCallId': IsStr(),
+                'errorText': 'Tool execution was interrupted by an error.',
+            },
+            {'type': 'error', 'errorText': "Tool 'unknown_tool' exceeded max retries count of 1"},
             {'type': 'finish-step'},
             {'type': 'finish', 'finishReason': 'error'},
             '[DONE]',
@@ -2304,9 +2310,123 @@ async def test_run_stream_request_error():
                 'toolName': 'tool',
                 'input': {'query': 'a'},
             },
+            {
+                'type': 'tool-output-error',
+                'toolCallId': 'pyd_ai_tool_call_id__tool',
+                'errorText': 'Tool execution was interrupted by an error.',
+            },
             {'type': 'error', 'errorText': 'Unknown tool'},
             {'type': 'finish-step'},
             {'type': 'finish', 'finishReason': 'error'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_run_stream_tool_retry_exhaustion():
+    """When a tool exhausts its retries, the last tool call should get a tool-output-error chunk."""
+    agent = Agent(model=TestModel(), retries=1)
+
+    @agent.tool_plain(retries=1)
+    async def flaky_tool(query: str) -> str:
+        raise ModelRetry('Service unavailable')
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    # Every tool-input-start must have a corresponding tool-output-error — no dangling calls
+    tool_starts = [e for e in events if is_str_dict(e) and e['type'] == 'tool-input-start']
+    tool_outputs = [e for e in events if is_str_dict(e) and e['type'] == 'tool-output-error']
+    started_ids = {e['toolCallId'] for e in tool_starts}
+    closed_ids = {e['toolCallId'] for e in tool_outputs}
+    assert started_ids == closed_ids, f'Dangling tool calls: {started_ids - closed_ids}'
+
+    # Verify the event type sequence: each attempt gets start→delta→available→error,
+    # and the final exhaustion gets an additional stream-level error
+    event_types = [e if isinstance(e, str) else e['type'] for e in events]
+    assert event_types == snapshot(
+        [
+            'start',
+            'start-step',
+            'tool-input-start',
+            'tool-input-delta',
+            'tool-input-available',
+            'tool-output-error',
+            'finish-step',
+            'start-step',
+            'tool-input-start',
+            'tool-input-delta',
+            'tool-input-available',
+            'tool-output-error',
+            'error',
+            'finish-step',
+            'finish',
+            '[DONE]',
+        ]
+    )
+
+
+async def test_run_stream_output_tool_error():
+    """When an output tool fails, the pending tool call (tracked via FinalResultEvent) should be closed."""
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {
+            0: DeltaToolCall(
+                name='final_result',
+                json_args='{"value": "bad"}',
+                tool_call_id='out_1',
+            )
+        }
+
+    def bad_output(value: str) -> str:
+        raise ValueError('Output validation failed')
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=bad_output, retries=0)
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    # The output tool call must be closed with tool-output-error before the stream error
+    event_types = [e if isinstance(e, str) else e['type'] for e in events]
+    assert event_types == snapshot(
+        [
+            'start',
+            'start-step',
+            'tool-input-start',
+            'tool-input-delta',
+            'tool-input-available',
+            'tool-output-error',
+            'error',
+            'finish-step',
+            'finish',
             '[DONE]',
         ]
     )
@@ -4565,6 +4685,82 @@ async def test_adapter_dump_messages_id_fallback():
     # Each ID should be unique
     ids = [m.id for m in result1]
     assert len(ids) == len(set(ids))
+
+
+async def test_event_stream_server_message_id():
+    """Test that VercelAIEventStream passes server_message_id to the StartChunk."""
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+        yield PartEndEvent(index=0, part=TextPart(content='Hello'))
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request, server_message_id='server-generated-id-abc123')
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events[0] == snapshot({'type': 'start', 'messageId': 'server-generated-id-abc123'})
+
+
+async def test_adapter_server_message_id():
+    """Test that VercelAIAdapter passes server_message_id through to the StartChunk."""
+
+    agent = Agent(model=TestModel())
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request, server_message_id='adapter-generated-id-xyz789')
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert events[0] == snapshot({'type': 'start', 'messageId': 'adapter-generated-id-xyz789'})
+
+
+async def test_adapter_server_message_id_default_none():
+    """Test that VercelAIAdapter produces a StartChunk without messageId when server_message_id is not specified."""
+
+    agent = Agent(model=TestModel())
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert events[0] == snapshot({'type': 'start'})
 
 
 async def test_adapter_dump_messages_with_invalid_json_args():

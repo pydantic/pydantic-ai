@@ -79,6 +79,15 @@ class WebSearch(BuiltinOrLocalTool[AgentDepsT]):
 
             return duckduckgo_search_tool()
         except ImportError:
+            import warnings
+
+            warnings.warn(
+                'WebSearch local fallback requires the `duckduckgo` optional group — '
+                '`pip install "pydantic-ai-slim[duckduckgo]"`. '
+                'Without it, WebSearch only works with models that support it natively.',
+                UserWarning,
+                stacklevel=2,
+            )
             return None
 
     def _requires_builtin(self) -> bool:
