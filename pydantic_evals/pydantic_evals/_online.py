@@ -26,7 +26,7 @@ from .evaluators.evaluator import EvaluationResult, Evaluator, EvaluatorFailure
 
 if TYPE_CHECKING:
     # Imported only for type annotations; `online` imports from this module at runtime.
-    from .online import SpanReference
+    from .online import OnlineEvalConfig, OnlineEvaluator, SpanReference
 
 SinkCallback = Callable[
     [Sequence[EvaluationResult], Sequence[EvaluatorFailure], EvaluatorContext],
@@ -104,30 +104,6 @@ class EvaluationSink(Protocol):
                 in future releases.
         """
         ...
-
-
-class OnlineEvaluatorLike(Protocol):
-    evaluator: Evaluator
-    sample_rate: float | Callable[[Any], float | bool] | None
-    max_concurrency: int
-    semaphore: threading.Semaphore
-    sink: Any
-    on_max_concurrency: OnMaxConcurrencyCallback | None
-    on_sampling_error: OnSamplingErrorCallback | None
-    on_error: OnErrorCallback | None
-
-
-class OnlineEvalConfigLike(Protocol):
-    default_sink: Any
-    default_sample_rate: float | Callable[[Any], float | bool]
-    sampling_mode: SamplingMode
-    enabled: bool
-    emit_otel_events: bool
-    include_baggage: bool
-    metadata: dict[str, Any] | None
-    on_max_concurrency: OnMaxConcurrencyCallback | None
-    on_sampling_error: OnSamplingErrorCallback | None
-    on_error: OnErrorCallback | None
 
 
 class CallbackSink:
@@ -212,8 +188,8 @@ def dispatch_in_background_thread(coro: Coroutine[Any, Any, None]) -> None:
 
 
 def _resolve_sample_rate_field(
-    online_eval: OnlineEvaluatorLike,
-    config: OnlineEvalConfigLike,
+    online_eval: OnlineEvaluator,
+    config: OnlineEvalConfig,
 ) -> float | Callable[[Any], float | bool]:
     if online_eval.sample_rate is None:
         return config.default_sample_rate
@@ -254,14 +230,14 @@ def _should_evaluate(
 
 
 def sample_evaluators(
-    online_evals: Sequence[OnlineEvaluatorLike],
-    config: OnlineEvalConfigLike,
+    online_evals: Sequence[OnlineEvaluator],
+    config: OnlineEvalConfig,
     inputs: Any,
     *,
     build_sampling_context: SamplingContextBuilder,
-) -> list[OnlineEvaluatorLike]:
+) -> list[OnlineEvaluator]:
     call_seed = random.random()
-    sampled: list[OnlineEvaluatorLike] = []
+    sampled: list[OnlineEvaluator] = []
     for online_eval in online_evals:
         sampling_context = build_sampling_context(online_eval.evaluator, inputs, config.metadata, call_seed)
         try:
@@ -413,16 +389,16 @@ class _SinkGroup:
     """
 
     sinks: list[EvaluationSink]
-    evaluators: list[OnlineEvaluatorLike]
-    outcomes: list[tuple[OnlineEvaluatorLike, Sequence[EvaluationResult], Sequence[EvaluatorFailure]]]
+    evaluators: list[OnlineEvaluator]
+    outcomes: list[tuple[OnlineEvaluator, Sequence[EvaluationResult], Sequence[EvaluatorFailure]]]
 
 
 async def _run_and_collect(
-    online_eval: OnlineEvaluatorLike,
+    online_eval: OnlineEvaluator,
     context: EvaluatorContext,
     span_reference: Any | None,
     target: str,
-    config: OnlineEvalConfigLike,
+    config: OnlineEvalConfig,
     group: _SinkGroup,
 ) -> None:
     """Run a single evaluator, emit its OTel events, and stash the outcome on the group.
@@ -487,7 +463,7 @@ async def _submit_group_to_sink(
     sink: EvaluationSink,
     payload: SinkPayload,
     group: _SinkGroup,
-    config: OnlineEvalConfigLike,
+    config: OnlineEvalConfig,
 ) -> None:
     """Submit a batched payload to one sink, routing errors to each evaluator's on_error.
 
@@ -511,11 +487,11 @@ async def _submit_group_to_sink(
 
 
 async def dispatch_evaluators(
-    online_evaluators: Sequence[OnlineEvaluatorLike],
+    online_evaluators: Sequence[OnlineEvaluator],
     context: EvaluatorContext,
     span_reference: Any | None,
     target: str,
-    config: OnlineEvalConfigLike,
+    config: OnlineEvalConfig,
 ) -> None:
     # Group evaluators by raw sink source so evaluators sharing a source land a
     # single batched `submit` call per sink. Keyed by `id()` of the raw source
@@ -530,11 +506,7 @@ async def dispatch_evaluators(
         if group is None:
             cached = resolved_cache.get(key)
             if cached is None:
-                cached = (
-                    _normalize_sinks(cast(EvaluationSink | Sequence[EvaluationSink | SinkCallback] | SinkCallback, raw))
-                    if raw is not None
-                    else []
-                )
+                cached = _normalize_sinks(raw) if raw is not None else []
                 resolved_cache[key] = cached
             # Skip evaluators whose results would have nowhere to go: both OTel
             # emission disabled and no sinks attached. Avoids spending semaphore
