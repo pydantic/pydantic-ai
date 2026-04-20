@@ -845,11 +845,3 @@ agent = Agent(model)
 ```
 
 For a complete list of available models, see the [Doubleword models documentation](https://docs.doubleword.ai/inference-api/models).
-
-#### Batch Pricing
-
-Doubleword offers batch pricing with up to 90% savings on inference costs. You can use the [`autobatcher`](https://pypi.org/project/autobatcher/) package to automatically batch requests:
-
-```bash
-pip install autobatcher
-```
